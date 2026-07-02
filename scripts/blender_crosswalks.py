@@ -64,10 +64,16 @@ def add_crosswalk(name: str, near, u, n, width_m: float, material, offset_m: flo
     draw_fn(name, near, u, n, width_m, material, offset_m=offset_m)
 
 
-def add_paint_line(name: str, p1: tuple, p2: tuple, width_m: float, material, height_m: float = 0.06):
+def add_paint_line(name: str, p1: tuple, p2: tuple, width_m: float, material,
+                    height_m: float = 0.01, z_base: float = 0.06):
     """A single thin painted line segment between two points - used for
     corner-hatching diagonal lines (src/geometry_model.py:hatch_lines_ft) and
-    any other simple paint-only marking that's just a straight stripe."""
+    any other simple paint-only marking that's just a straight stripe.
+    z_base defaults just above the pavement's own top surface (0.05 m, per
+    blender_scene.py's PAVEMENT_HEIGHT_M) - sitting exactly AT that height
+    instead of slightly above it z-fights (see extrude_polygon's z_base
+    docstring); callers that know the real pavement height should pass their
+    own PAVEMENT_HEIGHT_M + MARKING_CLEARANCE_M explicitly instead."""
     p1v, p2v = mathutils.Vector((*p1, 0.0)), mathutils.Vector((*p2, 0.0))
     direction = p2v - p1v
     length = direction.length
@@ -75,7 +81,7 @@ def add_paint_line(name: str, p1: tuple, p2: tuple, width_m: float, material, he
         return
     u = direction / length
     n = mathutils.Vector((-u.y, u.x, 0))
-    add_stripe_rect(name, (p1v + p2v) / 2, u, n, length, width_m, height_m, material)
+    add_stripe_rect(name, (p1v + p2v) / 2, u, n, length, width_m, height_m, material, z_base=z_base)
 
 
 def add_dashed_centerline(name: str, near: mathutils.Vector, far: mathutils.Vector, material,

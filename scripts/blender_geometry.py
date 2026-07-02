@@ -21,11 +21,20 @@ def apply_planar_uv(obj, tile_size_m: float = 2.0):
     obj.select_set(False)
 
 
-def extrude_polygon(name: str, coords_2d: list, height: float, material, uv_tile_m: float = 2.0):
+def extrude_polygon(name: str, coords_2d: list, height: float, material, uv_tile_m: float = 2.0,
+                     z_base: float = 0.0):
+    """z_base lifts the whole solid to sit on top of something already at that
+    height (e.g. a paint marking on top of the pavement slab) instead of
+    starting at z=0 and mostly overlapping it. IMPORTANT: don't set z_base to
+    exactly the height of the surface it sits on - two coincident/coplanar
+    faces at the exact same height z-fight (confirmed by an isolated test:
+    even a flat, zero-height marking placed at z=pavement_height rendered as
+    a visibly tessellated/flickering mess). Give it a small clearance gap
+    above that height instead (see blender_scene.py:MARKING_CLEARANCE_M)."""
     pts = coords_2d[:-1] if coords_2d[0] == coords_2d[-1] else coords_2d
     if len(pts) < 3:
         return None
-    verts = [(x, y, 0.0) for x, y in pts]
+    verts = [(x, y, z_base) for x, y in pts]
     faces = [tuple(range(len(verts)))]
 
     mesh = bpy.data.meshes.new(name)
@@ -80,11 +89,11 @@ def build_mesh_from_data(name: str, vertices: list, faces: list, material):
 
 
 def add_stripe_rect(name, center: mathutils.Vector, u: mathutils.Vector, n: mathutils.Vector,
-                     length: float, width: float, height: float, material):
+                     length: float, width: float, height: float, material, z_base: float = 0.0):
     corners = [
         center + u * (length / 2) + n * (width / 2),
         center + u * (length / 2) - n * (width / 2),
         center - u * (length / 2) - n * (width / 2),
         center - u * (length / 2) + n * (width / 2),
     ]
-    extrude_polygon(name, [(p.x, p.y) for p in corners], height, material)
+    extrude_polygon(name, [(p.x, p.y) for p in corners], height, material, z_base=z_base)

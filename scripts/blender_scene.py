@@ -45,6 +45,18 @@ from blender_props import (
 
 random.seed(7)  # stable building color assignment across existing/proposed renders
 
+PAVEMENT_HEIGHT_M = 0.05
+EXISTING_MARKING_HEIGHT_M = 0.06  # crosswalks/centerlines' top height (add_crosswalk*/add_dashed_centerline)
+# The new paint-only overlay markings (lane narrowing, corner hatching, mountable apron) sit on top
+# of EXISTING_MARKING_HEIGHT_M + this gap, NOT exactly at either that or PAVEMENT_HEIGHT_M - two
+# surfaces at the exact same height are coincident/coplanar, which renders as flickering z-fighting
+# (confirmed by an isolated test: a marking placed with zero gap above the pavement rendered as a
+# visibly tessellated mess even as a flat, zero-height plane, ruling out "thin geometry aliasing" as
+# the cause; a lane-narrowing stripe overlapping a crosswalk's footprint needed the SAME fix again
+# relative to the crosswalk's own top height, not just the pavement's). ~1cm of clearance is
+# imperceptible at this render's scale but enough to give the depth buffer an unambiguous answer.
+MARKING_CLEARANCE_M = 0.01
+
 BUILDING_PALETTE = [
     (0.62, 0.42, 0.35),  # brick red
     (0.82, 0.78, 0.68),  # cream siding
@@ -129,9 +141,9 @@ def build_scene(data: dict):
             extrude_polygon(f"building_{i}", b["coords"], b["height_m"], mat)
 
     for i, ring in enumerate(data.get("pavement_near", [])):
-        extrude_polygon(f"pavement_near_{i}", ring, 0.05, asphalt_near)
+        extrude_polygon(f"pavement_near_{i}", ring, PAVEMENT_HEIGHT_M, asphalt_near)
     for i, ring in enumerate(data.get("pavement_far", [])):
-        extrude_polygon(f"pavement_far_{i}", ring, 0.05, asphalt_far)
+        extrude_polygon(f"pavement_far_{i}", ring, PAVEMENT_HEIGHT_M, asphalt_far)
 
     for i, ring in enumerate(data.get("sidewalks_near", [])):
         extrude_polygon(f"sidewalk_near_{i}", ring, 0.03, concrete_near)
@@ -139,14 +151,17 @@ def build_scene(data: dict):
         extrude_polygon(f"sidewalk_far_{i}", ring, 0.03, concrete_far)
 
     # Paint-only / no-curb-change proposal treatments (src/treatments.py:
-    # add_lane_narrowing / add_corner_hatching / add_mountable_apron) - flush
-    # with the pavement, drawn on top of it like any other marking.
+    # add_lane_narrowing / add_corner_hatching / add_mountable_apron) - sit
+    # above BOTH the pavement and the existing crosswalk/centerline markings
+    # they can overlap (a stripe runs the whole leg, crossing the crosswalk),
+    # with a small MARKING_CLEARANCE_M gap either way (see docstring above).
+    marking_z = EXISTING_MARKING_HEIGHT_M + MARKING_CLEARANCE_M
     for i, ring in enumerate(data.get("lane_narrowing_stripes", [])):
-        extrude_polygon(f"lane_narrowing_{i}", ring, 0.06, marking_mat)
+        extrude_polygon(f"lane_narrowing_{i}", ring, 0.01, marking_mat, z_base=marking_z)
     for i, line in enumerate(data.get("corner_hatching_lines", [])):
-        add_paint_line(f"corner_hatch_{i}", line[0], line[-1], 0.15, marking_mat)
+        add_paint_line(f"corner_hatch_{i}", line[0], line[-1], 0.15, marking_mat, z_base=marking_z)
     for i, ring in enumerate(data.get("corner_apron_polygons", [])):
-        extrude_polygon(f"corner_apron_{i}", ring, 0.06, apron_mat)
+        extrude_polygon(f"corner_apron_{i}", ring, 0.01, apron_mat, z_base=marking_z)
 
     for island in data.get("refuge_islands", []):
         extrude_polygon(f"refuge_{island['name']}", island["coords"], island.get("height_m", 0.15), refuge_mat)

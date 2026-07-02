@@ -1,0 +1,108 @@
+# Authoritative geometry inputs for Broad St (CR 518) & Greenwood Ave, Hopewell
+# Borough, NJ 08525. Values here supersede any width attribute (there isn't one)
+# on the NJDOT Roadway Network GeoJSON - see Phase 1 audit.
+
+intersection:
+  name: "Broad St (CR 518) & Greenwood Ave, Hopewell Borough, NJ 08525"
+  center_wgs84: [-74.7619598, 40.389179]
+  resolution_method: >
+    OSM/Overpass way-endpoint match (src/data_loader.py:geocode_intersection) -
+    West/East Broad Street and North/South Greenwood Avenue all share one node.
+    Cross-checked against the NJDOT SLD: this is Route 518 milepost 10.30, shown
+    as a signalized intersection in data/00000518__8.000-11.000.pdf (page 1).
+  signalized: true
+  clip_radius_m: 150
+  leg_working_length_ft: 130
+  # Confirmed by Danny: all 4 approaches have marked crosswalks today, in the
+  # simple "lines" style (2 transverse boundary lines, no bars) - matches OSM's
+  # own crossing:markings=lines tag on all 4 mapped crossings here. The style
+  # actually used per scenario lives in DesignState.crosswalk_styles (see
+  # src/treatments.py:upgrade_crosswalk_markings) - this list only says which
+  # legs have ANY marked crossing worth drawing.
+  # (Separately, a long rectangle further south on Greenwood in the aerial
+  # photo looks like a loading/no-parking box, not a crosswalk - not modeled.)
+  existing_marked_crosswalks: ["broad_st_west", "broad_st_east", "greenwood_ave_north", "greenwood_ave_south"]
+
+# Route 518 (Broad St) corridor-level facts, from the NJDOT Straight Line Diagram
+# (SRI 00000518__, MP 8.000-11.000, data/00000518__8.000-11.000.pdf, inventoried
+# October 2012). Our intersection (MP 10.30) falls in the "West Broad Street"
+# named segment per NJDOT (NJDOT's West/East Broad St split point is further
+# east, at the Route 569/Hamilton Ave signal - NOT at Greenwood Ave, unlike OSM's
+# naming, which splits West/East right at Greenwood).
+corridor:
+  jurisdiction: "County"
+  functional_class: "Urban Minor Arterial"
+  speed_limit_mph: 30
+  lanes: 2
+  median_type: "None"
+  median_width_ft: 0
+  shoulder_width_ft_per_side: 2
+  sld_pavement_width_ft: 48  # nominal/segment-average - see legs.*.curb_to_curb_ft for corner-specific ground truth
+
+# Per-leg curb-to-curb widths actually used for geometry construction.
+# `confirmed: false` legs use a placeholder and should not be trusted for
+# final treatment design.
+legs:
+  broad_st_west:
+    sri: "00000518__"
+    street_name: "West Broad Street (west of Greenwood Ave)"
+    curb_to_curb_ft: 55.5  # 55 ft 6 in
+    confirmed: true
+    source: >
+      Ground-truth measurement report, p.84 Appendix D: 55 ft 6 in at the
+      "Greenwood Ave intersection, west side," corroborated by the p.38
+      narrative ("approximately 55 ft. 8 in. ... at the west side of the N.
+      Greenwood Ave. intersection") - ~2 in discrepancy attributed to
+      measurement rounding. Wider than the corridor's 48 ft SLD nominal value -
+      the report itself flags this side as wider than typical/expected for the
+      corridor, consistent with local widening (turn lane / on-street parking)
+      right at the signalized corner.
+
+  broad_st_east:
+    sri: "00000518__"
+    street_name: "East Broad Street (east of Greenwood Ave)"
+    curb_to_curb_ft: 68  # measured pedestrian crossing distance (curb-to-curb, incl. parking/shoulder zone)
+    confirmed: true
+    source: >
+      Ground-truth measurement report, p.21: ~54 ft "active roadway" vs. ~68 ft
+      total including the parking/shoulder zone on each side, measured as the
+      pedestrian crossing distance across Broad St immediately east of the
+      Greenwood Ave intersection. Using the 68 ft total (curb-to-curb) figure
+      here since that's the actual physical width a pedestrian crosses and what
+      the curb lines represent - the 54 ft "active roadway" figure is the
+      travel-lanes-only portion, kept here for reference in case lane-level
+      detail is needed later.
+
+  greenwood_ave_north:
+    sri: "11051089__"  # NJDOT records this street as "COLUMBIA AVE", not Greenwood - see project notes
+    street_name: "North Greenwood Ave"
+    curb_to_curb_ft: 34  # ESTIMATE: measured ~50.25 ft parcel-to-parcel ROW gap minus assumed 8 ft/side sidewalk+verge
+    confirmed: false
+    source: >
+      No NJDOT SLD exists for this local/municipal road (ROUTE_SUBTYPE 7).
+      Estimated: measured a stable ~50.25 ft parcel-to-parcel gap (Mercer County
+      parcels, sampled 50/70/90 ft up the leg) as the total ROW width, then
+      subtracted an assumed 8 ft/side for sidewalk + verge (typical small NJ
+      borough local street) to get an estimated 34 ft curb-to-curb. NOT a field
+      measurement - replace with an actual measured width when available.
+
+  greenwood_ave_south:
+    sri: "11051089__"
+    street_name: "South Greenwood Ave"
+    curb_to_curb_ft: 34  # ESTIMATE: same methodology as greenwood_ave_north
+    confirmed: false
+    source: >
+      Same estimation methodology as greenwood_ave_north (measured ~50.25 ft
+      parcel-to-parcel ROW gap minus assumed 8 ft/side sidewalk+verge). NOT a
+      field measurement.
+
+# Phase 3 inputs.
+treatments:
+  existing_corner_radius_ft: 20  # ESTIMATE: typical as-built radius for a small NJ downtown arterial/local
+  existing_corner_radius_source: >
+    No survey/aerial measurement available; parcel boundaries near the corners
+    are simple straight lot lines (checked - no chamfer encoding an actual curb
+    return), so it can't be read off the parcel data either. 20 ft is a
+    placeholder typical of older small-borough Main-Street intersections
+    predating modern truck-accommodating design standards. Replace once an
+    actual corner radius is measured (aerial imagery or field survey).

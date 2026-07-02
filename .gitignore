@@ -179,3 +179,16 @@ cython_debug/
 #  refer to https://docs.cursor.com/context/ignore-files
 .cursorignore
 .cursorindexingignore
+data/NJ_Roadway_Network.geojson
+data/MercerTaxList.dbf.xml
+data/MercerTaxList.dbf
+data/MercerTaxList.CPG
+data/MercerCountyParcels.shx
+data/MercerCountyParcels.shp.xml
+data/MercerCountyParcels.shp
+data/MercerCountyParcels.sbx
+data/MercerCountyParcels.sbn
+data/MercerCountyParcels.prj
+data/MercerCountyParcels.dbf
+data/MercerCountyParcels.CPG
+data/00000518__8.000-11.000.pdf

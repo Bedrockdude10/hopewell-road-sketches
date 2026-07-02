@@ -14,15 +14,34 @@ instead of N times is the single biggest lever for reducing total render time):
   blender --background --python scripts/blender_scene.py -- \\
       output/geometry_existing.json output/phase4_render_existing.png \\
       output/geometry_proposed.json output/phase4_render_proposed.png
+
+This file is the entry point + top-level scene assembly only - the actual
+geometry-building code is split across sibling modules in this same
+directory (plain local imports work fine under Blender's bundled Python, no
+venv needed):
+  blender_materials.py   flat-color and PBR-textured material builders
+  blender_geometry.py    generic mesh helpers (extrude a ring, stripe rects)
+  blender_crosswalks.py  the 3 painted crosswalk styles + dashed centerlines
+  blender_props.py       street furniture: streetlights, signage, traffic
+                          signals, trees - one builder function per prop type
 """
 import json
-import math
 import random
 import sys
 from pathlib import Path
 
 import bpy
 import mathutils
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # for the sibling blender_*.py imports below
+
+from blender_crosswalks import add_crosswalk, add_dashed_centerline
+from blender_geometry import build_mesh_from_data, extrude_polygon
+from blender_materials import make_material, make_textured_material
+from blender_props import (
+    PED_SIGNAL_HOUSING_DARK, SIGNAL_HOUSING_DARK, SIGN_POST_GRAY,
+    add_prop, add_tree_instances, build_tree_proxy, import_gltf_template,
+)
 
 random.seed(7)  # stable building color assignment across existing/proposed renders
 
@@ -33,13 +52,6 @@ BUILDING_PALETTE = [
     (0.70, 0.62, 0.48),  # tan
     (0.45, 0.38, 0.32),  # dark brown
 ]
-
-# MUTCD-ish colors for procedurally-built signage (no CC0 traffic-sign model
-# was found - see README.md "Phase 4 fidelity"). Real geometric shape/color,
-# just not a downloaded asset.
-STOP_SIGN_RED = (0.55, 0.03, 0.03)
-SCHOOL_ZONE_YELLOW_GREEN = (0.75, 0.85, 0.05)
-SIGN_POST_GRAY = (0.35, 0.35, 0.37)
 
 
 def parse_args() -> list[tuple[Path, Path]]:
@@ -62,375 +74,6 @@ def clear_scene():
 
 
 # ---------------------------------------------------------------------------
-# Materials
-# ---------------------------------------------------------------------------
-
-def make_material(name: str, color: tuple, roughness: float = 0.9):
-    mat = bpy.data.materials.new(name)
-    mat.use_nodes = True
-    bsdf = mat.node_tree.nodes.get("Principled BSDF")
-    bsdf.inputs["Base Color"].default_value = (*color, 1.0)
-    bsdf.inputs["Roughness"].default_value = roughness
-    return mat
-
-
-def make_textured_material(name: str, texture_paths: dict | None, fallback_color: tuple,
-                            fallback_roughness: float = 0.9):
-    """Diffuse/Roughness/Normal-mapped material from local file paths (already
-    downloaded by src/theme.py in the venv - this function never fetches
-    anything). Falls back to a flat color material if texture_paths is falsy
-    or any image fails to load, so a missing/corrupt file never crashes the render."""
-    if not texture_paths:
-        return make_material(name, fallback_color, fallback_roughness)
-    try:
-        mat = bpy.data.materials.new(name)
-        mat.use_nodes = True
-        nodes = mat.node_tree.nodes
-        links = mat.node_tree.links
-        bsdf = nodes.get("Principled BSDF")
-
-        def image_node(path: str, colorspace: str):
-            node = nodes.new("ShaderNodeTexImage")
-            img = bpy.data.images.load(path)
-            img.colorspace_settings.name = colorspace
-            node.image = img
-            return node
-
-        if texture_paths.get("Diffuse"):
-            links.new(image_node(texture_paths["Diffuse"], "sRGB").outputs["Color"], bsdf.inputs["Base Color"])
-        if texture_paths.get("Rough"):
-            links.new(image_node(texture_paths["Rough"], "Non-Color").outputs["Color"], bsdf.inputs["Roughness"])
-        if texture_paths.get("nor_gl"):
-            normal_map = nodes.new("ShaderNodeNormalMap")
-            links.new(image_node(texture_paths["nor_gl"], "Non-Color").outputs["Color"], normal_map.inputs["Color"])
-            links.new(normal_map.outputs["Normal"], bsdf.inputs["Normal"])
-        return mat
-    except Exception as e:
-        print(f"  WARNING: textured material {name!r} failed ({e}) - falling back to flat color")
-        return make_material(name, fallback_color, fallback_roughness)
-
-
-# ---------------------------------------------------------------------------
-# Mesh building
-# ---------------------------------------------------------------------------
-
-def apply_planar_uv(obj, tile_size_m: float = 2.0):
-    """Project UVs from above at a fixed real-world tile size, so a tiled
-    texture reads at a consistent physical scale across differently-sized
-    pieces (pavement vs. a small sidewalk wedge) rather than stretching to
-    fill each mesh. Harmless no-op-ish for flat-color materials."""
-    bpy.ops.object.select_all(action="DESELECT")
-    bpy.context.view_layer.objects.active = obj
-    obj.select_set(True)
-    bpy.ops.object.mode_set(mode="EDIT")
-    bpy.ops.mesh.select_all(action="SELECT")
-    bpy.ops.uv.cube_project(cube_size=tile_size_m)
-    bpy.ops.object.mode_set(mode="OBJECT")
-    obj.select_set(False)
-
-
-def extrude_polygon(name: str, coords_2d: list, height: float, material, uv_tile_m: float = 2.0):
-    pts = coords_2d[:-1] if coords_2d[0] == coords_2d[-1] else coords_2d
-    if len(pts) < 3:
-        return None
-    verts = [(x, y, 0.0) for x, y in pts]
-    faces = [tuple(range(len(verts)))]
-
-    mesh = bpy.data.meshes.new(name)
-    mesh.from_pydata(verts, [], faces)
-    mesh.update()
-    if not mesh.polygons:
-        return None
-    obj = bpy.data.objects.new(name, mesh)
-    bpy.context.collection.objects.link(obj)
-
-    if height > 0:
-        bpy.ops.object.select_all(action="DESELECT")  # multi-object edit mode would otherwise re-extrude others
-        bpy.context.view_layer.objects.active = obj
-        obj.select_set(True)
-        bpy.ops.object.mode_set(mode="EDIT")
-        bpy.ops.mesh.select_all(action="SELECT")
-        bpy.ops.mesh.extrude_region_move(TRANSFORM_OT_translate={"value": (0, 0, height)})
-        bpy.ops.object.mode_set(mode="OBJECT")
-        obj.select_set(False)
-
-    obj.data.materials.append(material)
-    apply_planar_uv(obj, uv_tile_m)
-    return obj
-
-
-def build_mesh_from_data(name: str, vertices: list, faces: list, material):
-    """Build an object directly from precomputed vertices/faces (e.g. a
-    trimesh-decimated building - see src/mesh_utils.py) rather than extruding
-    a 2D ring ourselves."""
-    mesh = bpy.data.meshes.new(name)
-    mesh.from_pydata(vertices, [], faces)
-    mesh.update()
-    if not mesh.polygons:
-        return None
-    obj = bpy.data.objects.new(name, mesh)
-    bpy.context.collection.objects.link(obj)
-    obj.data.materials.append(material)
-
-    # trimesh always triangulates (even a plain box becomes ~12 triangles),
-    # which reads as a faceted/crystalline shape under Blender's default flat
-    # shading - merge coplanar triangles back into flat faces so a simple
-    # building still looks like a clean box, not a low-poly gemstone.
-    bpy.ops.object.select_all(action="DESELECT")
-    bpy.context.view_layer.objects.active = obj
-    obj.select_set(True)
-    bpy.ops.object.mode_set(mode="EDIT")
-    bpy.ops.mesh.select_all(action="SELECT")
-    bpy.ops.mesh.dissolve_limited()
-    bpy.ops.object.mode_set(mode="OBJECT")
-    obj.select_set(False)
-    return obj
-
-
-def add_stripe_rect(name, center: mathutils.Vector, u: mathutils.Vector, n: mathutils.Vector,
-                     length: float, width: float, height: float, material):
-    corners = [
-        center + u * (length / 2) + n * (width / 2),
-        center + u * (length / 2) - n * (width / 2),
-        center - u * (length / 2) - n * (width / 2),
-        center - u * (length / 2) + n * (width / 2),
-    ]
-    extrude_polygon(name, [(p.x, p.y) for p in corners], height, material)
-
-
-# ---------------------------------------------------------------------------
-# Crosswalk styles
-# ---------------------------------------------------------------------------
-
-def _crosswalk_bars(name, near, u, n, width_m, material, offset_m, depth_m, stripe_width_m, gap_m):
-    """Parallel bars (rungs) running along travel (u), spaced across the crossing (n).
-    Returns (center, span) so callers (ladder) can reuse the layout for framing rails."""
-    usable_width = max(width_m - 1.5, 0.5)  # keep clear of the curb edges
-    period = stripe_width_m + gap_m
-    n_stripes = max(int(usable_width / period), 1)
-    span = (n_stripes - 1) * period
-    center = near + u * offset_m
-    for i in range(n_stripes):
-        lateral = -span / 2 + i * period
-        add_stripe_rect(f"{name}_stripe_{i}", center + n * lateral, u, n, depth_m, stripe_width_m, 0.06, material)
-    return center, span
-
-
-def add_crosswalk_continental(name: str, near, u, n, width_m: float, material, offset_m: float = 3.0,
-                               depth_m: float = 3.0, stripe_width_m: float = 0.5, gap_m: float = 0.5):
-    """Continental: parallel bars only, no framing rails."""
-    _crosswalk_bars(name, near, u, n, width_m, material, offset_m, depth_m, stripe_width_m, gap_m)
-
-
-def add_crosswalk_ladder(name: str, near, u, n, width_m: float, material, offset_m: float = 3.0,
-                          depth_m: float = 3.0, stripe_width_m: float = 0.5, gap_m: float = 0.5,
-                          rail_width_m: float = 0.3):
-    """Ladder: continental bars framed by two rails spanning the crossing width at
-    each end of the depth - the rails are what distinguish it from bare continental."""
-    center, span = _crosswalk_bars(name, near, u, n, width_m, material, offset_m, depth_m, stripe_width_m, gap_m)
-    rail_length = span + stripe_width_m + gap_m
-    for side, sign in [("near", -1), ("far", 1)]:
-        rail_center = center + u * (sign * depth_m / 2)
-        add_stripe_rect(f"{name}_rail_{side}", rail_center, n, u, rail_length, rail_width_m, 0.06, material)
-
-
-def add_crosswalk_lines(name: str, near, u, n, width_m: float, material, offset_m: float = 3.0,
-                         depth_m: float = 3.0, line_width_m: float = 0.3):
-    """Simple/standard marking: just two transverse lines bounding the crossing, no
-    bars in between - the least visible of the three styles (FHWA/NACTO recommend
-    upgrading this to continental or ladder for visibility, hence it being the
-    'existing conditions' style here while proposed treatments upgrade it)."""
-    line_width = max(width_m - 1.0, 0.5)
-    center = near + u * offset_m
-    for side, sign in [("near", -1), ("far", 1)]:
-        line_center = center + u * (sign * depth_m / 2)
-        add_stripe_rect(f"{name}_line_{side}", line_center, n, u, line_width, line_width_m, 0.06, material)
-
-
-CROSSWALK_STYLES = {
-    "lines": add_crosswalk_lines,
-    "continental": add_crosswalk_continental,
-    "ladder": add_crosswalk_ladder,
-}
-
-
-def add_crosswalk(name: str, near, u, n, width_m: float, material, offset_m: float = 3.0, style: str = "lines"):
-    draw_fn = CROSSWALK_STYLES.get(style, add_crosswalk_lines)
-    draw_fn(name, near, u, n, width_m, material, offset_m=offset_m)
-
-
-def add_dashed_centerline(name: str, near: mathutils.Vector, far: mathutils.Vector, material,
-                           start_m: float = 6.0, dash_m: float = 1.0, gap_m: float = 1.0, width_m: float = 0.15):
-    direction = far - near
-    length = direction.length
-    if length <= start_m:
-        return
-    u = direction / length
-    n = mathutils.Vector((-u.y, u.x, 0))
-    pos = start_m
-    i = 0
-    while pos + dash_m < length:
-        center = near + u * (pos + dash_m / 2)
-        add_stripe_rect(f"{name}_dash_{i}", center, u, n, dash_m, width_m, 0.06, material)
-        pos += dash_m + gap_m
-        i += 1
-
-
-# ---------------------------------------------------------------------------
-# Props: streetlight (real glTF asset, procedural fallback), signage (procedural
-# - no CC0 traffic-sign source found, see README.md), trees (geometry-nodes
-# instancing of one procedural low-poly mesh)
-# ---------------------------------------------------------------------------
-
-def import_gltf_template(gltf_path: str | None, name: str):
-    """Import a glTF once and return it as a hidden template object for
-    add_streetlight() to make cheap linked duplicates of (shared mesh data,
-    not full copies - the actual performance-relevant instancing here).
-    Returns None if there's no path or the import fails."""
-    if not gltf_path or not Path(gltf_path).exists():
-        return None
-    try:
-        before = set(bpy.data.objects)
-        bpy.ops.import_scene.gltf(filepath=gltf_path)
-        imported = [o for o in bpy.data.objects if o not in before]
-        if not imported:
-            return None
-        if len(imported) > 1:
-            bpy.ops.object.select_all(action="DESELECT")
-            for obj in imported:
-                obj.select_set(True)
-            bpy.context.view_layer.objects.active = imported[0]
-            bpy.ops.object.join()
-        template = bpy.context.view_layer.objects.active
-        template.name = name
-        template.hide_render = True
-        template.hide_set(True)
-        return template
-    except Exception as e:
-        print(f"  WARNING: glTF import failed for {gltf_path!r} ({e}) - using a procedural fallback instead")
-        return None
-
-
-def add_streetlight(name: str, position: tuple, heading_deg: float, template, pole_mat, head_mat):
-    if template is not None:
-        obj = template.copy()
-        bpy.context.collection.objects.link(obj)
-        obj.name = name
-        obj.location = (position[0], position[1], 0.0)
-        obj.rotation_euler = (0, 0, math.radians(heading_deg))
-        obj.hide_render = False
-        obj.hide_set(False)
-        return obj
-
-    # Procedural fallback: a plain pole + small head, used if the Poly Haven
-    # model couldn't be fetched (no network) - not what ships when online.
-    x, y = position
-    bpy.ops.mesh.primitive_cylinder_add(radius=0.08, depth=4.5, location=(x, y, 2.25))
-    pole = bpy.context.active_object
-    pole.name = f"{name}_pole"
-    pole.data.materials.append(pole_mat)
-    bpy.ops.mesh.primitive_cube_add(size=0.35, location=(x, y, 4.6))
-    head = bpy.context.active_object
-    head.name = f"{name}_head"
-    head.scale = (1, 1, 0.5)
-    head.data.materials.append(head_mat)
-    return pole
-
-
-def _add_post_sign(name: str, position: tuple, heading_deg: float, n_sides: int, plate_radius: float,
-                    plate_color: tuple, post_mat):
-    """Shared shape for procedurally-built signage: a thin post + a flat
-    regular-polygon plate facing `heading_deg`. Used for stop signs (n_sides=8,
-    red) and the school zone sign (n_sides=5, yellow-green) - real MUTCD shapes
-    and colors, just not a downloaded model (no CC0 traffic-sign source found)."""
-    x, y = position
-    bpy.ops.mesh.primitive_cylinder_add(radius=0.04, depth=2.1, location=(x, y, 1.05))
-    post = bpy.context.active_object
-    post.name = f"{name}_post"
-    post.data.materials.append(post_mat)
-
-    bpy.ops.mesh.primitive_cylinder_add(radius=plate_radius, depth=0.03, vertices=n_sides, location=(x, y, 2.15))
-    plate = bpy.context.active_object
-    plate.name = f"{name}_plate"
-    plate.rotation_euler = (math.radians(90), 0, math.radians(heading_deg))
-    plate_mat = make_material(f"{name}_plate_mat", plate_color, roughness=0.35)
-    plate.data.materials.append(plate_mat)
-    return post
-
-
-def add_stop_sign(name: str, position: tuple, heading_deg: float, post_mat):
-    return _add_post_sign(name, position, heading_deg, n_sides=8, plate_radius=0.3,
-                           plate_color=STOP_SIGN_RED, post_mat=post_mat)
-
-
-def add_school_zone_sign(name: str, position: tuple, heading_deg: float, post_mat):
-    return _add_post_sign(name, position, heading_deg, n_sides=5, plate_radius=0.35,
-                           plate_color=SCHOOL_ZONE_YELLOW_GREEN, post_mat=post_mat)
-
-
-def build_tree_proxy(trunk_mat, foliage_mat):
-    """A single low-poly procedural tree (cone + cylinder). No CC0 source of
-    genuinely low-poly stylized trees was found - Poly Haven's tree models are
-    realistic photoscanned assets (multi-material, alpha-masked foliage cards)
-    disproportionately heavy for background dressing instanced many times over
-    at this render's scale/distance. See README.md "Phase 4 fidelity"."""
-    bpy.ops.mesh.primitive_cylinder_add(radius=0.15, depth=2.0, vertices=6, location=(0, 0, 1.0))
-    trunk = bpy.context.active_object
-    trunk.name = "tree_trunk"
-    trunk.data.materials.append(trunk_mat)
-
-    bpy.ops.mesh.primitive_cone_add(radius1=1.3, depth=3.0, vertices=8, location=(0, 0, 3.3))
-    foliage = bpy.context.active_object
-    foliage.name = "tree_foliage"
-    foliage.data.materials.append(foliage_mat)
-
-    bpy.ops.object.select_all(action="DESELECT")
-    trunk.select_set(True)
-    foliage.select_set(True)
-    bpy.context.view_layer.objects.active = trunk
-    bpy.ops.object.join()
-    tree = bpy.context.view_layer.objects.active
-    tree.name = "tree_proxy_template"
-    tree.hide_render = True
-    tree.hide_set(True)
-    return tree
-
-
-def add_tree_instances(name: str, points: list, tree_template):
-    """Geometry-nodes point instancing: ONE tree mesh's data is shared across
-    every point (Instance on Points), not copied per-tree - the actual
-    performance requirement behind 'not individual mesh copies'."""
-    if not points or tree_template is None:
-        return None
-
-    mesh = bpy.data.meshes.new(f"{name}_points")
-    mesh.from_pydata([(x, y, 0.0) for x, y in points], [], [])
-    mesh.update()
-    obj = bpy.data.objects.new(name, mesh)
-    bpy.context.collection.objects.link(obj)
-
-    node_group = bpy.data.node_groups.new(f"{name}_GN", "GeometryNodeTree")
-    node_group.interface.new_socket("Geometry", in_out="INPUT", socket_type="NodeSocketGeometry")
-    node_group.interface.new_socket("Geometry", in_out="OUTPUT", socket_type="NodeSocketGeometry")
-
-    nodes = node_group.nodes
-    links = node_group.links
-    group_input = nodes.new("NodeGroupInput")
-    group_output = nodes.new("NodeGroupOutput")
-    instance_on_points = nodes.new("GeometryNodeInstanceOnPoints")
-    object_info = nodes.new("GeometryNodeObjectInfo")
-    object_info.inputs["Object"].default_value = tree_template
-
-    links.new(group_input.outputs["Geometry"], instance_on_points.inputs["Points"])
-    links.new(object_info.outputs["Geometry"], instance_on_points.inputs["Instance"])
-    links.new(instance_on_points.outputs["Instances"], group_output.inputs["Geometry"])
-
-    modifier = obj.modifiers.new(name=f"{name}_GN", type="NODES")
-    modifier.node_group = node_group
-    return obj
-
-
-# ---------------------------------------------------------------------------
 # Scene assembly
 # ---------------------------------------------------------------------------
 
@@ -450,6 +93,8 @@ def build_scene(data: dict):
     pole_mat = make_material("Pole", SIGN_POST_GRAY, roughness=0.5)
     trunk_mat = make_material("TreeTrunk", (0.32, 0.22, 0.15), roughness=0.9)
     foliage_mat = make_material("TreeFoliage", (0.16, 0.4, 0.14), roughness=0.85)
+    signal_housing_mat = make_material("SignalHousing", SIGNAL_HOUSING_DARK, roughness=0.4)
+    ped_signal_housing_mat = make_material("PedSignalHousing", PED_SIGNAL_HOUSING_DARK, roughness=0.4)
 
     all_pavement = data.get("pavement_near", []) + data.get("pavement_far", [])
     pavement_x = [x for ring in all_pavement for x, y in ring]
@@ -521,16 +166,14 @@ def build_scene(data: dict):
         add_dashed_centerline(f"centerline_{leg['name']}", near, far, centerline_mat, start_m=offset_m + 2)
 
     # Props: real streetlight model (or procedural fallback) at each corner,
-    # procedural signage (no CC0 traffic-sign source available - see README).
+    # procedural signage incl. traffic signals (no CC0 source available - see
+    # blender_props.py / README.md). Placement is decided upstream by
+    # src/props.py; add_prop() just dispatches each exported prop dict to its
+    # builder.
     streetlight_template = import_gltf_template(theme.get("streetlight_gltf"), "streetlight_template")
     for i, prop in enumerate(data.get("props", [])):
-        pos, heading = prop["position_m"], prop["heading_deg"]
-        if prop["type"] == "streetlight":
-            add_streetlight(f"streetlight_{i}", pos, heading, streetlight_template, pole_mat, pole_mat)
-        elif prop["type"] == "stop_sign":
-            add_stop_sign(f"stop_sign_{i}", pos, heading, pole_mat)
-        elif prop["type"] == "school_zone_sign":
-            add_school_zone_sign(f"school_zone_sign_{i}", pos, heading, pole_mat)
+        add_prop(f"{prop['type']}_{i}", prop, streetlight_template, pole_mat,
+                 signal_housing_mat, ped_signal_housing_mat)
 
     # Trees: one shared low-poly mesh, geometry-nodes-instanced along the
     # sidewalk bands (not one mesh copy per tree).

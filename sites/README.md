@@ -22,7 +22,6 @@ intersection:
   anchor_query: "..."                 # a Nominatim-geocodable address/place to anchor the OSM search bbox
   resolution_method: >                # free text - document how you cross-checked the resolved point
     ...
-  signalized: true|false
   clip_radius_m: 150                  # how far out to load/clip the road network around the center
   leg_working_length_ft: 130          # how far each leg's centerline extends from the intersection
   existing_marked_crosswalks: [...]   # leg names that currently have ANY marked crosswalk (checked against
@@ -44,6 +43,21 @@ legs:
     confirmed: true|false             # true = field-measured/surveyed; false = geometric/estimated placeholder
     source: >                         # REQUIRED if confirmed: false - explain the estimation methodology
       ...                             # and REQUIRED either way - cite where curb_to_curb_ft came from
+
+signals:                              # optional - only for signalized intersections. Presence of this block
+                                       # IS what "signalized" means now (replaces the old `signalized: true`
+                                       # flag, which nothing downstream ever read).
+  pole_type: >                        # free text - what kind of signal hardware (informs blender_scene.py's
+    ...                               # procedural geometry, e.g. "pole-mounted rigid/davit arm")
+  source: >                           # REQUIRED - how this was confirmed (street-view photo review, field
+    ...                               # survey, etc.) - doesn't have to be a survey, but say what it actually is
+  corners:
+    - legs: [<leg_name>, <leg_name>]  # the two legs whose curbs meet at this corner - matched as a set
+                                       # the same way build_corner_fillets() identifies corners internally
+                                       # (order doesn't matter)
+      pedestrian_head: same_pole|separate_pole   # is the ped signal head on the vehicle signal's pole,
+                                                  # or its own separate pole?
+  no_turn_on_red_legs: [<leg_name>, ...]  # legs where turning onto the cross street is restricted
 
 props:                                # optional - fidelity-pass signage/props with no general derivation
   extra:

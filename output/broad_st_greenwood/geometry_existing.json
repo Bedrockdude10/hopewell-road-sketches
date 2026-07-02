@@ -2376,6 +2376,140 @@
       ]
     },
     {
+      "type": "traffic_signal_pole",
+      "position_ft": [
+        419161.333793243,
+        566732.1902201198
+      ],
+      "heading_deg": -87.69947121408117,
+      "source": "confirmed (broad_st_west/greenwood_ave_south corner - Confirmed via street-view photo review (Danny, cross-referenced against all 4 approaches), 2026-07-02 - direct visual observation, not a field survey.\n): pole-mounted rigid/davit arm signal, placed at the real corner-fillet arc midpoint (same position as the streetlight prop here); exact arm/head aim is a render-fidelity simplification, not a signal-timing-accurate model of which approach each head actually faces.",
+      "position_m": [
+        0.6635652523519937,
+        -16.51753073922107
+      ]
+    },
+    {
+      "type": "pedestrian_signal_head",
+      "position_ft": [
+        419161.333793243,
+        566732.1902201198
+      ],
+      "heading_deg": -87.69947121408117,
+      "own_post": false,
+      "source": "confirmed (broad_st_west/greenwood_ave_south corner - Confirmed via street-view photo review (Danny, cross-referenced against all 4 approaches), 2026-07-02 - direct visual observation, not a field survey.\n): pedestrian head mounted on the same pole as the vehicle signal.",
+      "position_m": [
+        0.6635652523519937,
+        -16.51753073922107
+      ]
+    },
+    {
+      "type": "traffic_signal_pole",
+      "position_ft": [
+        419205.44823703007,
+        566754.8630083667
+      ],
+      "heading_deg": -34.24985488908861,
+      "source": "confirmed (greenwood_ave_south/broad_st_east corner - Confirmed via street-view photo review (Danny, cross-referenced against all 4 approaches), 2026-07-02 - direct visual observation, not a field survey.\n): pole-mounted rigid/davit arm signal, placed at the real corner-fillet arc midpoint (same position as the streetlight prop here); exact arm/head aim is a render-fidelity simplification, not a signal-timing-accurate model of which approach each head actually faces.",
+      "position_m": [
+        14.10964771865476,
+        -9.606864881570823
+      ]
+    },
+    {
+      "type": "pedestrian_signal_head",
+      "position_ft": [
+        419205.44823703007,
+        566754.8630083667
+      ],
+      "heading_deg": -34.24985488908861,
+      "own_post": false,
+      "source": "confirmed (greenwood_ave_south/broad_st_east corner - Confirmed via street-view photo review (Danny, cross-referenced against all 4 approaches), 2026-07-02 - direct visual observation, not a field survey.\n): pedestrian head mounted on the same pole as the vehicle signal.",
+      "position_m": [
+        14.10964771865476,
+        -9.606864881570823
+      ]
+    },
+    {
+      "type": "traffic_signal_pole",
+      "position_ft": [
+        419163.6001775008,
+        566830.8581101821
+      ],
+      "heading_deg": 84.29478431528524,
+      "source": "confirmed (broad_st_east/greenwood_ave_north corner - Confirmed via street-view photo review (Danny, cross-referenced against all 4 approaches), 2026-07-02 - direct visual observation, not a field survey.\n): pole-mounted rigid/davit arm signal, placed at the real corner-fillet arc midpoint (same position as the streetlight prop here); exact arm/head aim is a render-fidelity simplification, not a signal-timing-accurate model of which approach each head actually faces.",
+      "position_m": [
+        1.3543591741350947,
+        13.556442151774933
+      ]
+    },
+    {
+      "type": "pedestrian_signal_head",
+      "position_ft": [
+        419160.61503792676,
+        566831.1563411724
+      ],
+      "heading_deg": 84.29478431528524,
+      "own_post": true,
+      "source": "confirmed (broad_st_east/greenwood_ave_north corner - Confirmed via street-view photo review (Danny, cross-referenced against all 4 approaches), 2026-07-02 - direct visual observation, not a field survey.\n): pedestrian head is on a SEPARATE pole from the vehicle signal; approximation: offset 3 ft along the sidewalk from the vehicle signal pole (no surveyed separate-pole location available).",
+      "position_m": [
+        0.4444886319675017,
+        13.647342957618926
+      ]
+    },
+    {
+      "type": "traffic_signal_pole",
+      "position_ft": [
+        419124.86104592535,
+        566796.599648852
+      ],
+      "heading_deg": 163.40910810538023,
+      "source": "confirmed (greenwood_ave_north/broad_st_west corner - Confirmed via street-view photo review (Danny, cross-referenced against all 4 approaches), 2026-07-02 - direct visual observation, not a field survey.\n): pole-mounted rigid/davit arm signal, placed at the real corner-fillet arc midpoint (same position as the streetlight prop here); exact arm/head aim is a render-fidelity simplification, not a signal-timing-accurate model of which approach each head actually faces.",
+      "position_m": [
+        -10.453328130062157,
+        3.114463138364721
+      ]
+    },
+    {
+      "type": "pedestrian_signal_head",
+      "position_ft": [
+        419124.86104592535,
+        566796.599648852
+      ],
+      "heading_deg": 163.40910810538023,
+      "own_post": false,
+      "source": "confirmed (greenwood_ave_north/broad_st_west corner - Confirmed via street-view photo review (Danny, cross-referenced against all 4 approaches), 2026-07-02 - direct visual observation, not a field survey.\n): pedestrian head mounted on the same pole as the vehicle signal.",
+      "position_m": [
+        -10.453328130062157,
+        3.114463138364721
+      ]
+    },
+    {
+      "type": "no_turn_on_red_sign",
+      "position_ft": [
+        419129.49136132834,
+        566793.2165921372
+      ],
+      "heading_deg": -55.612512718028476,
+      "source": "confirmed (street-view photo review, site config.yaml signals.no_turn_on_red_legs) that no-turn-on-red signage exists on this approach; placement approximation: same near-corner curb-line pattern as _stop_sign_props (not a real traffic-engineering placement study).",
+      "position_m": [
+        -9.04200799523131,
+        2.0833074516993015
+      ]
+    },
+    {
+      "type": "no_turn_on_red_sign",
+      "position_ft": [
+        419201.65535997687,
+        566759.7715509862
+      ],
+      "heading_deg": 122.71698879788184,
+      "source": "confirmed (street-view photo review, site config.yaml signals.no_turn_on_red_legs) that no-turn-on-red signage exists on this approach; placement approximation: same near-corner curb-line pattern as _stop_sign_props (not a real traffic-engineering placement study).",
+      "position_m": [
+        12.953578792838893,
+        -8.110741091131233
+      ]
+    },
+    {
       "type": "school_zone_sign",
       "position_ft": [
         419129.8024649218,

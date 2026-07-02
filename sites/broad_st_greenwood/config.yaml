@@ -25,7 +25,6 @@ intersection:
     West/East Broad Street and North/South Greenwood Avenue all share one node.
     Cross-checked against the NJDOT SLD: this is Route 518 milepost 10.30, shown
     as a signalized intersection in data/00000518__8.000-11.000.pdf (page 1).
-  signalized: true
   clip_radius_m: 150
   leg_working_length_ft: 130
   # Confirmed by Danny: all 4 approaches have marked crosswalks today, in the
@@ -122,6 +121,38 @@ legs:
       Same estimation methodology as greenwood_ave_north (measured ~50.25 ft
       parcel-to-parcel ROW gap minus assumed 8 ft/side sidewalk+verge). NOT a
       field measurement.
+
+# Phase 4 fidelity: real traffic-signal / pedestrian-signal / no-turn-on-red
+# geometry, replacing the old unused `signalized: true` flag (nothing
+# downstream ever read it - see git history). NOT a field survey: confirmed
+# via direct street-view photo review (Danny, cross-referenced against all 4
+# approaches), 2026-07-02 - a real, observed fact, just not a measured one,
+# distinct from the existing_corner_radius_ft-style geometric estimates
+# elsewhere in this file. See src/export.py:_traffic_signal_props /
+# _no_turn_on_red_props and sites/README.md for the schema.
+signals:
+  pole_type: >
+    Pole-mounted rigid/davit arm (short arm off a vertical pole, one
+    3-section vehicle signal head at the end) at all 4 corners - NOT a
+    full-width mast arm, NOT span-wire.
+  source: >
+    Confirmed via street-view photo review (Danny, cross-referenced against
+    all 4 approaches), 2026-07-02 - direct visual observation, not a field
+    survey.
+  corners:
+    # `legs` identifies the corner the same way build_corner_fillets() does -
+    # the two legs whose curbs meet there (matched as a set; order doesn't matter).
+    - legs: [greenwood_ave_north, broad_st_west]
+      pedestrian_head: same_pole
+    - legs: [greenwood_ave_north, broad_st_east]
+      pedestrian_head: separate_pole
+    - legs: [greenwood_ave_south, broad_st_west]
+      pedestrian_head: same_pole
+    - legs: [greenwood_ave_south, broad_st_east]
+      pedestrian_head: same_pole
+  # NTOR restricts turns FROM Broad St onto Greenwood/Columbia - confirmed
+  # absent on both Greenwood approaches.
+  no_turn_on_red_legs: [broad_st_west, broad_st_east]
 
 # Phase 4 fidelity: site-specific signage beyond the generic per-corner
 # streetlight / per-approach stop sign that src/export.py places automatically

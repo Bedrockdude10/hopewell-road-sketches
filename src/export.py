@@ -1,107 +1,28 @@
 """Serialize a DesignState to plain JSON (local meters, centered on the
 intersection) so the headless Blender script can build a scene without needing
-shapely/geopandas inside Blender's bundled Python."""
+shapely/geopandas inside Blender's bundled Python.
+
+This module only orchestrates: coordinate transforms live in src/coords.py,
+crosswalk-to-leg matching in src/crosswalks.py, and street-furniture placement
+in src/props.py."""
 import json
 from pathlib import Path
 
-import numpy as np
-import pyproj
-from shapely.geometry import LineString, Point, Polygon
+from shapely.geometry import Point, Polygon
 
-from src.geometry_model import NJ_STATE_PLANE_FT, WGS84, build_pavement_polygon, leg_clearance_ft
+from src.coords import FT_TO_M, building_footprint_ft, pt_to_local_m, ring_to_local_m, wgs84_ring_to_local_m
+from src.crosswalks import resolve_crosswalk_offsets
+from src.geometry_model import build_pavement_polygon
 from src.intersection import IntersectionModel
 from src.mesh_utils import build_decimated_building_mesh
 from src.osm_context import fetch_buildings, fetch_crossings
+from src.props import build_props
 from src.treatments import DesignState, build_sidewalk_pieces
 
-FT_TO_M = 0.3048
 BUILDING_CONTEXT_RADIUS_M = 130
 SIDEWALK_WIDTH_FT = 6
 NEAR_ZONE_BUFFER_FT = 10  # how far past the farthest crosswalk the "near" (4k texture) pavement zone extends
 TREE_SPACING_FT = 25  # typical municipal street-tree spacing (NACTO/street-design guidance), not a fabricated guess
-STREETLIGHT_SIDEWALK_SETBACK_FT = 4
-SIGN_SIDEWALK_SETBACK_FT = 3
-
-_wgs84_to_state_plane = pyproj.Transformer.from_crs(WGS84, NJ_STATE_PLANE_FT, always_xy=True)
-
-
-def _ring_to_local_m(coords, center_ft) -> list[list[float]]:
-    return [[(x - center_ft.x) * FT_TO_M, (y - center_ft.y) * FT_TO_M] for x, y in coords]
-
-
-def _pt_to_local_m(x, y, center_ft) -> list[float]:
-    return [(x - center_ft.x) * FT_TO_M, (y - center_ft.y) * FT_TO_M]
-
-
-def _wgs84_ring_to_local_m(coords_wgs84, center_ft) -> list[list[float]]:
-    xs, ys = _wgs84_to_state_plane.transform([c[0] for c in coords_wgs84], [c[1] for c in coords_wgs84])
-    return [[(x - center_ft.x) * FT_TO_M, (y - center_ft.y) * FT_TO_M] for x, y in zip(xs, ys)]
-
-
-def _building_footprint_ft(coords_wgs84, center_ft) -> Polygon:
-    xs, ys = _wgs84_to_state_plane.transform([c[0] for c in coords_wgs84], [c[1] for c in coords_wgs84])
-    return Polygon(zip(xs, ys))
-
-
-# OSM crossing:markings values -> our 3 rendered styles. "lines" (two simple
-# transverse boundary lines) is the least visible; FHWA/NACTO guidance treats
-# continental and ladder as visibility upgrades over it - unmapped/missing
-# values default to "lines" since that's the least assumption-laden guess.
-OSM_MARKINGS_TO_STYLE = {
-    "lines": "lines",
-    "zebra": "continental",
-    "ladder": "ladder",
-}
-
-
-def _match_crossings_to_legs(legs: dict, crossings: list[dict]) -> dict:
-    """
-    Match each OSM-mapped crossing way to whichever leg it actually crosses -
-    real surveyed geometry beats a geometric estimate of where a crosswalk
-    probably sits. A crossing is assigned to the leg whose centerline it's
-    closest to (perpendicular distance), as long as its midpoint projects onto
-    that leg between the intersection and its far end, and isn't absurdly far
-    off to the side (i.e. it's actually this leg's crossing, not some other
-    nearby crossing that happened to fall within the fetch radius).
-
-    Returns {leg_name: (offset_ft, style)} for legs with a matched real crossing.
-    """
-    candidates = []
-    for crossing in crossings:
-        xs, ys = _wgs84_to_state_plane.transform(
-            [c[0] for c in crossing["coords_wgs84"]], [c[1] for c in crossing["coords_wgs84"]]
-        )
-        line = LineString(zip(xs, ys))
-        mid = line.interpolate(0.5, normalized=True)
-        style = OSM_MARKINGS_TO_STYLE.get(crossing["tags"].get("crossing:markings"), "lines")
-        for leg_name, leg in legs.items():
-            centerline = leg.centerline
-            along = centerline.project(mid)
-            if not (0 < along < centerline.length):
-                continue
-            perp = centerline.interpolate(along).distance(mid)
-            if perp > leg.curb_to_curb_ft / 2 + 10:  # not plausibly this leg's crossing
-                continue
-            candidates.append((perp, leg_name, along, style))
-
-    best_by_leg: dict[str, tuple[float, float, str]] = {}  # leg_name -> (best_perp, along, style)
-    for perp, leg_name, along, style in sorted(candidates, key=lambda c: c[0]):
-        if leg_name not in best_by_leg:
-            best_by_leg[leg_name] = (perp, along, style)
-    return {leg_name: (along, style) for leg_name, (_, along, style) in best_by_leg.items()}
-
-
-def _resolve_crosswalk_offsets(state: DesignState, crossings: list[dict]) -> dict[str, tuple[float, str]]:
-    """{leg_name: (offset_ft, source)} - real OSM survey position if matched, else
-    the geometric past-the-curve estimate (needed for hypothetical/proposed crossings)."""
-    matched = _match_crossings_to_legs(state.legs, crossings)
-    out = {}
-    for leg_name in state.legs:
-        if leg_name in matched:
-            out[leg_name] = (matched[leg_name][0], "osm_survey")
-        else:
-            out[leg_name] = (leg_clearance_ft(leg_name, state.legs, state.corner_fillets), "geometric_estimate")
-    return out
 
 
 def _split_near_far(polygons: list[Polygon], center_ft: Point, near_radius_ft: float):
@@ -149,80 +70,6 @@ def _tree_points_along_piece(piece: Polygon, spacing_ft: float) -> list[tuple[fl
     return points
 
 
-def _corner_streetlight_props(corner_fillets: dict, center_ft: Point) -> list[dict]:
-    """Streetlight at each corner's fillet-arc midpoint (real geometry), pushed a
-    few feet further from the intersection center onto the sidewalk/corner -
-    that offset distance is a placement approximation, flagged as such."""
-    props = []
-    for pieces in corner_fillets.values():
-        if "error" in pieces:
-            continue
-        mid = pieces["arc"].interpolate(0.5, normalized=True)
-        outward = np.array([mid.x - center_ft.x, mid.y - center_ft.y])
-        norm = np.linalg.norm(outward)
-        outward = outward / norm if norm > 1e-6 else np.array([1.0, 0.0])
-        pos = (mid.x + outward[0] * STREETLIGHT_SIDEWALK_SETBACK_FT,
-               mid.y + outward[1] * STREETLIGHT_SIDEWALK_SETBACK_FT)
-        heading = np.degrees(np.arctan2(outward[1], outward[0]))
-        props.append({
-            "type": "streetlight", "position_ft": pos, "heading_deg": heading,
-            "source": f"real: corner fillet arc midpoint; approximation: pushed {STREETLIGHT_SIDEWALK_SETBACK_FT} ft "
-                      "outward onto the sidewalk (no surveyed pole location available)",
-        })
-    return props
-
-
-def _leg_sign_position_ft(leg, offset_ft: float, side: str) -> tuple[tuple[float, float], float]:
-    """A point offset_ft along a leg's centerline from the intersection, pushed
-    laterally past the curb (left or right, per `side`) onto the sidewalk.
-    Returns (position, heading_deg) with heading pointing back toward the road."""
-    centerline = leg.centerline
-    p = centerline.interpolate(min(offset_ft, centerline.length))
-    p2 = centerline.interpolate(min(offset_ft + 1, centerline.length))
-    u = np.array([p2.x - p.x, p2.y - p.y])
-    u = u / np.linalg.norm(u)
-    n = np.array([-u[1], u[0]]) if side == "left" else np.array([u[1], -u[0]])
-    half_w = leg.curb_to_curb_ft / 2
-    pos = (p.x + n[0] * (half_w + SIGN_SIDEWALK_SETBACK_FT), p.y + n[1] * (half_w + SIGN_SIDEWALK_SETBACK_FT))
-    heading = np.degrees(np.arctan2(-n[1], -n[0]))  # face back toward the road
-    return pos, heading
-
-
-def _stop_sign_props(state: DesignState, offsets_ft: dict) -> list[dict]:
-    """One stop sign per approach, placed on the leg's 'right' curb (our own
-    left/right offset convention, not a real traffic-direction analysis) just
-    past where the roadway straightens out. This is a placement approximation -
-    real stop sign placement depends on engineering judgment not modeled here."""
-    props = []
-    for leg_name, leg in state.legs.items():
-        offset_ft = offsets_ft[leg_name][0]
-        pos, heading = _leg_sign_position_ft(leg, offset_ft, side="right")
-        props.append({
-            "type": "stop_sign", "position_ft": pos, "heading_deg": heading,
-            "source": "approximation: placed on the leg's near-corner curb line, arbitrary side "
-                      "(not a real traffic-direction/engineering placement study)",
-        })
-    return props
-
-
-def _extra_props_from_config(model: IntersectionModel, state: DesignState, offsets_ft: dict) -> list[dict]:
-    """User-specified extra signage (e.g. a school zone sign) from the site's
-    config.yaml `props.extra` list - explicitly site-specific knowledge that
-    doesn't belong in the general pipeline. See sites/README.md."""
-    props = []
-    for entry in model.config.get("props", {}).get("extra", []):
-        leg = state.legs.get(entry["leg"])
-        if leg is None:
-            continue
-        offset_ft = entry.get("offset_ft", offsets_ft.get(entry["leg"], (10, ""))[0])
-        pos, heading = _leg_sign_position_ft(leg, offset_ft, side=entry.get("side", "right"))
-        props.append({
-            "type": entry["type"], "position_ft": pos, "heading_deg": heading,
-            "source": f"user-specified in site config.yaml (props.extra): {entry.get('note', 'no note given')}",
-        })
-    return props
-
-
 def export_scenario(model: IntersectionModel, state: DesignState, name: str, out_path: Path,
                      buildings: list[dict] | None = None, crossings: list[dict] | None = None,
                      theme: dict | None = None) -> Path:
@@ -236,15 +83,12 @@ def export_scenario(model: IntersectionModel, state: DesignState, name: str, out
         buildings = fetch_buildings(model.center_wgs84, radius_m=BUILDING_CONTEXT_RADIUS_M)
     if crossings is None:
         crossings = fetch_crossings(model.center_wgs84, radius_m=BUILDING_CONTEXT_RADIUS_M)
-    crosswalk_offsets = _resolve_crosswalk_offsets(state, crossings)
+    crosswalk_offsets = resolve_crosswalk_offsets(state, crossings)
 
     # OSM building footprints are independent of (and coarser than) our SLD/field-measured
     # curb geometry - a few end up drawn overlapping the actual pavement. Drop those rather
     # than render buildings sitting in the middle of the road.
-    buildings = [
-        b for b in buildings
-        if not _building_footprint_ft(b["coords_wgs84"], center_ft).intersects(pavement)
-    ]
+    buildings = [b for b in buildings if not building_footprint_ft(b["coords_wgs84"]).intersects(pavement)]
 
     near_radius_ft = max((v[0] for v in crosswalk_offsets.values()), default=30) + NEAR_ZONE_BUFFER_FT
     pavement_near, pavement_far = _split_near_far([pavement], center_ft, near_radius_ft)
@@ -252,27 +96,23 @@ def export_scenario(model: IntersectionModel, state: DesignState, name: str, out
 
     tree_points_ft = [pt for piece in sidewalk_pieces for pt in _tree_points_along_piece(piece, TREE_SPACING_FT)]
 
-    props = (
-        _corner_streetlight_props(state.corner_fillets, center_ft)
-        + _stop_sign_props(state, crosswalk_offsets)
-        + _extra_props_from_config(model, state, crosswalk_offsets)
-    )
+    props = build_props(model, state, crosswalk_offsets, center_ft)
 
     building_entries = []
     for b in buildings:
-        footprint_ft = _building_footprint_ft(b["coords_wgs84"], center_ft)
+        footprint_ft = building_footprint_ft(b["coords_wgs84"])
         mesh = build_decimated_building_mesh(footprint_ft, b["height_m"] / FT_TO_M)
         if mesh is not None:
             verts_ft, faces = mesh
             building_entries.append({
                 "mesh": True,
-                "vertices_m": [_pt_to_local_m(x, y, center_ft)[:2] + [z * FT_TO_M] for x, y, z in verts_ft],
+                "vertices_m": [pt_to_local_m(x, y, center_ft)[:2] + [z * FT_TO_M] for x, y, z in verts_ft],
                 "faces": faces,
             })
         else:
             building_entries.append({
                 "mesh": False,
-                "coords": _wgs84_ring_to_local_m(b["coords_wgs84"], center_ft),
+                "coords": wgs84_ring_to_local_m(b["coords_wgs84"], center_ft),
                 "height_m": b["height_m"],
             })
 
@@ -281,13 +121,13 @@ def export_scenario(model: IntersectionModel, state: DesignState, name: str, out
         "units": "meters",
         "theme": theme,
         "existing_marked_crosswalks": model.config["intersection"].get("existing_marked_crosswalks", []),
-        "pavement_near": [_ring_to_local_m(p.exterior.coords, center_ft) for p in pavement_near],
-        "pavement_far": [_ring_to_local_m(p.exterior.coords, center_ft) for p in pavement_far],
-        "sidewalks_near": [_ring_to_local_m(p.exterior.coords, center_ft) for p in sidewalks_near],
-        "sidewalks_far": [_ring_to_local_m(p.exterior.coords, center_ft) for p in sidewalks_far],
-        "tree_points": [_pt_to_local_m(x, y, center_ft) for x, y in tree_points_ft],
+        "pavement_near": [ring_to_local_m(p.exterior.coords, center_ft) for p in pavement_near],
+        "pavement_far": [ring_to_local_m(p.exterior.coords, center_ft) for p in pavement_far],
+        "sidewalks_near": [ring_to_local_m(p.exterior.coords, center_ft) for p in sidewalks_near],
+        "sidewalks_far": [ring_to_local_m(p.exterior.coords, center_ft) for p in sidewalks_far],
+        "tree_points": [pt_to_local_m(x, y, center_ft) for x, y in tree_points_ft],
         "props": [
-            {**p, "position_m": _pt_to_local_m(p["position_ft"][0], p["position_ft"][1], center_ft)}
+            {**p, "position_m": pt_to_local_m(p["position_ft"][0], p["position_ft"][1], center_ft)}
             for p in props
         ],
         "legs": [
@@ -310,17 +150,17 @@ def export_scenario(model: IntersectionModel, state: DesignState, name: str, out
         "refuge_islands": [
             {
                 "name": island_name,
-                "coords": _ring_to_local_m(island["polygon"].exterior.coords, center_ft),
+                "coords": ring_to_local_m(island["polygon"].exterior.coords, center_ft),
                 "height_m": 0.15,
             }
             for island_name, island in state.refuge_islands.items()
         ],
         "raised_crossings": [
-            {"name": leg_name, "coords": _ring_to_local_m(poly.exterior.coords, center_ft), "height_m": 0.10}
+            {"name": leg_name, "coords": ring_to_local_m(poly.exterior.coords, center_ft), "height_m": 0.10}
             for leg_name, poly in state.raised_crossings.items()
         ],
         "corner_parcels": [
-            {"name": str(row["quadrant"]), "coords": _ring_to_local_m(row.geometry.exterior.coords, center_ft)}
+            {"name": str(row["quadrant"]), "coords": ring_to_local_m(row.geometry.exterior.coords, center_ft)}
             for _, row in model.corner_parcels.iterrows()
         ],
         "buildings": building_entries,

@@ -2394,14 +2394,15 @@
         419161.333793243,
         566732.1902201198
       ],
-      "heading_deg": -87.69947121408117,
-      "arm_length_ft": 22.375,
-      "source": "confirmed (broad_st_west/greenwood_ave_south corner - Corrected 2026-07-02 (Rollo): the earlier street-view photo review (2026-07-02) misread this hardware as a short davit arm - the signals are actually mast-arm held. Still a direct visual observation, not a field survey.\n): full-width mast-arm signal, pole placed at the real corner-fillet arc midpoint (same position as the streetlight prop here); arm_length_ft=22.4 is an approximation derived from this corner's real adjacent leg widths (average of their half-widths, reaching roughly to mid-roadway) - exact per-lane aim/reach isn't surveyed, only that the hardware is mast-arm-mounted; same render-fidelity caveat as before on which approach each head actually faces.",
+      "heading_deg": 34.38748728232145,
+      "arm_heading_deg": 124.38748728232146,
+      "arm_length_ft": 27.75,
+      "source": "confirmed (broad_st_west/greenwood_ave_south corner - Corrected 2026-07-02 (Rollo): the earlier street-view photo review (2026-07-02) misread this hardware as a short davit arm - the signals are actually mast-arm held. Still a direct visual observation, not a field survey.\n): full-width mast-arm signal, pole at the real corner-fillet arc midpoint; the arm extends at a right angle to broad_st_west (parallel to its crosswalk, perpendicular to its travel direction), reaching roughly to mid-roadway (arm_length_ft=27.8, half of broad_st_west's real curb-to-curb width) - confirmed via street-view against a real example (NW corner's arm over West Broad St), not a diagonal reach toward the intersection center. Exactly which lane the head hangs over isn't surveyed.",
       "position_m": [
         0.6635652523519937,
         -16.51753073922107
       ],
-      "arm_length_m": 6.8199000000000005
+      "arm_length_m": 8.4582
     },
     {
       "type": "pedestrian_signal_head",
@@ -2423,14 +2424,15 @@
         419205.44823703007,
         566754.8630083667
       ],
-      "heading_deg": -34.24985488908861,
-      "arm_length_ft": 25.5,
-      "source": "confirmed (greenwood_ave_south/broad_st_east corner - Corrected 2026-07-02 (Rollo): the earlier street-view photo review (2026-07-02) misread this hardware as a short davit arm - the signals are actually mast-arm held. Still a direct visual observation, not a field survey.\n): full-width mast-arm signal, pole placed at the real corner-fillet arc midpoint (same position as the streetlight prop here); arm_length_ft=25.5 is an approximation derived from this corner's real adjacent leg widths (average of their half-widths, reaching roughly to mid-roadway) - exact per-lane aim/reach isn't surveyed, only that the hardware is mast-arm-mounted; same render-fidelity caveat as before on which approach each head actually faces.",
+      "heading_deg": 119.70273833705579,
+      "arm_heading_deg": -150.2972616629442,
+      "arm_length_ft": 17.0,
+      "source": "confirmed (greenwood_ave_south/broad_st_east corner - Corrected 2026-07-02 (Rollo): the earlier street-view photo review (2026-07-02) misread this hardware as a short davit arm - the signals are actually mast-arm held. Still a direct visual observation, not a field survey.\n): full-width mast-arm signal, pole at the real corner-fillet arc midpoint; the arm extends at a right angle to greenwood_ave_south (parallel to its crosswalk, perpendicular to its travel direction), reaching roughly to mid-roadway (arm_length_ft=17.0, half of greenwood_ave_south's real curb-to-curb width) - confirmed via street-view against a real example (NW corner's arm over West Broad St), not a diagonal reach toward the intersection center. Exactly which lane the head hangs over isn't surveyed.",
       "position_m": [
         14.10964771865476,
         -9.606864881570823
       ],
-      "arm_length_m": 7.7724
+      "arm_length_m": 5.1816
     },
     {
       "type": "pedestrian_signal_head",
@@ -2452,14 +2454,15 @@
         419163.6001775008,
         566830.8581101821
       ],
-      "heading_deg": 84.29478431528524,
-      "arm_length_ft": 25.5,
-      "source": "confirmed (broad_st_east/greenwood_ave_north corner - Corrected 2026-07-02 (Rollo): the earlier street-view photo review (2026-07-02) misread this hardware as a short davit arm - the signals are actually mast-arm held. Still a direct visual observation, not a field survey.\n): full-width mast-arm signal, pole placed at the real corner-fillet arc midpoint (same position as the streetlight prop here); arm_length_ft=25.5 is an approximation derived from this corner's real adjacent leg widths (average of their half-widths, reaching roughly to mid-roadway) - exact per-lane aim/reach isn't surveyed, only that the hardware is mast-arm-mounted; same render-fidelity caveat as before on which approach each head actually faces.",
+      "heading_deg": -147.2830111999733,
+      "arm_heading_deg": -57.28301119997327,
+      "arm_length_ft": 34.0,
+      "source": "confirmed (broad_st_east/greenwood_ave_north corner - Corrected 2026-07-02 (Rollo): the earlier street-view photo review (2026-07-02) misread this hardware as a short davit arm - the signals are actually mast-arm held. Still a direct visual observation, not a field survey.\n): full-width mast-arm signal, pole at the real corner-fillet arc midpoint; the arm extends at a right angle to broad_st_east (parallel to its crosswalk, perpendicular to its travel direction), reaching roughly to mid-roadway (arm_length_ft=34.0, half of broad_st_east's real curb-to-curb width) - confirmed via street-view against a real example (NW corner's arm over West Broad St), not a diagonal reach toward the intersection center. Exactly which lane the head hangs over isn't surveyed.",
       "position_m": [
         1.3543591741350947,
         13.556442151774933
       ],
-      "arm_length_m": 7.7724
+      "arm_length_m": 10.3632
     },
     {
       "type": "pedestrian_signal_head",
@@ -2481,14 +2484,15 @@
         419124.86104592535,
         566796.599648852
       ],
-      "heading_deg": 163.40910810538023,
-      "arm_length_ft": 22.375,
-      "source": "confirmed (greenwood_ave_north/broad_st_west corner - Corrected 2026-07-02 (Rollo): the earlier street-view photo review (2026-07-02) misread this hardware as a short davit arm - the signals are actually mast-arm held. Still a direct visual observation, not a field survey.\n): full-width mast-arm signal, pole placed at the real corner-fillet arc midpoint (same position as the streetlight prop here); arm_length_ft=22.4 is an approximation derived from this corner's real adjacent leg widths (average of their half-widths, reaching roughly to mid-roadway) - exact per-lane aim/reach isn't surveyed, only that the hardware is mast-arm-mounted; same render-fidelity caveat as before on which approach each head actually faces.",
+      "heading_deg": -60.29773481323395,
+      "arm_heading_deg": 29.70226518676605,
+      "arm_length_ft": 17.0,
+      "source": "confirmed (greenwood_ave_north/broad_st_west corner - Corrected 2026-07-02 (Rollo): the earlier street-view photo review (2026-07-02) misread this hardware as a short davit arm - the signals are actually mast-arm held. Still a direct visual observation, not a field survey.\n): full-width mast-arm signal, pole at the real corner-fillet arc midpoint; the arm extends at a right angle to greenwood_ave_north (parallel to its crosswalk, perpendicular to its travel direction), reaching roughly to mid-roadway (arm_length_ft=17.0, half of greenwood_ave_north's real curb-to-curb width) - confirmed via street-view against a real example (NW corner's arm over West Broad St), not a diagonal reach toward the intersection center. Exactly which lane the head hangs over isn't surveyed.",
       "position_m": [
         -10.453328130062157,
         3.114463138364721
       ],
-      "arm_length_m": 6.8199000000000005
+      "arm_length_m": 5.1816
     },
     {
       "type": "pedestrian_signal_head",

@@ -23,6 +23,7 @@ BUILDING_CONTEXT_RADIUS_M = 130
 SIDEWALK_WIDTH_FT = 6
 NEAR_ZONE_BUFFER_FT = 10  # how far past the farthest crosswalk the "near" (4k texture) pavement zone extends
 TREE_SPACING_FT = 25  # typical municipal street-tree spacing (NACTO/street-design guidance), not a fabricated guess
+TREE_MIN_SETBACK_FROM_CENTER_FT = 20  # NACTO "daylighting" convention - keep trees clear of corner sight triangles
 CORNER_HATCH_SPACING_FT = 2.5  # spacing between rendered diagonal hatch lines - a rendering choice, not MUTCD-specified
 
 
@@ -45,10 +46,15 @@ def _split_near_far(polygons: list[Polygon], center_ft: Point, near_radius_ft: f
     return near_polys, far_polys
 
 
-def _tree_points_along_piece(piece: Polygon, spacing_ft: float) -> list[tuple[float, float]]:
+def _tree_points_along_piece(piece: Polygon, spacing_ft: float, center_ft: Point,
+                              min_setback_from_center_ft: float) -> list[tuple[float, float]]:
     """Sample points along a sidewalk piece's long axis at spacing_ft intervals.
     Corner wedge pieces (not meaningfully elongated) are skipped - trees belong
-    along the straight runs of sidewalk, not crammed into a tiny corner fillet."""
+    along the straight runs of sidewalk, not crammed into a tiny corner fillet.
+    Points within min_setback_from_center_ft of the intersection center are
+    also dropped, even on an otherwise-eligible straight piece - real street
+    trees don't get planted right at a corner (they'd block the sight
+    triangle a driver/pedestrian needs there), so neither should this one."""
     mrr = piece.minimum_rotated_rectangle
     if mrr.geom_type != "Polygon":
         return []
@@ -66,7 +72,7 @@ def _tree_points_along_piece(piece: Polygon, spacing_ft: float) -> list[tuple[fl
     for i in range(n_trees):
         t = (i + 0.5) / n_trees
         pt = Point(a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t)
-        if piece.buffer(1).contains(pt):
+        if piece.buffer(1).contains(pt) and pt.distance(center_ft) >= min_setback_from_center_ft:
             points.append((pt.x, pt.y))
     return points
 
@@ -100,7 +106,10 @@ def export_scenario(model: IntersectionModel, state: DesignState, name: str, out
     pavement_near, pavement_far = _split_near_far([pavement], center_ft, near_radius_ft)
     sidewalks_near, sidewalks_far = _split_near_far(sidewalk_pieces, center_ft, near_radius_ft)
 
-    tree_points_ft = [pt for piece in sidewalk_pieces for pt in _tree_points_along_piece(piece, TREE_SPACING_FT)]
+    tree_points_ft = [
+        pt for piece in sidewalk_pieces
+        for pt in _tree_points_along_piece(piece, TREE_SPACING_FT, center_ft, TREE_MIN_SETBACK_FROM_CENTER_FT)
+    ]
 
     props = build_props(model, state, crosswalk_offsets, center_ft)
 

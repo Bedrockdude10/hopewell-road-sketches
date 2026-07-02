@@ -65,15 +65,19 @@ def add_crosswalk(name: str, near, u, n, width_m: float, material, offset_m: flo
 
 
 def add_stop_bar(name: str, near, u, n, width_m: float, material, offset_m: float, line_width_m: float = 0.5):
-    """Stop bar: a single transverse line across a signalized approach telling
-    drivers where to stop for the signal - drawn just behind (intersection
-    side of) the leg's crosswalk, using the same single-boundary-line shape as
-    one of add_crosswalk_lines()'s two lines (full leg width minus a small
-    curb margin), just wider (real stop bars run 12-24 in vs. a crosswalk
-    line's 4-6 in) so it reads as visually distinct from the crosswalk."""
-    line_width = max(width_m - 1.0, 0.5)
-    center = near + u * offset_m
-    add_stripe_rect(f"{name}_bar", center, n, u, line_width, line_width_m, 0.06, material)
+    """Stop bar: a single transverse line telling drivers where to stop for the
+    signal, drawn just behind (intersection side of) the leg's crosswalk.
+    Spans only the entering half of the road - `n` is the leg's own 'left'
+    direction relative to its outward centerline direction (see
+    src/props.py's left/right convention), which is the entering driver's
+    right-hand side under US right-hand traffic (they travel the *opposite*
+    way along the leg, so the sides swap) - a real stop bar never crosses
+    into the opposing/receiving lanes, unlike a crosswalk line which spans
+    the full width."""
+    half_width = width_m / 2
+    lane_span = max(half_width - 0.5, 0.5)  # keep clear of the centerline and the curb edge
+    lane_center = near + u * offset_m + n * (half_width / 2)  # centered within the entering half only
+    add_stripe_rect(f"{name}_bar", lane_center, n, u, lane_span, line_width_m, 0.06, material)
 
 
 def add_paint_line(name: str, p1: tuple, p2: tuple, width_m: float, material,

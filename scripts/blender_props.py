@@ -155,17 +155,22 @@ def add_vehicle_signal_head(name: str, position: tuple, heading_deg: float, hous
     return housing
 
 
-def add_traffic_signal_pole(name: str, position: tuple, heading_deg: float, pole_mat, housing_mat,
-                             arm_length_m: float = TRAFFIC_SIGNAL_ARM_LENGTH_M):
+def add_traffic_signal_pole(name: str, position: tuple, head_facing_deg: float, pole_mat, housing_mat,
+                             arm_heading_deg: float | None = None, arm_length_m: float = TRAFFIC_SIGNAL_ARM_LENGTH_M):
     """Full-width mast-arm signal - the confirmed pole type for this
     intersection (NOT a short pole-mounted rigid/davit arm, NOT span-wire; see
     sites/README.md `signals` block / config.yaml). A tall post + a
-    horizontal arm reaching toward the roadway (inward, opposite the pole's
-    outward corner-fillet offset) + a procedural 3-section vehicle head at the
-    arm's end. `arm_length_m` is computed upstream (src/props.py) from this
-    corner's real adjacent leg widths, not hardcoded - exact arm/head aim is
-    still a render-fidelity simplification, not a signal-timing-accurate
-    model of which approach each head actually faces."""
+    horizontal arm + a procedural 3-section vehicle head at the arm's end.
+
+    arm_heading_deg and head_facing_deg are DIFFERENT directions (not a fixed
+    180 degrees apart): the arm extends at a right angle to the one leg it's
+    built for (see src/props.py:_traffic_signal_props for which leg and why),
+    while the head faces back down that same leg toward oncoming traffic -
+    those are perpendicular axes, not opposite ends of one axis. Falls back
+    to the old "arm opposite the head" behavior if arm_heading_deg isn't
+    given (e.g. a prop dict from a site/version that doesn't set it).
+    arm_length_m is computed upstream (src/props.py) from the real leg width
+    this arm actually spans, not hardcoded."""
     x, y = position
     bpy.ops.mesh.primitive_cylinder_add(
         radius=0.1, depth=TRAFFIC_SIGNAL_POLE_HEIGHT_M, location=(x, y, TRAFFIC_SIGNAL_POLE_HEIGHT_M / 2)
@@ -174,18 +179,18 @@ def add_traffic_signal_pole(name: str, position: tuple, heading_deg: float, pole
     pole.name = f"{name}_pole"
     pole.data.materials.append(pole_mat)
 
-    inward = math.radians(heading_deg + 180)
-    dx, dy = math.cos(inward), math.sin(inward)
+    arm_dir = math.radians(arm_heading_deg if arm_heading_deg is not None else head_facing_deg + 180)
+    dx, dy = math.cos(arm_dir), math.sin(arm_dir)
     arm_z = TRAFFIC_SIGNAL_POLE_HEIGHT_M - 0.4
     arm_center = (x + dx * arm_length_m / 2, y + dy * arm_length_m / 2, arm_z)
     bpy.ops.mesh.primitive_cylinder_add(radius=0.05, depth=arm_length_m, location=arm_center)
     arm = bpy.context.active_object
     arm.name = f"{name}_arm"
-    arm.rotation_euler = (0, math.radians(90), inward)  # lay the cylinder flat, then point it inward
+    arm.rotation_euler = (0, math.radians(90), arm_dir)  # lay the cylinder flat, then point it along arm_dir
     arm.data.materials.append(pole_mat)
 
     head_pos = (x + dx * arm_length_m, y + dy * arm_length_m, arm_z - 0.2)
-    add_vehicle_signal_head(f"{name}_head", head_pos, heading_deg, housing_mat)
+    add_vehicle_signal_head(f"{name}_head", head_pos, head_facing_deg, housing_mat)
     return pole
 
 
@@ -288,6 +293,7 @@ def add_prop(name: str, prop: dict, streetlight_template, pole_mat, signal_housi
         add_school_zone_sign(name, pos, heading, pole_mat)
     elif ptype == "traffic_signal_pole":
         add_traffic_signal_pole(name, pos, heading, pole_mat, signal_housing_mat,
+                                 arm_heading_deg=prop.get("arm_heading_deg"),
                                  arm_length_m=prop.get("arm_length_m", TRAFFIC_SIGNAL_ARM_LENGTH_M))
     elif ptype == "pedestrian_signal_head":
         add_pedestrian_signal_head(name, pos, heading, prop.get("own_post", False), ped_signal_housing_mat, pole_mat)

@@ -78,18 +78,25 @@ def _traffic_signal_props(model: IntersectionModel, state: DesignState, center_f
     Traffic signal pole + pedestrian signal head at each corner listed in the
     site config's `signals.corners` (see sites/README.md) - confirmed via
     direct street-view photo review, NOT a field survey, but real/observed
-    rather than a geometric placeholder (distinct from e.g.
-    existing_corner_radius_ft's estimate). Reuses the same real
-    corner-fillet-arc-midpoint geometry as _corner_streetlight_props(); which
-    way each signal head visually aims is a render-fidelity simplification,
-    not a signal-timing-accurate model of actual head aiming.
+    rather than a geometric placeholder. Pole position reuses the same real
+    corner-fillet-arc-midpoint geometry as _corner_streetlight_props().
 
-    The pole is confirmed to carry a full-width mast arm (see config.yaml
-    `signals.pole_type`), so the arm's reach is derived from this corner's two
-    real adjacent leg widths rather than a fixed constant - the average of
-    their half-widths, landing the head roughly over mid-roadway. This is
-    still an approximation (exactly which lane a real mast arm's head hangs
-    over isn't surveyed, only that it's mast-arm-mounted, not a short davit).
+    The mast arm extends at a RIGHT ANGLE to leg_a - the one leg of this
+    corner's pair whose LEFT curb feeds it (see build_corner_fillets /
+    fillet_curb_corner: a corner is always (leg_a.left_curb, leg_b.right_curb),
+    so the pole sits on leg_a's left side) - parallel to leg_a's own crosswalk
+    and perpendicular to leg_a's direction of travel, reaching from the pole
+    across to roughly mid-roadway. Confirmed against a real example: at the
+    broad_st_west/greenwood_ave_north (NW) corner, leg_a is broad_st_west, and
+    the arm reaches out over West Broad St's lanes, near-directly above its
+    crosswalk - visible to a driver heading west on Broad St looking across
+    the intersection - NOT diagonally toward the intersection center (an
+    earlier version of this function had it reaching for the bisector of both
+    adjacent legs, which is a ~45 degree angle relative to either road, not a
+    real mast-arm layout). The vehicle head at the arm's end faces back down
+    leg_a (toward oncoming leg_a-direction traffic) so it's actually visible
+    to approaching drivers; exactly which approach's signal phase it
+    represents isn't modeled, only the physical mast/head geometry.
     """
     signals_cfg = model.config.get("signals")
     if not signals_cfg:
@@ -110,28 +117,38 @@ def _traffic_signal_props(model: IntersectionModel, state: DesignState, center_f
         outward = outward / norm if norm > 1e-6 else np.array([1.0, 0.0])
         pole_pos = (mid.x + outward[0] * STREETLIGHT_SIDEWALK_SETBACK_FT,
                     mid.y + outward[1] * STREETLIGHT_SIDEWALK_SETBACK_FT)
-        heading = np.degrees(np.arctan2(outward[1], outward[0]))
-        arm_length_ft = (state.legs[leg_a].curb_to_curb_ft / 2 + state.legs[leg_b].curb_to_curb_ft / 2) / 2
+        pole_heading = np.degrees(np.arctan2(outward[1], outward[0]))
+
+        # leg_a's own outward direction - the axis the arm/crosswalk are actually
+        # built around, not the corner's outward-from-center bisector above.
+        leg_a_line = state.legs[leg_a].centerline
+        c0, c1 = np.array(leg_a_line.coords[0]), np.array(leg_a_line.coords[1])
+        u_a = (c1 - c0) / np.linalg.norm(c1 - c0)
+        arm_dir = np.array([u_a[1], -u_a[0]])  # perpendicular to leg_a: from its left curb (the pole) across to its right
+        arm_heading = np.degrees(np.arctan2(arm_dir[1], arm_dir[0]))
+        head_facing = np.degrees(np.arctan2(-u_a[1], -u_a[0]))  # back down leg_a, toward the intersection
+        arm_length_ft = state.legs[leg_a].curb_to_curb_ft / 2
+
         props.append({
-            "type": "traffic_signal_pole", "position_ft": pole_pos, "heading_deg": heading,
-            "arm_length_ft": arm_length_ft,
+            "type": "traffic_signal_pole", "position_ft": pole_pos, "heading_deg": head_facing,
+            "arm_heading_deg": arm_heading, "arm_length_ft": arm_length_ft,
             "source": f"confirmed ({leg_a}/{leg_b} corner - {confirmation}): full-width mast-arm signal, "
-                      "pole placed at the real corner-fillet arc midpoint (same position as the streetlight "
-                      f"prop here); arm_length_ft={arm_length_ft:.1f} is an approximation derived from this "
-                      "corner's real adjacent leg widths (average of their half-widths, reaching roughly to "
-                      "mid-roadway) - exact per-lane aim/reach isn't surveyed, only that the hardware is "
-                      "mast-arm-mounted; same render-fidelity caveat as before on which approach each head "
-                      "actually faces.",
+                      "pole at the real corner-fillet arc midpoint; the arm extends at a right angle to "
+                      f"{leg_a} (parallel to its crosswalk, perpendicular to its travel direction), reaching "
+                      f"roughly to mid-roadway (arm_length_ft={arm_length_ft:.1f}, half of {leg_a}'s real "
+                      "curb-to-curb width) - confirmed via street-view against a real example (NW corner's "
+                      "arm over West Broad St), not a diagonal reach toward the intersection center. Exactly "
+                      "which lane the head hangs over isn't surveyed.",
         })
 
         same_pole = cfg.get("pedestrian_head") == "same_pole"
         if same_pole:
-            ped_pos, ped_heading = pole_pos, heading
+            ped_pos, ped_heading = pole_pos, pole_heading
         else:
             tangent = np.array([-outward[1], outward[0]])
             ped_pos = (pole_pos[0] + tangent[0] * PED_HEAD_POLE_OFFSET_FT,
                        pole_pos[1] + tangent[1] * PED_HEAD_POLE_OFFSET_FT)
-            ped_heading = heading
+            ped_heading = pole_heading
         props.append({
             "type": "pedestrian_signal_head", "position_ft": ped_pos, "heading_deg": ped_heading,
             "own_post": not same_pole,

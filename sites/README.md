@@ -48,7 +48,9 @@ signals:                              # optional - only for signalized intersect
                                        # IS what "signalized" means now (replaces the old `signalized: true`
                                        # flag, which nothing downstream ever read).
   pole_type: >                        # free text - what kind of signal hardware (informs blender_scene.py's
-    ...                               # procedural geometry, e.g. "pole-mounted rigid/davit arm")
+    ...                               # procedural geometry, e.g. "full-width mast arm" or "pole-mounted
+                                       # rigid/davit arm" - a mast arm's reach is derived from real adjacent
+                                       # leg widths (src/props.py), not read from this string
   source: >                           # REQUIRED - how this was confirmed (street-view photo review, field
     ...                               # survey, etc.) - doesn't have to be a survey, but say what it actually is
   corners:

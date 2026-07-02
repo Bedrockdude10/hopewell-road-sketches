@@ -19,6 +19,14 @@ OSM_MARKINGS_TO_STYLE = {
     "ladder": "ladder",
 }
 
+# Distance back toward the intersection from a leg's resolved crosswalk offset
+# to its stop bar: half of the ~10 ft crosswalk depth used in
+# scripts/blender_crosswalks.py (so the setback starts at the crosswalk's near
+# boundary, not its center) plus a typical MUTCD stop-line-to-crosswalk gap.
+# An approximation (no site is surveyed down to exact striping), same category
+# as src/props.py's STREETLIGHT_SIDEWALK_SETBACK_FT.
+STOP_BAR_SETBACK_FT = 9.0
+
 
 def _match_crossings_to_legs(legs: dict, crossings: list[dict]) -> dict:
     """
@@ -76,4 +84,17 @@ def resolve_crosswalk_offsets(state: DesignState, crossings: list[dict]) -> dict
             offset_ft += delta_ft
             source += f"+scenario_shift({delta_ft:+g}ft)"
         out[leg_name] = (offset_ft, source)
+    return out
+
+
+def resolve_stop_bar_offsets(state: DesignState, crosswalk_offsets: dict[str, tuple[float, str]]) -> dict[str, float]:
+    """{leg_name: offset_ft} - where a signalized approach's stop bar sits,
+    derived from that leg's already-resolved crosswalk offset (real or
+    estimated, overrides included) minus STOP_BAR_SETBACK_FT. Clamped to
+    leg_clearance_ft() so a short leg or a tight corner radius never pushes
+    the stop bar back into the curb-return curve."""
+    out = {}
+    for leg_name, (crosswalk_offset_ft, _source) in crosswalk_offsets.items():
+        min_offset_ft = leg_clearance_ft(leg_name, state.legs, state.corner_fillets)
+        out[leg_name] = max(crosswalk_offset_ft - STOP_BAR_SETBACK_FT, min_offset_ft)
     return out

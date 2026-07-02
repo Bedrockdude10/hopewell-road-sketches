@@ -83,6 +83,13 @@ def _traffic_signal_props(model: IntersectionModel, state: DesignState, center_f
     corner-fillet-arc-midpoint geometry as _corner_streetlight_props(); which
     way each signal head visually aims is a render-fidelity simplification,
     not a signal-timing-accurate model of actual head aiming.
+
+    The pole is confirmed to carry a full-width mast arm (see config.yaml
+    `signals.pole_type`), so the arm's reach is derived from this corner's two
+    real adjacent leg widths rather than a fixed constant - the average of
+    their half-widths, landing the head roughly over mid-roadway. This is
+    still an approximation (exactly which lane a real mast arm's head hangs
+    over isn't surveyed, only that it's mast-arm-mounted, not a short davit).
     """
     signals_cfg = model.config.get("signals")
     if not signals_cfg:
@@ -104,12 +111,17 @@ def _traffic_signal_props(model: IntersectionModel, state: DesignState, center_f
         pole_pos = (mid.x + outward[0] * STREETLIGHT_SIDEWALK_SETBACK_FT,
                     mid.y + outward[1] * STREETLIGHT_SIDEWALK_SETBACK_FT)
         heading = np.degrees(np.arctan2(outward[1], outward[0]))
+        arm_length_ft = (state.legs[leg_a].curb_to_curb_ft / 2 + state.legs[leg_b].curb_to_curb_ft / 2) / 2
         props.append({
             "type": "traffic_signal_pole", "position_ft": pole_pos, "heading_deg": heading,
-            "source": f"confirmed ({leg_a}/{leg_b} corner - {confirmation}): pole-mounted rigid/davit arm "
-                      "signal, placed at the real corner-fillet arc midpoint (same position as the "
-                      "streetlight prop here); exact arm/head aim is a render-fidelity simplification, "
-                      "not a signal-timing-accurate model of which approach each head actually faces.",
+            "arm_length_ft": arm_length_ft,
+            "source": f"confirmed ({leg_a}/{leg_b} corner - {confirmation}): full-width mast-arm signal, "
+                      "pole placed at the real corner-fillet arc midpoint (same position as the streetlight "
+                      f"prop here); arm_length_ft={arm_length_ft:.1f} is an approximation derived from this "
+                      "corner's real adjacent leg widths (average of their half-widths, reaching roughly to "
+                      "mid-roadway) - exact per-lane aim/reach isn't surveyed, only that the hardware is "
+                      "mast-arm-mounted; same render-fidelity caveat as before on which approach each head "
+                      "actually faces.",
         })
 
         same_pole = cfg.get("pedestrian_head") == "same_pole"

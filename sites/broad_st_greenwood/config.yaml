@@ -132,12 +132,14 @@ legs:
 # _no_turn_on_red_props and sites/README.md for the schema.
 signals:
   pole_type: >
-    Pole-mounted rigid/davit arm (short arm off a vertical pole, one
-    3-section vehicle signal head at the end) at all 4 corners - NOT a
-    full-width mast arm, NOT span-wire.
+    Full-width mast arm (a horizontal arm extending from the corner pole out
+    over the roadway, with the 3-section vehicle signal head hanging above
+    the travel lanes) at all 4 corners - NOT a short pole-mounted rigid/davit
+    arm, NOT span-wire.
   source: >
-    Confirmed via street-view photo review (Danny, cross-referenced against
-    all 4 approaches), 2026-07-02 - direct visual observation, not a field
+    Corrected 2026-07-02 (Rollo): the earlier street-view photo review
+    (2026-07-02) misread this hardware as a short davit arm - the signals are
+    actually mast-arm held. Still a direct visual observation, not a field
     survey.
   corners:
     # `legs` identifies the corner the same way build_corner_fillets() does -

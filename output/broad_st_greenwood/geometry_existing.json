@@ -2395,11 +2395,13 @@
         566732.1902201198
       ],
       "heading_deg": -87.69947121408117,
-      "source": "confirmed (broad_st_west/greenwood_ave_south corner - Confirmed via street-view photo review (Danny, cross-referenced against all 4 approaches), 2026-07-02 - direct visual observation, not a field survey.\n): pole-mounted rigid/davit arm signal, placed at the real corner-fillet arc midpoint (same position as the streetlight prop here); exact arm/head aim is a render-fidelity simplification, not a signal-timing-accurate model of which approach each head actually faces.",
+      "arm_length_ft": 22.375,
+      "source": "confirmed (broad_st_west/greenwood_ave_south corner - Corrected 2026-07-02 (Rollo): the earlier street-view photo review (2026-07-02) misread this hardware as a short davit arm - the signals are actually mast-arm held. Still a direct visual observation, not a field survey.\n): full-width mast-arm signal, pole placed at the real corner-fillet arc midpoint (same position as the streetlight prop here); arm_length_ft=22.4 is an approximation derived from this corner's real adjacent leg widths (average of their half-widths, reaching roughly to mid-roadway) - exact per-lane aim/reach isn't surveyed, only that the hardware is mast-arm-mounted; same render-fidelity caveat as before on which approach each head actually faces.",
       "position_m": [
         0.6635652523519937,
         -16.51753073922107
-      ]
+      ],
+      "arm_length_m": 6.8199000000000005
     },
     {
       "type": "pedestrian_signal_head",
@@ -2409,7 +2411,7 @@
       ],
       "heading_deg": -87.69947121408117,
       "own_post": false,
-      "source": "confirmed (broad_st_west/greenwood_ave_south corner - Confirmed via street-view photo review (Danny, cross-referenced against all 4 approaches), 2026-07-02 - direct visual observation, not a field survey.\n): pedestrian head mounted on the same pole as the vehicle signal.",
+      "source": "confirmed (broad_st_west/greenwood_ave_south corner - Corrected 2026-07-02 (Rollo): the earlier street-view photo review (2026-07-02) misread this hardware as a short davit arm - the signals are actually mast-arm held. Still a direct visual observation, not a field survey.\n): pedestrian head mounted on the same pole as the vehicle signal.",
       "position_m": [
         0.6635652523519937,
         -16.51753073922107
@@ -2422,11 +2424,13 @@
         566754.8630083667
       ],
       "heading_deg": -34.24985488908861,
-      "source": "confirmed (greenwood_ave_south/broad_st_east corner - Confirmed via street-view photo review (Danny, cross-referenced against all 4 approaches), 2026-07-02 - direct visual observation, not a field survey.\n): pole-mounted rigid/davit arm signal, placed at the real corner-fillet arc midpoint (same position as the streetlight prop here); exact arm/head aim is a render-fidelity simplification, not a signal-timing-accurate model of which approach each head actually faces.",
+      "arm_length_ft": 25.5,
+      "source": "confirmed (greenwood_ave_south/broad_st_east corner - Corrected 2026-07-02 (Rollo): the earlier street-view photo review (2026-07-02) misread this hardware as a short davit arm - the signals are actually mast-arm held. Still a direct visual observation, not a field survey.\n): full-width mast-arm signal, pole placed at the real corner-fillet arc midpoint (same position as the streetlight prop here); arm_length_ft=25.5 is an approximation derived from this corner's real adjacent leg widths (average of their half-widths, reaching roughly to mid-roadway) - exact per-lane aim/reach isn't surveyed, only that the hardware is mast-arm-mounted; same render-fidelity caveat as before on which approach each head actually faces.",
       "position_m": [
         14.10964771865476,
         -9.606864881570823
-      ]
+      ],
+      "arm_length_m": 7.7724
     },
     {
       "type": "pedestrian_signal_head",
@@ -2436,7 +2440,7 @@
       ],
       "heading_deg": -34.24985488908861,
       "own_post": false,
-      "source": "confirmed (greenwood_ave_south/broad_st_east corner - Confirmed via street-view photo review (Danny, cross-referenced against all 4 approaches), 2026-07-02 - direct visual observation, not a field survey.\n): pedestrian head mounted on the same pole as the vehicle signal.",
+      "source": "confirmed (greenwood_ave_south/broad_st_east corner - Corrected 2026-07-02 (Rollo): the earlier street-view photo review (2026-07-02) misread this hardware as a short davit arm - the signals are actually mast-arm held. Still a direct visual observation, not a field survey.\n): pedestrian head mounted on the same pole as the vehicle signal.",
       "position_m": [
         14.10964771865476,
         -9.606864881570823
@@ -2449,11 +2453,13 @@
         566830.8581101821
       ],
       "heading_deg": 84.29478431528524,
-      "source": "confirmed (broad_st_east/greenwood_ave_north corner - Confirmed via street-view photo review (Danny, cross-referenced against all 4 approaches), 2026-07-02 - direct visual observation, not a field survey.\n): pole-mounted rigid/davit arm signal, placed at the real corner-fillet arc midpoint (same position as the streetlight prop here); exact arm/head aim is a render-fidelity simplification, not a signal-timing-accurate model of which approach each head actually faces.",
+      "arm_length_ft": 25.5,
+      "source": "confirmed (broad_st_east/greenwood_ave_north corner - Corrected 2026-07-02 (Rollo): the earlier street-view photo review (2026-07-02) misread this hardware as a short davit arm - the signals are actually mast-arm held. Still a direct visual observation, not a field survey.\n): full-width mast-arm signal, pole placed at the real corner-fillet arc midpoint (same position as the streetlight prop here); arm_length_ft=25.5 is an approximation derived from this corner's real adjacent leg widths (average of their half-widths, reaching roughly to mid-roadway) - exact per-lane aim/reach isn't surveyed, only that the hardware is mast-arm-mounted; same render-fidelity caveat as before on which approach each head actually faces.",
       "position_m": [
         1.3543591741350947,
         13.556442151774933
-      ]
+      ],
+      "arm_length_m": 7.7724
     },
     {
       "type": "pedestrian_signal_head",
@@ -2463,7 +2469,7 @@
       ],
       "heading_deg": 84.29478431528524,
       "own_post": true,
-      "source": "confirmed (broad_st_east/greenwood_ave_north corner - Confirmed via street-view photo review (Danny, cross-referenced against all 4 approaches), 2026-07-02 - direct visual observation, not a field survey.\n): pedestrian head is on a SEPARATE pole from the vehicle signal; approximation: offset 3 ft along the sidewalk from the vehicle signal pole (no surveyed separate-pole location available).",
+      "source": "confirmed (broad_st_east/greenwood_ave_north corner - Corrected 2026-07-02 (Rollo): the earlier street-view photo review (2026-07-02) misread this hardware as a short davit arm - the signals are actually mast-arm held. Still a direct visual observation, not a field survey.\n): pedestrian head is on a SEPARATE pole from the vehicle signal; approximation: offset 3 ft along the sidewalk from the vehicle signal pole (no surveyed separate-pole location available).",
       "position_m": [
         0.4444886319675017,
         13.647342957618926
@@ -2476,11 +2482,13 @@
         566796.599648852
       ],
       "heading_deg": 163.40910810538023,
-      "source": "confirmed (greenwood_ave_north/broad_st_west corner - Confirmed via street-view photo review (Danny, cross-referenced against all 4 approaches), 2026-07-02 - direct visual observation, not a field survey.\n): pole-mounted rigid/davit arm signal, placed at the real corner-fillet arc midpoint (same position as the streetlight prop here); exact arm/head aim is a render-fidelity simplification, not a signal-timing-accurate model of which approach each head actually faces.",
+      "arm_length_ft": 22.375,
+      "source": "confirmed (greenwood_ave_north/broad_st_west corner - Corrected 2026-07-02 (Rollo): the earlier street-view photo review (2026-07-02) misread this hardware as a short davit arm - the signals are actually mast-arm held. Still a direct visual observation, not a field survey.\n): full-width mast-arm signal, pole placed at the real corner-fillet arc midpoint (same position as the streetlight prop here); arm_length_ft=22.4 is an approximation derived from this corner's real adjacent leg widths (average of their half-widths, reaching roughly to mid-roadway) - exact per-lane aim/reach isn't surveyed, only that the hardware is mast-arm-mounted; same render-fidelity caveat as before on which approach each head actually faces.",
       "position_m": [
         -10.453328130062157,
         3.114463138364721
-      ]
+      ],
+      "arm_length_m": 6.8199000000000005
     },
     {
       "type": "pedestrian_signal_head",
@@ -2490,7 +2498,7 @@
       ],
       "heading_deg": 163.40910810538023,
       "own_post": false,
-      "source": "confirmed (greenwood_ave_north/broad_st_west corner - Confirmed via street-view photo review (Danny, cross-referenced against all 4 approaches), 2026-07-02 - direct visual observation, not a field survey.\n): pedestrian head mounted on the same pole as the vehicle signal.",
+      "source": "confirmed (greenwood_ave_north/broad_st_west corner - Corrected 2026-07-02 (Rollo): the earlier street-view photo review (2026-07-02) misread this hardware as a short davit arm - the signals are actually mast-arm held. Still a direct visual observation, not a field survey.\n): pedestrian head mounted on the same pole as the vehicle signal.",
       "position_m": [
         -10.453328130062157,
         3.114463138364721
@@ -2551,7 +2559,8 @@
       "confirmed": true,
       "crosswalk_offset_m": 6.210905646537566,
       "crosswalk_offset_source": "osm_survey",
-      "crosswalk_style": "lines"
+      "crosswalk_style": "lines",
+      "stop_bar_offset_m": 13.453973499085103
     },
     {
       "name": "broad_st_east",
@@ -2567,7 +2576,8 @@
       "confirmed": true,
       "crosswalk_offset_m": 6.514727806522351,
       "crosswalk_offset_source": "osm_survey",
-      "crosswalk_style": "lines"
+      "crosswalk_style": "lines",
+      "stop_bar_offset_m": 13.043003654567887
     },
     {
       "name": "greenwood_ave_south",
@@ -2583,7 +2593,8 @@
       "confirmed": false,
       "crosswalk_offset_m": 12.711186200932191,
       "crosswalk_offset_source": "osm_survey",
-      "crosswalk_style": "lines"
+      "crosswalk_style": "lines",
+      "stop_bar_offset_m": 19.34833782389782
     },
     {
       "name": "greenwood_ave_north",
@@ -2599,7 +2610,8 @@
       "confirmed": false,
       "crosswalk_offset_m": 11.140328206632804,
       "crosswalk_offset_source": "osm_survey",
-      "crosswalk_style": "lines"
+      "crosswalk_style": "lines",
+      "stop_bar_offset_m": 15.444567756726745
     }
   ],
   "refuge_islands": [],

@@ -27,7 +27,10 @@ VEHICLE_SIGNAL_LENS_COLORS = [
     (0.05, 0.55, 0.15),  # green (bottom)
 ]
 TRAFFIC_SIGNAL_POLE_HEIGHT_M = 5.5  # taller than the streetlight pole (4.5 m) - matches a real signal pole
-TRAFFIC_SIGNAL_ARM_LENGTH_M = 2.2  # short davit arm, confirmed NOT a full-width mast arm (see sites/README.md)
+# Real arm length is a full-width mast arm (see sites/README.md / config.yaml signals.pole_type), computed
+# per-corner from real adjacent leg widths in src/props.py and passed in as each prop's arm_length_m. This
+# constant is only a fallback for a prop dict missing that field (e.g. a site with no signals.pole_type data).
+TRAFFIC_SIGNAL_ARM_LENGTH_M = 2.2
 PED_SIGNAL_MOUNT_HEIGHT_M = 2.3  # typical pedestrian signal head mounting height
 
 # RRFB (Rectangular Rapid Flashing Beacon): a MUTCD W11-2 pedestrian-crossing
@@ -152,14 +155,17 @@ def add_vehicle_signal_head(name: str, position: tuple, heading_deg: float, hous
     return housing
 
 
-def add_traffic_signal_pole(name: str, position: tuple, heading_deg: float, pole_mat, housing_mat):
-    """Pole-mounted rigid/davit arm signal - the confirmed pole type for this
-    intersection (NOT a full-width mast arm, NOT span-wire; see sites/README.md
-    `signals` block / config.yaml). A tall post + a short horizontal arm
-    reaching toward the roadway (inward, opposite the pole's outward
-    corner-fillet offset) + a procedural 3-section vehicle head at the arm's
-    end. Exact arm/head aim is a render-fidelity simplification, not a
-    signal-timing-accurate model of which approach each head actually faces."""
+def add_traffic_signal_pole(name: str, position: tuple, heading_deg: float, pole_mat, housing_mat,
+                             arm_length_m: float = TRAFFIC_SIGNAL_ARM_LENGTH_M):
+    """Full-width mast-arm signal - the confirmed pole type for this
+    intersection (NOT a short pole-mounted rigid/davit arm, NOT span-wire; see
+    sites/README.md `signals` block / config.yaml). A tall post + a
+    horizontal arm reaching toward the roadway (inward, opposite the pole's
+    outward corner-fillet offset) + a procedural 3-section vehicle head at the
+    arm's end. `arm_length_m` is computed upstream (src/props.py) from this
+    corner's real adjacent leg widths, not hardcoded - exact arm/head aim is
+    still a render-fidelity simplification, not a signal-timing-accurate
+    model of which approach each head actually faces."""
     x, y = position
     bpy.ops.mesh.primitive_cylinder_add(
         radius=0.1, depth=TRAFFIC_SIGNAL_POLE_HEIGHT_M, location=(x, y, TRAFFIC_SIGNAL_POLE_HEIGHT_M / 2)
@@ -171,14 +177,14 @@ def add_traffic_signal_pole(name: str, position: tuple, heading_deg: float, pole
     inward = math.radians(heading_deg + 180)
     dx, dy = math.cos(inward), math.sin(inward)
     arm_z = TRAFFIC_SIGNAL_POLE_HEIGHT_M - 0.4
-    arm_center = (x + dx * TRAFFIC_SIGNAL_ARM_LENGTH_M / 2, y + dy * TRAFFIC_SIGNAL_ARM_LENGTH_M / 2, arm_z)
-    bpy.ops.mesh.primitive_cylinder_add(radius=0.05, depth=TRAFFIC_SIGNAL_ARM_LENGTH_M, location=arm_center)
+    arm_center = (x + dx * arm_length_m / 2, y + dy * arm_length_m / 2, arm_z)
+    bpy.ops.mesh.primitive_cylinder_add(radius=0.05, depth=arm_length_m, location=arm_center)
     arm = bpy.context.active_object
     arm.name = f"{name}_arm"
     arm.rotation_euler = (0, math.radians(90), inward)  # lay the cylinder flat, then point it inward
     arm.data.materials.append(pole_mat)
 
-    head_pos = (x + dx * TRAFFIC_SIGNAL_ARM_LENGTH_M, y + dy * TRAFFIC_SIGNAL_ARM_LENGTH_M, arm_z - 0.2)
+    head_pos = (x + dx * arm_length_m, y + dy * arm_length_m, arm_z - 0.2)
     add_vehicle_signal_head(f"{name}_head", head_pos, heading_deg, housing_mat)
     return pole
 
@@ -281,7 +287,8 @@ def add_prop(name: str, prop: dict, streetlight_template, pole_mat, signal_housi
     elif ptype == "school_zone_sign":
         add_school_zone_sign(name, pos, heading, pole_mat)
     elif ptype == "traffic_signal_pole":
-        add_traffic_signal_pole(name, pos, heading, pole_mat, signal_housing_mat)
+        add_traffic_signal_pole(name, pos, heading, pole_mat, signal_housing_mat,
+                                 arm_length_m=prop.get("arm_length_m", TRAFFIC_SIGNAL_ARM_LENGTH_M))
     elif ptype == "pedestrian_signal_head":
         add_pedestrian_signal_head(name, pos, heading, prop.get("own_post", False), ped_signal_housing_mat, pole_mat)
     elif ptype == "no_turn_on_red_sign":

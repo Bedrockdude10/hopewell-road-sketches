@@ -11,7 +11,7 @@ from pathlib import Path
 from shapely.geometry import Point, Polygon
 
 from src.coords import FT_TO_M, building_footprint_ft, pt_to_local_m, ring_to_local_m, wgs84_ring_to_local_m
-from src.crosswalks import resolve_crosswalk_offsets
+from src.crosswalks import resolve_crosswalk_offsets, resolve_stop_bar_offsets
 from src.geometry_model import build_pavement_polygon, corner_overlay_polygon, hatch_lines_ft, lane_narrowing_polygons_ft
 from src.intersection import IntersectionModel
 from src.mesh_utils import build_decimated_building_mesh
@@ -85,6 +85,11 @@ def export_scenario(model: IntersectionModel, state: DesignState, name: str, out
     if crossings is None:
         crossings = fetch_crossings(model.center_wgs84, radius_m=BUILDING_CONTEXT_RADIUS_M)
     crosswalk_offsets = resolve_crosswalk_offsets(state, crossings)
+    # Stop bars only make sense at a signalized intersection (this site's
+    # config.yaml `signals` block is what "signalized" means - see
+    # src/props.py's _traffic_signal_props/_no_turn_on_red_props, which gate
+    # the same way).
+    stop_bar_offsets = resolve_stop_bar_offsets(state, crosswalk_offsets) if model.config.get("signals") else {}
 
     # OSM building footprints are independent of (and coarser than) our SLD/field-measured
     # curb geometry - a few end up drawn overlapping the actual pavement. Drop those rather
@@ -153,7 +158,11 @@ def export_scenario(model: IntersectionModel, state: DesignState, name: str, out
         "corner_hatching_lines": corner_hatching_lines,
         "corner_apron_polygons": corner_apron_polygons,
         "props": [
-            {**p, "position_m": pt_to_local_m(p["position_ft"][0], p["position_ft"][1], center_ft)}
+            {
+                **p,
+                "position_m": pt_to_local_m(p["position_ft"][0], p["position_ft"][1], center_ft),
+                **({"arm_length_m": p["arm_length_ft"] * FT_TO_M} if "arm_length_ft" in p else {}),
+            }
             for p in props
         ],
         "legs": [
@@ -170,6 +179,8 @@ def export_scenario(model: IntersectionModel, state: DesignState, name: str, out
                 # A treatment (e.g. upgrade_crosswalk_markings) can override the style;
                 # otherwise default to what OSM says exists today ("lines" if unmapped).
                 "crosswalk_style": state.crosswalk_styles.get(leg_name, "lines"),
+                # None (not drawn) unless this site's intersection is signalized (see stop_bar_offsets above).
+                "stop_bar_offset_m": stop_bar_offsets[leg_name] * FT_TO_M if leg_name in stop_bar_offsets else None,
             }
             for leg_name, leg in state.legs.items()
         ],

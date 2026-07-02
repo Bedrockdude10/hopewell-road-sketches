@@ -123,6 +123,21 @@ legs:
       parcel-to-parcel ROW gap minus assumed 8 ft/side sidewalk+verge). NOT a
       field measurement.
 
+# Phase 4 fidelity: site-specific signage beyond the generic per-corner
+# streetlight / per-approach stop sign that src/export.py places automatically
+# from real fillet/leg geometry. `props.extra` entries are NOT grounded in a
+# real signage inventory for this corridor - placement is a request from the
+# fidelity pass, not a surveyed fact. See src/export.py:_extra_props_from_config.
+props:
+  extra:
+    - type: school_zone_sign
+      leg: broad_st_west
+      offset_ft: 20
+      side: right
+      note: >
+        Placed per fidelity-pass request (west-side crossing), not confirmed
+        against a real school-zone signage inventory for this corridor.
+
 # Phase 3 inputs.
 treatments:
   existing_corner_radius_ft: 20  # ESTIMATE: typical as-built radius for a small NJ downtown arterial/local

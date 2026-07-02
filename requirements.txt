@@ -22,3 +22,6 @@ requests==2.34.2
 shapely==2.1.2
 six==1.17.0
 urllib3==2.7.0
+fast_simplification==0.1.13
+mapbox_earcut==2.0.0
+trimesh==4.12.2

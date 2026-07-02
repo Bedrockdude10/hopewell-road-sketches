@@ -21,6 +21,7 @@ from src.export import BUILDING_CONTEXT_RADIUS_M, export_scenario
 from src.intersection import load_intersection_model
 from src.osm_context import fetch_buildings, fetch_crossings
 from src.site import add_site_arg, load_site_scenarios, site_output_dir
+from src.theme import build_default_theme
 from src.treatments import DesignState
 
 BLENDER_SCENE_SCRIPT = Path(__file__).resolve().parent / "blender_scene.py"
@@ -74,10 +75,15 @@ def main():
     crossings = fetch_crossings(model.center_wgs84, radius_m=BUILDING_CONTEXT_RADIUS_M)
     print(f"  -> {len(crossings)} crossings")
 
+    print("Fetching render theme (Poly Haven textures/models, cached under output/.textures/)...")
+    theme = build_default_theme()
+    missing = [k for k, v in theme.items() if v is None]
+    print(f"  -> ready ({len(theme) - len(missing)}/{len(theme)} assets; missing: {missing or 'none'})")
+
     existing_json = export_scenario(model, baseline, "Existing Conditions", out_dir / "geometry_existing.json",
-                                     buildings=buildings, crossings=crossings)
+                                     buildings=buildings, crossings=crossings, theme=theme)
     proposed_json = export_scenario(model, scenario, "Proposed Treatments", out_dir / "geometry_proposed.json",
-                                     buildings=buildings, crossings=crossings)
+                                     buildings=buildings, crossings=crossings, theme=theme)
 
     render_all(blender_bin, [
         (existing_json, out_dir / "phase4_render_existing.png"),

@@ -6,9 +6,9 @@ import requests
 from geopy.geocoders import Nominatim
 from shapely.geometry import Point, box
 
-from src.geometry_model import NJ_STATE_PLANE_FT, WGS84, buffer_point_wgs84, reproject_to_state_plane
+from src.geometry.model import NJ_STATE_PLANE_FT, WGS84, buffer_point_wgs84, reproject_to_state_plane
 
-DATA_DIR = Path(__file__).resolve().parent.parent / "data"
+DATA_DIR = Path(__file__).resolve().parent.parent.parent / "data"  # src/sources/data_loader.py -> repo root
 # Defaults only - a site's config.yaml (data_sources:) can point at different
 # files entirely (e.g. a different county's parcels/road network), since
 # nothing else in this module is specific to Mercer County or NJDOT's statewide file.

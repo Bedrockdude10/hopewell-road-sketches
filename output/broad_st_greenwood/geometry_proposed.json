@@ -2226,10 +2226,6 @@
       -27.04455932917502
     ],
     [
-      3.3691639912527056,
-      -19.847234565126247
-    ],
-    [
       21.598654704491654,
       -27.19794473038204
     ],
@@ -2272,10 +2268,6 @@
     [
       -3.0934883166049607,
       19.7783014522478
-    ],
-    [
-      -12.063155623000581,
-      7.205693583236822
     ],
     [
       -15.940435400020705,
@@ -2360,58 +2352,6 @@
       "position_m": [
         -9.380247029124666,
         2.877724159784429
-      ]
-    },
-    {
-      "type": "stop_sign",
-      "position_ft": [
-        419129.49136132834,
-        566793.2165921372
-      ],
-      "heading_deg": -55.612512718028476,
-      "source": "approximation: placed on the leg's near-corner curb line, arbitrary side (not a real traffic-direction/engineering placement study)",
-      "position_m": [
-        -9.04200799523131,
-        2.0833074516993015
-      ]
-    },
-    {
-      "type": "stop_sign",
-      "position_ft": [
-        419201.65535997687,
-        566759.7715509862
-      ],
-      "heading_deg": 122.71698879788184,
-      "source": "approximation: placed on the leg's near-corner curb line, arbitrary side (not a real traffic-direction/engineering placement study)",
-      "position_m": [
-        12.953578792838893,
-        -8.110741091131233
-      ]
-    },
-    {
-      "type": "stop_sign",
-      "position_ft": [
-        419162.7409247311,
-        566740.4144672692
-      ],
-      "heading_deg": 29.702738337988254,
-      "source": "approximation: placed on the leg's near-corner curb line, arbitrary side (not a real traffic-direction/engineering placement study)",
-      "position_m": [
-        1.0924589299205225,
-        -14.010780208076444
-      ]
-    },
-    {
-      "type": "stop_sign",
-      "position_ft": [
-        419158.711206315,
-        566828.2056495129
-      ],
-      "heading_deg": -150.29773481587068,
-      "source": "approximation: placed on the leg's near-corner curb line, arbitrary side (not a real traffic-direction/engineering placement study)",
-      "position_m": [
-        -0.1357992432898376,
-        12.747972139812727
       ]
     },
     {

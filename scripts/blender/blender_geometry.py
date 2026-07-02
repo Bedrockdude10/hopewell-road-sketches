@@ -62,7 +62,7 @@ def extrude_polygon(name: str, coords_2d: list, height: float, material, uv_tile
 
 def build_mesh_from_data(name: str, vertices: list, faces: list, material):
     """Build an object directly from precomputed vertices/faces (e.g. a
-    trimesh-decimated building - see src/mesh_utils.py) rather than extruding
+    trimesh-decimated building - see src/render/mesh_utils.py) rather than extruding
     a 2D ring ourselves."""
     mesh = bpy.data.meshes.new(name)
     mesh.from_pydata(vertices, [], faces)

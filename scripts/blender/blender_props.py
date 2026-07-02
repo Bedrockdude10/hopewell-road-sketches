@@ -3,7 +3,7 @@ fallback), signage incl. traffic signals (procedural - no CC0
 traffic-sign/signal-head source found, see README.md "Phase 4 fidelity"), and
 trees (geometry-nodes instancing of one procedural low-poly mesh). Placement
 (position/heading/which corner gets what) is decided upstream in
-src/props.py - this module only ever draws a prop at a given position.
+src/render/props.py - this module only ever draws a prop at a given position.
 Imported by blender_scene.py - runs under Blender's bundled Python."""
 import math
 from pathlib import Path
@@ -28,7 +28,7 @@ VEHICLE_SIGNAL_LENS_COLORS = [
 ]
 TRAFFIC_SIGNAL_POLE_HEIGHT_M = 5.5  # taller than the streetlight pole (4.5 m) - matches a real signal pole
 # Real arm length is a full-width mast arm (see sites/README.md / config.yaml signals.pole_type), computed
-# per-corner from real adjacent leg widths in src/props.py and passed in as each prop's arm_length_m. This
+# per-corner from real adjacent leg widths in src/render/props.py and passed in as each prop's arm_length_m. This
 # constant is only a fallback for a prop dict missing that field (e.g. a site with no signals.pole_type data).
 TRAFFIC_SIGNAL_ARM_LENGTH_M = 2.2
 PED_SIGNAL_MOUNT_HEIGHT_M = 2.3  # typical pedestrian signal head mounting height
@@ -164,12 +164,12 @@ def add_traffic_signal_pole(name: str, position: tuple, head_facing_deg: float, 
 
     arm_heading_deg and head_facing_deg are DIFFERENT directions (not a fixed
     180 degrees apart): the arm extends at a right angle to the one leg it's
-    built for (see src/props.py:_traffic_signal_props for which leg and why),
+    built for (see src/render/props.py:_traffic_signal_props for which leg and why),
     while the head faces back down that same leg toward oncoming traffic -
     those are perpendicular axes, not opposite ends of one axis. Falls back
     to the old "arm opposite the head" behavior if arm_heading_deg isn't
     given (e.g. a prop dict from a site/version that doesn't set it).
-    arm_length_m is computed upstream (src/props.py) from the real leg width
+    arm_length_m is computed upstream (src/render/props.py) from the real leg width
     this arm actually spans, not hardcoded."""
     x, y = position
     bpy.ops.mesh.primitive_cylinder_add(
@@ -246,7 +246,7 @@ def add_rrfb(name: str, position: tuple, heading_deg: float, post_mat):
     crossing warning sign (MUTCD W11-2) with two amber beacon bars mounted
     below it. Real installations typically pair a matching unit on the
     opposite curb - only one assembly is modeled per exported prop entry (see
-    src/treatments.py:add_extra_prop)."""
+    src/geometry/treatments.py:add_extra_prop)."""
     x, y = position
     bpy.ops.mesh.primitive_cylinder_add(radius=0.05, depth=RRFB_MOUNT_HEIGHT_M, location=(x, y, RRFB_MOUNT_HEIGHT_M / 2))
     post = bpy.context.active_object
@@ -281,7 +281,7 @@ def add_rrfb(name: str, position: tuple, heading_deg: float, post_mat):
 
 def add_prop(name: str, prop: dict, streetlight_template, pole_mat, signal_housing_mat, ped_signal_housing_mat):
     """Build the Blender geometry for one exported prop dict (placement
-    decided upstream by src/props.py), dispatching on its "type" field to the
+    decided upstream by src/render/props.py), dispatching on its "type" field to the
     matching builder above. Kept next to the builders so adding a new prop
     type never requires touching blender_scene.py."""
     pos, heading, ptype = prop["position_m"], prop["heading_deg"], prop["type"]

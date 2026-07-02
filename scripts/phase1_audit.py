@@ -22,8 +22,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import geopandas as gpd
 import matplotlib.pyplot as plt
 
-from src.data_loader import DEFAULT_ROAD_NETWORK_PATH, geocode_intersection, load_road_network
-from src.geometry_model import NJ_STATE_PLANE_FT, buffer_point_wgs84, clip_to_radius, reproject_to_state_plane
+from src.sources.data_loader import DEFAULT_ROAD_NETWORK_PATH, geocode_intersection, load_road_network
+from src.geometry.model import NJ_STATE_PLANE_FT, buffer_point_wgs84, clip_to_radius, reproject_to_state_plane
 from src.site import list_sites, load_site_config, site_output_dir
 
 ATTR_COLUMNS = [

@@ -15,13 +15,13 @@ intersection:
   name: "Broad St (CR 518) & Greenwood Ave, Hopewell Borough, NJ 08525"
   center_wgs84: [-74.7619598, 40.389179]
   # street1/street2/anchor_query are what scripts/phase1_audit.py used to
-  # resolve center_wgs84 in the first place (src/data_loader.py:geocode_intersection)
+  # resolve center_wgs84 in the first place (src/sources/data_loader.py:geocode_intersection)
   # - kept here so re-resolving (e.g. if OSM data changes) is a one-command rerun.
   street1: "Broad St"
   street2: "Greenwood Ave"
   anchor_query: "Broad Street, Hopewell Borough, NJ 08525"
   resolution_method: >
-    OSM/Overpass way-endpoint match (src/data_loader.py:geocode_intersection) -
+    OSM/Overpass way-endpoint match (src/sources/data_loader.py:geocode_intersection) -
     West/East Broad Street and North/South Greenwood Avenue all share one node.
     Cross-checked against the NJDOT SLD: this is Route 518 milepost 10.30, shown
     as a signalized intersection in data/00000518__8.000-11.000.pdf (page 1).
@@ -31,7 +31,7 @@ intersection:
   # simple "lines" style (2 transverse boundary lines, no bars) - matches OSM's
   # own crossing:markings=lines tag on all 4 mapped crossings here. The style
   # actually used per scenario lives in DesignState.crosswalk_styles (see
-  # src/treatments.py:upgrade_crosswalk_markings) - this list only says which
+  # src/geometry/treatments.py:upgrade_crosswalk_markings) - this list only says which
   # legs have ANY marked crossing worth drawing.
   # (Separately, a long rectangle further south on Greenwood in the aerial
   # photo looks like a loading/no-parking box, not a crosswalk - not modeled.)
@@ -57,7 +57,7 @@ corridor:
 # `confirmed: false` legs use a placeholder and should not be trusted for
 # final treatment design. `bearing_deg` is the approximate compass bearing
 # (0=N, 90=E, clockwise) from the intersection center OUTWARD along this leg -
-# it's how src/intersection.py tells apart multiple legs sharing the same SRI
+# it's how src/geometry/intersection.py tells apart multiple legs sharing the same SRI
 # (a road normally produces 2 legs, one on each side of the intersection) and
 # is the only thing that has to generalize correctly for this to work on an
 # intersection shaped differently than a neat 4-way + (T-intersections, 3-way
@@ -128,7 +128,7 @@ legs:
 # via direct street-view photo review (Danny, cross-referenced against all 4
 # approaches), 2026-07-02 - a real, observed fact, just not a measured one,
 # distinct from the existing_corner_radius_ft-style geometric estimates
-# elsewhere in this file. See src/export.py:_traffic_signal_props /
+# elsewhere in this file. See src/render/export.py:_traffic_signal_props /
 # _no_turn_on_red_props and sites/README.md for the schema.
 signals:
   pole_type: >
@@ -157,10 +157,10 @@ signals:
   no_turn_on_red_legs: [broad_st_west, broad_st_east]
 
 # Phase 4 fidelity: site-specific signage beyond the generic per-corner
-# streetlight / per-approach stop sign that src/export.py places automatically
+# streetlight / per-approach stop sign that src/render/export.py places automatically
 # from real fillet/leg geometry. `props.extra` entries are NOT grounded in a
 # real signage inventory for this corridor - placement is a request from the
-# fidelity pass, not a surveyed fact. See src/export.py:_extra_props_from_config.
+# fidelity pass, not a surveyed fact. See src/render/export.py:_extra_props_from_config.
 props:
   extra:
     - type: school_zone_sign

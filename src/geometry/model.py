@@ -205,7 +205,7 @@ def lane_narrowing_polygons_ft(leg: "Leg", stripe_width_ft: float) -> list[Polyg
     """Two thin paint-only strips just inside each curb line - a visual lane
     narrowing treatment achieved with paint, NOT a curb_to_curb_ft change (no
     pavement/curb geometry is touched). Used by paint-only proposals - see
-    src/treatments.py:add_lane_narrowing."""
+    src/geometry/treatments.py:add_lane_narrowing."""
     half = leg.curb_to_curb_ft / 2
     inner_half = max(half - stripe_width_ft, 0.5)
     polys = []
@@ -221,7 +221,7 @@ def corner_overlay_polygon(pieces: dict, center_ft: Point, depth_ft: float) -> P
     """A 'virtual bump-out' zone hugging a corner's fillet arc, extending
     depth_ft inward toward the intersection center - flush with the pavement,
     no elevation/curb change. Shared shape for two different render
-    treatments: diagonal paint hatching (src/treatments.py:add_corner_hatching)
+    treatments: diagonal paint hatching (src/geometry/treatments.py:add_corner_hatching)
     and a textured mountable apron (add_mountable_apron) - same footprint,
     different surface finish.
 

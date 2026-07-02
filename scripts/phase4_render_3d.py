@@ -23,14 +23,14 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from src.export import BUILDING_CONTEXT_RADIUS_M, export_scenario
-from src.intersection import load_intersection_model
-from src.osm_context import fetch_buildings, fetch_crossings
+from src.render.export import BUILDING_CONTEXT_RADIUS_M, export_scenario
+from src.geometry.intersection import load_intersection_model
+from src.sources.osm_context import fetch_buildings, fetch_crossings
 from src.site import add_scenario_arg, add_site_arg, load_site_scenarios, scenario_label, site_output_dir
-from src.theme import build_default_theme
-from src.treatments import DesignState
+from src.render.theme import build_default_theme
+from src.geometry.treatments import DesignState
 
-BLENDER_SCENE_SCRIPT = Path(__file__).resolve().parent / "blender_scene.py"
+BLENDER_SCENE_SCRIPT = Path(__file__).resolve().parent / "blender" / "blender_scene.py"
 DEFAULT_MAC_BLENDER = "/Applications/Blender.app/Contents/MacOS/Blender"
 
 

@@ -16,7 +16,7 @@ def make_material(name: str, color: tuple, roughness: float = 0.9):
 def make_textured_material(name: str, texture_paths: dict | None, fallback_color: tuple,
                             fallback_roughness: float = 0.9):
     """Diffuse/Roughness/Normal-mapped material from local file paths (already
-    downloaded by src/theme.py in the venv - this function never fetches
+    downloaded by src/render/theme.py in the venv - this function never fetches
     anything). Falls back to a flat color material if texture_paths is falsy
     or any image fails to load, so a missing/corrupt file never crashes the render."""
     if not texture_paths:

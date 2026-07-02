@@ -1,10 +1,10 @@
 """Resolve the set of real texture/model files a render should use, fetching
-them (via src/assets.py) in the project's normal Python environment. Blender's
+them (via src/render/assets.py) in the project's normal Python environment. Blender's
 own bundled Python has no network access / requests / this project's venv, so
 blender_scene.py never fetches anything itself - it only reads the local paths
 this module resolves, with every entry allowed to be None (asset unavailable ->
 blender_scene.py falls back to a flat color / procedural shape)."""
-from src.assets import fetch_polyhaven_model, fetch_polyhaven_texture
+from src.render.assets import fetch_polyhaven_model, fetch_polyhaven_texture
 
 # Poly Haven slugs chosen by browsing api.polyhaven.com/assets?t=textures - see
 # README.md "Phase 4 fidelity" for why these specific ones and why no CC0 source

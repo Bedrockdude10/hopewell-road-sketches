@@ -1,7 +1,7 @@
 """Example treatment scenarios, shared by the Phase 3 plan-view render and the
 Phase 4 3D export so both phases show the exact same design."""
-from src.coords import FT_TO_M
-from src.treatments import (
+from src.render.coords import FT_TO_M
+from src.geometry.treatments import (
     DesignState, add_corner_hatching, add_extra_prop, add_lane_narrowing, add_mountable_apron, bump_out,
     find_corner, raise_crossing, refuge_island, shift_crosswalk_offset, upgrade_crosswalk_markings,
 )

@@ -14,10 +14,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import matplotlib.pyplot as plt
 
-from src.intersection import IntersectionModel, load_intersection_model
-from src.render import legend_handles, plot_design_state
+from src.geometry.intersection import IntersectionModel, load_intersection_model
+from src.render.plan_view import legend_handles, plot_design_state
 from src.site import add_site_arg, site_output_dir
-from src.treatments import DesignState
+from src.geometry.treatments import DesignState
 
 
 def print_leg_summary(model: IntersectionModel):

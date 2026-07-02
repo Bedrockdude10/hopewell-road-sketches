@@ -1,11 +1,11 @@
 """Coordinate conversions shared by the Phase 4 export: WGS84 -> NJ State
 Plane feet -> local meters centered on the intersection (what
-scripts/blender_scene.py actually consumes, since Blender's bundled Python
+scripts/blender/blender_scene.py actually consumes, since Blender's bundled Python
 has no shapely/geopandas/pyproj)."""
 import pyproj
 from shapely.geometry import Polygon
 
-from src.geometry_model import NJ_STATE_PLANE_FT, WGS84
+from src.geometry.model import NJ_STATE_PLANE_FT, WGS84
 
 FT_TO_M = 0.3048
 

@@ -1,19 +1,19 @@
 """OSM/Overpass context data (building massing) for presentation-quality 3D
 renders. This is background dressing only - never used for the authoritative
 curb/pavement geometry, which comes from NJDOT SLD + field measurement (see
-src/data_loader.py for why OSM's own data isn't trusted for that)."""
+src/sources/data_loader.py for why OSM's own data isn't trusted for that)."""
 import hashlib
 import json
 from pathlib import Path
 
 from shapely.geometry import Point
 
-from src.data_loader import query_overpass
-from src.geometry_model import buffer_point_wgs84
+from src.sources.data_loader import query_overpass
+from src.geometry.model import buffer_point_wgs84
 
 DEFAULT_BUILDING_HEIGHT_M = 7.0  # ~2 stories, typical for small-borough Main St buildings
 METERS_PER_LEVEL = 3.0
-CACHE_DIR = Path(__file__).resolve().parent.parent / "output" / ".cache"
+CACHE_DIR = Path(__file__).resolve().parent.parent.parent / "output" / ".cache"  # src/sources/osm_context.py -> repo root
 
 
 def fetch_buildings(center_wgs84: Point, radius_m: float, use_cache: bool = True) -> list[dict]:

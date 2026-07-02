@@ -9,8 +9,8 @@ import geopandas as gpd
 import numpy as np
 from shapely.geometry import Point
 
-from src.data_loader import load_parcels_near, load_road_network
-from src.geometry_model import (
+from src.sources.data_loader import load_parcels_near, load_road_network
+from src.geometry.model import (
     Leg,
     build_corner_fillets,
     buffer_point_wgs84,
@@ -22,7 +22,7 @@ from src.geometry_model import (
 )
 from src.site import load_site_config
 
-ROOT_DIR = Path(__file__).resolve().parent.parent
+ROOT_DIR = Path(__file__).resolve().parent.parent.parent  # src/geometry/intersection.py -> repo root
 
 
 @dataclass

@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 
 from shapely.geometry import Polygon
 
-from src.geometry_model import Leg, fillet_curb_corner, leg_clearance_ft
+from src.geometry.model import Leg, fillet_curb_corner, leg_clearance_ft
 
 NACTO_MIN_REFUGE_ISLAND_WIDTH_FT = 6
 LANE_NARROWING_DEFAULT_STRIPE_FT = 5.0  # common low-cost NACTO paint buffer/shoulder-stripe width
@@ -217,7 +217,7 @@ def add_mountable_apron(state: DesignState, corner: tuple[str, str],
 
 def shift_crosswalk_offset(state: DesignState, leg_name: str, delta_ft: float) -> DesignState:
     """Shift a leg's crosswalk further from (positive) or closer to (negative)
-    the intersection, on top of whatever src/crosswalks.py:resolve_crosswalk_offsets
+    the intersection, on top of whatever src/render/crosswalks.py:resolve_crosswalk_offsets
     would otherwise resolve (a real OSM-surveyed position or the geometric
     curve-clearance estimate) - e.g. to give a turning fire apparatus more room
     before it encounters the crosswalk mid-turn."""
@@ -239,7 +239,7 @@ def add_extra_prop(state: DesignState, leg_name: str, prop_type: str, offset_ft:
     belong to this particular proposal, not every scenario at this site.
 
     offset_ft defaults to None, meaning "place it at this leg's real resolved
-    crosswalk offset" (src/props.py:_extra_props_from_state falls back to it,
+    crosswalk offset" (src/render/props.py:_extra_props_from_state falls back to it,
     same as _extra_props_from_config does for site-config props) - an RRFB or
     a relocated crossing sign belongs AT the crossing, and a real OSM-surveyed
     crosswalk can sit much farther from the corner than a small guessed

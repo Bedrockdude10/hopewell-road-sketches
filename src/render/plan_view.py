@@ -3,9 +3,9 @@ import geopandas as gpd
 import numpy as np
 from matplotlib.lines import Line2D
 
-from src.geometry_model import build_pavement_polygon
-from src.intersection import IntersectionModel
-from src.treatments import DesignState
+from src.geometry.model import build_pavement_polygon
+from src.geometry.intersection import IntersectionModel
+from src.geometry.treatments import DesignState
 
 
 def plot_design_state(ax, model: IntersectionModel, state: DesignState, title: str, dimension_labels: bool = True):

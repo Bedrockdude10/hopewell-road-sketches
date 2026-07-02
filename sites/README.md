@@ -50,7 +50,7 @@ signals:                              # optional - only for signalized intersect
   pole_type: >                        # free text - what kind of signal hardware (informs blender_scene.py's
     ...                               # procedural geometry, e.g. "full-width mast arm" or "pole-mounted
                                        # rigid/davit arm" - a mast arm's reach is derived from real adjacent
-                                       # leg widths (src/props.py), not read from this string
+                                       # leg widths (src/render/props.py), not read from this string
   source: >                           # REQUIRED - how this was confirmed (street-view photo review, field
     ...                               # survey, etc.) - doesn't have to be a survey, but say what it actually is
   corners:
@@ -85,7 +85,7 @@ def build_demo_scenario(baseline: DesignState) -> DesignState:
     ...
 ```
 
-Compose treatments from `src/treatments.py` (`bump_out`, `refuge_island`, `raise_crossing`,
+Compose treatments from `src/geometry/treatments.py` (`bump_out`, `refuge_island`, `raise_crossing`,
 `upgrade_crosswalk_markings`) - see `sites/broad_st_greenwood/scenarios.py` for a worked example.
 Nothing stops you from adding more functions to a site's `scenarios.py` for
 alternative scenarios (e.g. `build_minimal_scenario`); phase3/phase4 scripts

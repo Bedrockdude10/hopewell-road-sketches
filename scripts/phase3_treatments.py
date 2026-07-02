@@ -12,10 +12,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import matplotlib.pyplot as plt
 
-from src.intersection import load_intersection_model
-from src.render import legend_handles, plot_design_state
+from src.geometry.intersection import load_intersection_model
+from src.render.plan_view import legend_handles, plot_design_state
 from src.site import DEFAULT_SCENARIO, add_scenario_arg, add_site_arg, load_site_scenarios, scenario_label, site_output_dir
-from src.treatments import DesignState
+from src.geometry.treatments import DesignState
 
 
 def main():

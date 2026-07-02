@@ -1,6 +1,6 @@
 """3D mesh utilities for background/context geometry (OSM buildings) that isn't
 the subject of the render and doesn't need full poly density. Not used for the
-authoritative pavement/curb geometry - see geometry_model.py for that."""
+authoritative pavement/curb geometry - see src/geometry/model.py for that."""
 from shapely.geometry import Polygon
 
 MAX_BUILDING_FACES_BEFORE_DECIMATION = 40  # a straight-walled prism from a simple

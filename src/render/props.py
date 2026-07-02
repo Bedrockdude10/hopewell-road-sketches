@@ -1,14 +1,14 @@
 """Street-furniture placement: streetlights, stop signs, traffic signals
 (pole + pedestrian head), no-turn-on-red signs, and any site-specific extras
 from config.yaml. Every function here only decides WHERE a prop goes and WHY
-(a "source" string on every entry) - scripts/blender_props.py is what
+(a "source" string on every entry) - scripts/blender/blender_props.py is what
 actually draws it. See sites/README.md for the `signals`/`props.extra`
 config schema this reads from."""
 import numpy as np
 from shapely.geometry import Point
 
-from src.intersection import IntersectionModel
-from src.treatments import DesignState
+from src.geometry.intersection import IntersectionModel
+from src.geometry.treatments import DesignState
 
 STREETLIGHT_SIDEWALK_SETBACK_FT = 4
 SIGN_SIDEWALK_SETBACK_FT = 3
@@ -60,7 +60,13 @@ def _stop_sign_props(state: DesignState, offsets_ft: dict) -> list[dict]:
     """One stop sign per approach, placed on the leg's 'right' curb (our own
     left/right offset convention, not a real traffic-direction analysis) just
     past where the roadway straightens out. This is a placement approximation -
-    real stop sign placement depends on engineering judgment not modeled here."""
+    real stop sign placement depends on engineering judgment not modeled here.
+
+    Only called for a site with NO confirmed `signals` block (see build_props)
+    - a real signalized intersection is controlled by its traffic signals, not
+    also by stop signs at every corner; adding both unconditionally would draw
+    hardware that doesn't exist at a site we already have real signal data
+    for, like this one."""
     props = []
     for leg_name, leg in state.legs.items():
         offset_ft = offsets_ft[leg_name][0]
@@ -208,7 +214,7 @@ def _extra_props_from_config(model: IntersectionModel, state: DesignState, offse
 
 def _extra_props_from_state(state: DesignState, offsets_ft: dict) -> list[dict]:
     """Scenario-specific extra signage added by a treatment
-    (src/treatments.py:add_extra_prop) - e.g. an RRFB or a relocated
+    (src/geometry/treatments.py:add_extra_prop) - e.g. an RRFB or a relocated
     school-zone sign that only exists in one particular proposal, not the
     site's baseline config (see _extra_props_from_config for the site-wide
     equivalent)."""
@@ -229,12 +235,15 @@ def _extra_props_from_state(state: DesignState, offsets_ft: dict) -> list[dict]:
 
 
 def build_props(model: IntersectionModel, state: DesignState, offsets_ft: dict, center_ft: Point) -> list[dict]:
-    """All street-furniture props for one scenario export: a streetlight and a
-    stop sign at every corner/approach (always), plus traffic signals and any
-    site-specific or scenario-specific extras."""
+    """All street-furniture props for one scenario export: a streetlight at
+    every corner/approach (always), plus EITHER stop signs (unsignalized
+    intersections) OR traffic signals (this site's `signals` config block -
+    never both, a real signalized intersection isn't also stop-sign
+    controlled), plus any site-specific or scenario-specific extras."""
+    signalized = bool(model.config.get("signals"))
     return (
         _corner_streetlight_props(state.corner_fillets, center_ft)
-        + _stop_sign_props(state, offsets_ft)
+        + ([] if signalized else _stop_sign_props(state, offsets_ft))
         + _traffic_signal_props(model, state, center_ft)
         + _no_turn_on_red_props(model, state, offsets_ft)
         + _extra_props_from_config(model, state, offsets_ft)

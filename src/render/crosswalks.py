@@ -5,9 +5,9 @@ crossings that don't exist yet). See README.md "Crosswalk styles: real data
 over guessing"."""
 from shapely.geometry import LineString
 
-from src.coords import wgs84_to_state_plane
-from src.geometry_model import leg_clearance_ft
-from src.treatments import DesignState
+from src.render.coords import wgs84_to_state_plane
+from src.geometry.model import leg_clearance_ft
+from src.geometry.treatments import DesignState
 
 # OSM crossing:markings values -> our 3 rendered styles. "lines" (two simple
 # transverse boundary lines) is the least visible; FHWA/NACTO guidance treats
@@ -21,10 +21,10 @@ OSM_MARKINGS_TO_STYLE = {
 
 # Distance back toward the intersection from a leg's resolved crosswalk offset
 # to its stop bar: half of the ~10 ft crosswalk depth used in
-# scripts/blender_crosswalks.py (so the setback starts at the crosswalk's near
+# scripts/blender/blender_crosswalks.py (so the setback starts at the crosswalk's near
 # boundary, not its center) plus a typical MUTCD stop-line-to-crosswalk gap.
 # An approximation (no site is surveyed down to exact striping), same category
-# as src/props.py's STREETLIGHT_SIDEWALK_SETBACK_FT.
+# as src/render/props.py's STREETLIGHT_SIDEWALK_SETBACK_FT.
 STOP_BAR_SETBACK_FT = 9.0
 
 

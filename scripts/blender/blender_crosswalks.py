@@ -1,7 +1,7 @@
 """Painted crosswalk styles (lines/continental/ladder) and dashed
 centerlines. Imported by blender_scene.py - runs under Blender's bundled
 Python. See README.md "Crosswalk styles: real data over guessing" for how a
-leg's style is decided upstream in src/export.py."""
+leg's style is decided upstream in src/render/export.py."""
 import mathutils
 
 from blender_geometry import add_stripe_rect
@@ -69,7 +69,7 @@ def add_stop_bar(name: str, near, u, n, width_m: float, material, offset_m: floa
     signal, drawn just behind (intersection side of) the leg's crosswalk.
     Spans only the entering half of the road - `n` is the leg's own 'left'
     direction relative to its outward centerline direction (see
-    src/props.py's left/right convention), which is the entering driver's
+    src/render/props.py's left/right convention), which is the entering driver's
     right-hand side under US right-hand traffic (they travel the *opposite*
     way along the leg, so the sides swap) - a real stop bar never crosses
     into the opposing/receiving lanes, unlike a crosswalk line which spans
@@ -83,7 +83,7 @@ def add_stop_bar(name: str, near, u, n, width_m: float, material, offset_m: floa
 def add_paint_line(name: str, p1: tuple, p2: tuple, width_m: float, material,
                     height_m: float = 0.01, z_base: float = 0.06):
     """A single thin painted line segment between two points - used for
-    corner-hatching diagonal lines (src/geometry_model.py:hatch_lines_ft) and
+    corner-hatching diagonal lines (src/geometry/model.py:hatch_lines_ft) and
     any other simple paint-only marking that's just a straight stripe.
     z_base defaults just above the pavement's own top surface (0.05 m, per
     blender_scene.py's PAVEMENT_HEIGHT_M) - sitting exactly AT that height

@@ -2,28 +2,29 @@
 intersection) so the headless Blender script can build a scene without needing
 shapely/geopandas inside Blender's bundled Python.
 
-This module only orchestrates: coordinate transforms live in src/coords.py,
-crosswalk-to-leg matching in src/crosswalks.py, and street-furniture placement
-in src/props.py."""
+This module only orchestrates: coordinate transforms live in src/render/coords.py,
+crosswalk-to-leg matching in src/render/crosswalks.py, and street-furniture placement
+in src/render/props.py."""
 import json
 from pathlib import Path
 
 from shapely.geometry import Point, Polygon
 
-from src.coords import FT_TO_M, building_footprint_ft, pt_to_local_m, ring_to_local_m, wgs84_ring_to_local_m
-from src.crosswalks import resolve_crosswalk_offsets, resolve_stop_bar_offsets
-from src.geometry_model import build_pavement_polygon, corner_overlay_polygon, hatch_lines_ft, lane_narrowing_polygons_ft
-from src.intersection import IntersectionModel
-from src.mesh_utils import build_decimated_building_mesh
-from src.osm_context import fetch_buildings, fetch_crossings
-from src.props import build_props
-from src.treatments import DesignState, build_sidewalk_pieces
+from src.render.coords import FT_TO_M, building_footprint_ft, pt_to_local_m, ring_to_local_m, wgs84_ring_to_local_m
+from src.render.crosswalks import resolve_crosswalk_offsets, resolve_stop_bar_offsets
+from src.geometry.model import (
+    build_pavement_polygon, corner_overlay_polygon, hatch_lines_ft, lane_narrowing_polygons_ft, leg_clearance_ft,
+)
+from src.geometry.intersection import IntersectionModel
+from src.render.mesh_utils import build_decimated_building_mesh
+from src.sources.osm_context import fetch_buildings, fetch_crossings
+from src.render.props import build_props
+from src.geometry.treatments import DesignState, build_sidewalk_pieces
 
 BUILDING_CONTEXT_RADIUS_M = 130
 SIDEWALK_WIDTH_FT = 6
 NEAR_ZONE_BUFFER_FT = 10  # how far past the farthest crosswalk the "near" (4k texture) pavement zone extends
 TREE_SPACING_FT = 25  # typical municipal street-tree spacing (NACTO/street-design guidance), not a fabricated guess
-TREE_MIN_SETBACK_FROM_CENTER_FT = 20  # NACTO "daylighting" convention - keep trees clear of corner sight triangles
 CORNER_HATCH_SPACING_FT = 2.5  # spacing between rendered diagonal hatch lines - a rendering choice, not MUTCD-specified
 
 
@@ -46,15 +47,13 @@ def _split_near_far(polygons: list[Polygon], center_ft: Point, near_radius_ft: f
     return near_polys, far_polys
 
 
-def _tree_points_along_piece(piece: Polygon, spacing_ft: float, center_ft: Point,
-                              min_setback_from_center_ft: float) -> list[tuple[float, float]]:
+def _tree_points_along_piece(piece: Polygon, spacing_ft: float) -> list[tuple[float, float]]:
     """Sample points along a sidewalk piece's long axis at spacing_ft intervals.
     Corner wedge pieces (not meaningfully elongated) are skipped - trees belong
     along the straight runs of sidewalk, not crammed into a tiny corner fillet.
-    Points within min_setback_from_center_ft of the intersection center are
-    also dropped, even on an otherwise-eligible straight piece - real street
-    trees don't get planted right at a corner (they'd block the sight
-    triangle a driver/pedestrian needs there), so neither should this one."""
+    Proximity to the corner itself is filtered separately (_is_clear_of_corner)
+    since that needs to know which leg a point is actually alongside, not just
+    the piece's own shape."""
     mrr = piece.minimum_rotated_rectangle
     if mrr.geom_type != "Polygon":
         return []
@@ -72,9 +71,32 @@ def _tree_points_along_piece(piece: Polygon, spacing_ft: float, center_ft: Point
     for i in range(n_trees):
         t = (i + 0.5) / n_trees
         pt = Point(a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t)
-        if piece.buffer(1).contains(pt) and pt.distance(center_ft) >= min_setback_from_center_ft:
+        if piece.buffer(1).contains(pt):
             points.append((pt.x, pt.y))
     return points
+
+
+def _is_clear_of_corner(pt: tuple[float, float], legs: dict, corner_fillets: dict) -> bool:
+    """A point counts as clear of the corner only if, projected onto whichever
+    leg's centerline it's actually alongside, it falls past that leg's own
+    real leg_clearance_ft() - the same curb-return clearance distance already
+    used to place crosswalks and stop bars. Filtering by raw distance from
+    the intersection CENTER point (an earlier version of this function did)
+    doesn't work: a wide road's own half-width alone can already exceed a
+    fixed clearance radius at every point along it, so the filter ends up
+    doing nothing on a 60+ ft road while over-filtering a narrow one - the
+    same Euclidean-vs-projected mistake leg_clearance_ft() itself was
+    originally written to avoid (see README.md's Phase 4 general notes)."""
+    point = Point(pt)
+    best_leg, best_along, best_perp = None, 0.0, float("inf")
+    for leg_name, leg in legs.items():
+        along = leg.centerline.project(point)
+        perp = leg.centerline.interpolate(along).distance(point)
+        if perp < best_perp:
+            best_leg, best_along, best_perp = leg_name, along, perp
+    if best_leg is None:
+        return True
+    return best_along >= leg_clearance_ft(best_leg, legs, corner_fillets)
 
 
 def export_scenario(model: IntersectionModel, state: DesignState, name: str, out_path: Path,
@@ -82,7 +104,7 @@ def export_scenario(model: IntersectionModel, state: DesignState, name: str, out
                      theme: dict | None = None) -> Path:
     center_ft = model.center_ft
     if theme is None:
-        from src.theme import build_default_theme
+        from src.render.theme import build_default_theme
         theme = build_default_theme()
     pavement = build_pavement_polygon(state.corner_fillets)
     sidewalk_pieces = build_sidewalk_pieces(state, sidewalk_width_ft=SIDEWALK_WIDTH_FT)
@@ -93,7 +115,7 @@ def export_scenario(model: IntersectionModel, state: DesignState, name: str, out
     crosswalk_offsets = resolve_crosswalk_offsets(state, crossings)
     # Stop bars only make sense at a signalized intersection (this site's
     # config.yaml `signals` block is what "signalized" means - see
-    # src/props.py's _traffic_signal_props/_no_turn_on_red_props, which gate
+    # src/render/props.py's _traffic_signal_props/_no_turn_on_red_props, which gate
     # the same way).
     stop_bar_offsets = resolve_stop_bar_offsets(state, crosswalk_offsets) if model.config.get("signals") else {}
 
@@ -108,12 +130,13 @@ def export_scenario(model: IntersectionModel, state: DesignState, name: str, out
 
     tree_points_ft = [
         pt for piece in sidewalk_pieces
-        for pt in _tree_points_along_piece(piece, TREE_SPACING_FT, center_ft, TREE_MIN_SETBACK_FROM_CENTER_FT)
+        for pt in _tree_points_along_piece(piece, TREE_SPACING_FT)
+        if _is_clear_of_corner(pt, state.legs, state.corner_fillets)
     ]
 
     props = build_props(model, state, crosswalk_offsets, center_ft)
 
-    # Paint-only / no-curb-change proposal treatments (see src/treatments.py:
+    # Paint-only / no-curb-change proposal treatments (see src/geometry/treatments.py:
     # add_lane_narrowing / add_corner_hatching / add_mountable_apron) - all flush
     # with the existing pavement, never touching pavement_near/far or corner_parcels.
     lane_narrowing_stripes = [

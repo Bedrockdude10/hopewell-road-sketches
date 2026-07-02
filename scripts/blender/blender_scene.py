@@ -5,13 +5,14 @@ exports produced by scripts/phase4_export_geometry.py (or phase4_render_3d.py).
 Not run with the project's normal Python - invoke via Blender's own
 interpreter, which has no network access / requests / this project's venv.
 Every real asset (textures, the streetlight model) is fetched beforehand in
-the venv (src/theme.py) and passed in as local file paths via the JSON -
-this script only ever reads files, never fetches them. Accepts any number of
-<geometry.json> <output.png> pairs, all rendered in one Blender process (each
-launch has ~1-1.5s of fixed startup overhead - paying it once for N renders
-instead of N times is the single biggest lever for reducing total render time):
+the venv (src/render/theme.py) and passed in as local file paths via the
+JSON - this script only ever reads files, never fetches them. Accepts any
+number of <geometry.json> <output.png> pairs, all rendered in one Blender
+process (each launch has ~1-1.5s of fixed startup overhead - paying it once
+for N renders instead of N times is the single biggest lever for reducing
+total render time):
 
-  blender --background --python scripts/blender_scene.py -- \\
+  blender --background --python scripts/blender/blender_scene.py -- \\
       output/geometry_existing.json output/phase4_render_existing.png \\
       output/geometry_proposed.json output/phase4_render_proposed.png
 
@@ -150,7 +151,7 @@ def build_scene(data: dict):
     for i, ring in enumerate(data.get("sidewalks_far", [])):
         extrude_polygon(f"sidewalk_far_{i}", ring, 0.03, concrete_far)
 
-    # Paint-only / no-curb-change proposal treatments (src/treatments.py:
+    # Paint-only / no-curb-change proposal treatments (src/geometry/treatments.py:
     # add_lane_narrowing / add_corner_hatching / add_mountable_apron) - sit
     # above BOTH the pavement and the existing crosswalk/centerline markings
     # they can overlap (a stripe runs the whole leg, crossing the crosswalk),
@@ -198,7 +199,7 @@ def build_scene(data: dict):
     # Props: real streetlight model (or procedural fallback) at each corner,
     # procedural signage incl. traffic signals (no CC0 source available - see
     # blender_props.py / README.md). Placement is decided upstream by
-    # src/props.py; add_prop() just dispatches each exported prop dict to its
+    # src/render/props.py; add_prop() just dispatches each exported prop dict to its
     # builder.
     streetlight_template = import_gltf_template(theme.get("streetlight_gltf"), "streetlight_template")
     for i, prop in enumerate(data.get("props", [])):

@@ -201,6 +201,67 @@ def leg_clearance_ft(leg_name: str, legs: dict, corner_fillets: dict, buffer_ft:
     return max_along_dist + buffer_ft
 
 
+def lane_narrowing_polygons_ft(leg: "Leg", stripe_width_ft: float) -> list[Polygon]:
+    """Two thin paint-only strips just inside each curb line - a visual lane
+    narrowing treatment achieved with paint, NOT a curb_to_curb_ft change (no
+    pavement/curb geometry is touched). Used by paint-only proposals - see
+    src/treatments.py:add_lane_narrowing."""
+    half = leg.curb_to_curb_ft / 2
+    inner_half = max(half - stripe_width_ft, 0.5)
+    polys = []
+    for curb, sign in ((leg.left_curb, 1), (leg.right_curb, -1)):
+        inner = leg.centerline.offset_curve(sign * inner_half)
+        ring = list(curb.coords) + list(reversed(inner.coords))
+        if len(ring) >= 3:
+            polys.append(Polygon(ring))
+    return polys
+
+
+def corner_overlay_polygon(pieces: dict, center_ft: Point, depth_ft: float) -> Polygon:
+    """A 'virtual bump-out' zone hugging a corner's fillet arc, extending
+    depth_ft inward toward the intersection center - flush with the pavement,
+    no elevation/curb change. Shared shape for two different render
+    treatments: diagonal paint hatching (src/treatments.py:add_corner_hatching)
+    and a textured mountable apron (add_mountable_apron) - same footprint,
+    different surface finish.
+
+    A clean 4-point kite (arc start -> arc mid -> arc end -> inner point), NOT
+    every point along the arc: using all ~24 arc vertices here produced a
+    self-intersecting ring for some corners (GEOS then rejected it) and, once
+    patched, a jagged boundary that fragmented any hatch line clipped against
+    it into many small pieces - a visibly "tessellated" paint pattern for no
+    benefit, since 3 points already approximate this size of curve smoothly
+    enough for a paint-only overlay."""
+    arc = pieces["arc"]
+    start, mid, end = (arc.interpolate(t, normalized=True) for t in (0.0, 0.5, 1.0))
+    inward = np.array([center_ft.x - mid.x, center_ft.y - mid.y])
+    norm = np.linalg.norm(inward)
+    inward = inward / norm if norm > 1e-6 else np.array([0.0, 0.0])
+    inner_pt = (mid.x + inward[0] * depth_ft, mid.y + inward[1] * depth_ft)
+    return Polygon([start.coords[0], mid.coords[0], end.coords[0], inner_pt])
+
+
+def hatch_lines_ft(polygon: Polygon, spacing_ft: float = 2.0, angle_deg: float = 45.0) -> list[LineString]:
+    """Diagonal hatch lines filling a polygon, clipped to its boundary - used
+    to render paint-only diagonal/chevron marking (e.g. corner_hatching_polygon
+    above) without any real curb/pavement geometry change."""
+    minx, miny, maxx, maxy = polygon.bounds
+    diag = ((maxx - minx) ** 2 + (maxy - miny) ** 2) ** 0.5
+    cx, cy = (minx + maxx) / 2, (miny + maxy) / 2
+    theta = np.radians(angle_deg)
+    u = np.array([np.cos(theta), np.sin(theta)])
+    n = np.array([-u[1], u[0]])
+    lines = []
+    offset = -diag
+    while offset <= diag:
+        center = np.array([cx, cy]) + n * offset
+        clipped = LineString([center - u * diag, center + u * diag]).intersection(polygon)
+        if not clipped.is_empty:
+            lines.extend(clipped.geoms if clipped.geom_type == "MultiLineString" else [clipped])
+        offset += spacing_ft
+    return lines
+
+
 def build_pavement_polygon(corner_fillets: dict) -> Polygon:
     """
     Stitch every corner's (trimmed curb, arc, trimmed curb) into one continuous

@@ -12,7 +12,7 @@ from shapely.geometry import Point, Polygon
 
 from src.coords import FT_TO_M, building_footprint_ft, pt_to_local_m, ring_to_local_m, wgs84_ring_to_local_m
 from src.crosswalks import resolve_crosswalk_offsets
-from src.geometry_model import build_pavement_polygon
+from src.geometry_model import build_pavement_polygon, corner_overlay_polygon, hatch_lines_ft, lane_narrowing_polygons_ft
 from src.intersection import IntersectionModel
 from src.mesh_utils import build_decimated_building_mesh
 from src.osm_context import fetch_buildings, fetch_crossings
@@ -23,6 +23,7 @@ BUILDING_CONTEXT_RADIUS_M = 130
 SIDEWALK_WIDTH_FT = 6
 NEAR_ZONE_BUFFER_FT = 10  # how far past the farthest crosswalk the "near" (4k texture) pavement zone extends
 TREE_SPACING_FT = 25  # typical municipal street-tree spacing (NACTO/street-design guidance), not a fabricated guess
+CORNER_HATCH_SPACING_FT = 2.5  # spacing between rendered diagonal hatch lines - a rendering choice, not MUTCD-specified
 
 
 def _split_near_far(polygons: list[Polygon], center_ft: Point, near_radius_ft: float):
@@ -98,6 +99,28 @@ def export_scenario(model: IntersectionModel, state: DesignState, name: str, out
 
     props = build_props(model, state, crosswalk_offsets, center_ft)
 
+    # Paint-only / no-curb-change proposal treatments (see src/treatments.py:
+    # add_lane_narrowing / add_corner_hatching / add_mountable_apron) - all flush
+    # with the existing pavement, never touching pavement_near/far or corner_parcels.
+    lane_narrowing_stripes = [
+        ring_to_local_m(poly.exterior.coords, center_ft)
+        for leg_name, stripe_width_ft in state.lane_narrowing.items()
+        for poly in lane_narrowing_polygons_ft(state.legs[leg_name], stripe_width_ft)
+    ]
+    corner_hatching_lines = [
+        [pt_to_local_m(x, y, center_ft) for x, y in line.coords]
+        for corner, depth_ft in state.corner_hatching.items()
+        if "error" not in state.corner_fillets[corner]
+        for line in hatch_lines_ft(corner_overlay_polygon(state.corner_fillets[corner], center_ft, depth_ft),
+                                    spacing_ft=CORNER_HATCH_SPACING_FT)
+    ]
+    corner_apron_polygons = [
+        ring_to_local_m(corner_overlay_polygon(state.corner_fillets[corner], center_ft, extent_ft).exterior.coords,
+                         center_ft)
+        for corner, extent_ft in state.corner_aprons.items()
+        if "error" not in state.corner_fillets[corner]
+    ]
+
     building_entries = []
     for b in buildings:
         footprint_ft = building_footprint_ft(b["coords_wgs84"])
@@ -126,6 +149,9 @@ def export_scenario(model: IntersectionModel, state: DesignState, name: str, out
         "sidewalks_near": [ring_to_local_m(p.exterior.coords, center_ft) for p in sidewalks_near],
         "sidewalks_far": [ring_to_local_m(p.exterior.coords, center_ft) for p in sidewalks_far],
         "tree_points": [pt_to_local_m(x, y, center_ft) for x, y in tree_points_ft],
+        "lane_narrowing_stripes": lane_narrowing_stripes,
+        "corner_hatching_lines": corner_hatching_lines,
+        "corner_apron_polygons": corner_apron_polygons,
         "props": [
             {**p, "position_m": pt_to_local_m(p["position_ft"][0], p["position_ft"][1], center_ft)}
             for p in props

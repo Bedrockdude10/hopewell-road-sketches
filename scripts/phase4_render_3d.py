@@ -1,9 +1,15 @@
 """
-Phase 4 (stretch): export existing-conditions + proposed-treatment geometry for
-a site, then drive headless Blender (`blender --background --python
+Phase 4 (stretch): export existing-conditions + one named proposal's geometry
+for a site, then drive headless Blender (`blender --background --python
 blender_scene.py`) to render both as presentation-ready 3D stills.
 
-Usage: python scripts/phase4_render_3d.py [--site broad_st_greenwood]
+Usage: python scripts/phase4_render_3d.py [--site broad_st_greenwood] [--scenario build_demo_scenario]
+
+A site can define any number of proposals in its scenarios.py (see
+sites/README.md); pass the function name via --scenario to render a specific
+one (e.g. --scenario build_proposal_a_paint_only). Output files are named
+after it (geometry_<label>.json, phase4_render_<label>.png), except the
+default scenario which keeps the original *_existing/*_proposed names.
 
 Requires Blender on PATH, or set BLENDER_BIN to the executable
 (e.g. /Applications/Blender.app/Contents/MacOS/Blender on macOS).
@@ -20,7 +26,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from src.export import BUILDING_CONTEXT_RADIUS_M, export_scenario
 from src.intersection import load_intersection_model
 from src.osm_context import fetch_buildings, fetch_crossings
-from src.site import add_site_arg, load_site_scenarios, site_output_dir
+from src.site import add_scenario_arg, add_site_arg, load_site_scenarios, scenario_label, site_output_dir
 from src.theme import build_default_theme
 from src.treatments import DesignState
 
@@ -57,15 +63,17 @@ def render_all(blender_bin: str, jobs: list[tuple[Path, Path]]):
 
 
 def main():
-    args = add_site_arg(argparse.ArgumentParser()).parse_args()
+    args = add_scenario_arg(add_site_arg(argparse.ArgumentParser())).parse_args()
     out_dir = site_output_dir(args.site)
+    label = scenario_label(args.scenario)
 
     blender_bin = find_blender()
     print(f"Using Blender: {blender_bin}")
 
     model = load_intersection_model(site=args.site)
     baseline = DesignState.from_model(model)
-    scenario = load_site_scenarios(args.site).build_demo_scenario(baseline)
+    build_scenario = getattr(load_site_scenarios(args.site), args.scenario)
+    scenario = build_scenario(baseline)
 
     print("Fetching OSM building context...")
     buildings = fetch_buildings(model.center_wgs84, radius_m=BUILDING_CONTEXT_RADIUS_M)
@@ -82,12 +90,13 @@ def main():
 
     existing_json = export_scenario(model, baseline, "Existing Conditions", out_dir / "geometry_existing.json",
                                      buildings=buildings, crossings=crossings, theme=theme)
-    proposed_json = export_scenario(model, scenario, "Proposed Treatments", out_dir / "geometry_proposed.json",
+    proposed_json = export_scenario(model, scenario, f"Proposed Treatments ({args.scenario})",
+                                     out_dir / f"geometry_{label}.json",
                                      buildings=buildings, crossings=crossings, theme=theme)
 
     render_all(blender_bin, [
         (existing_json, out_dir / "phase4_render_existing.png"),
-        (proposed_json, out_dir / "phase4_render_proposed.png"),
+        (proposed_json, out_dir / f"phase4_render_{label}.png"),
     ])
 
 

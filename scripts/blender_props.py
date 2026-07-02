@@ -30,6 +30,16 @@ TRAFFIC_SIGNAL_POLE_HEIGHT_M = 5.5  # taller than the streetlight pole (4.5 m) -
 TRAFFIC_SIGNAL_ARM_LENGTH_M = 2.2  # short davit arm, confirmed NOT a full-width mast arm (see sites/README.md)
 PED_SIGNAL_MOUNT_HEIGHT_M = 2.3  # typical pedestrian signal head mounting height
 
+# RRFB (Rectangular Rapid Flashing Beacon): a MUTCD W11-2 pedestrian-crossing
+# diamond sign (same fluorescent yellow-green as the school zone sign) with two
+# rectangular amber beacon bars mounted just below it. No CC0 RRFB/traffic-sign
+# model exists on Poly Haven - checked api.polyhaven.com/assets?type=models for
+# "sign"/"traffic"/"beacon"/"light"/"post" keywords and found nothing closer
+# than a concrete road barrier - so this is procedural, like the other signage.
+RRFB_SIGN_YELLOW_GREEN = SCHOOL_ZONE_YELLOW_GREEN
+RRFB_BEACON_AMBER = (0.95, 0.55, 0.05)
+RRFB_MOUNT_HEIGHT_M = 2.3
+
 
 def import_gltf_template(gltf_path: str | None, name: str):
     """Import a glTF once and return it as a hidden template object for
@@ -220,6 +230,44 @@ def add_no_turn_on_red_sign(name: str, position: tuple, heading_deg: float, post
     return post
 
 
+def add_rrfb(name: str, position: tuple, heading_deg: float, post_mat):
+    """Procedural Rectangular Rapid Flashing Beacon: a diamond pedestrian-
+    crossing warning sign (MUTCD W11-2) with two amber beacon bars mounted
+    below it. Real installations typically pair a matching unit on the
+    opposite curb - only one assembly is modeled per exported prop entry (see
+    src/treatments.py:add_extra_prop)."""
+    x, y = position
+    bpy.ops.mesh.primitive_cylinder_add(radius=0.05, depth=RRFB_MOUNT_HEIGHT_M, location=(x, y, RRFB_MOUNT_HEIGHT_M / 2))
+    post = bpy.context.active_object
+    post.name = f"{name}_post"
+    post.data.materials.append(post_mat)
+
+    # Diamond sign: a square plate, tilted 45 deg about its own facing/normal
+    # axis (local X, rotated first) before the whole assembly is turned to face
+    # heading_deg (local Z, rotated last) - same two-step convention as the
+    # octagon/pentagon sign plates in _add_post_sign, generalized to a square.
+    bpy.ops.mesh.primitive_cube_add(size=1.0, location=(x, y, RRFB_MOUNT_HEIGHT_M + 0.15))
+    sign = bpy.context.active_object
+    sign.name = f"{name}_sign"
+    sign.scale = (0.03, 0.4, 0.4)
+    sign.rotation_euler = (math.radians(45), 0, math.radians(heading_deg))
+    sign_mat = make_material(f"{name}_sign_mat", RRFB_SIGN_YELLOW_GREEN, roughness=0.35)
+    sign.data.materials.append(sign_mat)
+
+    face = math.radians(heading_deg)
+    fx, fy = math.cos(face), math.sin(face)
+    for i in range(2):
+        beacon_z = RRFB_MOUNT_HEIGHT_M - 0.15 - i * 0.15
+        bpy.ops.mesh.primitive_cube_add(size=1.0, location=(x + fx * 0.05, y + fy * 0.05, beacon_z))
+        beacon = bpy.context.active_object
+        beacon.name = f"{name}_beacon_{i}"
+        beacon.scale = (0.03, 0.35, 0.08)
+        beacon.rotation_euler = (0, 0, face)
+        beacon_mat = make_material(f"{name}_beacon_{i}_mat", RRFB_BEACON_AMBER, roughness=0.3)
+        beacon.data.materials.append(beacon_mat)
+    return post
+
+
 def add_prop(name: str, prop: dict, streetlight_template, pole_mat, signal_housing_mat, ped_signal_housing_mat):
     """Build the Blender geometry for one exported prop dict (placement
     decided upstream by src/props.py), dispatching on its "type" field to the
@@ -238,6 +286,8 @@ def add_prop(name: str, prop: dict, streetlight_template, pole_mat, signal_housi
         add_pedestrian_signal_head(name, pos, heading, prop.get("own_post", False), ped_signal_housing_mat, pole_mat)
     elif ptype == "no_turn_on_red_sign":
         add_no_turn_on_red_sign(name, pos, heading, pole_mat)
+    elif ptype == "rrfb":
+        add_rrfb(name, pos, heading, pole_mat)
 
 
 def build_tree_proxy(trunk_mat, foliage_mat):

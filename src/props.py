@@ -177,14 +177,37 @@ def _extra_props_from_config(model: IntersectionModel, state: DesignState, offse
     return props
 
 
+def _extra_props_from_state(state: DesignState, offsets_ft: dict) -> list[dict]:
+    """Scenario-specific extra signage added by a treatment
+    (src/treatments.py:add_extra_prop) - e.g. an RRFB or a relocated
+    school-zone sign that only exists in one particular proposal, not the
+    site's baseline config (see _extra_props_from_config for the site-wide
+    equivalent)."""
+    props = []
+    for entry in state.extra_props:
+        leg = state.legs.get(entry["leg"])
+        if leg is None:
+            continue
+        # offset_ft may be explicitly None (see add_extra_prop) - `or` (not .get's
+        # default) is required to fall through to the real crosswalk offset in that case.
+        offset_ft = entry.get("offset_ft") or offsets_ft.get(entry["leg"], (10, ""))[0]
+        pos, heading = _leg_sign_position_ft(leg, offset_ft, side=entry.get("side", "right"))
+        props.append({
+            "type": entry["type"], "position_ft": pos, "heading_deg": heading,
+            "source": f"scenario-specified (treatment-level prop, not site config): {entry.get('note') or 'no note given'}",
+        })
+    return props
+
+
 def build_props(model: IntersectionModel, state: DesignState, offsets_ft: dict, center_ft: Point) -> list[dict]:
     """All street-furniture props for one scenario export: a streetlight and a
     stop sign at every corner/approach (always), plus traffic signals and any
-    site-specific extras where the site config asks for them."""
+    site-specific or scenario-specific extras."""
     return (
         _corner_streetlight_props(state.corner_fillets, center_ft)
         + _stop_sign_props(state, offsets_ft)
         + _traffic_signal_props(model, state, center_ft)
         + _no_turn_on_red_props(model, state, offsets_ft)
         + _extra_props_from_config(model, state, offsets_ft)
+        + _extra_props_from_state(state, offsets_ft)
     )

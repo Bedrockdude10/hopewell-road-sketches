@@ -35,7 +35,7 @@ import mathutils
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))  # for the sibling blender_*.py imports below
 
-from blender_crosswalks import add_crosswalk, add_dashed_centerline
+from blender_crosswalks import add_crosswalk, add_dashed_centerline, add_paint_line
 from blender_geometry import build_mesh_from_data, extrude_polygon
 from blender_materials import make_material, make_textured_material
 from blender_props import (
@@ -83,6 +83,7 @@ def build_scene(data: dict):
     asphalt_far = make_textured_material("AsphaltFar", theme.get("asphalt_far"), (0.07, 0.07, 0.08), 0.95)
     concrete_near = make_textured_material("ConcreteNear", theme.get("concrete_near"), (0.72, 0.71, 0.67), 0.85)
     concrete_far = make_textured_material("ConcreteFar", theme.get("concrete_far"), (0.72, 0.71, 0.67), 0.85)
+    apron_mat = make_textured_material("Apron", theme.get("apron_near"), (0.65, 0.6, 0.55), 0.8)
     lot = make_material("Lot", (0.55, 0.6, 0.48), roughness=0.9)
     grass = make_material("Grass", (0.3, 0.48, 0.24), roughness=1.0)
     refuge_mat = make_material("Refuge", (0.22, 0.5, 0.26), roughness=0.8)
@@ -104,7 +105,7 @@ def build_scene(data: dict):
     # full building-context radius - buildings are background dressing and are
     # fine to crop at the frame edges.
     pavement_radius = max(max(pavement_x) - min(pavement_x), max(pavement_y) - min(pavement_y)) / 2
-    scene_radius = pavement_radius * 1.6
+    scene_radius = pavement_radius * 1.2  # tight enough to actually read paint markings/signage detail
 
     all_x = pavement_x + [x for b in data.get("buildings", []) for x, y, *_ in
                            (b["vertices_m"] if b["mesh"] else b["coords"])]
@@ -136,6 +137,16 @@ def build_scene(data: dict):
         extrude_polygon(f"sidewalk_near_{i}", ring, 0.03, concrete_near)
     for i, ring in enumerate(data.get("sidewalks_far", [])):
         extrude_polygon(f"sidewalk_far_{i}", ring, 0.03, concrete_far)
+
+    # Paint-only / no-curb-change proposal treatments (src/treatments.py:
+    # add_lane_narrowing / add_corner_hatching / add_mountable_apron) - flush
+    # with the pavement, drawn on top of it like any other marking.
+    for i, ring in enumerate(data.get("lane_narrowing_stripes", [])):
+        extrude_polygon(f"lane_narrowing_{i}", ring, 0.06, marking_mat)
+    for i, line in enumerate(data.get("corner_hatching_lines", [])):
+        add_paint_line(f"corner_hatch_{i}", line[0], line[-1], 0.15, marking_mat)
+    for i, ring in enumerate(data.get("corner_apron_polygons", [])):
+        extrude_polygon(f"corner_apron_{i}", ring, 0.06, apron_mat)
 
     for island in data.get("refuge_islands", []):
         extrude_polygon(f"refuge_{island['name']}", island["coords"], island.get("height_m", 0.15), refuge_mat)

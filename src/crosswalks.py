@@ -59,12 +59,21 @@ def _match_crossings_to_legs(legs: dict, crossings: list[dict]) -> dict:
 
 def resolve_crosswalk_offsets(state: DesignState, crossings: list[dict]) -> dict[str, tuple[float, str]]:
     """{leg_name: (offset_ft, source)} - real OSM survey position if matched, else
-    the geometric past-the-curve estimate (needed for hypothetical/proposed crossings)."""
+    the geometric past-the-curve estimate (needed for hypothetical/proposed
+    crossings). A scenario's shift_crosswalk_offset() override (if any) is
+    applied on top and noted in the source string, rather than silently
+    replacing the real/estimated base value."""
     matched = _match_crossings_to_legs(state.legs, crossings)
     out = {}
     for leg_name in state.legs:
         if leg_name in matched:
-            out[leg_name] = (matched[leg_name][0], "osm_survey")
+            offset_ft, source = matched[leg_name][0], "osm_survey"
         else:
-            out[leg_name] = (leg_clearance_ft(leg_name, state.legs, state.corner_fillets), "geometric_estimate")
+            offset_ft = leg_clearance_ft(leg_name, state.legs, state.corner_fillets)
+            source = "geometric_estimate"
+        delta_ft = state.crosswalk_offset_overrides.get(leg_name)
+        if delta_ft:
+            offset_ft += delta_ft
+            source += f"+scenario_shift({delta_ft:+g}ft)"
+        out[leg_name] = (offset_ft, source)
     return out

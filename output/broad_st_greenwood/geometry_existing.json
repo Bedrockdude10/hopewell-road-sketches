@@ -22,6 +22,16 @@
       "Rough": "/Users/danny/ProductiveProjects/hopewell-road-sketches/output/.textures/pavement_02/2k/pavement_02_Rough_2k.jpg",
       "nor_gl": "/Users/danny/ProductiveProjects/hopewell-road-sketches/output/.textures/pavement_02/2k/pavement_02_nor_gl_2k.jpg"
     },
+    "apron_near": {
+      "Diffuse": "/Users/danny/ProductiveProjects/hopewell-road-sketches/output/.textures/patterned_concrete_pavers/4k/patterned_concrete_pavers_Diffuse_4k.jpg",
+      "Rough": "/Users/danny/ProductiveProjects/hopewell-road-sketches/output/.textures/patterned_concrete_pavers/4k/patterned_concrete_pavers_Rough_4k.jpg",
+      "nor_gl": "/Users/danny/ProductiveProjects/hopewell-road-sketches/output/.textures/patterned_concrete_pavers/4k/patterned_concrete_pavers_nor_gl_4k.jpg"
+    },
+    "apron_far": {
+      "Diffuse": "/Users/danny/ProductiveProjects/hopewell-road-sketches/output/.textures/patterned_concrete_pavers/2k/patterned_concrete_pavers_Diffuse_2k.jpg",
+      "Rough": "/Users/danny/ProductiveProjects/hopewell-road-sketches/output/.textures/patterned_concrete_pavers/2k/patterned_concrete_pavers_Rough_2k.jpg",
+      "nor_gl": "/Users/danny/ProductiveProjects/hopewell-road-sketches/output/.textures/patterned_concrete_pavers/2k/patterned_concrete_pavers_nor_gl_2k.jpg"
+    },
     "streetlight_gltf": "/Users/danny/ProductiveProjects/hopewell-road-sketches/output/.textures/models/street_lamp_01_1k/street_lamp_01_1k.gltf"
   },
   "existing_marked_crosswalks": [
@@ -2270,6 +2280,9 @@
       -14.76467134577511
     ]
   ],
+  "lane_narrowing_stripes": [],
+  "corner_hatching_lines": [],
+  "corner_apron_polygons": [],
   "props": [
     {
       "type": "streetlight",

@@ -12,6 +12,10 @@ from src.assets import fetch_polyhaven_model, fetch_polyhaven_texture
 ASPHALT_SLUG = "asphalt_01"
 CONCRETE_SLUG = "pavement_02"
 STREETLIGHT_SLUG = "street_lamp_01"
+# Mountable-apron surface (Proposal B: "stamped/colored concrete, distinct texture
+# from travel lane") - verified via api.polyhaven.com/assets?type=textures to have
+# real Diffuse/Rough/nor_gl maps at 2k/4k, same as the other two textures here.
+APRON_SLUG = "patterned_concrete_pavers"
 
 NEAR_RESOLUTION = "4k"
 FAR_RESOLUTION = "2k"
@@ -26,13 +30,16 @@ def _texture_paths(slug: str, resolution: str) -> dict[str, str] | None:
 
 def build_default_theme() -> dict:
     """{"asphalt_near": {...} | None, "asphalt_far": ..., "concrete_near": ...,
-    "concrete_far": ..., "streetlight_gltf": str | None}. Fetched once and
-    shared across every scenario export for a render (the assets don't vary
-    per-scenario) - see scripts/phase4_render_3d.py."""
+    "concrete_far": ..., "apron_near": ..., "apron_far": ...,
+    "streetlight_gltf": str | None}. Fetched once and shared across every
+    scenario export for a render (the assets don't vary per-scenario) - see
+    scripts/phase4_render_3d.py."""
     return {
         "asphalt_near": _texture_paths(ASPHALT_SLUG, NEAR_RESOLUTION),
         "asphalt_far": _texture_paths(ASPHALT_SLUG, FAR_RESOLUTION),
         "concrete_near": _texture_paths(CONCRETE_SLUG, NEAR_RESOLUTION),
         "concrete_far": _texture_paths(CONCRETE_SLUG, FAR_RESOLUTION),
+        "apron_near": _texture_paths(APRON_SLUG, NEAR_RESOLUTION),
+        "apron_far": _texture_paths(APRON_SLUG, FAR_RESOLUTION),
         "streetlight_gltf": (lambda p: str(p) if p else None)(fetch_polyhaven_model(STREETLIGHT_SLUG)),
     }

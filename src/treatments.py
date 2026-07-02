@@ -9,6 +9,9 @@ from shapely.geometry import Polygon
 from src.geometry_model import Leg, fillet_curb_corner, leg_clearance_ft
 
 NACTO_MIN_REFUGE_ISLAND_WIDTH_FT = 6
+LANE_NARROWING_DEFAULT_STRIPE_FT = 5.0  # common low-cost NACTO paint buffer/shoulder-stripe width
+CORNER_HATCHING_DEFAULT_DEPTH_FT = 6.0  # paint-only zone depth, comparable footprint to a modest real curb extension
+CORNER_APRON_DEFAULT_EXTENT_FT = 5.0  # mountable-apron zone depth - same shape as hatching, different surface finish
 
 
 @dataclass
@@ -21,6 +24,12 @@ class DesignState:
     refuge_islands: dict = field(default_factory=dict)   # name -> {"polygon": Polygon, "width_ft": float}
     raised_crossings: dict = field(default_factory=dict)  # leg name -> Polygon
     crosswalk_styles: dict = field(default_factory=dict)  # leg name -> "lines" | "continental" | "ladder"
+    lane_narrowing: dict = field(default_factory=dict)  # leg name -> stripe_width_ft (paint-only, no curb change)
+    corner_hatching: dict = field(default_factory=dict)  # corner tuple -> depth_ft (paint-only, no curb change)
+    corner_aprons: dict = field(default_factory=dict)  # corner tuple -> extent_ft (mountable apron, no curb change)
+    crosswalk_offset_overrides: dict = field(default_factory=dict)  # leg name -> +/- delta_ft on top of the
+                                                                     # normally-resolved offset (see shift_crosswalk)
+    extra_props: list = field(default_factory=list)  # [{"leg","type","offset_ft","side","note"}] - see add_extra_prop
     notes: list = field(default_factory=list)
 
     @classmethod
@@ -29,6 +38,19 @@ class DesignState:
 
     def clone(self) -> "DesignState":
         return deepcopy(self)
+
+
+def find_corner(state: DesignState, leg_a: str, leg_b: str) -> tuple[str, str]:
+    """Look up the (name_a, name_b) key in state.corner_fillets for the corner
+    where leg_a and leg_b meet, regardless of which order build_corner_fillets
+    happened to store it in (it sorts by compass bearing, not by call-site
+    convenience) - corners are identified by which two legs meet there, not by
+    tuple order."""
+    wanted = {leg_a, leg_b}
+    for corner in state.corner_fillets:
+        if set(corner) == wanted:
+            return corner
+    raise KeyError(f"No corner between {leg_a!r} and {leg_b!r} in this state.")
 
 
 def bump_out(state: DesignState, corner: tuple[str, str], radius_ft: float) -> DesignState:
@@ -145,6 +167,93 @@ def upgrade_crosswalk_markings(state: DesignState, leg_name: str, style: str) ->
     new_state = state.clone()
     new_state.crosswalk_styles[leg_name] = style
     new_state.notes.append(f"upgrade_crosswalk_markings({leg_name}, style={style!r})")
+    return new_state
+
+
+def add_lane_narrowing(state: DesignState, leg_name: str,
+                        stripe_width_ft: float = LANE_NARROWING_DEFAULT_STRIPE_FT) -> DesignState:
+    """Paint-only visual lane narrowing: a striped buffer/shoulder painted along
+    both curbs of a leg. Zero curb/pavement geometry change - the lowest-cost
+    alternative to bump_out()'s real curb extension, achieving the same
+    'narrower-looking travel way' cue with paint instead of concrete."""
+    if leg_name not in state.legs:
+        raise KeyError(f"Leg {leg_name!r} not present in this state.")
+    new_state = state.clone()
+    new_state.lane_narrowing[leg_name] = stripe_width_ft
+    new_state.notes.append(f"add_lane_narrowing({leg_name}, stripe_width_ft={stripe_width_ft})")
+    return new_state
+
+
+def add_corner_hatching(state: DesignState, corner: tuple[str, str],
+                         depth_ft: float = CORNER_HATCHING_DEFAULT_DEPTH_FT) -> DesignState:
+    """Paint-only diagonal hatching in a corner's gutter zone: a visual
+    narrowing cue with zero curb/fillet geometry change - the paint-only
+    alternative to bump_out() at the same corner. `corner` is a (leg_a, leg_b)
+    key as produced by build_corner_fillets."""
+    if corner not in state.corner_fillets:
+        raise KeyError(f"Corner {corner} references a fillet not present in this state.")
+    new_state = state.clone()
+    new_state.corner_hatching[corner] = depth_ft
+    new_state.notes.append(f"add_corner_hatching({corner}, depth_ft={depth_ft})")
+    return new_state
+
+
+def add_mountable_apron(state: DesignState, corner: tuple[str, str],
+                         extent_ft: float = CORNER_APRON_DEFAULT_EXTENT_FT) -> DesignState:
+    """Mountable apron: a textured (not painted-line) surface treatment at a
+    corner, flush with the existing pavement grade - visually/optically
+    narrows the corner for pedestrians while remaining fully drivable (e.g. by
+    a fire apparatus's rear wheels during a wide turn) since no curb or
+    elevation change is introduced. Same footprint as add_corner_hatching, a
+    different real-world treatment for corners where a hard bump-out isn't an
+    option (see fire_apparatus_constraint in a proposal's spec)."""
+    if corner not in state.corner_fillets:
+        raise KeyError(f"Corner {corner} references a fillet not present in this state.")
+    new_state = state.clone()
+    new_state.corner_aprons[corner] = extent_ft
+    new_state.notes.append(f"add_mountable_apron({corner}, extent_ft={extent_ft})")
+    return new_state
+
+
+def shift_crosswalk_offset(state: DesignState, leg_name: str, delta_ft: float) -> DesignState:
+    """Shift a leg's crosswalk further from (positive) or closer to (negative)
+    the intersection, on top of whatever src/crosswalks.py:resolve_crosswalk_offsets
+    would otherwise resolve (a real OSM-surveyed position or the geometric
+    curve-clearance estimate) - e.g. to give a turning fire apparatus more room
+    before it encounters the crosswalk mid-turn."""
+    if leg_name not in state.legs:
+        raise KeyError(f"Leg {leg_name!r} not present in this state.")
+    new_state = state.clone()
+    new_state.crosswalk_offset_overrides[leg_name] = (
+        new_state.crosswalk_offset_overrides.get(leg_name, 0.0) + delta_ft
+    )
+    new_state.notes.append(f"shift_crosswalk_offset({leg_name}, delta_ft={delta_ft})")
+    return new_state
+
+
+def add_extra_prop(state: DesignState, leg_name: str, prop_type: str, offset_ft: float | None = None,
+                    side: str = "right", note: str = "") -> DesignState:
+    """Add one scenario-specific street-furniture prop (e.g. an RRFB, a
+    relocated school-zone sign) along a leg - the treatment-level equivalent of
+    a site config's `props.extra` (see sites/README.md), for props that only
+    belong to this particular proposal, not every scenario at this site.
+
+    offset_ft defaults to None, meaning "place it at this leg's real resolved
+    crosswalk offset" (src/props.py:_extra_props_from_state falls back to it,
+    same as _extra_props_from_config does for site-config props) - an RRFB or
+    a relocated crossing sign belongs AT the crossing, and a real OSM-surveyed
+    crosswalk can sit much farther from the corner than a small guessed
+    number (e.g. ~42 ft on greenwood_ave_south here) - a hardcoded offset_ft
+    can easily land inside the curb-return curve, in the roadway, instead of
+    on the sidewalk. Only pass an explicit offset_ft when the prop genuinely
+    belongs somewhere other than the crosswalk."""
+    if leg_name not in state.legs:
+        raise KeyError(f"Leg {leg_name!r} not present in this state.")
+    new_state = state.clone()
+    new_state.extra_props.append(
+        {"leg": leg_name, "type": prop_type, "offset_ft": offset_ft, "side": side, "note": note}
+    )
+    new_state.notes.append(f"add_extra_prop({leg_name}, {prop_type!r}, offset_ft={offset_ft})")
     return new_state
 
 

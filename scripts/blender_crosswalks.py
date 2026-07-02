@@ -64,6 +64,20 @@ def add_crosswalk(name: str, near, u, n, width_m: float, material, offset_m: flo
     draw_fn(name, near, u, n, width_m, material, offset_m=offset_m)
 
 
+def add_paint_line(name: str, p1: tuple, p2: tuple, width_m: float, material, height_m: float = 0.06):
+    """A single thin painted line segment between two points - used for
+    corner-hatching diagonal lines (src/geometry_model.py:hatch_lines_ft) and
+    any other simple paint-only marking that's just a straight stripe."""
+    p1v, p2v = mathutils.Vector((*p1, 0.0)), mathutils.Vector((*p2, 0.0))
+    direction = p2v - p1v
+    length = direction.length
+    if length < 1e-6:
+        return
+    u = direction / length
+    n = mathutils.Vector((-u.y, u.x, 0))
+    add_stripe_rect(name, (p1v + p2v) / 2, u, n, length, width_m, height_m, material)
+
+
 def add_dashed_centerline(name: str, near: mathutils.Vector, far: mathutils.Vector, material,
                            start_m: float = 6.0, dash_m: float = 1.0, gap_m: float = 1.0, width_m: float = 0.15):
     direction = far - near

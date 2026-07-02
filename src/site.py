@@ -51,6 +51,29 @@ def add_site_arg(parser):
     return parser
 
 
+DEFAULT_SCENARIO = "build_demo_scenario"
+
+
+def add_scenario_arg(parser):
+    """Shared --scenario CLI flag: the name of a function in the site's
+    scenarios.py to build (e.g. build_proposal_a_paint_only) - lets a site
+    define any number of named proposals beyond the one build_demo_scenario
+    every phase script uses by default. Returns the parser for chaining."""
+    parser.add_argument("--scenario", default=DEFAULT_SCENARIO,
+                         help=f"Function name in the site's scenarios.py to build (default: {DEFAULT_SCENARIO})")
+    return parser
+
+
+def scenario_label(scenario_name: str) -> str:
+    """Filename-safe label for a scenario's output files - 'proposed' for the
+    default demo scenario (preserves the original geometry_proposed.json /
+    phase4_render_proposed.png filenames), else the function name with its
+    'build_' prefix stripped (e.g. build_proposal_a_paint_only -> proposal_a_paint_only)."""
+    if scenario_name == DEFAULT_SCENARIO:
+        return "proposed"
+    return scenario_name[len("build_"):] if scenario_name.startswith("build_") else scenario_name
+
+
 def load_site_scenarios(site: str) -> ModuleType:
     """Dynamically import sites/<site>/scenarios.py and return the module."""
     path = site_dir(site) / "scenarios.py"

@@ -1,8 +1,10 @@
 """
-Phase 3: apply composable parametric treatments (curb extensions / tightened turn
-radii, a raised crossing, a pedestrian refuge island) to the Phase 2 baseline
-geometry, and render a before/after plan-view comparison.
+Phase 3: apply a site's demo treatment scenario (sites/<site>/scenarios.py) to
+the Phase 2 baseline geometry, and render a before/after plan-view comparison.
+
+Usage: python scripts/phase3_treatments.py [--site broad_st_greenwood]
 """
+import argparse
 import sys
 from pathlib import Path
 
@@ -12,16 +14,15 @@ import matplotlib.pyplot as plt
 
 from src.intersection import load_intersection_model
 from src.render import legend_handles, plot_design_state
-from src.scenarios import build_demo_scenario
+from src.site import add_site_arg, load_site_scenarios, site_output_dir
 from src.treatments import DesignState
-
-OUTPUT_DIR = Path(__file__).resolve().parent.parent / "output"
 
 
 def main():
-    model = load_intersection_model()
+    args = add_site_arg(argparse.ArgumentParser()).parse_args()
+    model = load_intersection_model(site=args.site)
     baseline = DesignState.from_model(model)
-    scenario = build_demo_scenario(baseline)
+    scenario = load_site_scenarios(args.site).build_demo_scenario(baseline)
 
     print("=== Treatments applied ===")
     for note in scenario.notes:
@@ -31,11 +32,9 @@ def main():
     plot_design_state(axes[0], model, baseline, "Existing Conditions (Phase 2 baseline)")
     plot_design_state(axes[1], model, scenario, "Proposed Treatments")
     fig.legend(handles=legend_handles(), loc="lower center", ncol=4, fontsize=8, bbox_to_anchor=(0.5, -0.02))
-    fig.suptitle("Broad St & Greenwood Ave, Hopewell Borough, NJ - Before / After (NAD83 NJ State Plane, feet)",
-                 fontsize=13)
+    fig.suptitle(f"{model.config['intersection']['name']} - Before / After (NAD83 NJ State Plane, feet)", fontsize=13)
 
-    OUTPUT_DIR.mkdir(exist_ok=True)
-    out_path = OUTPUT_DIR / "phase3_before_after.png"
+    out_path = site_output_dir(args.site) / "phase3_before_after.png"
     fig.savefig(out_path, dpi=150, bbox_inches="tight")
     print(f"\nSaved before/after render to {out_path}")
 

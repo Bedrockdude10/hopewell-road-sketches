@@ -1,10 +1,25 @@
 # Authoritative geometry inputs for Broad St (CR 518) & Greenwood Ave, Hopewell
 # Borough, NJ 08525. Values here supersede any width attribute (there isn't one)
 # on the NJDOT Roadway Network GeoJSON - see Phase 1 audit.
+#
+# This is one SITE among potentially many - see sites/README.md for the schema
+# every site's config.yaml must follow. src/ contains no site-specific data;
+# everything specific to this intersection lives here and in scenarios.py.
+
+data_sources:
+  # Paths are relative to the repo root.
+  road_network: data/NJ_Roadway_Network.geojson
+  parcels: data/MercerCountyParcels.shp
 
 intersection:
   name: "Broad St (CR 518) & Greenwood Ave, Hopewell Borough, NJ 08525"
   center_wgs84: [-74.7619598, 40.389179]
+  # street1/street2/anchor_query are what scripts/phase1_audit.py used to
+  # resolve center_wgs84 in the first place (src/data_loader.py:geocode_intersection)
+  # - kept here so re-resolving (e.g. if OSM data changes) is a one-command rerun.
+  street1: "Broad St"
+  street2: "Greenwood Ave"
+  anchor_query: "Broad Street, Hopewell Borough, NJ 08525"
   resolution_method: >
     OSM/Overpass way-endpoint match (src/data_loader.py:geocode_intersection) -
     West/East Broad Street and North/South Greenwood Avenue all share one node.
@@ -41,10 +56,19 @@ corridor:
 
 # Per-leg curb-to-curb widths actually used for geometry construction.
 # `confirmed: false` legs use a placeholder and should not be trusted for
-# final treatment design.
+# final treatment design. `bearing_deg` is the approximate compass bearing
+# (0=N, 90=E, clockwise) from the intersection center OUTWARD along this leg -
+# it's how src/intersection.py tells apart multiple legs sharing the same SRI
+# (a road normally produces 2 legs, one on each side of the intersection) and
+# is the only thing that has to generalize correctly for this to work on an
+# intersection shaped differently than a neat 4-way + (T-intersections, 3-way
+# intersections, non-perpendicular crossings, etc. all just need accurate
+# bearings here - nothing else about the matching logic assumes 4 legs or
+# perpendicular roads).
 legs:
   broad_st_west:
     sri: "00000518__"
+    bearing_deg: 235.6
     street_name: "West Broad Street (west of Greenwood Ave)"
     curb_to_curb_ft: 55.5  # 55 ft 6 in
     confirmed: true
@@ -60,6 +84,7 @@ legs:
 
   broad_st_east:
     sri: "00000518__"
+    bearing_deg: 57.3
     street_name: "East Broad Street (east of Greenwood Ave)"
     curb_to_curb_ft: 68  # measured pedestrian crossing distance (curb-to-curb, incl. parking/shoulder zone)
     confirmed: true
@@ -75,6 +100,7 @@ legs:
 
   greenwood_ave_north:
     sri: "11051089__"  # NJDOT records this street as "COLUMBIA AVE", not Greenwood - see project notes
+    bearing_deg: 330.3
     street_name: "North Greenwood Ave"
     curb_to_curb_ft: 34  # ESTIMATE: measured ~50.25 ft parcel-to-parcel ROW gap minus assumed 8 ft/side sidewalk+verge
     confirmed: false
@@ -88,6 +114,7 @@ legs:
 
   greenwood_ave_south:
     sri: "11051089__"
+    bearing_deg: 150.3
     street_name: "South Greenwood Ave"
     curb_to_curb_ft: 34  # ESTIMATE: same methodology as greenwood_ave_north
     confirmed: false

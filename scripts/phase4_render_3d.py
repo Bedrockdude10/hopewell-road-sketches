@@ -1,11 +1,14 @@
 """
-Phase 4 (stretch): export existing-conditions + proposed-treatment geometry, then
-drive headless Blender (`blender --background --python blender_scene.py`) to
-render both as presentation-ready 3D stills.
+Phase 4 (stretch): export existing-conditions + proposed-treatment geometry for
+a site, then drive headless Blender (`blender --background --python
+blender_scene.py`) to render both as presentation-ready 3D stills.
+
+Usage: python scripts/phase4_render_3d.py [--site broad_st_greenwood]
 
 Requires Blender on PATH, or set BLENDER_BIN to the executable
 (e.g. /Applications/Blender.app/Contents/MacOS/Blender on macOS).
 """
+import argparse
 import os
 import shutil
 import subprocess
@@ -17,13 +20,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from src.export import BUILDING_CONTEXT_RADIUS_M, export_scenario
 from src.intersection import load_intersection_model
 from src.osm_context import fetch_buildings, fetch_crossings
-from src.scenarios import build_demo_scenario
+from src.site import add_site_arg, load_site_scenarios, site_output_dir
 from src.treatments import DesignState
 
-ROOT = Path(__file__).resolve().parent.parent
-OUTPUT_DIR = ROOT / "output"
 BLENDER_SCENE_SCRIPT = Path(__file__).resolve().parent / "blender_scene.py"
-
 DEFAULT_MAC_BLENDER = "/Applications/Blender.app/Contents/MacOS/Blender"
 
 
@@ -56,12 +56,15 @@ def render_all(blender_bin: str, jobs: list[tuple[Path, Path]]):
 
 
 def main():
+    args = add_site_arg(argparse.ArgumentParser()).parse_args()
+    out_dir = site_output_dir(args.site)
+
     blender_bin = find_blender()
     print(f"Using Blender: {blender_bin}")
 
-    model = load_intersection_model()
+    model = load_intersection_model(site=args.site)
     baseline = DesignState.from_model(model)
-    scenario = build_demo_scenario(baseline)
+    scenario = load_site_scenarios(args.site).build_demo_scenario(baseline)
 
     print("Fetching OSM building context...")
     buildings = fetch_buildings(model.center_wgs84, radius_m=BUILDING_CONTEXT_RADIUS_M)
@@ -71,14 +74,14 @@ def main():
     crossings = fetch_crossings(model.center_wgs84, radius_m=BUILDING_CONTEXT_RADIUS_M)
     print(f"  -> {len(crossings)} crossings")
 
-    existing_json = export_scenario(model, baseline, "Existing Conditions", OUTPUT_DIR / "geometry_existing.json",
+    existing_json = export_scenario(model, baseline, "Existing Conditions", out_dir / "geometry_existing.json",
                                      buildings=buildings, crossings=crossings)
-    proposed_json = export_scenario(model, scenario, "Proposed Treatments", OUTPUT_DIR / "geometry_proposed.json",
+    proposed_json = export_scenario(model, scenario, "Proposed Treatments", out_dir / "geometry_proposed.json",
                                      buildings=buildings, crossings=crossings)
 
     render_all(blender_bin, [
-        (existing_json, OUTPUT_DIR / "phase4_render_existing.png"),
-        (proposed_json, OUTPUT_DIR / "phase4_render_proposed.png"),
+        (existing_json, out_dir / "phase4_render_existing.png"),
+        (proposed_json, out_dir / "phase4_render_proposed.png"),
     ])
 
 

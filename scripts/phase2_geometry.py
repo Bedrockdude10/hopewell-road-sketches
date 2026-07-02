@@ -1,8 +1,12 @@
 """
-Phase 2: reconcile the road network with the NJDOT SLD + ground-truth measurements
-(config/intersection_config.yaml), clip parcels to establish ROW context at the
-four corners, and build curb-line + rounded-corner geometry as Shapely polygons/lines.
+Phase 2: reconcile the road network with the site's SLD + ground-truth
+measurements (sites/<site>/config.yaml), clip parcels to establish ROW context
+at the corners, and build curb-line + rounded-corner geometry as Shapely
+polygons/lines.
+
+Usage: python scripts/phase2_geometry.py [--site broad_st_greenwood]
 """
+import argparse
 import sys
 from pathlib import Path
 
@@ -12,9 +16,8 @@ import matplotlib.pyplot as plt
 
 from src.intersection import IntersectionModel, load_intersection_model
 from src.render import legend_handles, plot_design_state
+from src.site import add_site_arg, site_output_dir
 from src.treatments import DesignState
-
-OUTPUT_DIR = Path(__file__).resolve().parent.parent / "output"
 
 
 def print_leg_summary(model: IntersectionModel):
@@ -31,21 +34,21 @@ def print_leg_summary(model: IntersectionModel):
           f"[{'ESTIMATE' if not model.config['treatments'].get('existing_corner_radius_source', '').startswith('Confirmed') else 'CONFIRMED'}]")
 
 
-def plot(model: IntersectionModel):
+def plot(model: IntersectionModel, out_dir: Path):
     fig, ax = plt.subplots(figsize=(11, 11))
     baseline = DesignState.from_model(model)
-    plot_design_state(ax, model, baseline, "Broad St & Greenwood Ave, Hopewell Borough, NJ - Phase 2 geometry")
+    plot_design_state(ax, model, baseline, f"{model.config['intersection']['name']} - Phase 2 geometry")
     ax.legend(handles=legend_handles(), loc="upper left", fontsize=8)
     ax.set_ylabel("Feet (EPSG:3424)")
 
-    OUTPUT_DIR.mkdir(exist_ok=True)
-    out_path = OUTPUT_DIR / "phase2_geometry_plot.png"
+    out_path = out_dir / "phase2_geometry_plot.png"
     fig.savefig(out_path, dpi=150, bbox_inches="tight")
     print(f"\nSaved plot to {out_path}")
 
 
 def main():
-    model = load_intersection_model()
+    args = add_site_arg(argparse.ArgumentParser()).parse_args()
+    model = load_intersection_model(site=args.site)
     print_leg_summary(model)
 
     print("\n=== Nearest parcel per quadrant (corner / ROW reference) ===")
@@ -56,7 +59,7 @@ def main():
         status = "OK" if "error" not in pieces else f"FAILED: {pieces['error']}"
         print(f"  {a} <-> {b}: {status}")
 
-    plot(model)
+    plot(model, site_output_dir(args.site))
 
     unconfirmed = [name for name, cfg in model.config["legs"].items() if not cfg.get("confirmed")]
     print(f"\nNOTE: legs still using an estimate rather than a field measurement: {unconfirmed}")

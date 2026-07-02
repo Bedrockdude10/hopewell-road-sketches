@@ -1,34 +1,30 @@
 """
-Phase 1: load, clip, and audit the NJDOT road network around Broad St & Greenwood
-Ave, Hopewell Borough, NJ. Prints what attributes NJDOT actually recorded and
-renders a labeled plan-view plot for a sanity check against the real intersection.
+Phase 1: resolve an intersection, load/clip/audit the road network around it,
+and render a labeled plan-view sanity-check plot. This is the exploratory tool
+you run ONCE per new site, before sites/<site>/config.yaml exists - its job is
+to find out what NJDOT (or whatever road network file) actually recorded here,
+so you know what needs supplementing with SLD/field data.
+
+Usage:
+  # A brand-new site with no config yet - pass the streets directly:
+  python scripts/phase1_audit.py --street1 "Main St" --street2 "Oak Ave" \\
+      --anchor "Main St, Sometown, NJ" [--road-network path/to/network.geojson]
+
+  # An existing site - reads street1/street2/anchor_query/road_network from its config:
+  python scripts/phase1_audit.py --site broad_st_greenwood
 """
+import argparse
 import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+import geopandas as gpd
 import matplotlib.pyplot as plt
 
-from src.data_loader import geocode_intersection, load_road_network
+from src.data_loader import DEFAULT_ROAD_NETWORK_PATH, geocode_intersection, load_road_network
 from src.geometry_model import NJ_STATE_PLANE_FT, buffer_point_wgs84, clip_to_radius, reproject_to_state_plane
-
-ANCHOR_QUERY = "Broad Street, Hopewell Borough, NJ 08525"
-STREET_1 = "Broad St"
-STREET_2 = "Greenwood Ave"
-CLIP_RADIUS_M = 150
-
-OUTPUT_DIR = Path(__file__).resolve().parent.parent / "output"
-
-# NJDOT's Roadway Network records this cross street under a different official
-# name than current local signage/OSM (SRI 11051089__, SLD_NAME "COLUMBIA AVE").
-# Confirmed via OSM/Overpass: the "North Greenwood Avenue" / "South Greenwood
-# Avenue" ways share their endpoint node with the "West/East Broad Street" (CR
-# 518) ways, and that shared node sits 0.3 ft from this NJDOT segment's line
-# (vs. 8.4 ft for the Route 518 / Broad St segment itself).
-DISPLAY_NAME_OVERRIDES = {
-    "11051089__": "GREENWOOD AVE (NJDOT: COLUMBIA AVE)",
-}
+from src.site import list_sites, load_site_config, site_output_dir
 
 ATTR_COLUMNS = [
     "OBJECTID", "SRI", "SRI_OLD", "MP_START", "MP_END", "DIRECTION", "SLD_NAME",
@@ -37,78 +33,92 @@ ATTR_COLUMNS = [
 ]
 
 
-def print_segment_audit(clipped_wgs84):
-    target_sris = {"00000518__", "11051089__"}  # Route 518 (Broad St) + Columbia/Greenwood Ave
-    segments = clipped_wgs84[clipped_wgs84["SRI"].isin(target_sris)]
-    if segments.empty:
-        print("  WARNING: expected SRIs not found in clipped set - printing all clipped segments instead.")
-        segments = clipped_wgs84
-
-    cols = [c for c in ATTR_COLUMNS if c in segments.columns]
-    for _, row in segments.iterrows():
-        label = DISPLAY_NAME_OVERRIDES.get(row.get("SRI"), row.get("SLD_NAME"))
-        print(f"\n--- {label} (SRI {row.get('SRI')}) ---")
+def print_segment_audit(clipped_wgs84, center):
+    """Print full attributes for the segments actually closest to the resolved
+    center - for a brand-new site you don't know the SRIs in advance, so audit
+    by proximity rather than a pre-known SRI list."""
+    if clipped_wgs84.empty:
+        print("  WARNING: nothing in the clipped set to audit.")
+        return
+    by_dist = clipped_wgs84.assign(_dist=clipped_wgs84.distance(center)).sort_values("_dist")
+    cols = [c for c in ATTR_COLUMNS if c in by_dist.columns]
+    for _, row in by_dist.head(4).iterrows():
+        print(f"\n--- {row.get('SLD_NAME')} (SRI {row.get('SRI')}) ---")
         for col in cols:
             print(f"  {col:20s} = {row[col]}")
 
-    present = {c for c in cols if segments[cols].notna().any().get(c, False)}
-    missing_of_interest = {
-        "lane count": "not a field in this layer",
-        "road/lane width": "not a field in this layer",
-        "surface type": "not a field in this layer",
-    }
-    print("\nAttributes NOT present on this layer (lane count, width, surface):")
-    for k, v in missing_of_interest.items():
-        print(f"  {k}: {v}")
-    print("Jurisdiction/route identification IS present via SRI / ROUTE_SUBTYPE / ROAD_NUM.")
+    print("\nAttributes NOT present on this layer, if blank above: lane count, road/lane width, surface type "
+          "are commonly absent from NJDOT's SRI/SLD linear-referencing layer - check for a separate SLD PDF/field "
+          "measurement before assuming a width.")
 
 
-def plot_network(clipped_ft, center_ft):
+def plot_network(clipped_ft, center_ft, title: str, out_path: Path):
     fig, ax = plt.subplots(figsize=(10, 10))
     clipped_ft.plot(ax=ax, color="black", linewidth=2)
 
     for _, row in clipped_ft.iterrows():
-        label = DISPLAY_NAME_OVERRIDES.get(row.get("SRI"), row.get("SLD_NAME"))
         pt = row.geometry.interpolate(0.5, normalized=True)
         ax.annotate(
-            label, (pt.x, pt.y), fontsize=8, color="darkred",
+            row.get("SLD_NAME"), (pt.x, pt.y), fontsize=8, color="darkred",
             ha="center", bbox=dict(boxstyle="round,pad=0.2", fc="white", ec="none", alpha=0.7),
         )
 
     ax.scatter([center_ft.x], [center_ft.y], color="blue", zorder=5, s=40, label="Geocoded intersection")
-    ax.set_title("Broad St & Greenwood Ave, Hopewell Borough, NJ\n(clipped to 150m radius, NAD83 NJ State Plane, feet)")
+    ax.set_title(title)
     ax.set_xlabel("Feet (EPSG:3424)")
     ax.set_ylabel("Feet (EPSG:3424)")
     ax.set_aspect("equal")
     ax.legend()
 
-    OUTPUT_DIR.mkdir(exist_ok=True)
-    out_path = OUTPUT_DIR / "phase1_network_plot.png"
     fig.savefig(out_path, dpi=150, bbox_inches="tight")
     print(f"\nSaved plot to {out_path}")
 
 
 def main():
-    print(f"Resolving intersection: {STREET_1} & {STREET_2} (anchor query: {ANCHOR_QUERY!r})")
-    center = geocode_intersection(STREET_1, STREET_2, ANCHOR_QUERY)
-    print(f"  -> lon={center.x:.7f}, lat={center.y:.7f} (resolved via OSM way-endpoint match, not address geocoding)")
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--site", help=f"Load street1/street2/anchor_query/road_network from an existing site's "
+                                        f"config.yaml. Available: {', '.join(list_sites())}")
+    parser.add_argument("--street1")
+    parser.add_argument("--street2")
+    parser.add_argument("--anchor", help="Address/place string Nominatim can geocode, to anchor the OSM search bbox")
+    parser.add_argument("--road-network", default=str(DEFAULT_ROAD_NETWORK_PATH))
+    parser.add_argument("--clip-radius-m", type=float, default=150)
+    parser.add_argument("--out-name", default="phase1_network_plot.png")
+    args = parser.parse_args()
 
-    bbox = buffer_point_wgs84(center, CLIP_RADIUS_M * 1.3)
+    if args.site:
+        cfg = load_site_config(args.site)["intersection"]
+        street1 = args.street1 or cfg["street1"]
+        street2 = args.street2 or cfg["street2"]
+        anchor = args.anchor or cfg["anchor_query"]
+        out_dir = site_output_dir(args.site)
+    else:
+        if not (args.street1 and args.street2 and args.anchor):
+            parser.error("Pass --site, or all of --street1/--street2/--anchor for a brand-new site.")
+        street1, street2, anchor = args.street1, args.street2, args.anchor
+        out_dir = site_output_dir("_scratch")
+
+    print(f"Resolving intersection: {street1} & {street2} (anchor query: {anchor!r})")
+    center = geocode_intersection(street1, street2, anchor)
+    print(f"  -> lon={center.x:.7f}, lat={center.y:.7f} (resolved via OSM way-endpoint match, not address geocoding)")
+    print("  Save this as intersection.center_wgs84 in the site's config.yaml.")
+
+    bbox = buffer_point_wgs84(center, args.clip_radius_m * 1.3)
     print("\nLoading road network (bbox-filtered read)...")
-    network = load_road_network(bbox=bbox)
+    network = load_road_network(bbox=bbox, path=args.road_network)
     print(f"  -> {len(network)} features in load bbox")
 
-    clipped = clip_to_radius(network, center, CLIP_RADIUS_M)
-    print(f"  -> {len(clipped)} features within {CLIP_RADIUS_M}m radius")
+    clipped = clip_to_radius(network, center, args.clip_radius_m)
+    print(f"  -> {len(clipped)} features within {args.clip_radius_m}m radius")
 
-    print("\n=== Attribute audit: Broad St & Greenwood Ave segments ===")
-    print_segment_audit(clipped)
+    print(f"\n=== Attribute audit: segments nearest {street1} & {street2} ===")
+    print_segment_audit(clipped, center)
 
     clipped_ft = reproject_to_state_plane(clipped)
-    import geopandas as gpd
     center_ft = gpd.GeoSeries([center], crs="EPSG:4326").to_crs(NJ_STATE_PLANE_FT).iloc[0]
 
-    plot_network(clipped_ft, center_ft)
+    title = f"{street1} & {street2}\n(clipped to {args.clip_radius_m:.0f}m radius, NAD83 NJ State Plane, feet)"
+    plot_network(clipped_ft, center_ft, title, out_dir / args.out_name)
 
 
 if __name__ == "__main__":

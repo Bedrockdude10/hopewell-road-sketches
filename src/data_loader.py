@@ -9,8 +9,11 @@ from shapely.geometry import Point, box
 from src.geometry_model import NJ_STATE_PLANE_FT, WGS84, buffer_point_wgs84, reproject_to_state_plane
 
 DATA_DIR = Path(__file__).resolve().parent.parent / "data"
-ROAD_NETWORK_PATH = DATA_DIR / "NJ_Roadway_Network.geojson"
-PARCELS_PATH = DATA_DIR / "MercerCountyParcels.shp"
+# Defaults only - a site's config.yaml (data_sources:) can point at different
+# files entirely (e.g. a different county's parcels/road network), since
+# nothing else in this module is specific to Mercer County or NJDOT's statewide file.
+DEFAULT_ROAD_NETWORK_PATH = DATA_DIR / "NJ_Roadway_Network.geojson"
+DEFAULT_PARCELS_PATH = DATA_DIR / "MercerCountyParcels.shp"
 
 NOMINATIM_USER_AGENT = "hopewell-road-sketches-research/0.1 (contact: rollo.l@northeastern.edu)"
 OVERPASS_USER_AGENT = NOMINATIM_USER_AGENT
@@ -101,19 +104,27 @@ def geocode_intersection(street1: str, street2: str, anchor_query: str, search_r
     return Point((p1.x + p2.x) / 2, (p1.y + p2.y) / 2)
 
 
-def load_road_network(bbox: tuple[float, float, float, float] | None = None) -> gpd.GeoDataFrame:
-    """Load the NJDOT Roadway Network GeoJSON (statewide SRI/SLD linear-referencing layer),
-    optionally filtered to a WGS84 bbox (minx, miny, maxx, maxy)."""
-    return gpd.read_file(ROAD_NETWORK_PATH, bbox=bbox)
+def load_road_network(
+    bbox: tuple[float, float, float, float] | None = None, path: Path | str = DEFAULT_ROAD_NETWORK_PATH
+) -> gpd.GeoDataFrame:
+    """Load a roadway network GeoJSON (NJDOT's statewide SRI/SLD linear-referencing
+    layer by default; pass `path` for a different one), optionally filtered to a
+    WGS84 bbox (minx, miny, maxx, maxy)."""
+    return gpd.read_file(path, bbox=bbox)
 
 
-def load_parcels(bbox: tuple[float, float, float, float] | None = None) -> gpd.GeoDataFrame:
-    """Load the Mercer County Parcels/MOD-IV shapefile, optionally filtered to a bbox
-    (in the shapefile's native CRS - reproject the bbox first if querying in WGS84)."""
-    return gpd.read_file(PARCELS_PATH, bbox=bbox)
+def load_parcels(
+    bbox: tuple[float, float, float, float] | None = None, path: Path | str = DEFAULT_PARCELS_PATH
+) -> gpd.GeoDataFrame:
+    """Load a parcels/MOD-IV shapefile (Mercer County by default; pass `path` for a
+    different one), optionally filtered to a bbox (in the shapefile's native CRS -
+    reproject the bbox first if querying in WGS84)."""
+    return gpd.read_file(path, bbox=bbox)
 
 
-def load_parcels_near(center_wgs84: Point, radius_ft: float) -> gpd.GeoDataFrame:
+def load_parcels_near(
+    center_wgs84: Point, radius_ft: float, path: Path | str = DEFAULT_PARCELS_PATH
+) -> gpd.GeoDataFrame:
     """Load parcels within a square bbox (radius_ft) of a WGS84 point, reprojected
     to NJ State Plane. Full parcel polygons are kept (not circle-clipped) since
     partial lot fragments aren't meaningful for establishing ROW boundaries."""
@@ -121,5 +132,5 @@ def load_parcels_near(center_wgs84: Point, radius_ft: float) -> gpd.GeoDataFrame
     bbox_geom = box(center_ft.x - radius_ft, center_ft.y - radius_ft, center_ft.x + radius_ft, center_ft.y + radius_ft)
     # Passing a CRS-tagged GeoSeries (rather than a plain tuple) lets pyogrio resolve
     # the parcel shapefile's own (slightly different, HARN-less) NAD83 NJ State Plane CRS.
-    parcels = load_parcels(bbox=gpd.GeoSeries([bbox_geom], crs=NJ_STATE_PLANE_FT))
+    parcels = load_parcels(bbox=gpd.GeoSeries([bbox_geom], crs=NJ_STATE_PLANE_FT), path=path)
     return reproject_to_state_plane(parcels)

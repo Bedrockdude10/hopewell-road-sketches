@@ -36,7 +36,7 @@ import mathutils
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))  # for the sibling blender_*.py imports below
 
-from blender_crosswalks import add_crosswalk, add_dashed_centerline, add_paint_line, add_stop_bar
+from blender_crosswalks import add_crosswalk, add_dashed_centerline, add_double_yellow_centerline, add_paint_line, add_stop_bar
 from blender_geometry import build_mesh_from_data, extrude_polygon
 from blender_materials import make_material, make_textured_material
 from blender_props import (
@@ -194,7 +194,15 @@ def build_scene(data: dict):
         if stop_bar_offset_m is not None:
             add_stop_bar(f"stop_bar_{leg['name']}", near, u, n, leg["width_m"], marking_mat,
                          offset_m=stop_bar_offset_m)
-        add_dashed_centerline(f"centerline_{leg['name']}", near, far, centerline_mat, start_m=offset_m + 2)
+        # Real per-leg fact (confirmed via street-view, see src/geometry/treatments.py
+        # DEFAULT_CENTERLINE_STYLE) - some legs get no centerline paint at all, so this
+        # is NOT drawn unconditionally the way it used to be.
+        centerline_style = leg.get("centerline_style", "single_yellow_dashed")
+        if centerline_style == "double_yellow":
+            add_double_yellow_centerline(f"centerline_{leg['name']}", near, far, centerline_mat,
+                                          start_m=offset_m + 2)
+        elif centerline_style == "single_yellow_dashed":
+            add_dashed_centerline(f"centerline_{leg['name']}", near, far, centerline_mat, start_m=offset_m + 2)
 
     # Props: real streetlight model (or procedural fallback) at each corner,
     # procedural signage incl. traffic signals (no CC0 source available - see

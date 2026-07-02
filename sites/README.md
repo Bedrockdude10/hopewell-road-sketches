@@ -43,6 +43,11 @@ legs:
     confirmed: true|false             # true = field-measured/surveyed; false = geometric/estimated placeholder
     source: >                         # REQUIRED if confirmed: false - explain the estimation methodology
       ...                             # and REQUIRED either way - cite where curb_to_curb_ft came from
+    centerline_style: single_yellow_dashed|double_yellow|none  # optional, defaults to single_yellow_dashed
+                                       # (src/geometry/treatments.py:DEFAULT_CENTERLINE_STYLE) - what's actually
+                                       # painted down the middle of this leg TODAY. No OSM tag for this; state
+                                       # your source in a comment (street-view review, field survey, etc.) the
+                                       # same way the `signals` block below does.
 
 signals:                              # optional - only for signalized intersections. Presence of this block
                                        # IS what "signalized" means now (replaces the old `signalized: true`

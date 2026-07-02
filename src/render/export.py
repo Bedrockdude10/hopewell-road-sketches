@@ -19,7 +19,7 @@ from src.geometry.intersection import IntersectionModel
 from src.render.mesh_utils import build_decimated_building_mesh
 from src.sources.osm_context import fetch_buildings, fetch_crossings
 from src.render.props import build_props
-from src.geometry.treatments import DesignState, build_sidewalk_pieces
+from src.geometry.treatments import DEFAULT_CENTERLINE_STYLE, DesignState, build_sidewalk_pieces
 
 BUILDING_CONTEXT_RADIUS_M = 130
 SIDEWALK_WIDTH_FT = 6
@@ -213,6 +213,9 @@ def export_scenario(model: IntersectionModel, state: DesignState, name: str, out
                 "crosswalk_style": state.crosswalk_styles.get(leg_name, "lines"),
                 # None (not drawn) unless this site's intersection is signalized (see stop_bar_offsets above).
                 "stop_bar_offset_m": stop_bar_offsets[leg_name] * FT_TO_M if leg_name in stop_bar_offsets else None,
+                # Real per-leg fact from config.yaml (street-view confirmed), not an OSM tag - see
+                # src/geometry/treatments.py:set_centerline_style / DEFAULT_CENTERLINE_STYLE.
+                "centerline_style": state.centerline_styles.get(leg_name, DEFAULT_CENTERLINE_STYLE),
             }
             for leg_name, leg in state.legs.items()
         ],

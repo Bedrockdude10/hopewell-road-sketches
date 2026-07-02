@@ -13,6 +13,16 @@ LANE_NARROWING_DEFAULT_STRIPE_FT = 5.0  # common low-cost NACTO paint buffer/sho
 CORNER_HATCHING_DEFAULT_DEPTH_FT = 6.0  # paint-only zone depth, comparable footprint to a modest real curb extension
 CORNER_APRON_DEFAULT_EXTENT_FT = 5.0  # mountable-apron zone depth - same shape as hatching, different surface finish
 
+# What's actually painted down the middle of a leg today: a single dashed
+# yellow line (default - the ordinary two-way-undivided-road marking), a solid
+# double yellow (no-passing zone), or none at all (some real local streets
+# genuinely have no centerline paint). Unlike crosswalk style, there's no OSM
+# tag for this - it's read directly from a site's config.yaml per leg (see
+# sites/README.md), confirmed the same way as the `signals` block (street-view
+# photo review, not a field survey).
+DEFAULT_CENTERLINE_STYLE = "single_yellow_dashed"
+VALID_CENTERLINE_STYLES = ("single_yellow_dashed", "double_yellow", "none")
+
 
 @dataclass
 class DesignState:
@@ -24,6 +34,8 @@ class DesignState:
     refuge_islands: dict = field(default_factory=dict)   # name -> {"polygon": Polygon, "width_ft": float}
     raised_crossings: dict = field(default_factory=dict)  # leg name -> Polygon
     crosswalk_styles: dict = field(default_factory=dict)  # leg name -> "lines" | "continental" | "ladder"
+    centerline_styles: dict = field(default_factory=dict)  # leg name -> one of VALID_CENTERLINE_STYLES - seeded
+                                                             # from config.yaml in from_model(), see set_centerline_style
     lane_narrowing: dict = field(default_factory=dict)  # leg name -> stripe_width_ft (paint-only, no curb change)
     corner_hatching: dict = field(default_factory=dict)  # corner tuple -> depth_ft (paint-only, no curb change)
     corner_aprons: dict = field(default_factory=dict)  # corner tuple -> extent_ft (mountable apron, no curb change)
@@ -34,7 +46,12 @@ class DesignState:
 
     @classmethod
     def from_model(cls, model) -> "DesignState":
-        return cls(legs=deepcopy(model.legs), corner_fillets=deepcopy(model.corner_fillets))
+        centerline_styles = {
+            name: leg_cfg.get("centerline_style", DEFAULT_CENTERLINE_STYLE)
+            for name, leg_cfg in model.config["legs"].items()
+        }
+        return cls(legs=deepcopy(model.legs), corner_fillets=deepcopy(model.corner_fillets),
+                   centerline_styles=centerline_styles)
 
     def clone(self) -> "DesignState":
         return deepcopy(self)
@@ -167,6 +184,23 @@ def upgrade_crosswalk_markings(state: DesignState, leg_name: str, style: str) ->
     new_state = state.clone()
     new_state.crosswalk_styles[leg_name] = style
     new_state.notes.append(f"upgrade_crosswalk_markings({leg_name}, style={style!r})")
+    return new_state
+
+
+def set_centerline_style(state: DesignState, leg_name: str, style: str) -> DesignState:
+    """
+    Change what's painted down the middle of a leg: 'single_yellow_dashed'
+    (ordinary two-way marking), 'double_yellow' (solid no-passing zone), or
+    'none' (some real local streets have no centerline paint at all). Unlike
+    upgrade_crosswalk_markings, this isn't a visibility ranking - it's just
+    what's actually there, or a proposal's choice to change it - so any value
+    is a valid target, not just an "upgrade."
+    """
+    if style not in VALID_CENTERLINE_STYLES:
+        raise ValueError(f"Unknown centerline style {style!r} - expected one of {VALID_CENTERLINE_STYLES}")
+    new_state = state.clone()
+    new_state.centerline_styles[leg_name] = style
+    new_state.notes.append(f"set_centerline_style({leg_name}, style={style!r})")
     return new_state
 
 

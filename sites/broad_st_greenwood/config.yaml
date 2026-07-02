@@ -64,6 +64,12 @@ corridor:
 # intersections, non-perpendicular crossings, etc. all just need accurate
 # bearings here - nothing else about the matching logic assumes 4 legs or
 # perpendicular roads).
+#
+# `centerline_style` (one of single_yellow_dashed/double_yellow/none, see
+# src/geometry/treatments.py:VALID_CENTERLINE_STYLES) is what's actually
+# painted down the middle of each leg today - confirmed via street-view photo
+# review (Danny), 2026-07-02, same sourcing category as the `signals` block
+# below (a real observed fact, not a field survey, not an OSM tag).
 legs:
   broad_st_west:
     sri: "00000518__"
@@ -71,6 +77,7 @@ legs:
     street_name: "West Broad Street (west of Greenwood Ave)"
     curb_to_curb_ft: 55.5  # 55 ft 6 in
     confirmed: true
+    centerline_style: double_yellow  # confirmed via street-view photo review, 2026-07-02
     source: >
       Ground-truth measurement report, p.84 Appendix D: 55 ft 6 in at the
       "Greenwood Ave intersection, west side," corroborated by the p.38
@@ -87,6 +94,7 @@ legs:
     street_name: "East Broad Street (east of Greenwood Ave)"
     curb_to_curb_ft: 68  # measured pedestrian crossing distance (curb-to-curb, incl. parking/shoulder zone)
     confirmed: true
+    centerline_style: double_yellow  # confirmed via street-view photo review, 2026-07-02
     source: >
       Ground-truth measurement report, p.21: ~54 ft "active roadway" vs. ~68 ft
       total including the parking/shoulder zone on each side, measured as the
@@ -103,6 +111,7 @@ legs:
     street_name: "North Greenwood Ave"
     curb_to_curb_ft: 34  # ESTIMATE: measured ~50.25 ft parcel-to-parcel ROW gap minus assumed 8 ft/side sidewalk+verge
     confirmed: false
+    centerline_style: double_yellow  # confirmed via street-view photo review, 2026-07-02
     source: >
       No NJDOT SLD exists for this local/municipal road (ROUTE_SUBTYPE 7).
       Estimated: measured a stable ~50.25 ft parcel-to-parcel gap (Mercer County
@@ -117,6 +126,7 @@ legs:
     street_name: "South Greenwood Ave"
     curb_to_curb_ft: 34  # ESTIMATE: same methodology as greenwood_ave_north
     confirmed: false
+    centerline_style: none  # confirmed via street-view photo review, 2026-07-02 - no centerline paint exists today
     source: >
       Same estimation methodology as greenwood_ave_north (measured ~50.25 ft
       parcel-to-parcel ROW gap minus assumed 8 ft/side sidewalk+verge). NOT a

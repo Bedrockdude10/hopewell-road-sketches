@@ -119,6 +119,7 @@ scripts/
 - `refuge_island(state, leg_name, offset_ft, width_ft, along_road_ft)` — NACTO 6 ft minimum width enforced.
 - `raise_crossing(state, leg_name, crossing_width_ft)` — marks a crossing as a raised speed table; placed via `leg_clearance_ft()`.
 - `upgrade_crosswalk_markings(state, leg_name, style)` — repaints a crosswalk to a more visible style (`"lines"` → `"continental"` → `"ladder"`, FHWA/NACTO visibility ranking). A real, standalone low-cost treatment, not just cosmetic.
+- `set_centerline_style(state, leg_name, style)` — changes what's painted down a leg's middle (`"single_yellow_dashed"` / `"double_yellow"` / `"none"`). Not a visibility ranking like crosswalk style - just what's actually there today (`DesignState.from_model()` seeds it per leg from config.yaml's `centerline_style`, since there's no OSM tag for it) or what a proposal changes it to.
 - `build_sidewalk_pieces(state, sidewalk_width_ft)` — reuses the *same* fillet pipeline at a wider offset to get a sidewalk band that hugs the pavement exactly (12 pieces: 4 leg strips × 2 sides + 4 corner wedges).
 
 The demo scenario (`sites/broad_st_greenwood/scenarios.py:build_demo_scenario`) tightens the two corners on the confirmed West Broad St leg (20→10 ft), adds a refuge island, raises the Greenwood-south crossing, and upgrades the other 3 crosswalks to continental.
@@ -130,6 +131,10 @@ OSM actually has surveyed crosswalk geometry at this intersection (`highway=foot
 All 4 real crossings here are tagged `crossing:markings=lines` — confirmed correct by Danny (simple 2-line marking, not ladder or continental). The proposed scenario upgrades 3 of them to continental via `upgrade_crosswalk_markings`; the 4th becomes a raised crossing instead.
 
 `blender_crosswalks.py` implements all 3 styles: `add_crosswalk_lines` (2 transverse boundary lines only), `add_crosswalk_continental` (parallel bars, no rails), `add_crosswalk_ladder` (bars + 2 framing rails) — dispatched via `CROSSWALK_STYLES` by the `crosswalk_style` field per leg in the exported JSON.
+
+## Centerline styles: another real-vs-assumed fact, no OSM equivalent
+
+Unlike crosswalks, OSM has no tag for what's painted down the middle of a road, so this can't be resolved from real survey data at export time the way crosswalk style is - it has to be a per-leg fact recorded directly in `config.yaml` (`legs.<name>.centerline_style`, confirmed via street-view photo review, same sourcing category as the `signals` block). `DesignState.from_model()` seeds `state.centerline_styles` from it; `set_centerline_style()` lets a proposal change it. This replaced an earlier version of the pipeline that just drew a single dashed yellow line down every leg unconditionally, which happened to be wrong here: **West Broad St, East Broad St, and North Greenwood Ave all have a solid double yellow (no-passing zone) centerline; South Greenwood Ave has no centerline paint at all.** `blender_crosswalks.py:add_double_yellow_centerline` draws two continuous parallel lines (real MUTCD/AASHTO proportions - 6 in lines, 4 in gap) for `"double_yellow"`; `"none"` draws nothing.
 
 ## Phase 4 fidelity (textures, props, trees, mesh optimization)
 

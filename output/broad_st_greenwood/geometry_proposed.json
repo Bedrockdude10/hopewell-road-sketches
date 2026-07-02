@@ -2530,7 +2530,8 @@
       "crosswalk_offset_m": 6.210905646537566,
       "crosswalk_offset_source": "osm_survey",
       "crosswalk_style": "continental",
-      "stop_bar_offset_m": 10.145982061974099
+      "stop_bar_offset_m": 10.145982061974099,
+      "centerline_style": "double_yellow"
     },
     {
       "name": "broad_st_east",
@@ -2547,7 +2548,8 @@
       "crosswalk_offset_m": 6.514727806522351,
       "crosswalk_offset_source": "osm_survey",
       "crosswalk_style": "continental",
-      "stop_bar_offset_m": 13.043003654567887
+      "stop_bar_offset_m": 13.043003654567887,
+      "centerline_style": "double_yellow"
     },
     {
       "name": "greenwood_ave_south",
@@ -2564,7 +2566,8 @@
       "crosswalk_offset_m": 12.711186200932191,
       "crosswalk_offset_source": "osm_survey",
       "crosswalk_style": "lines",
-      "stop_bar_offset_m": 19.34833782389782
+      "stop_bar_offset_m": 19.34833782389782,
+      "centerline_style": "none"
     },
     {
       "name": "greenwood_ave_north",
@@ -2581,7 +2584,8 @@
       "crosswalk_offset_m": 11.140328206632804,
       "crosswalk_offset_source": "osm_survey",
       "crosswalk_style": "continental",
-      "stop_bar_offset_m": 15.444567756726745
+      "stop_bar_offset_m": 15.444567756726745,
+      "centerline_style": "double_yellow"
     }
   ],
   "refuge_islands": [

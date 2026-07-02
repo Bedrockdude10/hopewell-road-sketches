@@ -1,7 +1,9 @@
-"""Painted crosswalk styles (lines/continental/ladder) and dashed
-centerlines. Imported by blender_scene.py - runs under Blender's bundled
-Python. See README.md "Crosswalk styles: real data over guessing" for how a
-leg's style is decided upstream in src/render/export.py."""
+"""Painted crosswalk styles (lines/continental/ladder) and centerline styles
+(single dashed yellow, solid double yellow, or none). Imported by
+blender_scene.py - runs under Blender's bundled Python. See README.md
+"Crosswalk styles: real data over guessing" for how a leg's crosswalk style
+is decided upstream in src/render/export.py, and
+src/geometry/treatments.py:DEFAULT_CENTERLINE_STYLE for centerline style."""
 import mathutils
 
 from blender_geometry import add_stripe_rect
@@ -115,3 +117,22 @@ def add_dashed_centerline(name: str, near: mathutils.Vector, far: mathutils.Vect
         add_stripe_rect(f"{name}_dash_{i}", center, u, n, dash_m, width_m, 0.06, material)
         pos += dash_m + gap_m
         i += 1
+
+
+def add_double_yellow_centerline(name: str, near: mathutils.Vector, far: mathutils.Vector, material,
+                                  start_m: float = 6.0, width_m: float = 0.15, line_gap_m: float = 0.1):
+    """Solid double yellow: a no-passing-zone centerline - two continuous
+    (not dashed) parallel lines, real MUTCD/AASHTO proportions (~6 in line
+    width, ~4 in gap between them), same start_m setback past the
+    intersection curve as the dashed style."""
+    direction = far - near
+    length = direction.length
+    if length <= start_m:
+        return
+    u = direction / length
+    n = mathutils.Vector((-u.y, u.x, 0))
+    run = length - start_m
+    center = near + u * (start_m + run / 2)
+    lateral = line_gap_m / 2 + width_m / 2
+    for side, sign in [("a", -1), ("b", 1)]:
+        add_stripe_rect(f"{name}_{side}", center + n * (sign * lateral), u, n, run, width_m, 0.06, material)

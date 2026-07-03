@@ -1,7 +1,20 @@
 {
-  "name": "Existing Conditions",
+  "name": "Proposed Treatments (build_proposal_c_parking_buffer_bollards)",
   "units": "meters",
-  "notes": [],
+  "notes": [
+    "upgrade_crosswalk_markings(broad_st_west, style='continental')",
+    "upgrade_crosswalk_markings(broad_st_east, style='continental')",
+    "upgrade_crosswalk_markings(greenwood_ave_south, style='continental')",
+    "upgrade_crosswalk_markings(greenwood_ave_north, style='continental')",
+    "add_marked_parking(broad_st_west, side='left', depth_ft=8.0, stall_length_ft=22.0, curb_offset_ft=4.0)",
+    "add_marked_parking(broad_st_west, side='right', depth_ft=8.0, stall_length_ft=22.0, curb_offset_ft=4.0)",
+    "add_marked_parking(broad_st_east, side='left', depth_ft=8.0, stall_length_ft=22.0, curb_offset_ft=4.0)",
+    "add_marked_parking(broad_st_east, side='right', depth_ft=8.0, stall_length_ft=22.0, curb_offset_ft=4.0)",
+    "add_parking_buffer_bollards(broad_st_west, side='left', spacing_ft=10.0)",
+    "add_parking_buffer_bollards(broad_st_west, side='right', spacing_ft=10.0)",
+    "add_parking_buffer_bollards(broad_st_east, side='left', spacing_ft=10.0)",
+    "add_parking_buffer_bollards(broad_st_east, side='right', spacing_ft=10.0)"
+  ],
   "theme": {
     "asphalt_near": {
       "Diffuse": "/Users/danny/ProductiveProjects/hopewell-road-sketches/output/.textures/asphalt_01/4k/asphalt_01_Diffuse_4k.jpg",
@@ -2277,11 +2290,938 @@
   "lane_narrowing_taper_lines": [],
   "lane_narrowing_hatch_lines": [],
   "corner_hatching_lines": [],
-  "parking_edge_lines": [],
-  "parking_stall_divider_lines": [],
-  "parking_buffer_hatch_lines": [],
-  "parking_buffer_edge_lines": [],
-  "parking_buffer_taper_lines": [],
+  "parking_edge_lines": [
+    [
+      [
+        -7.325476671282622,
+        -13.916614999855868
+      ],
+      [
+        -28.6041201066433,
+        -28.47958158515012
+      ]
+    ],
+    [
+      [
+        -12.748107647100511,
+        -5.993350853048265
+      ],
+      [
+        -34.02675108246119,
+        -20.556317438342518
+      ]
+    ],
+    [
+      [
+        9.680625835018606,
+        11.077267214945332
+      ],
+      [
+        33.31527186917039,
+        22.569386565119494
+      ]
+    ],
+    [
+      [
+        16.974084760822215,
+        -0.28892371396366506
+      ],
+      [
+        39.17981180729801,
+        10.508397519702372
+      ]
+    ]
+  ],
+  "parking_stall_divider_lines": [
+    [
+      [
+        -5.948300550436322,
+        -15.928872560931277
+      ],
+      [
+        -7.325476671282622,
+        -13.916614999855868
+      ]
+    ],
+    [
+      [
+        -11.482008843438049,
+        -19.716106893254164
+      ],
+      [
+        -12.859184964284347,
+        -17.70384933217876
+      ]
+    ],
+    [
+      [
+        -17.015717136439775,
+        -23.503341225577053
+      ],
+      [
+        -18.392893257286076,
+        -21.491083664501645
+      ]
+    ],
+    [
+      [
+        -22.549425429441502,
+        -27.290575557899942
+      ],
+      [
+        -23.926601550287803,
+        -25.278317996824534
+      ]
+    ],
+    [
+      [
+        -14.12528376794681,
+        -3.981093291972857
+      ],
+      [
+        -12.748107647100511,
+        -5.993350853048265
+      ]
+    ],
+    [
+      [
+        -19.65899206094854,
+        -7.768327624295745
+      ],
+      [
+        -18.281815940102238,
+        -9.780585185371153
+      ]
+    ],
+    [
+      [
+        -25.192700353950265,
+        -11.555561956618634
+      ],
+      [
+        -23.815524233103964,
+        -13.567819517694042
+      ]
+    ],
+    [
+      [
+        -30.726408646951988,
+        -15.342796288941521
+      ],
+      [
+        -29.34923252610569,
+        -17.35505385001693
+      ]
+    ],
+    [
+      [
+        8.357262046472496,
+        13.139197501811665
+      ],
+      [
+        9.680625835018606,
+        11.077267214945332
+      ]
+    ],
+    [
+      [
+        14.385264832065488,
+        16.076228174635304
+      ],
+      [
+        15.711120357744909,
+        14.009537184044627
+      ]
+    ],
+    [
+      [
+        20.415759354791792,
+        19.008498143699114
+      ],
+      [
+        21.74161488045347,
+        16.94180715310844
+      ]
+    ],
+    [
+      [
+        26.446253877500354,
+        21.940768112762925
+      ],
+      [
+        27.77210940316203,
+        19.87407712217225
+      ]
+    ],
+    [
+      [
+        18.300396117254813,
+        -2.3553930612483995
+      ],
+      [
+        16.974084760822215,
+        -0.28892371396366506
+      ]
+    ],
+    [
+      [
+        24.330890639963375,
+        0.5768769078154117
+      ],
+      [
+        23.004579283530777,
+        2.643346255100146
+      ]
+    ],
+    [
+      [
+        30.36138516268968,
+        3.509146876879223
+      ],
+      [
+        29.03507380625708,
+        5.575616224163957
+      ]
+    ],
+    [
+      [
+        36.39187968539824,
+        6.441416845943034
+      ],
+      [
+        35.06556832896565,
+        8.507886193227769
+      ]
+    ]
+  ],
+  "parking_buffer_hatch_lines": [
+    [
+      [
+        -25.02590748808142,
+        -28.985463936417553
+      ],
+      [
+        -25.343448208204844,
+        -30.680180777405017
+      ]
+    ],
+    [
+      [
+        -22.180145554192926,
+        -27.03784278854672
+      ],
+      [
+        -22.49768627431635,
+        -28.732559629534187
+      ]
+    ],
+    [
+      [
+        -19.33438362030443,
+        -25.09022164067589
+      ],
+      [
+        -19.651924340445596,
+        -26.784938481663357
+      ]
+    ],
+    [
+      [
+        -16.488621686433675,
+        -23.142600492769574
+      ],
+      [
+        -16.8061624065571,
+        -24.837317333757042
+      ]
+    ],
+    [
+      [
+        -13.642859752545181,
+        -21.194979344898744
+      ],
+      [
+        -13.960400472686347,
+        -22.88969618588621
+      ]
+    ],
+    [
+      [
+        -10.797097818674427,
+        -19.24735819702791
+      ],
+      [
+        -11.114638538797852,
+        -20.94207503801538
+      ]
+    ],
+    [
+      [
+        -7.9513358847681905,
+        -17.29973704915708
+      ],
+      [
+        -8.268876604891615,
+        -18.994453890109064
+      ]
+    ],
+    [
+      [
+        -5.273371888208343,
+        -16.24765455891341
+      ],
+      [
+        -5.423114671003121,
+        -17.04683274223823
+      ]
+    ],
+    [
+      [
+        -4.347769646764314,
+        -14.932706612906792
+      ],
+      [
+        -4.643983189369273,
+        -16.513600171891788
+      ]
+    ],
+    [
+      [
+        -1.6607434706887232,
+        -13.83225921300659
+      ],
+      [
+        -1.7982212554807775,
+        -14.565979024020956
+      ]
+    ],
+    [
+      [
+        -33.89147876602393,
+        -16.031555886903686
+      ],
+      [
+        -34.209019486147355,
+        -17.726272727891153
+      ]
+    ],
+    [
+      [
+        -31.045716832135433,
+        -14.083934739032854
+      ],
+      [
+        -31.363257552258858,
+        -15.77865158002032
+      ]
+    ],
+    [
+      [
+        -28.199954898246936,
+        -12.136313591162024
+      ],
+      [
+        -28.517495618388104,
+        -13.83103043214949
+      ]
+    ],
+    [
+      [
+        -25.354192964376185,
+        -10.188692443255707
+      ],
+      [
+        -25.67173368449961,
+        -11.883409284243175
+      ]
+    ],
+    [
+      [
+        -22.50843103048769,
+        -8.241071295384877
+      ],
+      [
+        -22.825971750628856,
+        -9.935788136372343
+      ]
+    ],
+    [
+      [
+        -19.662669096616938,
+        -6.293450147514045
+      ],
+      [
+        -19.980209816740363,
+        -7.988166988501512
+      ]
+    ],
+    [
+      [
+        -16.8169071627107,
+        -4.3458289996432145
+      ],
+      [
+        -17.134447882834124,
+        -6.040545840595197
+      ]
+    ],
+    [
+      [
+        -14.138943166150852,
+        -3.293746509399545
+      ],
+      [
+        -14.288685948945629,
+        -4.092924692724366
+      ]
+    ],
+    [
+      [
+        -13.744760319704657,
+        -2.243271477297228
+      ],
+      [
+        -13.984006791693439,
+        -3.520131418534834
+      ]
+    ],
+    [
+      [
+        -10.898998385816162,
+        -0.29565032942639663
+      ],
+      [
+        -11.091999607943512,
+        -1.3256990782415494
+      ]
+    ],
+    [
+      [
+        29.90579843114745,
+        23.622938383053896
+      ],
+      [
+        30.2359132092997,
+        25.139141264227778
+      ]
+    ],
+    [
+      [
+        27.1147991916636,
+        22.265841842665896
+      ],
+      [
+        27.44491396981585,
+        23.78204472383978
+      ]
+    ],
+    [
+      [
+        24.323799952215236,
+        20.908745302277897
+      ],
+      [
+        24.653914730349744,
+        22.42494818345178
+      ]
+    ],
+    [
+      [
+        21.53280071273139,
+        19.551648761889897
+      ],
+      [
+        21.862915490883637,
+        21.06785164306378
+      ]
+    ],
+    [
+      [
+        18.741801473265284,
+        18.194552221501898
+      ],
+      [
+        19.071916251399788,
+        19.710755102675783
+      ]
+    ],
+    [
+      [
+        15.950802233799175,
+        16.837455681113898
+      ],
+      [
+        16.280917011951423,
+        18.353658562287784
+      ]
+    ],
+    [
+      [
+        13.159802994315326,
+        15.4803591407259
+      ],
+      [
+        13.489917772467575,
+        16.996562021899784
+      ]
+    ],
+    [
+      [
+        10.36880375484922,
+        14.1232626003379
+      ],
+      [
+        10.698918533001468,
+        15.639465481511783
+      ]
+    ],
+    [
+      [
+        7.561728026134149,
+        12.692327440954653
+      ],
+      [
+        7.907919293535361,
+        14.282368941159268
+      ]
+    ],
+    [
+      [
+        5.546190563430917,
+        11.64283024311997
+      ],
+      [
+        5.8523175299332015,
+        13.048858144220151
+      ]
+    ],
+    [
+      [
+        2.9021665460045916,
+        10.96078453322528
+      ],
+      [
+        2.9509888264289126,
+        11.18502315307958
+      ]
+    ],
+    [
+      [
+        39.59634295013887,
+        6.6438685476819055
+      ],
+      [
+        39.92645772829112,
+        8.160071428855789
+      ]
+    ],
+    [
+      [
+        36.80534371065502,
+        5.286772007258423
+      ],
+      [
+        37.135458488807274,
+        6.802974888432305
+      ]
+    ],
+    [
+      [
+        34.01434447118891,
+        3.9296754668704237
+      ],
+      [
+        34.34445924934116,
+        5.445878348079789
+      ]
+    ],
+    [
+      [
+        31.223345231740552,
+        2.5725789265179078
+      ],
+      [
+        31.553460009875057,
+        4.088781807691791
+      ]
+    ],
+    [
+      [
+        28.432345992256703,
+        1.2154823861299082
+      ],
+      [
+        28.762460770391208,
+        2.7316852673037912
+      ]
+    ],
+    [
+      [
+        25.641346752790596,
+        -0.141614154258091
+      ],
+      [
+        25.9714615309251,
+        1.3745887269157917
+      ]
+    ],
+    [
+      [
+        22.85034751332449,
+        -1.4987106946460904
+      ],
+      [
+        23.180462291476736,
+        0.017492186527792365
+      ]
+    ],
+    [
+      [
+        20.05934827384064,
+        -2.8558072350340895
+      ],
+      [
+        20.389463051992887,
+        -1.339604353860207
+      ]
+    ],
+    [
+      [
+        17.505445518205036,
+        -3.1239298920960166
+      ],
+      [
+        17.598463812509042,
+        -2.6967008942482065
+      ]
+    ],
+    [
+      [
+        16.621487283709644,
+        -4.667625556768477
+      ],
+      [
+        16.96996378401532,
+        -3.0670880808452146
+      ]
+    ]
+  ],
+  "parking_buffer_edge_lines": [
+    [
+      [
+        -5.637242248375341,
+        -15.715986261435505
+      ],
+      [
+        -27.226943985797,
+        -30.49183914622553
+      ]
+    ],
+    [
+      [
+        -13.81422546588583,
+        -3.7682069924770856
+      ],
+      [
+        -35.40392720330749,
+        -18.54405987726711
+      ]
+    ],
+    [
+      [
+        7.40848054544027,
+        12.599450060578064
+      ],
+      [
+        7.492694104128331,
+        12.653549472771585
+      ],
+      [
+        8.436383001000294,
+        13.183641592029389
+      ],
+      [
+        32.24899188041668,
+        24.762293664308825
+      ]
+    ],
+    [
+      [
+        17.318584419767653,
+        -2.8327895575077275
+      ],
+      [
+        40.246091796051715,
+        8.315490420513042
+      ]
+    ]
+  ],
+  "parking_buffer_taper_lines": [
+    [
+      [
+        -5.637242248375341,
+        -15.715986261435505
+      ],
+      [
+        -5.31009217108707,
+        -15.498750030155016
+      ],
+      [
+        -4.976987470033626,
+        -15.290759618399944
+      ],
+      [
+        -4.63818937536995,
+        -15.092178138133978
+      ],
+      [
+        -4.2939635821614415,
+        -14.903161322620791
+      ],
+      [
+        -3.944580042060977,
+        -14.723857404219267
+      ],
+      [
+        -3.590312751561776,
+        -14.554406998104417
+      ],
+      [
+        -3.231439537127735,
+        -14.394942992126943
+      ],
+      [
+        -2.8682418372899297,
+        -14.245590442456585
+      ],
+      [
+        -2.5010044820108916,
+        -14.106466475647968
+      ],
+      [
+        -2.1300154692634474,
+        -13.977680196632166
+      ],
+      [
+        -1.755565739125712,
+        -13.859332603272703
+      ],
+      [
+        -1.3779489457293415,
+        -13.751516507095658
+      ],
+      [
+        -0.9974612268658821,
+        -13.654316460548715
+      ],
+      [
+        -0.6144009718012065,
+        -13.567808690682707
+      ],
+      [
+        -0.22906858728029766,
+        -13.492061039362103
+      ]
+    ],
+    [
+      [
+        -13.81422546588583,
+        -3.7682069924770856
+      ],
+      [
+        -13.49328657274386,
+        -3.5418953044882047
+      ],
+      [
+        -13.178810553146945,
+        -3.306685639830865
+      ],
+      [
+        -12.871044028081885,
+        -3.062762456637528
+      ],
+      [
+        -12.57022835682775,
+        -2.810317046325468
+      ],
+      [
+        -12.27659944756329,
+        -2.549547383821383
+      ],
+      [
+        -11.99038757239203,
+        -2.2806579720731825
+      ],
+      [
+        -11.711817186802765,
+        -2.003859681736026
+      ],
+      [
+        -11.441106753600994,
+        -1.7193695859261788
+      ],
+      [
+        -11.178468571577362,
+        -1.4274107898652555
+      ],
+      [
+        -10.924108609072817,
+        -1.1282122559116223
+      ],
+      [
+        -10.678226342351781,
+        -0.822008624049928
+      ],
+      [
+        -10.441014599297802,
+        -0.5090400278742425
+      ],
+      [
+        -10.212659408094641,
+        -0.18955190617125484
+      ],
+      [
+        -9.993339851336321,
+        0.13620518932873385
+      ],
+      [
+        -9.783227925654828,
+        0.46797579070720824
+      ]
+    ],
+    [
+      [
+        7.40848054544027,
+        12.599450060578064
+      ],
+      [
+        7.11387644742555,
+        12.416758111694735
+      ],
+      [
+        6.813601675744309,
+        12.243544416390082
+      ],
+      [
+        6.507961067721807,
+        12.079984820268118
+      ],
+      [
+        6.197264908093354,
+        11.926245368136652
+      ],
+      [
+        5.881828613911802,
+        11.782482135496661
+      ],
+      [
+        5.561972414416401,
+        11.648841069967022
+      ],
+      [
+        5.238021025898494,
+        11.525457843247802
+      ],
+      [
+        4.910303322078567,
+        11.412457713373751
+      ],
+      [
+        4.579152000207547,
+        11.309955397435372
+      ],
+      [
+        4.244903243318154,
+        11.218054955228885
+      ],
+      [
+        3.907896378981136,
+        11.136849683586695
+      ],
+      [
+        3.568473534743814,
+        11.066422021707707
+      ],
+      [
+        3.2269792908541395,
+        11.006843467310071
+      ],
+      [
+        2.883760330429953,
+        10.958174504280557
+      ],
+      [
+        2.53916508753472,
+        10.92046454107538
+      ]
+    ],
+    [
+      [
+        17.318584419767653,
+        -2.8327895575077275
+      ],
+      [
+        17.03089224260277,
+        -3.023878287838865
+      ],
+      [
+        16.749174132592792,
+        -3.2236696744241753
+      ],
+      [
+        16.4736932536487,
+        -3.4319770842832513
+      ],
+      [
+        16.204706943273358,
+        -3.648605929272529
+      ],
+      [
+        15.94246647210829,
+        -3.8733538479376586
+      ],
+      [
+        15.687216809264292,
+        -4.106010894427076
+      ],
+      [
+        15.439196393471304,
+        -4.346359734679666
+      ],
+      [
+        15.198636910295953,
+        -4.594175849425234
+      ],
+      [
+        14.965763075799309,
+        -4.849227743855864
+      ],
+      [
+        14.74079242656394,
+        -5.111277164074592
+      ],
+      [
+        14.523935116462782,
+        -5.3800793194343335
+      ],
+      [
+        14.315393720453745,
+        -5.655383111299296
+      ],
+      [
+        14.11536304518711,
+        -5.936931367554702
+      ],
+      [
+        13.924029947170895,
+        -6.224461083006766
+      ],
+      [
+        13.741573158157106,
+        -6.517703664856777
+      ]
+    ]
+  ],
   "corner_apron_polygons": [],
   "props": [
     {
@@ -2494,6 +3434,474 @@
         -8.947183619950293,
         2.1482046436568725
       ]
+    },
+    {
+      "type": "bollard",
+      "position_ft": [
+        419141.79142621375,
+        566733.1694854987
+      ],
+      "heading_deg": 0.0,
+      "source": "scenario-specified (add_parking_buffer_bollards): flex-post delineator centered in broad_st_west's left striped buffer between its marked-parking lane and the curb (curb_offset_ft=4.0), spaced 10 ft apart.",
+      "position_m": [
+        -5.2929482181593315,
+        -16.21905065173097
+      ]
+    },
+    {
+      "type": "bollard",
+      "position_ft": [
+        419133.5390576069,
+        566727.521617549
+      ],
+      "heading_deg": 0.0,
+      "source": "scenario-specified (add_parking_buffer_bollards): flex-post delineator centered in broad_st_west's left striped buffer between its marked-parking lane and the curb (curb_offset_ft=4.0), spaced 10 ft apart.",
+      "position_m": [
+        -7.808270169530204,
+        -17.94052080279328
+      ]
+    },
+    {
+      "type": "bollard",
+      "position_ft": [
+        419125.28668900003,
+        566721.8737495993
+      ],
+      "heading_deg": 0.0,
+      "source": "scenario-specified (add_parking_buffer_bollards): flex-post delineator centered in broad_st_west's left striped buffer between its marked-parking lane and the curb (curb_offset_ft=4.0), spaced 10 ft apart.",
+      "position_m": [
+        -10.323592120901077,
+        -19.66199095385559
+      ]
+    },
+    {
+      "type": "bollard",
+      "position_ft": [
+        419117.0343203932,
+        566716.2258816496
+      ],
+      "heading_deg": 0.0,
+      "source": "scenario-specified (add_parking_buffer_bollards): flex-post delineator centered in broad_st_west's left striped buffer between its marked-parking lane and the curb (curb_offset_ft=4.0), spaced 10 ft apart.",
+      "position_m": [
+        -12.838914072254207,
+        -21.3834611049179
+      ]
+    },
+    {
+      "type": "bollard",
+      "position_ft": [
+        419108.78195178637,
+        566710.5780137
+      ],
+      "heading_deg": 0.0,
+      "source": "scenario-specified (add_parking_buffer_bollards): flex-post delineator centered in broad_st_west's left striped buffer between its marked-parking lane and the curb (curb_offset_ft=4.0), spaced 10 ft apart.",
+      "position_m": [
+        -15.35423602362508,
+        -23.10493125598021
+      ]
+    },
+    {
+      "type": "bollard",
+      "position_ft": [
+        419100.52958317957,
+        566704.9301457503
+      ],
+      "heading_deg": 0.0,
+      "source": "scenario-specified (add_parking_buffer_bollards): flex-post delineator centered in broad_st_west's left striped buffer between its marked-parking lane and the curb (curb_offset_ft=4.0), spaced 10 ft apart.",
+      "position_m": [
+        -17.86955797497821,
+        -24.82640140704252
+      ]
+    },
+    {
+      "type": "bollard",
+      "position_ft": [
+        419092.2772145727,
+        566699.2822778006
+      ],
+      "heading_deg": 0.0,
+      "source": "scenario-specified (add_parking_buffer_bollards): flex-post delineator centered in broad_st_west's left striped buffer between its marked-parking lane and the curb (curb_offset_ft=4.0), spaced 10 ft apart.",
+      "position_m": [
+        -20.384879926349083,
+        -26.54787155810483
+      ]
+    },
+    {
+      "type": "bollard",
+      "position_ft": [
+        419084.02484596585,
+        566693.6344098509
+      ],
+      "heading_deg": 0.0,
+      "source": "scenario-specified (add_parking_buffer_bollards): flex-post delineator centered in broad_st_west's left striped buffer between its marked-parking lane and the curb (curb_offset_ft=4.0), spaced 10 ft apart.",
+      "position_m": [
+        -22.900201877719958,
+        -28.26934170916714
+      ]
+    },
+    {
+      "type": "bollard",
+      "position_ft": [
+        419075.77247735905,
+        566687.9865419014
+      ],
+      "heading_deg": 0.0,
+      "source": "scenario-specified (add_parking_buffer_bollards): flex-post delineator centered in broad_st_west's left striped buffer between its marked-parking lane and the curb (curb_offset_ft=4.0), spaced 10 ft apart.",
+      "position_m": [
+        -25.415523829073088,
+        -29.990811860193965
+      ]
+    },
+    {
+      "type": "bollard",
+      "position_ft": [
+        419112.704906273,
+        566775.669183824
+      ],
+      "heading_deg": 0.0,
+      "source": "scenario-specified (add_parking_buffer_bollards): flex-post delineator centered in broad_st_west's right striped buffer between its marked-parking lane and the curb (curb_offset_ft=4.0), spaced 10 ft apart.",
+      "position_m": [
+        -14.15851949610184,
+        -3.265142602181621
+      ]
+    },
+    {
+      "type": "bollard",
+      "position_ft": [
+        419104.45253766613,
+        566770.0213158743
+      ],
+      "heading_deg": 0.0,
+      "source": "scenario-specified (add_parking_buffer_bollards): flex-post delineator centered in broad_st_west's right striped buffer between its marked-parking lane and the curb (curb_offset_ft=4.0), spaced 10 ft apart.",
+      "position_m": [
+        -16.673841447472714,
+        -4.986612753243931
+      ]
+    },
+    {
+      "type": "bollard",
+      "position_ft": [
+        419096.2001690593,
+        566764.3734479246
+      ],
+      "heading_deg": 0.0,
+      "source": "scenario-specified (add_parking_buffer_bollards): flex-post delineator centered in broad_st_west's right striped buffer between its marked-parking lane and the curb (curb_offset_ft=4.0), spaced 10 ft apart.",
+      "position_m": [
+        -19.189163398843586,
+        -6.708082904306241
+      ]
+    },
+    {
+      "type": "bollard",
+      "position_ft": [
+        419087.9478004525,
+        566758.7255799749
+      ],
+      "heading_deg": 0.0,
+      "source": "scenario-specified (add_parking_buffer_bollards): flex-post delineator centered in broad_st_west's right striped buffer between its marked-parking lane and the curb (curb_offset_ft=4.0), spaced 10 ft apart.",
+      "position_m": [
+        -21.704485350196716,
+        -8.429553055368551
+      ]
+    },
+    {
+      "type": "bollard",
+      "position_ft": [
+        419079.6954318456,
+        566753.0777120253
+      ],
+      "heading_deg": 0.0,
+      "source": "scenario-specified (add_parking_buffer_bollards): flex-post delineator centered in broad_st_west's right striped buffer between its marked-parking lane and the curb (curb_offset_ft=4.0), spaced 10 ft apart.",
+      "position_m": [
+        -24.219807301567588,
+        -10.15102320643086
+      ]
+    },
+    {
+      "type": "bollard",
+      "position_ft": [
+        419071.4430632388,
+        566747.4298440756
+      ],
+      "heading_deg": 0.0,
+      "source": "scenario-specified (add_parking_buffer_bollards): flex-post delineator centered in broad_st_west's right striped buffer between its marked-parking lane and the curb (curb_offset_ft=4.0), spaced 10 ft apart.",
+      "position_m": [
+        -26.73512925292072,
+        -11.87249335749317
+      ]
+    },
+    {
+      "type": "bollard",
+      "position_ft": [
+        419063.19069463195,
+        566741.7819761259
+      ],
+      "heading_deg": 0.0,
+      "source": "scenario-specified (add_parking_buffer_bollards): flex-post delineator centered in broad_st_west's right striped buffer between its marked-parking lane and the curb (curb_offset_ft=4.0), spaced 10 ft apart.",
+      "position_m": [
+        -29.250451204291593,
+        -13.59396350855548
+      ]
+    },
+    {
+      "type": "bollard",
+      "position_ft": [
+        419054.9383260251,
+        566736.1341081762
+      ],
+      "heading_deg": 0.0,
+      "source": "scenario-specified (add_parking_buffer_bollards): flex-post delineator centered in broad_st_west's right striped buffer between its marked-parking lane and the curb (curb_offset_ft=4.0), spaced 10 ft apart.",
+      "position_m": [
+        -31.765773155662465,
+        -15.31543365961779
+      ]
+    },
+    {
+      "type": "bollard",
+      "position_ft": [
+        419046.6859574183,
+        566730.4862402267
+      ],
+      "heading_deg": 0.0,
+      "source": "scenario-specified (add_parking_buffer_bollards): flex-post delineator centered in broad_st_west's right striped buffer between its marked-parking lane and the curb (curb_offset_ft=4.0), spaced 10 ft apart.",
+      "position_m": [
+        -34.281095107015595,
+        -17.036903810644617
+      ]
+    },
+    {
+      "type": "bollard",
+      "position_ft": [
+        419182.381800798,
+        566829.401073466
+      ],
+      "heading_deg": 0.0,
+      "source": "scenario-specified (add_parking_buffer_bollards): flex-post delineator centered in broad_st_east's left striped buffer between its marked-parking lane and the curb (curb_offset_ft=4.0), spaced 10 ft apart.",
+      "position_m": [
+        7.078997955120541,
+        13.112337360723318
+      ]
+    },
+    {
+      "type": "bollard",
+      "position_ft": [
+        419191.25198009354,
+        566834.0065428957
+      ],
+      "heading_deg": 0.0,
+      "source": "scenario-specified (add_parking_buffer_bollards): flex-post delineator centered in broad_st_east's left striped buffer between its marked-parking lane and the curb (curb_offset_ft=4.0), spaced 10 ft apart.",
+      "position_m": [
+        9.78262860440109,
+        14.516084442875348
+      ]
+    },
+    {
+      "type": "bollard",
+      "position_ft": [
+        419200.2452014648,
+        566838.3794103037
+      ],
+      "heading_deg": 0.0,
+      "source": "scenario-specified (add_parking_buffer_bollards): flex-post delineator centered in broad_st_east's left striped buffer between its marked-parking lane and the curb (curb_offset_ft=4.0), spaced 10 ft apart.",
+      "position_m": [
+        12.52376247836114,
+        15.848934428826349
+      ]
+    },
+    {
+      "type": "bollard",
+      "position_ft": [
+        419209.23842283606,
+        566842.7522777115
+      ],
+      "heading_deg": 0.0,
+      "source": "scenario-specified (add_parking_buffer_bollards): flex-post delineator centered in broad_st_east's left striped buffer between its marked-parking lane and the curb (curb_offset_ft=4.0), spaced 10 ft apart.",
+      "position_m": [
+        15.26489635232119,
+        17.181784414741863
+      ]
+    },
+    {
+      "type": "bollard",
+      "position_ft": [
+        419218.2316442073,
+        566847.1251451195
+      ],
+      "heading_deg": 0.0,
+      "source": "scenario-specified (add_parking_buffer_bollards): flex-post delineator centered in broad_st_east's left striped buffer between its marked-parking lane and the curb (curb_offset_ft=4.0), spaced 10 ft apart.",
+      "position_m": [
+        18.00603022628124,
+        18.514634400692863
+      ]
+    },
+    {
+      "type": "bollard",
+      "position_ft": [
+        419227.2248655786,
+        566851.4980125275
+      ],
+      "heading_deg": 0.0,
+      "source": "scenario-specified (add_parking_buffer_bollards): flex-post delineator centered in broad_st_east's left striped buffer between its marked-parking lane and the curb (curb_offset_ft=4.0), spaced 10 ft apart.",
+      "position_m": [
+        20.74716410024129,
+        19.84748438664386
+      ]
+    },
+    {
+      "type": "bollard",
+      "position_ft": [
+        419236.21808694984,
+        566855.8708799353
+      ],
+      "heading_deg": 0.0,
+      "source": "scenario-specified (add_parking_buffer_bollards): flex-post delineator centered in broad_st_east's left striped buffer between its marked-parking lane and the curb (curb_offset_ft=4.0), spaced 10 ft apart.",
+      "position_m": [
+        23.48829797420134,
+        21.180334372559376
+      ]
+    },
+    {
+      "type": "bollard",
+      "position_ft": [
+        419245.2113083211,
+        566860.2437473433
+      ],
+      "heading_deg": 0.0,
+      "source": "scenario-specified (add_parking_buffer_bollards): flex-post delineator centered in broad_st_east's left striped buffer between its marked-parking lane and the curb (curb_offset_ft=4.0), spaced 10 ft apart.",
+      "position_m": [
+        26.22943184816139,
+        22.513184358510376
+      ]
+    },
+    {
+      "type": "bollard",
+      "position_ft": [
+        419254.20452969236,
+        566864.6166147513
+      ],
+      "heading_deg": 0.0,
+      "source": "scenario-specified (add_parking_buffer_bollards): flex-post delineator centered in broad_st_east's left striped buffer between its marked-parking lane and the curb (curb_offset_ft=4.0), spaced 10 ft apart.",
+      "position_m": [
+        28.97056572212144,
+        23.846034344461376
+      ]
+    },
+    {
+      "type": "bollard",
+      "position_ft": [
+        419217.06409838254,
+        566775.3927261727
+      ],
+      "heading_deg": 0.0,
+      "source": "scenario-specified (add_parking_buffer_bollards): flex-post delineator centered in broad_st_east's right striped buffer between its marked-parking lane and the curb (curb_offset_ft=4.0), spaced 10 ft apart.",
+      "position_m": [
+        17.650162258889107,
+        -3.3494068942934274
+      ]
+    },
+    {
+      "type": "bollard",
+      "position_ft": [
+        419226.0573197538,
+        566779.7655935806
+      ],
+      "heading_deg": 0.0,
+      "source": "scenario-specified (add_parking_buffer_bollards): flex-post delineator centered in broad_st_east's right striped buffer between its marked-parking lane and the curb (curb_offset_ft=4.0), spaced 10 ft apart.",
+      "position_m": [
+        20.391296132849156,
+        -2.016556908377912
+      ]
+    },
+    {
+      "type": "bollard",
+      "position_ft": [
+        419235.05054112506,
+        566784.1384609885
+      ],
+      "heading_deg": 0.0,
+      "source": "scenario-specified (add_parking_buffer_bollards): flex-post delineator centered in broad_st_east's right striped buffer between its marked-parking lane and the curb (curb_offset_ft=4.0), spaced 10 ft apart.",
+      "position_m": [
+        23.13243000680921,
+        -0.683706922426913
+      ]
+    },
+    {
+      "type": "bollard",
+      "position_ft": [
+        419244.0437624963,
+        566788.5113283965
+      ],
+      "heading_deg": 0.0,
+      "source": "scenario-specified (add_parking_buffer_bollards): flex-post delineator centered in broad_st_east's right striped buffer between its marked-parking lane and the curb (curb_offset_ft=4.0), spaced 10 ft apart.",
+      "position_m": [
+        25.873563880769257,
+        0.649143063524086
+      ]
+    },
+    {
+      "type": "bollard",
+      "position_ft": [
+        419253.0369838676,
+        566792.8841958045
+      ],
+      "heading_deg": 0.0,
+      "source": "scenario-specified (add_parking_buffer_bollards): flex-post delineator centered in broad_st_east's right striped buffer between its marked-parking lane and the curb (curb_offset_ft=4.0), spaced 10 ft apart.",
+      "position_m": [
+        28.614697754729306,
+        1.981993049475085
+      ]
+    },
+    {
+      "type": "bollard",
+      "position_ft": [
+        419262.03020523884,
+        566797.2570632123
+      ],
+      "heading_deg": 0.0,
+      "source": "scenario-specified (add_parking_buffer_bollards): flex-post delineator centered in broad_st_east's right striped buffer between its marked-parking lane and the curb (curb_offset_ft=4.0), spaced 10 ft apart.",
+      "position_m": [
+        31.35583162868936,
+        3.314843035390601
+      ]
+    },
+    {
+      "type": "bollard",
+      "position_ft": [
+        419271.02342661016,
+        566801.6299306203
+      ],
+      "heading_deg": 0.0,
+      "source": "scenario-specified (add_parking_buffer_bollards): flex-post delineator centered in broad_st_east's right striped buffer between its marked-parking lane and the curb (curb_offset_ft=4.0), spaced 10 ft apart.",
+      "position_m": [
+        34.096965502667146,
+        4.6476930213416
+      ]
+    },
+    {
+      "type": "bollard",
+      "position_ft": [
+        419280.0166479814,
+        566806.0027980283
+      ],
+      "heading_deg": 0.0,
+      "source": "scenario-specified (add_parking_buffer_bollards): flex-post delineator centered in broad_st_east's right striped buffer between its marked-parking lane and the curb (curb_offset_ft=4.0), spaced 10 ft apart.",
+      "position_m": [
+        36.8380993766272,
+        5.9805430072925985
+      ]
+    },
+    {
+      "type": "bollard",
+      "position_ft": [
+        419289.0098693527,
+        566810.3756654361
+      ],
+      "heading_deg": 0.0,
+      "source": "scenario-specified (add_parking_buffer_bollards): flex-post delineator centered in broad_st_east's right striped buffer between its marked-parking lane and the curb (curb_offset_ft=4.0), spaced 10 ft apart.",
+      "position_m": [
+        39.57923325058725,
+        7.313392993208114
+      ]
     }
   ],
   "legs": [
@@ -2511,9 +3919,9 @@
       "confirmed": true,
       "crosswalk_offset_m": 6.210905646537566,
       "crosswalk_offset_source": "osm_survey",
-      "crosswalk_style": "lines",
+      "crosswalk_style": "continental",
       "stop_bar_offset_m": 13.453973499085103,
-      "stop_bar_width_m": null,
+      "stop_bar_width_m": 9.6012,
       "centerline_style": "double_yellow"
     },
     {
@@ -2530,9 +3938,9 @@
       "confirmed": true,
       "crosswalk_offset_m": 6.514727806522351,
       "crosswalk_offset_source": "osm_survey",
-      "crosswalk_style": "lines",
+      "crosswalk_style": "continental",
       "stop_bar_offset_m": 13.043003654567887,
-      "stop_bar_width_m": null,
+      "stop_bar_width_m": 13.411200000000001,
       "centerline_style": "double_yellow"
     },
     {
@@ -2549,7 +3957,7 @@
       "confirmed": false,
       "crosswalk_offset_m": 12.711186200932191,
       "crosswalk_offset_source": "osm_survey",
-      "crosswalk_style": "lines",
+      "crosswalk_style": "continental",
       "stop_bar_offset_m": 19.34833782389782,
       "stop_bar_width_m": null,
       "centerline_style": "none"
@@ -2568,7 +3976,7 @@
       "confirmed": false,
       "crosswalk_offset_m": 11.140328206632804,
       "crosswalk_offset_source": "osm_survey",
-      "crosswalk_style": "lines",
+      "crosswalk_style": "continental",
       "stop_bar_offset_m": 15.444567756726745,
       "stop_bar_width_m": null,
       "centerline_style": "double_yellow"

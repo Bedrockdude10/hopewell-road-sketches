@@ -256,6 +256,28 @@ def _extra_props_from_state(state: DesignState, offsets_ft: dict) -> list[dict]:
     return props
 
 
+def _parking_buffer_bollard_props(state: DesignState) -> list[dict]:
+    """Plastic bollards centered in the striped no-parking buffer between a
+    marked-parking lane and the curb (src/geometry/treatments.py:
+    add_parking_buffer_bollards) - the same bollard prop type _bollard_props
+    uses (just on the curb side of a parking lane instead of the travel-lane
+    side of a lane-narrowing buffer), so both render identically in 3D via
+    the one add_bollard() builder."""
+    props = []
+    for (leg_name, side), spacing_ft in state.parking_buffer_bollards.items():
+        leg = state.legs[leg_name]
+        curb_offset_ft = state.parking_zones[(leg_name, side)]["curb_offset_ft"]
+        start_ft = leg_clearance_ft(leg_name, state.legs, state.corner_fillets)
+        for pos in bollard_points_ft(leg, curb_offset_ft, start_ft, spacing_ft, sides=(side,)):
+            props.append({
+                "type": "bollard", "position_ft": pos, "heading_deg": 0.0,
+                "source": f"scenario-specified (add_parking_buffer_bollards): flex-post delineator centered in "
+                          f"{leg_name}'s {side} striped buffer between its marked-parking lane and the curb "
+                          f"(curb_offset_ft={curb_offset_ft:.1f}), spaced {spacing_ft:.0f} ft apart.",
+            })
+    return props
+
+
 def build_props(model: IntersectionModel, state: DesignState, offsets_ft: dict, center_ft: Point) -> list[dict]:
     """All street-furniture props for one scenario export: a streetlight at
     every corner/approach (always), plus EITHER stop signs (unsignalized
@@ -271,4 +293,5 @@ def build_props(model: IntersectionModel, state: DesignState, offsets_ft: dict, 
         + _extra_props_from_config(model, state, offsets_ft)
         + _extra_props_from_state(state, offsets_ft)
         + _bollard_props(state)
+        + _parking_buffer_bollard_props(state)
     )

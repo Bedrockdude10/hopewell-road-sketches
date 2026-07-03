@@ -19,6 +19,17 @@ OSM_MARKINGS_TO_STYLE = {
     "ladder": "ladder",
 }
 
+CROSSWALK_CLEARANCE_FT = 5.0  # safety margin beyond a leg's resolved crosswalk offset that a lane-narrowing
+                               # taper must stay clear of - the exact rendered crosswalk depth isn't available
+                               # here (a Blender-side rendering default, see blender_crosswalks.py), and a curved
+                               # taper's closest approach to the intersection isn't exactly at its target_ft
+                               # endpoint (the arc can bow slightly past it), so this errs generous rather than
+                               # trying to match that depth exactly. Shared by src/render/export.py (3D) and
+                               # src/render/plan_view.py (2D) so both compute the exact same taper - if they used
+                               # separately-defined copies of this constant, the two views could silently drift
+                               # apart, which is exactly the kind of "why does the 3D render disagree with the 2D
+                               # one" confusion this constant being centralized here is meant to prevent.
+
 # Distance back toward the intersection from a leg's resolved crosswalk offset
 # to its stop bar: half of the ~10 ft crosswalk depth used in
 # scripts/blender/blender_crosswalks.py (so the setback starts at the crosswalk's near

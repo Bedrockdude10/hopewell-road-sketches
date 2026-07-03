@@ -12,30 +12,29 @@ from pathlib import Path
 from shapely.geometry import Point, Polygon
 
 from src.render.coords import FT_TO_M, building_footprint_ft, pt_to_local_m, ring_to_local_m, wgs84_ring_to_local_m
-from src.render.crosswalks import resolve_crosswalk_offsets, resolve_stop_bar_offsets
+from src.render.crosswalks import CROSSWALK_CLEARANCE_FT, resolve_crosswalk_offsets, resolve_stop_bar_offsets
 from src.geometry.model import (
     build_pavement_polygon, corner_overlay_polygon, hatch_lines_ft, lane_narrowing_edge_lines_ft,
-    lane_narrowing_polygons_ft, lane_narrowing_taper_ft, leg_clearance_ft,
+    lane_narrowing_polygons_ft, lane_narrowing_taper_ft, lane_narrowing_taper_polygons_ft, leg_clearance_ft,
+    parking_lane_edge_line_ft, parking_stall_lines_ft,
 )
 from src.geometry.intersection import IntersectionModel
 from src.render.mesh_utils import build_decimated_building_mesh
 from src.sources.osm_context import fetch_buildings, fetch_crossings
 from src.render.props import build_props
-from src.geometry.treatments import DEFAULT_CENTERLINE_STYLE, DesignState, build_sidewalk_pieces
+from src.geometry.treatments import DEFAULT_CENTERLINE_STYLE, LEGAL_PARKING_SETBACK_FT, DesignState, build_sidewalk_pieces
 
 BUILDING_CONTEXT_RADIUS_M = 130
 SIDEWALK_WIDTH_FT = 6
 NEAR_ZONE_BUFFER_FT = 10  # how far past the farthest crosswalk the "near" (4k texture) pavement zone extends
 TREE_SPACING_FT = 25  # typical municipal street-tree spacing (NACTO/street-design guidance), not a fabricated guess
-PAINT_HATCH_SPACING_FT = 2.5  # spacing between rendered diagonal hatch lines - a rendering choice, not MUTCD-specified
-CROSSWALK_CLEARANCE_FT = 5.0  # safety margin beyond a leg's resolved crosswalk offset that a lane-narrowing
-                               # taper must stay clear of - the exact rendered crosswalk depth isn't available
-                               # here (a Blender-side rendering default, see blender_crosswalks.py), and a curved
-                               # taper's closest approach to the intersection isn't exactly at its target_ft
-                               # endpoint (the arc can bow slightly past it), so this errs generous rather than
-                               # trying to match that depth exactly
-
-
+PAINT_HATCH_SPACING_FT = 8.0  # spacing between rendered diagonal hatch lines - a rendering choice, not MUTCD-specified.
+                               # At the original 2.5ft spacing, each stroke (which runs the buffer's full diagonal
+                               # width, edge-to-edge, per hatch_lines_ft) touched the inner lane-edge line so
+                               # frequently that the buffer read as one solid painted mass reaching the double
+                               # yellow, drowning out the solid edge line and making the 11ft lane unreadable in
+                               # the render even though the underlying geometry was already correct (verified via
+                               # plan_view.py's top-down plot and by projecting each hatch line's real endpoints).
 def _leg_heading_deg(leg) -> float:
     """Compass-agnostic heading (standard math degrees) of a leg's own
     centerline, outward from the intersection - used to angle lane-narrowing
@@ -44,6 +43,31 @@ def _leg_heading_deg(leg) -> float:
     on one leg and nearly parallel on another depending on the leg's bearing."""
     (x0, y0), (x1, y1) = leg.centerline.coords[0], leg.centerline.coords[1]
     return math.degrees(math.atan2(y1 - y0, x1 - x0))
+
+
+def _entering_lane_width_ft(state: DesignState, leg_name: str) -> float | None:
+    """The real width of the entering travel lane (this leg's own "left" side
+    - see add_stop_bar's docstring) if it's been narrowed by EITHER
+    add_lane_narrowing or add_marked_parking on that side, else None (full
+    curb-to-curb half, unchanged behavior). Used to size the stop bar
+    (stop_bar_width_m below) so it stops at the real lane edge instead of
+    running across a no-parking buffer or a marked-parking lane a stopped
+    vehicle would never occupy."""
+    half_ft = state.legs[leg_name].curb_to_curb_ft / 2
+    if leg_name in state.lane_narrowing and "left" in state.lane_narrowing_sides.get(leg_name, ("left", "right")):
+        return half_ft - state.lane_narrowing[leg_name]
+    parking_zone = state.parking_zones.get((leg_name, "left"))
+    if parking_zone is not None:
+        return half_ft - parking_zone["curb_offset_ft"] - parking_zone["depth_ft"]
+    return None
+
+
+def _stop_bar_width_m(state: DesignState, leg_name: str) -> float | None:
+    """2x the entering lane's real width in meters (see add_stop_bar's own
+    docstring for why the FULL width, not the half, is what its width_m
+    param expects), or None to fall back to the full curb-to-curb width."""
+    entering_ft = _entering_lane_width_ft(state, leg_name)
+    return 2 * entering_ft * FT_TO_M if entering_ft is not None else None
 
 
 def _split_near_far(polygons: list[Polygon], center_ft: Point, near_radius_ft: float):
@@ -169,10 +193,15 @@ def export_scenario(model: IntersectionModel, state: DesignState, name: str, out
     # src/geometry/model.py:lane_narrowing_taper_ft), like a parking lane
     # curving back to the curb before an intersection - NOT a sweep around
     # the corner to the cross leg, which would inevitably cut through that
-    # leg's own crosswalk (it sits right at the corner by definition). No
-    # hatching in the taper itself (kept as a plain line, like a real curving
-    # lane-edge/gore line) so it can't ever cross into the crosswalk, which
-    # has priority over this paint.
+    # leg's own crosswalk (it sits right at the corner by definition). Per
+    # the real source photo this treatment is modeled on, the diagonal
+    # chevron paint keeps going in the same pattern all the way around the
+    # taper to the curb - it doesn't stop dead where the straight run ends -
+    # so the taper is hatched too (lane_narrowing_taper_polygons_ft), using
+    # the same angle/spacing as the straight run's hatch so the two read as
+    # one continuous stripe with no visible seam. It's still bounded by the
+    # real curb at target_ft, safely clear of the crosswalk, so it can never
+    # cross into the crosswalk, which has priority over this paint.
     lane_narrowing_edge_lines = []
     lane_narrowing_taper_lines = []
     lane_narrowing_hatch_lines = []
@@ -182,28 +211,43 @@ def export_scenario(model: IntersectionModel, state: DesignState, name: str, out
         # taper is anchored to, so the straight edge line, the hatch fill, and
         # the taper all meet exactly with no gap/overlap.
         start_ft = {}
+        target_ft_by_leg = {}
         for leg_name, stripe_width_ft in state.lane_narrowing.items():
+            sides = state.lane_narrowing_sides.get(leg_name, ("left", "right"))
             anchor_ft = leg_clearance_ft(leg_name, state.legs, state.corner_fillets)
             target_ft = crosswalk_offsets[leg_name][0] + CROSSWALK_CLEARANCE_FT
             start_ft[leg_name] = anchor_ft
+            target_ft_by_leg[leg_name] = target_ft
             lane_narrowing_edge_lines += [
                 ring_to_local_m(line.coords, center_ft)
                 for line in lane_narrowing_edge_lines_ft(state.legs[leg_name], stripe_width_ft,
-                                                          start_left_ft=anchor_ft, start_right_ft=anchor_ft)
+                                                          start_left_ft=anchor_ft, start_right_ft=anchor_ft,
+                                                          sides=sides)
             ]
             lane_narrowing_taper_lines += [
                 ring_to_local_m(taper.coords, center_ft)
-                for taper in lane_narrowing_taper_ft(state.legs[leg_name], stripe_width_ft, anchor_ft, target_ft)
+                for taper in lane_narrowing_taper_ft(state.legs[leg_name], stripe_width_ft, anchor_ft, target_ft,
+                                                      sides=sides)
             ]
 
         for leg_name, stripe_width_ft in state.lane_narrowing.items():
+            if leg_name in state.lane_narrowing_line_only:
+                continue  # just the edge/taper line above, no chevron fill - see add_lane_narrowing's line_only
+            sides = state.lane_narrowing_sides.get(leg_name, ("left", "right"))
+            hatch_angle_deg = _leg_heading_deg(state.legs[leg_name]) + 45
             lane_narrowing_hatch_lines += [
                 [pt_to_local_m(x, y, center_ft) for x, y in line.coords]
                 for poly in lane_narrowing_polygons_ft(
                     state.legs[leg_name], stripe_width_ft,
-                    start_left_ft=start_ft[leg_name], start_right_ft=start_ft[leg_name])
-                for line in hatch_lines_ft(poly, spacing_ft=PAINT_HATCH_SPACING_FT,
-                                            angle_deg=_leg_heading_deg(state.legs[leg_name]) + 45)
+                    start_left_ft=start_ft[leg_name], start_right_ft=start_ft[leg_name], sides=sides)
+                for line in hatch_lines_ft(poly, spacing_ft=PAINT_HATCH_SPACING_FT, angle_deg=hatch_angle_deg)
+            ]
+            lane_narrowing_hatch_lines += [
+                [pt_to_local_m(x, y, center_ft) for x, y in line.coords]
+                for poly in lane_narrowing_taper_polygons_ft(
+                    state.legs[leg_name], stripe_width_ft, start_ft[leg_name], target_ft_by_leg[leg_name],
+                    sides=sides)
+                for line in hatch_lines_ft(poly, spacing_ft=PAINT_HATCH_SPACING_FT, angle_deg=hatch_angle_deg)
             ]
     corner_hatching_lines = [
         [pt_to_local_m(x, y, center_ft) for x, y in line.coords]
@@ -212,6 +256,57 @@ def export_scenario(model: IntersectionModel, state: DesignState, name: str, out
         for line in hatch_lines_ft(corner_overlay_polygon(state.corner_fillets[corner], center_ft, depth_ft),
                                     spacing_ft=PAINT_HATCH_SPACING_FT)
     ]
+    # Marked curbside parking (add_marked_parking): a real parking lane, not a paint-only buffer -
+    # a lane-edge line depth_ft in from the curb plus perpendicular divider ticks at each stall
+    # boundary. The MARKED STALLS themselves only start at parking_start_ft - max(the physical
+    # past-the-corner-curve point, leg_clearance_ft, and the real legal minimum distance from the
+    # actual crosswalk, LEGAL_PARKING_SETBACK_FT - NJSA 39:4-138) - whichever is farther from the
+    # intersection, so parking is never marked somewhere a car couldn't legally stop even if the curb
+    # geometry alone would allow painting it there. If curb_offset_ft > 0, the parking lane doesn't
+    # start at the curb - there's a striped no-parking buffer between it and the curb (built with the
+    # exact same lane_narrowing_* geometry a travel-lane buffer uses, `sides=` restricted to just this
+    # one side - see add_marked_parking's curb_offset_ft docstring); THAT buffer still starts at the
+    # ordinary anchor_ft and tapers into the corner like any other paint-only buffer here, since a
+    # striped no-parking zone is still accurate (arguably more so) right up to the intersection -
+    # optionally with bollards centered in it (add_parking_buffer_bollards).
+    parking_edge_lines = []
+    parking_stall_divider_lines = []
+    parking_buffer_hatch_lines = []
+    parking_buffer_edge_lines = []  # straight run only - see add_paint_line's docstring for why a curve
+    parking_buffer_taper_lines = []  # (below) needs its own list, drawn with add_paint_polyline instead
+    for (leg_name, side), zone in state.parking_zones.items():
+        leg = state.legs[leg_name]
+        depth_ft, stall_length_ft, curb_offset_ft = zone["depth_ft"], zone["stall_length_ft"], zone["curb_offset_ft"]
+        anchor_ft = leg_clearance_ft(leg_name, state.legs, state.corner_fillets)
+        legal_start_ft = crosswalk_offsets[leg_name][0] + LEGAL_PARKING_SETBACK_FT
+        parking_start_ft = max(anchor_ft, legal_start_ft)
+        parking_edge_lines.append(ring_to_local_m(
+            parking_lane_edge_line_ft(leg, side, depth_ft, parking_start_ft, curb_offset_ft=curb_offset_ft).coords,
+            center_ft))
+        parking_stall_divider_lines += [
+            ring_to_local_m(line.coords, center_ft)
+            for line in parking_stall_lines_ft(leg, side, depth_ft, stall_length_ft, parking_start_ft,
+                                                curb_offset_ft=curb_offset_ft)
+        ]
+        if curb_offset_ft:
+            target_ft = crosswalk_offsets[leg_name][0] + CROSSWALK_CLEARANCE_FT
+            buffer_angle_deg = _leg_heading_deg(leg) + 45
+            parking_buffer_edge_lines.append(ring_to_local_m(
+                lane_narrowing_edge_lines_ft(leg, curb_offset_ft, start_left_ft=anchor_ft, start_right_ft=anchor_ft,
+                                              sides=(side,))[0].coords, center_ft))
+            for poly in lane_narrowing_polygons_ft(leg, curb_offset_ft, start_left_ft=anchor_ft,
+                                                    start_right_ft=anchor_ft, sides=(side,)):
+                parking_buffer_hatch_lines += [
+                    [pt_to_local_m(x, y, center_ft) for x, y in line.coords]
+                    for line in hatch_lines_ft(poly, spacing_ft=PAINT_HATCH_SPACING_FT, angle_deg=buffer_angle_deg)
+                ]
+            for poly in lane_narrowing_taper_polygons_ft(leg, curb_offset_ft, anchor_ft, target_ft, sides=(side,)):
+                parking_buffer_hatch_lines += [
+                    [pt_to_local_m(x, y, center_ft) for x, y in line.coords]
+                    for line in hatch_lines_ft(poly, spacing_ft=PAINT_HATCH_SPACING_FT, angle_deg=buffer_angle_deg)
+                ]
+            for taper in lane_narrowing_taper_ft(leg, curb_offset_ft, anchor_ft, target_ft, sides=(side,)):
+                parking_buffer_taper_lines.append(ring_to_local_m(taper.coords, center_ft))
     corner_apron_polygons = [
         ring_to_local_m(corner_overlay_polygon(state.corner_fillets[corner], center_ft, extent_ft).exterior.coords,
                          center_ft)
@@ -240,6 +335,7 @@ def export_scenario(model: IntersectionModel, state: DesignState, name: str, out
     data = {
         "name": name,
         "units": "meters",
+        "notes": state.notes,
         "theme": theme,
         "existing_marked_crosswalks": model.config["intersection"].get("existing_marked_crosswalks", []),
         "pavement_near": [ring_to_local_m(p.exterior.coords, center_ft) for p in pavement_near],
@@ -251,6 +347,11 @@ def export_scenario(model: IntersectionModel, state: DesignState, name: str, out
         "lane_narrowing_taper_lines": lane_narrowing_taper_lines,
         "lane_narrowing_hatch_lines": lane_narrowing_hatch_lines,
         "corner_hatching_lines": corner_hatching_lines,
+        "parking_edge_lines": parking_edge_lines,
+        "parking_stall_divider_lines": parking_stall_divider_lines,
+        "parking_buffer_hatch_lines": parking_buffer_hatch_lines,
+        "parking_buffer_edge_lines": parking_buffer_edge_lines,
+        "parking_buffer_taper_lines": parking_buffer_taper_lines,
         "corner_apron_polygons": corner_apron_polygons,
         "props": [
             {
@@ -276,6 +377,12 @@ def export_scenario(model: IntersectionModel, state: DesignState, name: str, out
                 "crosswalk_style": state.crosswalk_styles.get(leg_name, "lines"),
                 # None (not drawn) unless this site's intersection is signalized (see stop_bar_offsets above).
                 "stop_bar_offset_m": stop_bar_offsets[leg_name] * FT_TO_M if leg_name in stop_bar_offsets else None,
+                # A stop bar only ever belongs across the real entering travel lane, not the full
+                # curb-to-curb half (which can include a painted no-parking buffer or a marked-parking
+                # lane next to the curb that a stopped vehicle would never actually occupy) - see
+                # _entering_lane_width_ft. None falls back to the full half-width (blender_scene.py),
+                # i.e. unchanged behavior for any leg that hasn't been narrowed on its entering side.
+                "stop_bar_width_m": _stop_bar_width_m(state, leg_name),
                 # Real per-leg fact from config.yaml (street-view confirmed), not an OSM tag - see
                 # src/geometry/treatments.py:set_centerline_style / DEFAULT_CENTERLINE_STYLE.
                 "centerline_style": state.centerline_styles.get(leg_name, DEFAULT_CENTERLINE_STYLE),

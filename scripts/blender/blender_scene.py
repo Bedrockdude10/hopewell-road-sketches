@@ -194,6 +194,16 @@ def build_scene(data: dict):
         add_paint_line(f"corner_hatch_{i}", line[0], line[-1], 0.15, marking_mat, z_base=marking_z)
     for i, ring in enumerate(data.get("corner_apron_polygons", [])):
         extrude_polygon(f"corner_apron_{i}", ring, 0.01, apron_mat, z_base=marking_z)
+    for i, line in enumerate(data.get("parking_edge_lines", [])):
+        add_paint_line(f"parking_edge_{i}", line[0], line[-1], 0.25, marking_mat, z_base=marking_z)
+    for i, line in enumerate(data.get("parking_stall_divider_lines", [])):
+        add_paint_line(f"parking_stall_{i}", line[0], line[-1], 0.15, marking_mat, z_base=marking_z)
+    for i, line in enumerate(data.get("parking_buffer_edge_lines", [])):
+        add_paint_line(f"parking_buffer_edge_{i}", line[0], line[-1], 0.25, marking_mat, z_base=marking_z)
+    for i, line in enumerate(data.get("parking_buffer_taper_lines", [])):
+        add_paint_polyline(f"parking_buffer_taper_{i}", line, 0.15, marking_mat, z_base=marking_z)
+    for i, line in enumerate(data.get("parking_buffer_hatch_lines", [])):
+        add_paint_line(f"parking_buffer_hatch_{i}", line[0], line[-1], 0.15, marking_mat, z_base=marking_z)
 
     for island in data.get("refuge_islands", []):
         extrude_polygon(f"refuge_{island['name']}", island["coords"], island.get("height_m", 0.15), refuge_mat)
@@ -223,7 +233,8 @@ def build_scene(data: dict):
                            offset_m=offset_m, style=style)
         stop_bar_offset_m = leg.get("stop_bar_offset_m")
         if stop_bar_offset_m is not None:
-            add_stop_bar(f"stop_bar_{leg['name']}", near, u, n, leg["width_m"], marking_mat,
+            stop_bar_width_m = leg.get("stop_bar_width_m") or leg["width_m"]
+            add_stop_bar(f"stop_bar_{leg['name']}", near, u, n, stop_bar_width_m, marking_mat,
                          offset_m=stop_bar_offset_m)
         # Real per-leg fact (confirmed via street-view, see src/geometry/treatments.py
         # DEFAULT_CENTERLINE_STYLE) - some legs get no centerline paint at all, so this

@@ -37,8 +37,25 @@ class DesignState:
     centerline_styles: dict = field(default_factory=dict)  # leg name -> one of VALID_CENTERLINE_STYLES - seeded
                                                              # from config.yaml in from_model(), see set_centerline_style
     lane_narrowing: dict = field(default_factory=dict)  # leg name -> stripe_width_ft (paint-only, no curb change)
+    lane_narrowing_line_only: set = field(default_factory=set)  # leg names (subset of lane_narrowing) that get
+                                                                  # ONLY the solid edge/taper line delineating the
+                                                                  # lane, no diagonal chevron fill - see add_lane_narrowing's
+                                                                  # line_only param
+    lane_narrowing_sides: dict = field(default_factory=dict)  # leg name -> ("left",) | ("right",) | ("left","right") -
+                                                                 # which side(s) of the leg add_lane_narrowing actually
+                                                                 # narrowed (defaults to both if a leg is absent here -
+                                                                 # see add_lane_narrowing's sides param). Only ever a
+                                                                 # strict subset when something else (e.g. add_marked_parking)
+                                                                 # already owns the other side's edge.
     bollard_lines: dict = field(default_factory=dict)  # leg name -> spacing_ft (see add_bollards - requires
                                                          # lane_narrowing on the same leg, sits inside that buffer)
+    parking_zones: dict = field(default_factory=dict)  # (leg name, "left"|"right") -> {"depth_ft", "stall_length_ft",
+                                                         # "curb_offset_ft"} - marked curbside parking (paint-only,
+                                                         # no curb change) - see add_marked_parking
+    parking_buffer_bollards: dict = field(default_factory=dict)  # (leg name, "left"|"right") -> spacing_ft - flex-post
+                                                                   # bollards centered in that zone's curb_offset_ft
+                                                                   # buffer (requires curb_offset_ft > 0) - see
+                                                                   # add_parking_buffer_bollards
     corner_hatching: dict = field(default_factory=dict)  # corner tuple -> depth_ft (paint-only, no curb change)
     corner_aprons: dict = field(default_factory=dict)  # corner tuple -> extent_ft (mountable apron, no curb change)
     crosswalk_offset_overrides: dict = field(default_factory=dict)  # leg name -> +/- delta_ft on top of the
@@ -207,20 +224,112 @@ def set_centerline_style(state: DesignState, leg_name: str, style: str) -> Desig
 
 
 def add_lane_narrowing(state: DesignState, leg_name: str,
-                        stripe_width_ft: float = LANE_NARROWING_DEFAULT_STRIPE_FT) -> DesignState:
+                        stripe_width_ft: float = LANE_NARROWING_DEFAULT_STRIPE_FT,
+                        line_only: bool = False, sides: tuple = ("left", "right")) -> DesignState:
     """Paint-only visual lane narrowing: a striped buffer/shoulder painted along
-    both curbs of a leg. Zero curb/pavement geometry change - the lowest-cost
-    alternative to bump_out()'s real curb extension, achieving the same
-    'narrower-looking travel way' cue with paint instead of concrete."""
+    one or both curbs of a leg (sides - see below). Zero curb/pavement
+    geometry change - the lowest-cost alternative to bump_out()'s real curb
+    extension, achieving the same 'narrower-looking travel way' cue with
+    paint instead of concrete.
+
+    line_only=True skips the diagonal chevron fill entirely - just the solid
+    line (straight run + corner taper) delineating the outside of the real
+    travel lane, nothing painted in the buffer itself. Useful as a debugging/
+    comparison scenario (bare minimum lane-width marking, easy to check by eye
+    or by measurement against the plan view without chevron hatch density
+    affecting the read) as well as a real low-cost treatment option in its
+    own right.
+
+    sides restricts which side(s) of the leg get narrowed - defaults to both
+    (the usual case: a real two-lane road narrowed symmetrically). Pass a
+    single side (e.g. ("left",)) when the OTHER side's edge is already owned
+    by a different treatment - e.g. a marked-parking lane (add_marked_parking)
+    already delineates its own side; this just adds the matching plain
+    delineating line on the opposite (entering-traffic) side, matching real
+    curb-to-curb width there but with no buffer painted for it."""
     if leg_name not in state.legs:
         raise KeyError(f"Leg {leg_name!r} not present in this state.")
     new_state = state.clone()
     new_state.lane_narrowing[leg_name] = stripe_width_ft
-    new_state.notes.append(f"add_lane_narrowing({leg_name}, stripe_width_ft={stripe_width_ft})")
+    new_state.lane_narrowing_sides[leg_name] = sides
+    if line_only:
+        new_state.lane_narrowing_line_only.add(leg_name)
+    else:
+        new_state.lane_narrowing_line_only.discard(leg_name)
+    new_state.notes.append(
+        f"add_lane_narrowing({leg_name}, stripe_width_ft={stripe_width_ft}, line_only={line_only}, sides={sides})")
+    return new_state
+
+
+PARKING_STALL_DEPTH_DEFAULT_FT = 8.0  # AASHTO/NACTO typical parallel-parking lane depth (curb to travel-lane edge)
+PARKING_STALL_LENGTH_DEFAULT_FT = 22.0  # AASHTO/NACTO typical parallel-parking stall length
+LEGAL_PARKING_SETBACK_FT = 25.0  # NJSA 39:4-138: no stopping/standing/parking within 25 ft of a marked crosswalk at
+                                  # an intersection - a real legal minimum, not a rendering choice. Marked parking
+                                  # (src/render/export.py/plan_view.py) starts at max(this distance past the real
+                                  # crosswalk, leg_clearance_ft's physical past-the-corner-curve point) - whichever
+                                  # is farther from the intersection - so it never starts somewhere a car legally
+                                  # couldn't park even if the curb geometry alone would allow it.
+
+
+def add_marked_parking(state: DesignState, leg_name: str, side: str,
+                        depth_ft: float = PARKING_STALL_DEPTH_DEFAULT_FT,
+                        stall_length_ft: float = PARKING_STALL_LENGTH_DEFAULT_FT,
+                        curb_offset_ft: float = 0.0) -> DesignState:
+    """Marked curbside parallel parking along one side of a leg: a lane-edge
+    line depth_ft in from the curb, plus perpendicular divider ticks every
+    stall_length_ft (src/geometry/model.py:parking_lane_edge_line_ft /
+    parking_stall_lines_ft) - paint-only, zero curb/pavement change, same
+    convention as add_lane_narrowing/add_corner_hatching in that regard.
+    Independent of add_lane_narrowing - a leg can have marked parking with or
+    without a separate travel-lane-narrowing buffer on the same or other
+    side; nothing here assumes the two are combined, though a scenario is
+    free to call both (e.g. narrow the near lane while marking parking in
+    what the SLD calls the far side's shoulder zone).
+
+    curb_offset_ft > 0 pulls the parking lane in from the curb by that much,
+    leaving a striped no-parking buffer between the curb and the parking
+    lane itself (so parking sits directly against the active travel lane
+    instead of against the curb) - see build_striped_parking_buffer_polygons
+    in src/render/export.py/plan_view.py, which paints that buffer with the
+    same chevron treatment as add_lane_narrowing. 0 (the default) means the
+    parking lane starts right at the curb, no buffer."""
+    if leg_name not in state.legs:
+        raise KeyError(f"Leg {leg_name!r} not present in this state.")
+    if side not in ("left", "right"):
+        raise ValueError(f"side must be 'left' or 'right', got {side!r}")
+    new_state = state.clone()
+    new_state.parking_zones[(leg_name, side)] = {
+        "depth_ft": depth_ft, "stall_length_ft": stall_length_ft, "curb_offset_ft": curb_offset_ft,
+    }
+    new_state.notes.append(
+        f"add_marked_parking({leg_name}, side={side!r}, depth_ft={depth_ft}, stall_length_ft={stall_length_ft}, "
+        f"curb_offset_ft={curb_offset_ft})")
     return new_state
 
 
 BOLLARD_DEFAULT_SPACING_FT = 10.0  # typical flex-post delineator spacing for a channelized buffer
+
+
+def add_parking_buffer_bollards(state: DesignState, leg_name: str, side: str,
+                                 spacing_ft: float = BOLLARD_DEFAULT_SPACING_FT) -> DesignState:
+    """Plastic bollards (flex-post delineators) centered in the striped
+    no-parking buffer between a marked-parking lane and the curb - i.e. on
+    the OUTSIDE of the parking lane (the curb side), protecting/delineating
+    parked cars from that buffer, the mirror image of add_bollards (which
+    centers bollards in a lane-narrowing buffer on the travel-lane side).
+    Requires add_marked_parking to already be applied to this (leg_name,
+    side) with curb_offset_ft > 0 - there's no buffer to put bollards in
+    otherwise."""
+    zone = state.parking_zones.get((leg_name, side))
+    if zone is None:
+        raise KeyError(f"({leg_name!r}, {side!r}) has no marked parking - call add_marked_parking first.")
+    if not zone["curb_offset_ft"]:
+        raise ValueError(
+            f"({leg_name!r}, {side!r})'s marked parking has curb_offset_ft=0 - no curb buffer to put bollards in.")
+    new_state = state.clone()
+    new_state.parking_buffer_bollards[(leg_name, side)] = spacing_ft
+    new_state.notes.append(f"add_parking_buffer_bollards({leg_name}, side={side!r}, spacing_ft={spacing_ft})")
+    return new_state
 
 
 def add_bollards(state: DesignState, leg_name: str, spacing_ft: float = BOLLARD_DEFAULT_SPACING_FT) -> DesignState:

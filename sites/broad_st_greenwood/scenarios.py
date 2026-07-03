@@ -2,8 +2,8 @@
 Phase 4 3D export so both phases show the exact same design."""
 from src.render.coords import FT_TO_M
 from src.geometry.treatments import (
-    DesignState, add_corner_hatching, add_extra_prop, add_lane_narrowing, add_mountable_apron, bump_out,
-    find_corner, raise_crossing, refuge_island, shift_crosswalk_offset, upgrade_crosswalk_markings,
+    DesignState, add_bollards, add_corner_hatching, add_extra_prop, add_lane_narrowing, add_mountable_apron,
+    bump_out, find_corner, raise_crossing, refuge_island, shift_crosswalk_offset, upgrade_crosswalk_markings,
 )
 
 EXISTING_RADIUS_FT = 20  # matches sites/broad_st_greenwood/config.yaml treatments.existing_corner_radius_ft
@@ -93,4 +93,70 @@ def build_proposal_b_mountable_apron_hybrid(baseline: DesignState) -> DesignStat
                             note="Pedestrian-initiated RRFB.")
     state = add_extra_prop(state, "greenwood_ave_south", "school_zone_sign", side="left",
                             note="Relocated/duplicated for visibility from the Columbia approach.")
+    return state
+
+
+# --- Broad St road-diet series: three escalating treatments for the two
+# confirmed, over-wide Broad St legs (55.5/68 ft curb-to-curb vs. two travel
+# lanes' worth of actual need), independent of the Greenwood-focused PBSAC
+# proposals above. Each is a distinct scenario, not a stack, so they can be
+# compared side by side.
+BROAD_ST_LEGS = ("broad_st_west", "broad_st_east")
+TARGET_LANE_WIDTH_FT = 11  # NACTO/AASHTO urban minor-arterial minimum travel lane width
+
+
+def _narrow_broad_st_to_11ft_lanes(state: DesignState) -> DesignState:
+    """Paint-only lane narrowing on both Broad St legs: stripe each side's
+    buffer so the real remaining travel lane is 11 ft, filling everything
+    from the outside of that lane to the leg's own (config.yaml-confirmed)
+    curb with paint. stripe_width_ft is derived per leg from its real width,
+    not a fixed guess - broad_st_west (55.5 ft) and broad_st_east (68 ft) get
+    different stripe widths (16.75 ft / 23 ft) because they're different
+    widths in reality.
+
+    The buffer's edge line and hatching don't stop in a straight cut where
+    the crosswalk/stop-bar clearance zone begins - src/render/export.py
+    automatically continues them curving into every corner a narrowed leg
+    touches (see src/geometry/model.py:lane_narrowing_corner_ft) until they
+    meet the real curb, reading as a soft, paint-only bulb-out - no separate
+    treatment call needed here for that."""
+    for leg_name in BROAD_ST_LEGS:
+        half_width_ft = state.legs[leg_name].curb_to_curb_ft / 2
+        stripe_width_ft = half_width_ft - TARGET_LANE_WIDTH_FT
+        state = add_lane_narrowing(state, leg_name, stripe_width_ft)
+    return state
+
+
+def build_proposal_c_broad_st_paint_only(baseline: DesignState) -> DesignState:
+    """Broad St road diet, Proposal C - paint only: two real 11 ft travel
+    lanes (one each direction) on West and East Broad St, striped paint
+    filling the gap between the outside of each lane and the existing curb.
+    Zero curb/pavement geometry change, fully reversible - the lowest-cost
+    option in this series."""
+    return _narrow_broad_st_to_11ft_lanes(baseline)
+
+
+def build_proposal_d_broad_st_paint_and_bollards(baseline: DesignState) -> DesignState:
+    """Broad St road diet, Proposal D - paint + bollards: the same 11 ft
+    paint-only lane narrowing as Proposal C, escalated with a line of plastic
+    flex-post bollards down the center of each painted buffer. Still no
+    curb/pavement change - the bollards are a physically firmer (but still
+    mountable/replaceable, not poured) edge than paint alone."""
+    state = _narrow_broad_st_to_11ft_lanes(baseline)
+    for leg_name in BROAD_ST_LEGS:
+        state = add_bollards(state, leg_name)
+    return state
+
+
+def build_proposal_e_broad_st_mountable_bulbouts(baseline: DesignState) -> DesignState:
+    """Broad St road diet, Proposal E - mountable bulb-outs: a textured,
+    flush-with-grade curb extension (add_mountable_apron) at all four
+    corners. Visually and physically narrows each corner for pedestrians
+    (shorter crossing distance) while remaining fully drivable - e.g. by a
+    fire apparatus's rear wheels - since no elevation or hard curb change is
+    introduced. The most substantial treatment in this series, but still
+    reversible/mountable rather than a permanent poured bump-out."""
+    state = baseline
+    for corner in list(state.corner_fillets):
+        state = add_mountable_apron(state, corner)
     return state

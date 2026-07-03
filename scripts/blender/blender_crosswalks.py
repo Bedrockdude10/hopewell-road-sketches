@@ -8,6 +8,24 @@ import mathutils
 
 from blender_geometry import add_stripe_rect
 
+# Existing-conditions markings (crosswalks, centerlines, stop bars) are a thin
+# decal that sits flush on TOP of the pavement slab, not a thick block whose
+# bottom coincides with the pavement's own bottom at z=0. The original version
+# of this file used z_base=0, height=0.06 for all of these - the marking's
+# bottom fully overlapped the pavement's own volume instead of sitting on top
+# of it. That coincidence, combined with this render's camera having a far
+# wider near/far clip range than the scene needed (see blender_scene.py:
+# setup_camera_and_light), was confirmed (by an isolated test eliminating
+# other candidate causes one at a time) to starve the depth buffer of enough
+# precision at this camera's distance, producing a torn/tessellated look on
+# thin, elongated shapes like a crosswalk line. Both fixes were needed
+# together: this z_base lift, and tightening the camera's clip range.
+# blender_scene.py's EXISTING_MARKING_HEIGHT_M (this layer's real top, 0.07)
+# is what the newer paint-only treatments (lane narrowing, corner hatching,
+# mountable aprons) stack a clearance gap above - see its own docstring.
+EXISTING_MARKING_Z_BASE = 0.06  # PAVEMENT_HEIGHT_M (0.05) + one MARKING_CLEARANCE_M (0.01) gap
+EXISTING_MARKING_THICKNESS_M = 0.01
+
 
 def _crosswalk_bars(name, near, u, n, width_m, material, offset_m, depth_m, stripe_width_m, gap_m):
     """Parallel bars (rungs) running along travel (u), spaced across the crossing (n).
@@ -19,7 +37,8 @@ def _crosswalk_bars(name, near, u, n, width_m, material, offset_m, depth_m, stri
     center = near + u * offset_m
     for i in range(n_stripes):
         lateral = -span / 2 + i * period
-        add_stripe_rect(f"{name}_stripe_{i}", center + n * lateral, u, n, depth_m, stripe_width_m, 0.06, material)
+        add_stripe_rect(f"{name}_stripe_{i}", center + n * lateral, u, n, depth_m, stripe_width_m,
+                         EXISTING_MARKING_THICKNESS_M, material, z_base=EXISTING_MARKING_Z_BASE)
     return center, span
 
 
@@ -38,7 +57,8 @@ def add_crosswalk_ladder(name: str, near, u, n, width_m: float, material, offset
     rail_length = span + stripe_width_m + gap_m
     for side, sign in [("near", -1), ("far", 1)]:
         rail_center = center + u * (sign * depth_m / 2)
-        add_stripe_rect(f"{name}_rail_{side}", rail_center, n, u, rail_length, rail_width_m, 0.06, material)
+        add_stripe_rect(f"{name}_rail_{side}", rail_center, n, u, rail_length, rail_width_m,
+                         EXISTING_MARKING_THICKNESS_M, material, z_base=EXISTING_MARKING_Z_BASE)
 
 
 def add_crosswalk_lines(name: str, near, u, n, width_m: float, material, offset_m: float = 3.0,
@@ -51,7 +71,8 @@ def add_crosswalk_lines(name: str, near, u, n, width_m: float, material, offset_
     center = near + u * offset_m
     for side, sign in [("near", -1), ("far", 1)]:
         line_center = center + u * (sign * depth_m / 2)
-        add_stripe_rect(f"{name}_line_{side}", line_center, n, u, line_width, line_width_m, 0.06, material)
+        add_stripe_rect(f"{name}_line_{side}", line_center, n, u, line_width, line_width_m,
+                         EXISTING_MARKING_THICKNESS_M, material, z_base=EXISTING_MARKING_Z_BASE)
 
 
 CROSSWALK_STYLES = {
@@ -79,7 +100,8 @@ def add_stop_bar(name: str, near, u, n, width_m: float, material, offset_m: floa
     half_width = width_m / 2
     lane_span = max(half_width - 0.5, 0.5)  # keep clear of the centerline and the curb edge
     lane_center = near + u * offset_m + n * (half_width / 2)  # centered within the entering half only
-    add_stripe_rect(f"{name}_bar", lane_center, n, u, lane_span, line_width_m, 0.06, material)
+    add_stripe_rect(f"{name}_bar", lane_center, n, u, lane_span, line_width_m, EXISTING_MARKING_THICKNESS_M, material,
+                     z_base=EXISTING_MARKING_Z_BASE)
 
 
 def add_paint_line(name: str, p1: tuple, p2: tuple, width_m: float, material,
@@ -102,6 +124,19 @@ def add_paint_line(name: str, p1: tuple, p2: tuple, width_m: float, material,
     add_stripe_rect(name, (p1v + p2v) / 2, u, n, length, width_m, height_m, material, z_base=z_base)
 
 
+def add_paint_polyline(name: str, points: list, width_m: float, material,
+                        height_m: float = 0.01, z_base: float = 0.06):
+    """A painted line through every point in sequence (e.g. a sampled curve
+    like src/geometry/model.py:lane_narrowing_taper_ft's arc) - NOT
+    add_paint_line(name, points[0], points[-1], ...), which would draw a
+    single straight chord between the endpoints and silently discard every
+    point in between, turning an actual curve into a straight diagonal
+    segment (confirmed: that's exactly what was happening before this
+    function existed)."""
+    for i in range(len(points) - 1):
+        add_paint_line(f"{name}_{i}", points[i], points[i + 1], width_m, material, height_m=height_m, z_base=z_base)
+
+
 def add_dashed_centerline(name: str, near: mathutils.Vector, far: mathutils.Vector, material,
                            start_m: float = 6.0, dash_m: float = 1.0, gap_m: float = 1.0, width_m: float = 0.15):
     direction = far - near
@@ -114,7 +149,8 @@ def add_dashed_centerline(name: str, near: mathutils.Vector, far: mathutils.Vect
     i = 0
     while pos + dash_m < length:
         center = near + u * (pos + dash_m / 2)
-        add_stripe_rect(f"{name}_dash_{i}", center, u, n, dash_m, width_m, 0.06, material)
+        add_stripe_rect(f"{name}_dash_{i}", center, u, n, dash_m, width_m, EXISTING_MARKING_THICKNESS_M, material,
+                         z_base=EXISTING_MARKING_Z_BASE)
         pos += dash_m + gap_m
         i += 1
 
@@ -135,4 +171,5 @@ def add_double_yellow_centerline(name: str, near: mathutils.Vector, far: mathuti
     center = near + u * (start_m + run / 2)
     lateral = line_gap_m / 2 + width_m / 2
     for side, sign in [("a", -1), ("b", 1)]:
-        add_stripe_rect(f"{name}_{side}", center + n * (sign * lateral), u, n, run, width_m, 0.06, material)
+        add_stripe_rect(f"{name}_{side}", center + n * (sign * lateral), u, n, run, width_m,
+                         EXISTING_MARKING_THICKNESS_M, material, z_base=EXISTING_MARKING_Z_BASE)

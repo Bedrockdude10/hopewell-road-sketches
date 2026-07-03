@@ -8,6 +8,7 @@ import numpy as np
 from shapely.geometry import Point
 
 from src.geometry.intersection import IntersectionModel
+from src.geometry.model import bollard_points_ft, leg_clearance_ft
 from src.geometry.treatments import DesignState
 
 STREETLIGHT_SIDEWALK_SETBACK_FT = 4
@@ -76,6 +77,27 @@ def _stop_sign_props(state: DesignState, offsets_ft: dict) -> list[dict]:
             "source": "approximation: placed on the leg's near-corner curb line, arbitrary side "
                       "(not a real traffic-direction/engineering placement study)",
         })
+    return props
+
+
+def _bollard_props(state: DesignState) -> list[dict]:
+    """Plastic bollards (flex-post delineators) down the center of each
+    lane-narrowing buffer for legs a scenario has explicitly added them to
+    (src/geometry/treatments.py:add_bollards) - not a general per-site fact, only
+    ever present when a proposal calls for this specific paint+bollard
+    escalation."""
+    props = []
+    for leg_name, spacing_ft in state.bollard_lines.items():
+        leg = state.legs[leg_name]
+        stripe_width_ft = state.lane_narrowing[leg_name]
+        start_ft = leg_clearance_ft(leg_name, state.legs, state.corner_fillets)
+        for pos in bollard_points_ft(leg, stripe_width_ft, start_ft, spacing_ft):
+            props.append({
+                "type": "bollard", "position_ft": pos, "heading_deg": 0.0,
+                "source": f"scenario-specified (add_bollards): flex-post delineator centered in {leg_name}'s "
+                          f"painted lane-narrowing buffer (stripe_width_ft={stripe_width_ft:.1f}), spaced "
+                          f"{spacing_ft:.0f} ft apart.",
+            })
     return props
 
 
@@ -248,4 +270,5 @@ def build_props(model: IntersectionModel, state: DesignState, offsets_ft: dict, 
         + _no_turn_on_red_props(model, state, offsets_ft)
         + _extra_props_from_config(model, state, offsets_ft)
         + _extra_props_from_state(state, offsets_ft)
+        + _bollard_props(state)
     )

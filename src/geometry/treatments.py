@@ -37,6 +37,8 @@ class DesignState:
     centerline_styles: dict = field(default_factory=dict)  # leg name -> one of VALID_CENTERLINE_STYLES - seeded
                                                              # from config.yaml in from_model(), see set_centerline_style
     lane_narrowing: dict = field(default_factory=dict)  # leg name -> stripe_width_ft (paint-only, no curb change)
+    bollard_lines: dict = field(default_factory=dict)  # leg name -> spacing_ft (see add_bollards - requires
+                                                         # lane_narrowing on the same leg, sits inside that buffer)
     corner_hatching: dict = field(default_factory=dict)  # corner tuple -> depth_ft (paint-only, no curb change)
     corner_aprons: dict = field(default_factory=dict)  # corner tuple -> extent_ft (mountable apron, no curb change)
     crosswalk_offset_overrides: dict = field(default_factory=dict)  # leg name -> +/- delta_ft on top of the
@@ -215,6 +217,25 @@ def add_lane_narrowing(state: DesignState, leg_name: str,
     new_state = state.clone()
     new_state.lane_narrowing[leg_name] = stripe_width_ft
     new_state.notes.append(f"add_lane_narrowing({leg_name}, stripe_width_ft={stripe_width_ft})")
+    return new_state
+
+
+BOLLARD_DEFAULT_SPACING_FT = 10.0  # typical flex-post delineator spacing for a channelized buffer
+
+
+def add_bollards(state: DesignState, leg_name: str, spacing_ft: float = BOLLARD_DEFAULT_SPACING_FT) -> DesignState:
+    """Plastic bollards (flex-post delineators) down the center of a leg's
+    painted lane-narrowing buffer (add_lane_narrowing) - a firmer, but still
+    fully paint-plus-delineator (no curb/pavement change) escalation of that
+    same treatment. Requires add_lane_narrowing to already be applied to this
+    leg - a bollard line only makes sense inside a buffer that exists, and its
+    lateral placement (centered in that buffer) is derived from the buffer's
+    own stripe_width_ft, not a separately-specified position."""
+    if leg_name not in state.lane_narrowing:
+        raise KeyError(f"Leg {leg_name!r} has no lane_narrowing buffer - call add_lane_narrowing first.")
+    new_state = state.clone()
+    new_state.bollard_lines[leg_name] = spacing_ft
+    new_state.notes.append(f"add_bollards({leg_name}, spacing_ft={spacing_ft})")
     return new_state
 
 

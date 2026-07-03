@@ -43,6 +43,15 @@ RRFB_SIGN_YELLOW_GREEN = SCHOOL_ZONE_YELLOW_GREEN
 RRFB_BEACON_AMBER = (0.95, 0.55, 0.05)
 RRFB_MOUNT_HEIGHT_M = 2.3
 
+# Plastic flex-post delineator/bollard: real MUTCD/channelizer safety orange,
+# with a white reflective band near the top (both real, common features - just
+# no CC0 bollard model found, same "procedural but real colors/shape" approach
+# as the rest of this file's signage).
+BOLLARD_SAFETY_ORANGE = (0.85, 0.28, 0.03)
+BOLLARD_REFLECTIVE_WHITE = (0.92, 0.92, 0.9)
+BOLLARD_HEIGHT_M = 0.9
+BOLLARD_RADIUS_M = 0.05
+
 
 def import_gltf_template(gltf_path: str | None, name: str):
     """Import a glTF once and return it as a hidden template object for
@@ -279,6 +288,29 @@ def add_rrfb(name: str, position: tuple, heading_deg: float, post_mat):
     return post
 
 
+def add_bollard(name: str, position: tuple):
+    """A single plastic flex-post delineator: a short safety-orange cylinder
+    with a white reflective band near the top. Placement (which leg, spacing,
+    centered in the painted buffer) is decided upstream in
+    src/render/props.py:_bollard_props - heading is irrelevant for a
+    rotationally-symmetric post, so unlike the other props this one takes no
+    heading_deg."""
+    x, y = position
+    bpy.ops.mesh.primitive_cylinder_add(radius=BOLLARD_RADIUS_M, depth=BOLLARD_HEIGHT_M,
+                                         location=(x, y, BOLLARD_HEIGHT_M / 2))
+    post = bpy.context.active_object
+    post.name = f"{name}_post"
+    post.data.materials.append(make_material(f"{name}_post_mat", BOLLARD_SAFETY_ORANGE, roughness=0.5))
+
+    band_z = BOLLARD_HEIGHT_M * 0.7
+    bpy.ops.mesh.primitive_cylinder_add(radius=BOLLARD_RADIUS_M * 1.02, depth=BOLLARD_HEIGHT_M * 0.15,
+                                         location=(x, y, band_z))
+    band = bpy.context.active_object
+    band.name = f"{name}_band"
+    band.data.materials.append(make_material(f"{name}_band_mat", BOLLARD_REFLECTIVE_WHITE, roughness=0.2))
+    return post
+
+
 def add_prop(name: str, prop: dict, streetlight_template, pole_mat, signal_housing_mat, ped_signal_housing_mat):
     """Build the Blender geometry for one exported prop dict (placement
     decided upstream by src/render/props.py), dispatching on its "type" field to the
@@ -301,6 +333,8 @@ def add_prop(name: str, prop: dict, streetlight_template, pole_mat, signal_housi
         add_no_turn_on_red_sign(name, pos, heading, pole_mat)
     elif ptype == "rrfb":
         add_rrfb(name, pos, heading, pole_mat)
+    elif ptype == "bollard":
+        add_bollard(name, pos)
 
 
 def build_tree_proxy(trunk_mat, foliage_mat):

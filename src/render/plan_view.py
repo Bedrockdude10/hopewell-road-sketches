@@ -2,8 +2,9 @@
 import geopandas as gpd
 import numpy as np
 from matplotlib.lines import Line2D
+from matplotlib.patches import Patch
 
-from src.geometry.model import build_pavement_polygon
+from src.geometry.model import build_pavement_polygon, lane_narrowing_polygons_ft, leg_clearance_ft
 from src.geometry.intersection import IntersectionModel
 from src.geometry.treatments import DesignState
 
@@ -56,6 +57,19 @@ def plot_design_state(ax, model: IntersectionModel, state: DesignState, title: s
             ax.annotate("raised\ncrossing", (c.x, c.y), fontsize=6.5, color="indigo",
                         ha="center", va="center", fontweight="bold")
 
+    for leg_name, stripe_width_ft in state.lane_narrowing.items():
+        start_ft = leg_clearance_ft(leg_name, state.legs, state.corner_fillets)
+        for poly in lane_narrowing_polygons_ft(state.legs[leg_name], stripe_width_ft,
+                                                start_left_ft=start_ft, start_right_ft=start_ft):
+            gpd.GeoSeries([poly]).plot(ax=ax, color="gold", alpha=0.5, hatch="//", zorder=3)
+            gpd.GeoSeries([poly]).boundary.plot(ax=ax, color="goldenrod", linewidth=1, zorder=3)
+        if dimension_labels:
+            leg = state.legs[leg_name]
+            lane_ft = leg.curb_to_curb_ft / 2 - stripe_width_ft
+            mid = leg.centerline.interpolate(min(leg.centerline.length * 0.6, leg.centerline.length - 5))
+            ax.annotate(f"lane {lane_ft:.1f} ft", (mid.x, mid.y), fontsize=6.5, color="goldenrod",
+                        ha="center", bbox=dict(boxstyle="round,pad=0.15", fc="white", ec="none", alpha=0.75))
+
     ax.scatter([model.center_ft.x], [model.center_ft.y], color="blue", zorder=6, s=40)
     ax.set_title(title, fontsize=11)
     ax.set_aspect("equal")
@@ -72,6 +86,7 @@ def legend_handles():
         Line2D([0], [0], color="darkorange", lw=2.5, label="Corner fillet (radius labeled)"),
         Line2D([0], [0], color="seagreen", lw=6, alpha=0.6, label="Pedestrian refuge island"),
         Line2D([0], [0], color="slateblue", lw=6, alpha=0.35, label="Raised crossing"),
+        Patch(facecolor="gold", alpha=0.5, hatch="//", edgecolor="goldenrod", label="Lane narrowing buffer"),
         Line2D([0], [0], color="saddlebrown", lw=1.5, label="Corner parcel"),
         Line2D([0], [0], marker="o", color="blue", lw=0, label="Intersection"),
     ]

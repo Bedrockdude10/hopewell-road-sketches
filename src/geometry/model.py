@@ -201,20 +201,141 @@ def leg_clearance_ft(leg_name: str, legs: dict, corner_fillets: dict, buffer_ft:
     return max_along_dist + buffer_ft
 
 
-def lane_narrowing_polygons_ft(leg: "Leg", stripe_width_ft: float) -> list[Polygon]:
+def lane_narrowing_polygons_ft(leg: "Leg", stripe_width_ft: float,
+                                start_left_ft: float = 0.0, start_right_ft: float = 0.0) -> list[Polygon]:
     """Two thin paint-only strips just inside each curb line - a visual lane
     narrowing treatment achieved with paint, NOT a curb_to_curb_ft change (no
     pavement/curb geometry is touched). Used by paint-only proposals - see
-    src/geometry/treatments.py:add_lane_narrowing."""
+    src/geometry/treatments.py:add_lane_narrowing.
+
+    start_left_ft/start_right_ft trim each strip to begin past the point
+    where it tapers into the corner (see lane_narrowing_taper_ft) - a real
+    painted lane line doesn't stop in a straight cut at the crosswalk/
+    stop-bar clearance line, it tapers back out to meet the real curb closer
+    to the intersection, so this needs to line up exactly with wherever that
+    taper starts on each side (which can differ between the leg's left and
+    right side - each is trimmed independently). Without this, the strip's
+    straight, untrimmed curb/offset lines run all the way to the
+    intersection's own center point, crossing straight through the open
+    intersection box where no paint actually exists."""
     half = leg.curb_to_curb_ft / 2
     inner_half = max(half - stripe_width_ft, 0.5)
     polys = []
-    for curb, sign in ((leg.left_curb, 1), (leg.right_curb, -1)):
+    for curb, sign, start_ft in ((leg.left_curb, 1, start_left_ft), (leg.right_curb, -1, start_right_ft)):
         inner = leg.centerline.offset_curve(sign * inner_half)
-        ring = list(curb.coords) + list(reversed(inner.coords))
+        trimmed_curb = substring(curb, start_ft, curb.length)
+        trimmed_inner = substring(inner, start_ft, inner.length)
+        ring = list(trimmed_curb.coords) + list(reversed(trimmed_inner.coords))
         if len(ring) >= 3:
             polys.append(Polygon(ring))
     return polys
+
+
+def lane_narrowing_edge_lines_ft(leg: "Leg", stripe_width_ft: float,
+                                  start_left_ft: float = 0.0, start_right_ft: float = 0.0) -> list[LineString]:
+    """The solid line marking the new, narrower travel lane's outer edge on
+    each side - the same inner boundary lane_narrowing_polygons_ft's buffer
+    zone starts from (11 ft from centerline for this site's proposals - see
+    TARGET_LANE_WIDTH_FT in sites/broad_st_greenwood/scenarios.py) - drawn
+    explicitly so the lane width actually reads on the render, rather than
+    only being implied by wherever the diagonal hatching happens to start.
+    start_left_ft/start_right_ft match lane_narrowing_polygons_ft's (see its
+    docstring) so this line, the hatch fill, and the corner taper
+    (lane_narrowing_taper_ft) all begin at the same point with no gap."""
+    half = leg.curb_to_curb_ft / 2
+    inner_half = max(half - stripe_width_ft, 0.5)
+    lines = []
+    for sign, start_ft in ((1, start_left_ft), (-1, start_right_ft)):
+        inner = leg.centerline.offset_curve(sign * inner_half)
+        lines.append(substring(inner, start_ft, inner.length))
+    return lines
+
+
+def _corner_bulge_normal(leg: "Leg", role: str) -> np.ndarray:
+    """Unit normal pointing from a leg's curb toward where a real corner
+    fillet's arc bulges - the same direction that role's own curb is already
+    offset from centerline ('left' for the leg_a corner role, 'right' for
+    leg_b - see build_corner_fillets), just continuing further outward.
+    Confirmed empirically against this project's real corner arcs (a corner
+    fillet's arc sits further from centerline than the straight curb it's
+    replacing, on the same side, not the opposite one)."""
+    c0, c1 = np.array(leg.centerline.coords[0]), np.array(leg.centerline.coords[1])
+    u = _unit(c1 - c0)
+    return np.array([-u[1], u[0]]) if role == "left" else np.array([u[1], -u[0]])
+
+
+def lane_narrowing_taper_ft(leg: "Leg", stripe_width_ft: float, anchor_ft: float, target_ft: float,
+                             n_points: int = 16) -> list[LineString]:
+    """Tapers a lane-narrowing buffer's straight edge line, on both sides of
+    the leg, from anchor_ft (the stop-bar/clearance point where the straight
+    run ends) back out to meet the REAL curb at target_ft (a point safely
+    clear of the crosswalk, closer to the intersection than anchor_ft) - a
+    same-leg taper, like a parking lane curving back to the curb before an
+    intersection, NOT a sweep around the intersection corner to the cross
+    leg. A sweep like that was tried first and doesn't work: the cross leg's
+    own crosswalk sits right at the corner by definition, so any curve
+    reaching all the way to the cross leg's curb inevitably cuts through it
+    - there's no radius that avoids that, because the destination itself is
+    inside the excluded zone. Terminating on the SAME leg, before its OWN
+    crosswalk, sidesteps the problem entirely.
+
+    The taper is tangent to the straight inset line at anchor_ft (so it
+    continues the buffer's edge with no visible seam - the very thing an
+    independently-computed curve, e.g. built from build_corner_fillets'
+    fillet math with an unrelated radius, got wrong) and passes exactly
+    through the real curb at target_ft. Tangent-at-one-point + passes-
+    through-another-point + a common circle center uniquely determines the
+    radius - solved directly, not guessed or borrowed from elsewhere: for
+    chord d = target - anchor and outward unit normal n, R = |d|^2 / (2 *
+    dot(d, n)). (For this site this R lands within ~1 ft of the real corner's
+    own 20 ft radius anyway, for what it's worth - not a coincidence, just
+    two ways of describing similarly-scaled curves at the same corner.)"""
+    half = leg.curb_to_curb_ft / 2
+    inner_half = max(half - stripe_width_ft, 0.5)
+    tapers = []
+    for curb, sign, role in ((leg.left_curb, 1, "left"), (leg.right_curb, -1, "right")):
+        inset = leg.centerline.offset_curve(sign * inner_half)
+        p1 = np.array(inset.interpolate(anchor_ft).coords[0])
+        p2 = np.array(curb.interpolate(target_ft).coords[0])
+        n = _corner_bulge_normal(leg, role)
+        d = p2 - p1
+        denom = 2 * np.dot(d, n)
+        if abs(denom) < 1e-6:
+            continue  # p2 already (near enough) on the tangent line - no taper needed
+        radius_ft = np.dot(d, d) / denom
+        center = p1 + radius_ft * n
+        a1 = np.arctan2(p1[1] - center[1], p1[0] - center[0])
+        a2 = np.arctan2(p2[1] - center[1], p2[0] - center[0])
+        delta = (a2 - a1 + np.pi) % (2 * np.pi) - np.pi
+        angles = a1 + np.linspace(0, delta, n_points)
+        tapers.append(LineString([(center[0] + radius_ft * np.cos(t), center[1] + radius_ft * np.sin(t))
+                                   for t in angles]))
+    return tapers
+
+
+def bollard_points_ft(leg: "Leg", stripe_width_ft: float, start_ft: float,
+                       spacing_ft: float = 10.0) -> list[tuple[float, float]]:
+    """Points down the center of each side's paint-only lane-narrowing buffer
+    (same inner_half math as lane_narrowing_polygons_ft, so a bollard line
+    always sits centered in the buffer that's actually painted, not a
+    separately-guessed offset) - one line per curb, starting start_ft along
+    the centerline (past the corner fillet curve, same clearance convention
+    as crosswalks/stop bars/trees - see leg_clearance_ft) and spaced
+    spacing_ft apart to the end of the leg. Used by
+    src/geometry/treatments.py:add_bollards."""
+    half = leg.curb_to_curb_ft / 2
+    inner_half = max(half - stripe_width_ft, 0.5)
+    lateral = (half + inner_half) / 2  # centered within the buffer strip
+    length = leg.centerline.length
+    points = []
+    for sign in (1, -1):
+        offset_line = leg.centerline.offset_curve(sign * lateral)
+        d = start_ft
+        while d <= min(length, offset_line.length):
+            pt = offset_line.interpolate(d)
+            points.append((pt.x, pt.y))
+            d += spacing_ft
+    return points
 
 
 def corner_overlay_polygon(pieces: dict, center_ft: Point, depth_ft: float) -> Polygon:

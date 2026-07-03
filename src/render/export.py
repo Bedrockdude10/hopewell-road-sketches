@@ -6,6 +6,7 @@ This module only orchestrates: coordinate transforms live in src/render/coords.p
 crosswalk-to-leg matching in src/render/crosswalks.py, and street-furniture placement
 in src/render/props.py."""
 import json
+import math
 from pathlib import Path
 
 from shapely.geometry import Point, Polygon
@@ -13,7 +14,8 @@ from shapely.geometry import Point, Polygon
 from src.render.coords import FT_TO_M, building_footprint_ft, pt_to_local_m, ring_to_local_m, wgs84_ring_to_local_m
 from src.render.crosswalks import resolve_crosswalk_offsets, resolve_stop_bar_offsets
 from src.geometry.model import (
-    build_pavement_polygon, corner_overlay_polygon, hatch_lines_ft, lane_narrowing_polygons_ft, leg_clearance_ft,
+    build_pavement_polygon, corner_overlay_polygon, hatch_lines_ft, lane_narrowing_edge_lines_ft,
+    lane_narrowing_polygons_ft, lane_narrowing_taper_ft, leg_clearance_ft,
 )
 from src.geometry.intersection import IntersectionModel
 from src.render.mesh_utils import build_decimated_building_mesh
@@ -25,7 +27,23 @@ BUILDING_CONTEXT_RADIUS_M = 130
 SIDEWALK_WIDTH_FT = 6
 NEAR_ZONE_BUFFER_FT = 10  # how far past the farthest crosswalk the "near" (4k texture) pavement zone extends
 TREE_SPACING_FT = 25  # typical municipal street-tree spacing (NACTO/street-design guidance), not a fabricated guess
-CORNER_HATCH_SPACING_FT = 2.5  # spacing between rendered diagonal hatch lines - a rendering choice, not MUTCD-specified
+PAINT_HATCH_SPACING_FT = 2.5  # spacing between rendered diagonal hatch lines - a rendering choice, not MUTCD-specified
+CROSSWALK_CLEARANCE_FT = 5.0  # safety margin beyond a leg's resolved crosswalk offset that a lane-narrowing
+                               # taper must stay clear of - the exact rendered crosswalk depth isn't available
+                               # here (a Blender-side rendering default, see blender_crosswalks.py), and a curved
+                               # taper's closest approach to the intersection isn't exactly at its target_ft
+                               # endpoint (the arc can bow slightly past it), so this errs generous rather than
+                               # trying to match that depth exactly
+
+
+def _leg_heading_deg(leg) -> float:
+    """Compass-agnostic heading (standard math degrees) of a leg's own
+    centerline, outward from the intersection - used to angle lane-narrowing
+    hatch lines consistently relative to the road itself (like a real gore/
+    chevron marking), not a fixed world-space angle that would look diagonal
+    on one leg and nearly parallel on another depending on the leg's bearing."""
+    (x0, y0), (x1, y1) = leg.centerline.coords[0], leg.centerline.coords[1]
+    return math.degrees(math.atan2(y1 - y0, x1 - x0))
 
 
 def _split_near_far(polygons: list[Polygon], center_ft: Point, near_radius_ft: float):
@@ -139,17 +157,60 @@ def export_scenario(model: IntersectionModel, state: DesignState, name: str, out
     # Paint-only / no-curb-change proposal treatments (see src/geometry/treatments.py:
     # add_lane_narrowing / add_corner_hatching / add_mountable_apron) - all flush
     # with the existing pavement, never touching pavement_near/far or corner_parcels.
-    lane_narrowing_stripes = [
-        ring_to_local_m(poly.exterior.coords, center_ft)
-        for leg_name, stripe_width_ft in state.lane_narrowing.items()
-        for poly in lane_narrowing_polygons_ft(state.legs[leg_name], stripe_width_ft)
-    ]
+    # A lane-narrowing buffer is drawn as a solid edge line - the new lane's
+    # real edge, explicitly delineated (not just implied by wherever the
+    # diagonal hatching happens to start) so the lane width actually reads on
+    # the render - plus diagonal hatching filling the buffer beyond it, like a
+    # real gore/chevron marking, NOT a solid filled block of paint (which at
+    # this render's scale is visually indistinguishable from a sidewalk or
+    # apron). That edge line doesn't stop in a straight cut at the crosswalk/
+    # stop-bar clearance line either - it tapers back out to meet the real
+    # curb on the SAME leg, closer to the intersection (see
+    # src/geometry/model.py:lane_narrowing_taper_ft), like a parking lane
+    # curving back to the curb before an intersection - NOT a sweep around
+    # the corner to the cross leg, which would inevitably cut through that
+    # leg's own crosswalk (it sits right at the corner by definition). No
+    # hatching in the taper itself (kept as a plain line, like a real curving
+    # lane-edge/gore line) so it can't ever cross into the crosswalk, which
+    # has priority over this paint.
+    lane_narrowing_edge_lines = []
+    lane_narrowing_taper_lines = []
+    lane_narrowing_hatch_lines = []
+    if state.lane_narrowing:
+        # Where each side's straight run should start/end (see
+        # lane_narrowing_polygons_ft) - the same clearance/target points the
+        # taper is anchored to, so the straight edge line, the hatch fill, and
+        # the taper all meet exactly with no gap/overlap.
+        start_ft = {}
+        for leg_name, stripe_width_ft in state.lane_narrowing.items():
+            anchor_ft = leg_clearance_ft(leg_name, state.legs, state.corner_fillets)
+            target_ft = crosswalk_offsets[leg_name][0] + CROSSWALK_CLEARANCE_FT
+            start_ft[leg_name] = anchor_ft
+            lane_narrowing_edge_lines += [
+                ring_to_local_m(line.coords, center_ft)
+                for line in lane_narrowing_edge_lines_ft(state.legs[leg_name], stripe_width_ft,
+                                                          start_left_ft=anchor_ft, start_right_ft=anchor_ft)
+            ]
+            lane_narrowing_taper_lines += [
+                ring_to_local_m(taper.coords, center_ft)
+                for taper in lane_narrowing_taper_ft(state.legs[leg_name], stripe_width_ft, anchor_ft, target_ft)
+            ]
+
+        for leg_name, stripe_width_ft in state.lane_narrowing.items():
+            lane_narrowing_hatch_lines += [
+                [pt_to_local_m(x, y, center_ft) for x, y in line.coords]
+                for poly in lane_narrowing_polygons_ft(
+                    state.legs[leg_name], stripe_width_ft,
+                    start_left_ft=start_ft[leg_name], start_right_ft=start_ft[leg_name])
+                for line in hatch_lines_ft(poly, spacing_ft=PAINT_HATCH_SPACING_FT,
+                                            angle_deg=_leg_heading_deg(state.legs[leg_name]) + 45)
+            ]
     corner_hatching_lines = [
         [pt_to_local_m(x, y, center_ft) for x, y in line.coords]
         for corner, depth_ft in state.corner_hatching.items()
         if "error" not in state.corner_fillets[corner]
         for line in hatch_lines_ft(corner_overlay_polygon(state.corner_fillets[corner], center_ft, depth_ft),
-                                    spacing_ft=CORNER_HATCH_SPACING_FT)
+                                    spacing_ft=PAINT_HATCH_SPACING_FT)
     ]
     corner_apron_polygons = [
         ring_to_local_m(corner_overlay_polygon(state.corner_fillets[corner], center_ft, extent_ft).exterior.coords,
@@ -186,7 +247,9 @@ def export_scenario(model: IntersectionModel, state: DesignState, name: str, out
         "sidewalks_near": [ring_to_local_m(p.exterior.coords, center_ft) for p in sidewalks_near],
         "sidewalks_far": [ring_to_local_m(p.exterior.coords, center_ft) for p in sidewalks_far],
         "tree_points": [pt_to_local_m(x, y, center_ft) for x, y in tree_points_ft],
-        "lane_narrowing_stripes": lane_narrowing_stripes,
+        "lane_narrowing_edge_lines": lane_narrowing_edge_lines,
+        "lane_narrowing_taper_lines": lane_narrowing_taper_lines,
+        "lane_narrowing_hatch_lines": lane_narrowing_hatch_lines,
         "corner_hatching_lines": corner_hatching_lines,
         "corner_apron_polygons": corner_apron_polygons,
         "props": [

@@ -36,7 +36,10 @@ import mathutils
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))  # for the sibling blender_*.py imports below
 
-from blender_crosswalks import add_crosswalk, add_dashed_centerline, add_double_yellow_centerline, add_paint_line, add_stop_bar
+from blender_crosswalks import (
+    add_crosswalk, add_dashed_centerline, add_double_yellow_centerline, add_paint_line, add_paint_polyline,
+    add_stop_bar,
+)
 from blender_geometry import build_mesh_from_data, extrude_polygon
 from blender_materials import make_material, make_textured_material
 from blender_props import (
@@ -47,7 +50,12 @@ from blender_props import (
 random.seed(7)  # stable building color assignment across existing/proposed renders
 
 PAVEMENT_HEIGHT_M = 0.05
-EXISTING_MARKING_HEIGHT_M = 0.06  # crosswalks/centerlines' top height (add_crosswalk*/add_dashed_centerline)
+# crosswalks/centerlines/stop bars (add_crosswalk*/add_dashed_centerline/add_double_yellow_centerline/
+# add_stop_bar) sit at blender_crosswalks.py:EXISTING_MARKING_Z_BASE (0.06) with thickness
+# EXISTING_MARKING_THICKNESS_M (0.01) - this is their real top, i.e. EXISTING_MARKING_Z_BASE +
+# EXISTING_MARKING_THICKNESS_M. Kept as its own constant here (rather than importing the two above)
+# since this file only needs the single derived "top" value to stack the next layer above it.
+EXISTING_MARKING_HEIGHT_M = 0.07
 # The new paint-only overlay markings (lane narrowing, corner hatching, mountable apron) sit on top
 # of EXISTING_MARKING_HEIGHT_M + this gap, NOT exactly at either that or PAVEMENT_HEIGHT_M - two
 # surfaces at the exact same height are coincident/coplanar, which renders as flickering z-fighting
@@ -56,6 +64,15 @@ EXISTING_MARKING_HEIGHT_M = 0.06  # crosswalks/centerlines' top height (add_cros
 # the cause; a lane-narrowing stripe overlapping a crosswalk's footprint needed the SAME fix again
 # relative to the crosswalk's own top height, not just the pavement's). ~1cm of clearance is
 # imperceptible at this render's scale but enough to give the depth buffer an unambiguous answer.
+#
+# Separately, EXISTING_MARKING_Z_BASE=0 (the crosswalk/centerline/stop-bar layer's OLD z_base) had
+# its own bug even though its 0.06 top height was never coincident with anything: z_base=0 meant its
+# bottom fully overlapped the pavement's own 0-0.05 volume rather than sitting on top of it. That,
+# combined with this camera's near/far clip range being far wider than the scene needed (see
+# setup_camera_and_light) and so starving the depth buffer of precision at this camera's distance,
+# produced a torn/tessellated look on thin, elongated shapes like a crosswalk line - confirmed by an
+# isolated test. Fixed by both lifting z_base to sit flush on the pavement's top (see
+# blender_crosswalks.py:EXISTING_MARKING_Z_BASE) and tightening the camera's clip range.
 MARKING_CLEARANCE_M = 0.01
 
 BUILDING_PALETTE = [
@@ -157,8 +174,22 @@ def build_scene(data: dict):
     # they can overlap (a stripe runs the whole leg, crossing the crosswalk),
     # with a small MARKING_CLEARANCE_M gap either way (see docstring above).
     marking_z = EXISTING_MARKING_HEIGHT_M + MARKING_CLEARANCE_M
-    for i, ring in enumerate(data.get("lane_narrowing_stripes", [])):
-        extrude_polygon(f"lane_narrowing_{i}", ring, 0.01, marking_mat, z_base=marking_z)
+    # A lane-narrowing buffer is a solid edge line (the new lane's real edge)
+    # plus diagonal hatching filling the buffer beyond it - a real gore/chevron
+    # marking, not a solid filled block of paint (which at this render's scale
+    # was visually indistinguishable from a sidewalk/apron - see export.py).
+    # The edge line is dead straight along the main run (a simple 2-point
+    # line) but curves where it tapers into the corner (a many-point sampled
+    # arc, see export.py/lane_narrowing_taper_ft) - add_paint_line only ever
+    # draws a single straight chord between whatever two points it's given,
+    # so a curved line needs add_paint_polyline instead (drawing every
+    # consecutive segment) or it silently collapses into a straight diagonal.
+    for i, line in enumerate(data.get("lane_narrowing_edge_lines", [])):
+        add_paint_line(f"lane_narrowing_edge_{i}", line[0], line[-1], 0.25, marking_mat, z_base=marking_z)
+    for i, line in enumerate(data.get("lane_narrowing_taper_lines", [])):
+        add_paint_polyline(f"lane_narrowing_taper_{i}", line, 0.15, marking_mat, z_base=marking_z)
+    for i, line in enumerate(data.get("lane_narrowing_hatch_lines", [])):
+        add_paint_line(f"lane_narrowing_hatch_{i}", line[0], line[-1], 0.15, marking_mat, z_base=marking_z)
     for i, line in enumerate(data.get("corner_hatching_lines", [])):
         add_paint_line(f"corner_hatch_{i}", line[0], line[-1], 0.15, marking_mat, z_base=marking_z)
     for i, ring in enumerate(data.get("corner_apron_polygons", [])):
@@ -221,10 +252,10 @@ def build_scene(data: dict):
         tree_template = build_tree_proxy(trunk_mat, foliage_mat)
         add_tree_instances("street_trees", tree_points, tree_template)
 
-    return cx, cy, scene_radius
+    return cx, cy, scene_radius, ground_size
 
 
-def setup_camera_and_light(cx: float, cy: float, scene_radius: float):
+def setup_camera_and_light(cx: float, cy: float, scene_radius: float, ground_size: float):
     dist = scene_radius * 1.6
     height = scene_radius * 2.3
     bpy.ops.object.camera_add(location=(cx, cy - dist, height))
@@ -234,6 +265,20 @@ def setup_camera_and_light(cx: float, cy: float, scene_radius: float):
     direction = mathutils.Vector((cx, cy, 0)) - cam.location
     cam.rotation_euler = direction.to_track_quat("-Z", "Y").to_euler()
     cam.data.lens = 32
+    # Blender's default clip range (0.1 - 1000 m) is enormously wider than this
+    # scene ever needs, which starves the depth buffer of precision at the
+    # ~50-100 m distance this camera actually sits at - confirmed by an
+    # isolated test: thin, long ground markings (crosswalk lines) rendered as
+    # a torn/tessellated mess with the default clip range and perfectly solid
+    # once the range was tightened to the scene's real extent, with shadow
+    # settings held constant throughout (so this is a camera depth-buffer
+    # precision issue, not a shadow one, despite looking similar to the
+    # z-fighting/shadow-acne bugs documented elsewhere in this file/README).
+    # ground_size is already the true worst-case scene extent (see build_scene) -
+    # clip_end just needs to clear camera-to-farthest-ground-corner distance,
+    # so dist + height + ground_size is a generous, cheap-to-compute upper bound.
+    cam.data.clip_start = max(dist - scene_radius * 2, 1.0)
+    cam.data.clip_end = dist + height + ground_size
 
     bpy.ops.object.light_add(type="SUN", location=(cx + scene_radius * 0.3, cy - scene_radius * 0.3, height))
     sun = bpy.context.active_object
@@ -270,8 +315,8 @@ def main():
             data = json.load(f)
 
         clear_scene()
-        cx, cy, scene_radius = build_scene(data)
-        setup_camera_and_light(cx, cy, scene_radius)
+        cx, cy, scene_radius, ground_size = build_scene(data)
+        setup_camera_and_light(cx, cy, scene_radius, ground_size)
         render(output_path)
         print(f"RENDER_DONE: {output_path}")
 

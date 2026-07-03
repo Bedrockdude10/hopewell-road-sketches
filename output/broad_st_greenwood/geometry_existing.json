@@ -2272,7 +2272,9 @@
       -14.76467134577511
     ]
   ],
-  "lane_narrowing_stripes": [],
+  "lane_narrowing_edge_lines": [],
+  "lane_narrowing_taper_lines": [],
+  "lane_narrowing_hatch_lines": [],
   "corner_hatching_lines": [],
   "corner_apron_polygons": [],
   "props": [

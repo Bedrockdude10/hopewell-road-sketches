@@ -15,7 +15,11 @@ from src.render.coords import wgs84_to_state_plane
 from src.sources.osm_context import fetch_kerbs
 from src.geometry.model import (
     Leg,
+    assign_curb_points_to_legs,
+    assign_kerbs_to_corners,
+    curb_line_from_points,
     build_corner_fillets,
+    build_pavement_polygon,
     corner_radii_from_kerbs,
     buffer_point_wgs84,
     clip_to_radius,
@@ -58,6 +62,15 @@ SNAP_REPORT_THRESHOLD_FT = 2.0
 KERB_CONTEXT_RADIUS_M = 120  # fetch radius, metres - generous enough to catch a whole return
 KERB_NEAR_JUNCTION_FT = 80   # but a return belonging to THIS junction is within this of centre
 KERB_PLAUSIBLE_HALF_WIDTH_FT = (8.0, 45.0)  # a kerb this far off a centerline is that leg's kerb
+
+
+class OSMDataUnavailableError(RuntimeError):
+    """Overpass could not be reached, so OSM-derived geometry can't be built.
+
+    Distinct from "OSM has no data here", which is a legitimate finding this project
+    reports and renders honestly. An unreachable server is not evidence of absence, and
+    treating it as such silently downgrades every OSM-derived value to a placeholder.
+    """
 
 
 def _snap_distance_ft(line, center_ft: Point) -> float:
@@ -123,8 +136,17 @@ def kerb_lines_with_tags_ft(center_wgs84: Point, center_ft: Point) -> list:
     says about each (kerb=lowered, tactile_paving=yes, wheelchair=yes)."""
     try:
         kerbs = fetch_kerbs(center_wgs84, radius_m=KERB_CONTEXT_RADIUS_M)
-    except RuntimeError:
-        return []
+    except RuntimeError as e:
+        # An outage must not look like "nothing is mapped here". Returning [] silently
+        # would drop the traced kerbs, and with them the measured widths, the per-corner
+        # radii and every tactile pad - producing a confident-looking render built on
+        # absent data. Overpass mirrors are flaky enough that this happens in practice.
+        raise OSMDataUnavailableError(
+            f"could not fetch OSM kerbs for this junction ({e}). Refusing to build geometry: "
+            "without them the widths, corner radii and tactile paving would silently fall back "
+            "to placeholders, and the render would look finished while being wrong. Retry when "
+            "Overpass is reachable."
+        ) from e
     out = []
     for kerb in kerbs:
         coords = kerb.get("coords_wgs84")
@@ -146,11 +168,7 @@ def _kerb_lines_ft(center_wgs84: Point, center_ft: Point) -> list[LineString]:
     junction's corners, producing a nonsense 7.9-30.2 ft spread at Columbia & Princeton.
     A corner return sits within a few tens of feet of the junction it belongs to.
     """
-    try:
-        kerbs = fetch_kerbs(center_wgs84, radius_m=KERB_CONTEXT_RADIUS_M)
-    except RuntimeError as e:
-        print(f"  WARNING: could not fetch OSM kerbs ({e}) - corner radii stay placeholders.")
-        return []
+    kerbs = fetch_kerbs(center_wgs84, radius_m=KERB_CONTEXT_RADIUS_M)
 
     lines = []
     for kerb in kerbs:
@@ -181,7 +199,7 @@ def _widths_from_traced_kerbs(legs: dict, kerb_lines: list, legs_cfg: dict) -> d
     band and pavement edge came from estimated widths, so they sat several feet off the
     kerb the surveyor had actually traced.
     """
-    from src.provenance import FIELD_MEASURED, leg_width_provenance
+    from src.provenance import FIELD_MEASURED, field_measurement_governs_corner, leg_width_provenance
 
     updates = {}
     for name, leg in legs.items():
@@ -203,18 +221,115 @@ def _widths_from_traced_kerbs(legs: dict, kerb_lines: list, legs_cfg: dict) -> d
         if measured_half_ft >= current_half_ft - 0.5:
             continue  # traced kerb agrees, or sits outside our curb - nothing proven
 
-        tier = leg_width_provenance(legs_cfg.get(name, {}))
+        cfg = legs_cfg.get(name, {})
+        tier = leg_width_provenance(cfg)
+        if field_measurement_governs_corner(cfg):
+            print(f"  CONFLICT: {name} is field-measured AT THE INTERSECTION at {leg.curb_to_curb_ft:.1f} ft, "
+                  f"but the traced OSM kerb comes within {measured_half_ft:.1f} ft of its centerline "
+                  f"({measured_half_ft * 2:.1f} ft curb-to-curb). The measurement stands - it was taken at "
+                  f"this cross-section. Check the tracing, or whether the measurement spanned a shoulder "
+                  f"beyond the kerb.")
+            continue
         if tier == FIELD_MEASURED:
-            print(f"  CONFLICT: {name} is field-measured at {leg.curb_to_curb_ft:.1f} ft, but the traced "
-                  f"OSM kerb comes within {measured_half_ft:.1f} ft of its centerline "
-                  f"({measured_half_ft * 2:.1f} ft curb-to-curb). The measurement stands; check whether "
-                  f"it included a shoulder or parking zone beyond the kerb.")
+            print(f"  NOTE: {name} narrowed {leg.curb_to_curb_ft:.1f} -> {measured_half_ft * 2:.1f} ft. Its "
+                  f"field measurement is not recorded as taken AT the intersection (width_measured_at), and "
+                  f"an old street can be a different width at the corner than beside it - so the kerb traced "
+                  f"at this corner governs here. The field figure still stands for the leg away from the "
+                  f"junction; this model carries only one width per leg.")
+            updates[name] = measured_half_ft * 2
             continue
         updates[name] = measured_half_ft * 2
         print(f"  NOTE: {name} narrowed {leg.curb_to_curb_ft:.1f} -> {measured_half_ft * 2:.1f} ft from the "
               f"traced OSM kerb (osm_derived; the kerb is tangent to the curb line, so this is where the "
               f"curb actually is).")
     return updates
+
+
+# Past this distance out from the junction, a traced kerb says nothing about the corner.
+UNTRACED_CORNER_THRESHOLD_FT = 35.0
+
+
+def _apply_traced_curb_lines(legs: dict, kerb_ways: list, center_ft: Point, working_len: float) -> None:
+    """Replace a leg's derived curb lines with the surveyor's traced kerbs.
+
+    This is the last place NJDOT's alignment was still leaking into the geometry. Position
+    was fixed earlier by snapping the centerline to the OSM junction node, but the BEARING
+    stayed NJDOT's - and it measured 4-8 deg off the real street at these junctions. An
+    offset curb inherits that error and splays ~10 ft away from the true kerb over a 100 ft
+    leg, however accurate the width is. Measured on the traced runs: greenwood_ave_north's
+    offset varies 11.9 ft along 105 ft while the curb itself bends only 1.3 ft.
+
+    So where a side is traced, the traced points ARE the curb. Untraced sides keep the
+    centerline offset. Mutates `legs` in place; curb_to_curb_ft is left as the reported
+    width, which no longer drives that side's geometry.
+
+    Every traced kerb way counts, whatever its `kerb` value. A corner return is tagged
+    kerb=lowered because it's a ramp - that is a statement about its height, not about
+    whether it is the edge of the roadway, and filtering to kerb=raised dropped whole
+    traced corners (the SW corner of Broad & Greenwood) in favour of a fitted guess.
+    """
+    lines = [line for line, _tags in kerb_ways]
+    if not lines:
+        return
+    assigned = assign_curb_points_to_legs(legs, lines)
+    for name, sides in assigned.items():
+        leg = legs[name]
+        for side, points in sides.items():
+            curb = curb_line_from_points(points, leg, working_len)
+            if curb is None:
+                continue
+            setattr(leg, f"{side}_curb", curb)
+            leg.traced_sides.add(side)
+            near, far = min(p[0] for p in points), max(p[0] for p in points)
+            print(f"  NOTE: {name} {side} curb is the traced OSM kerb itself, {len(points)} points "
+                  f"covering {near:.0f}-{far:.0f} ft out from the junction.")
+
+    # A side with nothing traced near the junction leaves its corner to be bridged across a
+    # gap (or, with nothing traced at all, fitted from a radius). Both are weaker than a
+    # traced corner, and a big enough gap is what stops the pavement ring closing - so name
+    # the sides. That's the difference between "this junction isn't representable" and
+    # "trace these two and it will be".
+    gaps = []
+    for name, leg in legs.items():
+        for side in ("left", "right"):
+            points = assigned.get(name, {}).get(side, [])
+            if not points:
+                gaps.append(f"{name} {side} (nothing traced)")
+            elif min(p[0] for p in points) > UNTRACED_CORNER_THRESHOLD_FT:
+                gaps.append(f"{name} {side} (traced only from {min(p[0] for p in points):.0f} ft out)")
+    if gaps:
+        print(f"  NOTE: no traced kerb within {UNTRACED_CORNER_THRESHOLD_FT:.0f} ft of the junction on: "
+              f"{'; '.join(gaps)}. Those corners are bridged, not traced - tracing the kerb up to "
+              f"the corner return would fix them.")
+
+
+def _build_corners(legs: dict, radius_ft: float, corner_radii: dict, kerb_lines: list) -> dict:
+    """Corner geometry, preferring the surveyor's traced kerb over a fitted fillet.
+
+    A traced kerb IS the curb, so it is used as the corner directly and the leg curb lines
+    are trimmed to meet its ends. Fitting a circle to it and redrawing that circle off our
+    own estimated curb lines kept the curvature but lost the position - the synthesised
+    arcs sat 0.2-5.9 ft from the mapped kerb at Broad & Greenwood.
+
+    Falls back to the fitted fillet for the WHOLE junction if the traced corners can't
+    close into a valid pavement ring. A traced kerb can be too short, or stop before the
+    tangent point, and half a ring built from real geometry is worse than a consistent
+    approximation - so the fallback is all-or-nothing and says so.
+    """
+    corner_arcs = assign_kerbs_to_corners(legs, kerb_lines)
+    fillets = build_corner_fillets(legs, radius_ft, corner_radii, corner_arcs)
+    traced = [k for k, v in fillets.items() if v.get("source") == "traced_kerb"]
+    if not traced:
+        return fillets
+    try:
+        build_pavement_polygon(fillets)
+    except ValueError as e:
+        print(f"  NOTE: traced kerbs don't close into a valid pavement ring here ({e}). Falling back to "
+              f"fitted fillets for this junction; the corners will sit a few feet off the mapped kerb.")
+        return build_corner_fillets(legs, radius_ft, corner_radii)
+    names = ", ".join("/".join(sorted(c)) for c in traced)
+    print(f"  NOTE: corner geometry taken directly from the traced OSM kerb at: {names}.")
+    return fillets
 
 
 def _corner_radii_from_osm(center_wgs84: Point, center_ft: Point, legs: dict, fallback_ft: float) -> dict:
@@ -277,14 +392,18 @@ def load_intersection_model(config: dict | None = None, site: str | None = None)
     for name, width_ft in _widths_from_traced_kerbs(legs, kerb_lines, legs_cfg).items():
         legs[name] = Leg(name=name, centerline=legs[name].centerline, curb_to_curb_ft=width_ft)
 
+    kerb_ways = kerb_lines_with_tags_ft(center, center_ft)
+    _apply_traced_curb_lines(legs, kerb_ways, center_ft, working_len)
+
     radius_ft = config["treatments"]["existing_corner_radius_ft"]
     # Traced OSM kerbs give a real measured radius per corner where they exist; the
     # config value stays as the fallback for untraced corners. Nothing in OSM carries a
     # corner radius as a tag, so a traced kerb line is the only way to source this.
     corner_radii = {}
+    corner_fillets = {}
     if radius_ft:
         corner_radii = _corner_radii_from_osm(center, center_ft, legs, radius_ft)
-    corner_fillets = build_corner_fillets(legs, radius_ft, corner_radii) if radius_ft else {}
+        corner_fillets = _build_corners(legs, radius_ft, corner_radii, kerb_lines)
 
     parcels = load_parcels_near(center, radius_ft=300, path=parcels_path)
     corner_parcels = nearest_per_quadrant(label_quadrants(parcels, center_ft))

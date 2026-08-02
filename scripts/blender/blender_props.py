@@ -314,8 +314,10 @@ def add_bollard(name: str, position: tuple):
 
 PUSHBUTTON_POST_HEIGHT_M = 1.2      # APS pushbutton mounting height, ~42-48 in per MUTCD/PROWAG
 PUSHBUTTON_HOUSING_YELLOW = (0.85, 0.72, 0.08)
-TACTILE_PAD_FALLBACK_M = (0.9, 1.5)  # depth along the crossing, width across it - only used if the
-                                      # prop dict carries no pad_depth_m/pad_width_m
+TACTILE_PAD_FALLBACK_M = (0.610, 0.914)  # 2 ft deep x 3 ft wide - fallback only; the real
+                                          # dimensions arrive per-prop as pad_depth_m/pad_width_m
+                                          # from src/render/props.py. Kept in step with those so a
+                                          # prop missing them degrades to the same size, not a stale one.
 TACTILE_PAD_HEIGHT_M = 0.015
 # The pad straddles the kerb, where the pavement slab (0.05) meets the lower sidewalk
 # slab (0.03), so it has to sit on top of the HIGHER of the two or it is simply buried -

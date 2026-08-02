@@ -77,6 +77,11 @@ legs:
     street_name: "West Broad Street (west of Greenwood Ave)"
     curb_to_curb_ft: 55.5  # 55 ft 6 in
     width_provenance: field_measured  # reality - supersedes OSM and any estimate (see src/provenance.py)
+    width_measured_at: intersection
+    # The report puts this measurement AT the corner twice over - "Greenwood Ave
+    # intersection, west side" and "at the west side of the N. Greenwood Ave.
+    # intersection" - so it governs the corner geometry and is not overridden by the
+    # traced kerb. The two agree anyway: the traced kerb's ceiling here is ~60 ft.
     confirmed: true
     centerline_style: double_yellow  # confirmed via street-view photo review, 2026-07-02
     source: >
@@ -95,6 +100,15 @@ legs:
     street_name: "East Broad Street (east of Greenwood Ave)"
     curb_to_curb_ft: 68  # measured pedestrian crossing distance (curb-to-curb, incl. parking/shoulder zone)
     width_provenance: field_measured  # reality - supersedes OSM and any estimate (see src/provenance.py)
+    width_measured_at: near_intersection
+    # NOT at the corner: the report says "immediately EAST OF the Greenwood Ave
+    # intersection", and the figure is a crossing distance "including the parking/shoulder
+    # zone on each side" (54 ft active roadway vs 68 ft total). Broad St is an old street
+    # with an uneven layout, so a cross-section beside the junction need not describe the
+    # junction - and the kerb traced at this corner caps it at ~60.8 ft. The measurement
+    # is not wrong; it is measuring somewhere else. At the corner the traced kerb governs
+    # (src/provenance.py:field_measurement_governs_corner); the 68 ft figure still stands
+    # for the leg away from the junction, which this one-width-per-leg model can't carry.
     confirmed: true
     centerline_style: double_yellow  # confirmed via street-view photo review, 2026-07-02
     source: >

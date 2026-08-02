@@ -13,6 +13,7 @@ from shapely.geometry import Point, Polygon
 
 from src.render.coords import FT_TO_M, building_footprint_ft, pt_to_local_m, ring_to_local_m, wgs84_ring_to_local_m
 from src.render.crosswalks import (CROSSWALK_CLEARANCE_FT, CROSSWALK_DEPTH_M, STOP_BAR_CURB_CLEARANCE_M,
+                                   crosswalk_bands_ft, stop_bar_bands_ft,
                                    resolve_crosswalk_offsets, resolve_crosswalk_skews,
                                    resolve_stop_bar_offsets, stop_bar_width_ft)
 from src.geometry.model import (
@@ -24,7 +25,8 @@ from src.geometry.intersection import IntersectionModel, kerb_lines_with_tags_ft
 from src.render.mesh_utils import build_decimated_building_mesh
 from src.sources.osm_context import (fetch_buildings, fetch_crossings, fetch_kerbs,
                                      fetch_street_furniture, fetch_traffic_control)
-from src.render.props import assert_pads_off_roadway, build_props, control_nodes_ft, osm_tree_points_ft
+from src.checks import assert_scene_valid
+from src.render.props import build_props, control_nodes_ft, osm_tree_points_ft
 from src.geometry.treatments import DEFAULT_CENTERLINE_STYLE, LEGAL_PARKING_SETBACK_FT, DesignState, build_sidewalk_pieces
 
 BUILDING_CONTEXT_RADIUS_M = 130
@@ -110,9 +112,16 @@ def export_scenario(model: IntersectionModel, state: DesignState, name: str, out
 
     props = build_props(model, state, crosswalk_offsets, center_ft, traffic_control, street_furniture,
                          crossings, fetch_kerbs(model.center_wgs84, radius_m=KERB_RADIUS_M))
-    # Invariant, not a warning: a pad in the carriageway is a false claim about an
-    # accessibility feature. See assert_pads_off_roadway.
-    assert_pads_off_roadway(props, pavement)
+    # Invariants, not warnings: a pad in the carriageway is a false claim about an
+    # accessibility feature, and a curb drawn across the intersection is a false claim
+    # about the street. Checked on the same shared band geometry the plan view checks, so
+    # the two views can't diverge on what they consider valid. See src/checks.py.
+    assert_scene_valid(
+        model, state, props, pavement,
+        crosswalk_bands=crosswalk_bands_ft(state, crosswalk_offsets, crosswalk_skews,
+                                            CROSSWALK_DEPTH_M / FT_TO_M),
+        stop_bars=stop_bar_bands_ft(state, stop_bar_offsets, crosswalk_skews),
+        scenario=name)
 
     # Paint-only / no-curb-change proposal treatments (see src/geometry/treatments.py:
     # add_lane_narrowing / add_corner_hatching / add_mountable_apron) - all flush

@@ -220,7 +220,7 @@ def build_scene(data: dict):
     marked_leg_names = set(data.get("existing_marked_crosswalks", []))
     # Depth comes from src/render/crosswalks.py:CROSSWALK_DEPTH_M via the JSON, so the 2D plan
     # view (src/render/plan_view.py) and this render draw an identically-sized crosswalk.
-    crosswalk_depth_m = data.get("crosswalk_depth_m", 3.0)
+    crosswalk_depth_m = data.get("crosswalk_depth_m", 1.829)  # 6 ft; see blender_crosswalks.py
     stop_bar_curb_clearance_m = data.get("stop_bar_curb_clearance_m", 0.5)
     for leg in data.get("legs", []):
         near = mathutils.Vector((*leg["near_m"], 0.0))

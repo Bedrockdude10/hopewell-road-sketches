@@ -1,10 +1,10 @@
 """Geometry operations: WGS84 buffering, radius clipping, CRS reprojection, and
 curb-line / corner-fillet construction from centerlines + widths."""
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 import geopandas as gpd
 import numpy as np
-from shapely.geometry import LineString, Point, Polygon
+from shapely.geometry import LineString, MultiLineString, Point, Polygon
 from shapely.ops import substring
 from shapely.validation import explain_validity
 
@@ -85,6 +85,10 @@ class Leg:
     curb_to_curb_ft: float | None = None
     left_curb: LineString | None = None
     right_curb: LineString | None = None
+    # Sides whose curb line is the surveyor's traced kerb rather than a centerline offset.
+    # The corner between two traced sides is traced too, so it is joined and smoothed
+    # instead of being replaced by a fitted fillet.
+    traced_sides: set = field(default_factory=set)
 
     def __post_init__(self):
         if self.curb_to_curb_ft is not None:
@@ -95,6 +99,16 @@ class Leg:
 
 def _unit(v: np.ndarray) -> np.ndarray:
     return v / np.linalg.norm(v)
+
+
+# Beyond this, two adjacent legs are the same street running through the junction, and the
+# pair of curbs facing away from the stem is one continuous kerb with no corner in it. The
+# original 179 deg only caught a perfectly straight through road; W Broad kinks 9.1 deg at
+# Louellen, and rounding that "corner" is meaningless - the two curb rays converge so slowly
+# that their crossing point lands 47 ft up the street, dragging the fillet's tangent points
+# and the whole pavement ring with it. These are old streets; a through road that bends a
+# few degrees at a side street is the normal case, not a corner.
+THROUGH_STREET_ANGLE_DEG = 165.0
 
 
 def fillet_curb_corner(
@@ -126,7 +140,7 @@ def fillet_curb_corner(
         # The curbs double back along each other - a real geometry problem, not a
         # flat corner. Still an error.
         raise ValueError(f"Curb lines meet at an implausible angle ({np.degrees(theta):.1f} deg) - check inputs.")
-    if theta > np.radians(179):
+    if theta > np.radians(THROUGH_STREET_ANGLE_DEG):
         # Collinear: no rounding, no trimming. The "arc" is the straight bridge
         # across the small gap between the two curb lines' start points, which keeps
         # the (trimmed_a, arc, trimmed_b) contract - and build_pavement_polygon's
@@ -165,7 +179,8 @@ def _leg_bearing(leg: "Leg") -> float:
     return np.arctan2(d[1], d[0])
 
 
-def build_corner_fillets(legs: dict, radius_ft, corner_radii: dict | None = None) -> dict:
+def build_corner_fillets(legs: dict, radius_ft, corner_radii: dict | None = None,
+                          corner_arcs: dict | None = None) -> dict:
     """
     Given >=2 Legs with curb lines already computed, sort them by compass bearing
     and fillet the corner between each pair of angularly-adjacent legs (wrapping
@@ -185,9 +200,43 @@ def build_corner_fillets(legs: dict, radius_ft, corner_radii: dict | None = None
     for i in range(n):
         name_a, leg_a = ordered[i]
         name_b, leg_b = ordered[(i + 1) % n]
+        corner_key = frozenset((name_a, name_b))
+
+        # Both sides traced means the corner between them is traced too - the return's own
+        # vertices are already the inner ends of these two curbs. Nothing to fit: walk from
+        # one to the other and smooth the seam. Fitting a circle here and redrawing it off
+        # our own curb lines is what put the synthesised arcs 0.2-5.9 ft from the mapped
+        # kerb at Broad & Greenwood.
+        if "left" in leg_a.traced_sides and "right" in leg_b.traced_sides:
+            trimmed_a, arc, trimmed_b = traced_corner_join(leg_a.left_curb, leg_b.right_curb)
+            results[(name_a, name_b)] = {
+                "trimmed_a": trimmed_a, "arc": arc, "trimmed_b": trimmed_b,
+                "radius_ft": (corner_radii or {}).get(corner_key, radius_ft),
+                "source": "traced_kerb",
+            }
+            continue
+
+        traced = traced_corner_arc((corner_arcs or {}).get(corner_key, []),
+                                    leg_a.left_curb, leg_b.right_curb)
+        if traced is not None:
+            try:
+                trimmed_a = substring(leg_a.left_curb, leg_a.left_curb.project(Point(*traced.coords[0])),
+                                       leg_a.left_curb.length)
+                trimmed_b = substring(leg_b.right_curb, leg_b.right_curb.project(Point(*traced.coords[-1])),
+                                       leg_b.right_curb.length)
+                if not trimmed_a.is_empty and not trimmed_b.is_empty:
+                    results[(name_a, name_b)] = {
+                        "trimmed_a": trimmed_a, "arc": traced, "trimmed_b": trimmed_b,
+                        "radius_ft": (corner_radii or {}).get(corner_key, radius_ft),
+                        "source": "traced_kerb",
+                    }
+                    continue
+            except (ValueError, IndexError):
+                pass  # fall through to the fitted fillet below
+
         # A traced kerb gives this specific corner its own measured radius; anything
         # untraced falls back to the site-wide placeholder (see corner_radii_from_kerbs).
-        this_radius = (corner_radii or {}).get(frozenset((name_a, name_b)), radius_ft)
+        this_radius = corner_radii.get(corner_key, radius_ft) if corner_radii else radius_ft
         try:
             trimmed_a, arc, trimmed_b = fillet_curb_corner(leg_a.left_curb, leg_b.right_curb, this_radius)
             results[(name_a, name_b)] = {"trimmed_a": trimmed_a, "arc": arc, "trimmed_b": trimmed_b,
@@ -528,21 +577,33 @@ def hatch_lines_ft(polygon: Polygon, spacing_ft: float = 2.0, angle_deg: float =
     """Diagonal hatch lines filling a polygon, clipped to its boundary - used
     to render paint-only diagonal/chevron marking (e.g. corner_hatching_polygon
     above) without any real curb/pavement geometry change."""
+    # A corner-hatch polygon built off a traced kerb can pinch to a point where the curb
+    # doubles back on itself, which is a bowtie GEOS refuses to intersect against. buffer(0)
+    # resolves it into the same area without moving any edge; an empty result means the
+    # polygon had no area to hatch in the first place.
+    if not polygon.is_valid:
+        polygon = polygon.buffer(0)
+        if polygon.is_empty:
+            return []
+
     minx, miny, maxx, maxy = polygon.bounds
     diag = ((maxx - minx) ** 2 + (maxy - miny) ** 2) ** 0.5
-    cx, cy = (minx + maxx) / 2, (miny + maxy) / 2
     theta = np.radians(angle_deg)
     u = np.array([np.cos(theta), np.sin(theta)])
     n = np.array([-u[1], u[0]])
-    lines = []
-    offset = -diag
-    while offset <= diag:
-        center = np.array([cx, cy]) + n * offset
-        clipped = LineString([center - u * diag, center + u * diag]).intersection(polygon)
-        if not clipped.is_empty:
-            lines.extend(clipped.geoms if clipped.geom_type == "MultiLineString" else [clipped])
-        offset += spacing_ft
-    return lines
+
+    # Every hatch line at once, and one clip against the polygon instead of one GEOS call
+    # per line. Endpoints are built with numpy broadcasting; the whole family goes through
+    # a single MultiLineString intersection.
+    centers = (np.array([(minx + maxx) / 2, (miny + maxy) / 2])
+               + n * np.arange(-diag, diag + spacing_ft, spacing_ft)[:, None])
+    ends = np.stack([centers - u * diag, centers + u * diag], axis=1)
+    clipped = MultiLineString([tuple(map(tuple, pair)) for pair in ends]).intersection(polygon)
+
+    if clipped.is_empty:
+        return []
+    pieces = clipped.geoms if hasattr(clipped, "geoms") else [clipped]
+    return [g for g in pieces if g.geom_type == "LineString" and not g.is_empty]
 
 
 def build_pavement_polygon(corner_fillets: dict) -> Polygon:
@@ -731,6 +792,129 @@ def kerb_radius_is_usable(fit: dict | None) -> bool:
             and low <= fit["radius_ft"] <= high)
 
 
+def assign_kerbs_to_corners(legs: dict, kerb_lines_ft: list) -> dict:
+    """{frozenset(leg_a, leg_b): [LineString, ...]} - traced kerbs grouped by the corner
+    they belong to, matched by which two legs their midpoint sits closest to."""
+    by_corner: dict[frozenset, list] = {}
+    for line in kerb_lines_ft:
+        midpoint = line.interpolate(0.5, normalized=True)
+        ranked = sorted(legs.items(), key=lambda kv: kv[1].centerline.distance(midpoint))
+        if len(ranked) < 2:
+            continue
+        by_corner.setdefault(frozenset((ranked[0][0], ranked[1][0])), []).append(line)
+    return by_corner
+
+
+# A traced kerb is hand-clicked, so its vertices carry the mapper's noise: used raw it
+# renders as a visibly kinked corner. Smoothing replaces that noise while keeping the
+# traced POSITION and endpoints, which is the whole point of using the tracing.
+SMOOTHED_ARC_POINTS = 24
+MAX_ARC_FIT_RESIDUAL_FT = 1.5  # beyond this the kerb isn't really circular; smooth it instead
+
+
+def _chaikin(line: LineString, iterations: int = 5) -> LineString:
+    """Chaikin corner-cutting. Endpoints are preserved exactly; interior vertices are
+    repeatedly replaced by points 1/4 and 3/4 along each segment, which converges on a
+    smooth curve. Used where a kerb isn't circular enough to fit an arc."""
+    coords = np.asarray(line.coords, dtype=float)
+    for _ in range(iterations):
+        if len(coords) < 3:
+            break
+        # Both cut points for every segment in one shot; interleaved with reshape rather
+        # than appended one at a time (the vertex count quadruples each iteration).
+        starts, ends = coords[:-1], coords[1:]
+        cuts = np.empty((2 * len(starts), 2))
+        cuts[0::2] = 0.75 * starts + 0.25 * ends
+        cuts[1::2] = 0.25 * starts + 0.75 * ends
+        coords = np.vstack([coords[:1], cuts, coords[-1:]])
+    return LineString(coords)
+
+
+def smooth_traced_arc(line: LineString) -> LineString:
+    """A clean curve following a traced kerb: same endpoints, same path, no click noise.
+
+    Preferred method is to fit a circle to the traced points and redraw the arc between
+    the traced ENDPOINTS along that circle. That is smooth by construction and still sits
+    on the mapped kerb - unlike the old fitted fillet, which took only the radius and then
+    redrew the arc off our own estimated curb lines, landing it feet away.
+
+    Falls back to Chaikin smoothing where the kerb isn't circular enough to fit (a
+    compound return, or a trace covering more than one curve).
+    """
+    fit = fit_circle_ft(line)
+    if fit is None or fit["max_residual_ft"] > MAX_ARC_FIT_RESIDUAL_FT:
+        return _chaikin(line)
+
+    cx, cy = fit["center"]
+    radius = fit["radius_ft"]
+    start, end = np.array(line.coords[0]), np.array(line.coords[-1])
+    mid = np.array(line.interpolate(0.5, normalized=True).coords[0])
+    a0 = np.arctan2(start[1] - cy, start[0] - cx)
+    a1 = np.arctan2(end[1] - cy, end[0] - cx)
+    a_mid = np.arctan2(mid[1] - cy, mid[0] - cx)
+
+    # Two ways round the circle; take the one that actually passes through the traced
+    # midpoint, so a reflex return isn't silently replaced by the short way round.
+    candidates = [(a1 - a0) % (2 * np.pi), (a1 - a0) % (2 * np.pi) - 2 * np.pi]
+    def passes_mid(sweep):
+        t = ((a_mid - a0) / sweep) if sweep else 0.0
+        return 0.0 <= t <= 1.0
+    sweep = next((c for c in candidates if passes_mid(c)), min(candidates, key=abs))
+
+    angles = a0 + np.linspace(0, sweep, SMOOTHED_ARC_POINTS)
+    # Deliberately NOT pinned back to the raw traced endpoints. a0/a1 are already those
+    # endpoints projected onto the fitted circle, so the arc starts and ends within the
+    # fit residual (<=1.5 ft) of where they were traced. Snapping the ends back to the
+    # raw points put a kink at each end - it made the smoothed arc turn MORE sharply than
+    # the trace it was meant to clean up. The curb lines trim to the arc's own ends, so
+    # nothing downstream needs the raw endpoints.
+    return LineString([(cx + radius * np.cos(a), cy + radius * np.sin(a)) for a in angles])
+
+
+# How much of each traced curb either side of a corner is handed to the smoothing pass.
+# The traced corner returns already live in the leg curbs (assign_curb_points_to_legs puts
+# each return's vertices on the two sides it joins), so this only has to take the click
+# noise off the join, not invent a curve.
+CORNER_BLEND_FT = 8.0
+
+
+def traced_corner_join(curb_a: LineString, curb_b: LineString) -> tuple[LineString, LineString, LineString]:
+    """Join two traced curbs around the corner they share, smoothing the seam.
+
+    Both curbs are the surveyor's own traced kerb, ending where the tracing ends - which for
+    a mapped corner is partway around the return. So there is no corner to construct: the
+    two ends are already at the corner and this walks from one to the other, taking the last
+    CORNER_BLEND_FT of each, bridging whatever gap the tracing left, and Chaikin-smoothing
+    the result. Returns the same (trimmed_a, arc, trimmed_b) contract as fillet_curb_corner,
+    with the arc running from curb_a's side to curb_b's side.
+    """
+    blend_a = min(CORNER_BLEND_FT, curb_a.length / 2)
+    blend_b = min(CORNER_BLEND_FT, curb_b.length / 2)
+    head_a = substring(curb_a, 0, blend_a)
+    head_b = substring(curb_b, 0, blend_b)
+    seam = LineString(list(head_a.coords)[::-1] + list(head_b.coords))
+    return substring(curb_a, blend_a, curb_a.length), _chaikin(seam), substring(curb_b, blend_b, curb_b.length)
+
+
+def traced_corner_arc(kerb_lines: list, curb_a: LineString, curb_b: LineString) -> LineString | None:
+    """One traced kerb, oriented to run from curb_a's side to curb_b's side.
+
+    build_corner_fillets' contract is (trimmed_a, arc, trimmed_b) with the arc running
+    from its tangent point on curb_a to the one on curb_b, and build_pavement_polygon's
+    ring walk depends on that order. A traced kerb has whatever direction the mapper drew
+    it in, so it is reversed if needed. Where several kerbs share a corner the longest is
+    used - the others are usually short ramp segments rather than the return itself.
+    """
+    usable = [line for line in kerb_lines if line.length > 1.0]
+    if not usable:
+        return None
+    line = max(usable, key=lambda l: l.length)
+    start, end = Point(line.coords[0]), Point(line.coords[-1])
+    if start.distance(curb_a) > end.distance(curb_a):
+        line = LineString(list(line.coords)[::-1])
+    return smooth_traced_arc(line)
+
+
 def corner_radii_from_kerbs(legs: dict, kerb_lines_ft: list[LineString],
                              fallback_radius_ft: float) -> tuple[dict, list[str]]:
     """Per-corner radii derived from traced OSM kerb lines, plus notes on what happened.
@@ -796,3 +980,229 @@ def _corner_pairs(legs: dict) -> list[tuple[str, str]]:
     usable = {name: leg for name, leg in legs.items() if leg.left_curb is not None}
     ordered = sorted(usable.items(), key=lambda kv: _leg_bearing(kv[1]))
     return [(ordered[i][0], ordered[(i + 1) % len(ordered)][0]) for i in range(len(ordered))]
+
+
+# Building a leg's curb from the surveyor's traced kerb ways.
+#
+# EVERY traced kerb way is curb. The earlier version took only kerb=raised and only the
+# single longest run per side, which threw away exactly the geometry that matters: the
+# corner returns are tagged kerb=lowered (they're the ramps), so the SW corner of Broad &
+# Greenwood - traced in full - was being dropped and redrawn as a fitted fillet off the
+# NJDOT centerline. Raised vs lowered is a height, not a question of where the curb is.
+#
+# Each traced VERTEX is placed in the leg frame as (station along the centerline, signed
+# offset from it), and assigned to the one leg side whose half-width it best matches. That
+# splits a corner return between the two sides it joins, which is what a corner return is.
+# The curb is then the traced points themselves, in station order - no offsetting, no
+# fitting, no fillet. Nothing is invented except where nothing was traced.
+CURB_POINT_MAX_WIDTH_RATIO = 2.6   # |offset| / half-width; corner returns flare to ~2.3x
+CURB_POINT_MIN_WIDTH_RATIO = 0.45  # below this it's a median or a driveway, not this curb
+CURB_POINT_BEHIND_TOLERANCE_FT = 3.0
+
+
+def _line_direction(line: LineString) -> np.ndarray:
+    coords = np.asarray(line.coords)
+    vec = coords[-1] - coords[0]
+    norm = np.hypot(*vec)
+    return vec / norm if norm else np.array([1.0, 0.0])
+
+
+def _polyline_frame(centerline: LineString):
+    """(vertices, unit segment directions, segment lengths, station at each vertex).
+
+    The one description of a leg's frame. Both directions of the transform read it, so
+    station_offset(_point_at(...)) round-trips exactly - it did not when the forward
+    direction used segment tangents and the inverse estimated one from a +/-2 ft window.
+    """
+    verts = np.asarray(centerline.coords, dtype=float)
+    seg_vec = verts[1:] - verts[:-1]
+    seg_len = np.hypot(seg_vec[:, 0], seg_vec[:, 1])
+    seg_dir = seg_vec / np.where(seg_len > 0, seg_len, 1.0)[:, None]
+    return verts, seg_dir, seg_len, np.concatenate(([0.0], np.cumsum(seg_len)))
+
+
+def _frame_at(centerline: LineString, station: float) -> tuple[np.ndarray, np.ndarray]:
+    """(origin, unit tangent) of the leg frame at `station`, extrapolating past either end."""
+    verts, seg_dir, _seg_len, cumulative = _polyline_frame(centerline)
+    i = int(np.clip(np.searchsorted(cumulative, station, side="right") - 1, 0, len(seg_dir) - 1))
+    return verts[i] + seg_dir[i] * (station - cumulative[i]), seg_dir[i]
+
+
+def station_offset(centerline: LineString, xy) -> tuple[float, float]:
+    """A point in the leg's frame: distance along the centerline, and signed distance from
+    it - positive to the left, matching Leg.left_curb / right_curb.
+
+    The station is signed. LineString.project() clamps to [0, length], so everything behind
+    the junction comes back as station 0 with a small offset - which let a leg claim the
+    curb of the leg OPPOSITE it and draw it straight back through the intersection. Behind
+    the junction the station is measured against the leg's own starting tangent instead, so
+    it comes out negative and those points are rejected.
+
+    One point through the vectorized path, so there is only ever one definition of the frame.
+    """
+    stations, offsets = station_offset_many(centerline, np.asarray([xy], dtype=float))
+    return float(stations[0]), float(offsets[0])
+
+
+def _point_at(centerline: LineString, station: float, offset: float) -> tuple[float, float]:
+    origin, tangent = _frame_at(centerline, station)
+    return tuple(origin + np.array([-tangent[1], tangent[0]]) * offset)
+
+
+def station_offset_many(centerline: LineString, points: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    """station_offset() for many points at once: (stations, offsets) arrays.
+
+    Same frame and the same signed-station convention as the scalar version, but the whole
+    (points x centerline segments) projection is one numpy expression instead of two shapely
+    calls per point. Centerlines carry a handful of vertices, so the matrix is small and
+    this collapses the dominant cost of reading a junction's traced kerbs.
+    """
+    verts, seg_dir, seg_len, cumulative = _polyline_frame(centerline)
+    seg_start = verts[:-1]
+
+    pts = np.atleast_2d(np.asarray(points, dtype=float))
+    rel = pts[:, None, :] - seg_start[None, :, :]             # (p, s, 2)
+    along = np.einsum("psc,sc->ps", rel, seg_dir)
+    clamped = np.clip(along, 0.0, seg_len[None, :])
+    perp = rel - clamped[:, :, None] * seg_dir[None, :, :]
+    nearest = np.argmin(np.hypot(perp[:, :, 0], perp[:, :, 1]), axis=1)
+
+    rows = np.arange(len(pts))
+    stations = cumulative[nearest] + clamped[rows, nearest]
+    tangents = seg_dir[nearest]
+    rel_nearest = rel[rows, nearest]
+    offsets = tangents[:, 0] * rel_nearest[:, 1] - tangents[:, 1] * rel_nearest[:, 0]
+
+    # Past either end, measure against that end's tangent rather than letting the projection
+    # clamp. Behind the junction this is what keeps a station negative, so a leg can't claim
+    # the curb of the leg opposite it (see station_offset). Past the far end it stops every
+    # point beyond the leg's working length from collapsing onto the same station, and makes
+    # this an exact inverse of _point_at over the whole line.
+    for outside, vertex, direction, base in (
+            (stations <= 0, verts[0], seg_dir[0], 0.0),
+            (stations >= cumulative[-1], verts[-1], seg_dir[-1], cumulative[-1])):
+        if outside.any():
+            rel_end = pts[outside] - vertex
+            stations[outside] = base + rel_end @ direction
+            offsets[outside] = direction[0] * rel_end[:, 1] - direction[1] * rel_end[:, 0]
+    return stations, offsets
+
+
+def assign_curb_points_to_legs(legs: dict, kerb_lines: list[LineString]) -> dict:
+    """{leg_name: {"left": [(station, offset), ...], "right": [...]}} from traced kerbs.
+
+    Every vertex of every traced kerb way is considered, and goes to the single leg side
+    whose half-width it sits closest to in proportional terms. One vertex can only be one
+    piece of curb, so a corner return splits between the two sides that meet there rather
+    than being drawn twice.
+
+    Vectorized over vertices: each leg scores every traced vertex in one pass, and the
+    winning leg per vertex is an argmin over the resulting (legs x vertices) score matrix.
+    """
+    if not kerb_lines:
+        return {}
+    pts = np.concatenate([np.asarray(line.coords, dtype=float) for line in kerb_lines])
+
+    names, stations, offsets, ratios = [], [], [], []
+    for name, leg in legs.items():
+        if leg.curb_to_curb_ft is None:
+            continue
+        leg_stations, leg_offsets = station_offset_many(leg.centerline, pts)
+        ratio = np.abs(leg_offsets) / (leg.curb_to_curb_ft / 2)
+        # np.inf marks "this leg can't claim this vertex", so it never wins the argmin.
+        disqualified = ((leg_stations < -CURB_POINT_BEHIND_TOLERANCE_FT)
+                        | (ratio < CURB_POINT_MIN_WIDTH_RATIO)
+                        | (ratio > CURB_POINT_MAX_WIDTH_RATIO))
+        names.append(name)
+        stations.append(leg_stations)
+        offsets.append(leg_offsets)
+        ratios.append(np.where(disqualified, np.inf, ratio))
+    if not names:
+        return {}
+
+    ratios = np.vstack(ratios)
+    winner = np.argmin(ratios, axis=0)
+    claimed = np.isfinite(ratios[winner, np.arange(ratios.shape[1])])
+
+    out: dict[str, dict[str, list]] = {}
+    for leg_index, name in enumerate(names):
+        mine = claimed & (winner == leg_index)
+        if not mine.any():
+            continue
+        leg_stations, leg_offsets = stations[leg_index][mine], offsets[leg_index][mine]
+        for side, on_side in (("left", leg_offsets > 0), ("right", leg_offsets <= 0)):
+            if on_side.any():
+                out.setdefault(name, {})[side] = list(
+                    zip(leg_stations[on_side].tolist(), leg_offsets[on_side].tolist()))
+    return out
+
+
+# Extrapolating past the end of the tracing. A curb that leaves the corner is running down
+# the street, so it can diverge from the centerline by a few degrees (NJDOT's alignment
+# error) but not more. Taking the slope off the last two traced vertices instead read the
+# flare of a corner return - at Columbia & Princeton the south leg is traced for only 9 ft,
+# all of it return, and running that slope out 100 ft crossed the two curbs into an X.
+CURB_EXTRAPOLATION_MAX_SLOPE = 0.11        # ~6 degrees
+CURB_EXTRAPOLATION_MIN_BASELINE_FT = 15.0  # shorter than this is corner, not street
+
+
+def _outward_slope(points: list[tuple[float, float]]) -> float:
+    """d(offset)/d(station) for the outward end of a traced side, or 0 if the tracing is
+    too short to establish one - in which case the curb continues at the width last seen."""
+    end_station, end_offset = points[-1]
+    for station, offset in reversed(points[:-1]):
+        if end_station - station >= CURB_EXTRAPOLATION_MIN_BASELINE_FT:
+            slope = (end_offset - offset) / (end_station - station)
+            return float(np.clip(slope, -CURB_EXTRAPOLATION_MAX_SLOPE, CURB_EXTRAPOLATION_MAX_SLOPE))
+    return 0.0
+
+
+def curb_line_from_points(points: list[tuple[float, float]], leg: "Leg",
+                          working_length_ft: float) -> LineString | None:
+    """One leg side's curb, straight off the traced points.
+
+    The points are the surveyor's own vertices, kept as traced and ordered along the leg.
+    Only the outward end is extended, along the bearing of the last traced stretch, to reach
+    the leg's working length - and only when the tracing stops short of it. The junction end
+    is left exactly where the tracing ends; the corner is built from the traced geometry
+    there, not by running this line on into the intersection.
+    """
+    ordered = sorted(points)
+    if len(ordered) < 2:
+        return None
+    # One vertex per station: two traced ways can share an endpoint, and a curb that
+    # doubled back in station would fold the pavement edge over itself.
+    deduped = [ordered[0]]
+    for station, offset in ordered[1:]:
+        if station - deduped[-1][0] > 0.25:
+            deduped.append((station, offset))
+    if len(deduped) < 2:
+        return None
+
+    if deduped[-1][0] < working_length_ft:
+        deduped.append((working_length_ft,
+                        deduped[-1][1] + _outward_slope(deduped) * (working_length_ft - deduped[-1][0])))
+
+    return LineString([_point_at(leg.centerline, s, o) for s, o in deduped])
+
+
+def trimmed_curb_lines(legs: dict, corner_fillets: dict) -> dict[str, dict[str, LineString]]:
+    """Each leg side clipped at the corner tangent point, i.e. the curb as it actually
+    bounds the pavement.
+
+    A leg's raw curb line deliberately overshoots the junction so the fillet has something
+    to trim into - so drawing it raw puts curb lines straight across the middle of the
+    intersection, marking a curb where there is none. The pavement polygon and the 3D
+    export already use the trimmed pieces; this is how the plan view says the same thing.
+    Sides whose corner failed to build keep the raw line, which is honest: that corner has
+    no tangent point.
+    """
+    out = {name: {"left": leg.left_curb, "right": leg.right_curb} for name, leg in legs.items()}
+    for (name_a, name_b), pieces in corner_fillets.items():
+        if "error" in pieces:
+            continue
+        if name_a in out:
+            out[name_a]["left"] = pieces["trimmed_a"]
+        if name_b in out:
+            out[name_b]["right"] = pieces["trimmed_b"]
+    return out

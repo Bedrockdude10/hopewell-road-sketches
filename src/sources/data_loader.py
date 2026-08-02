@@ -1,4 +1,5 @@
 """Data loading: NJDOT roadway network, Mercer County parcels, and intersection geocoding."""
+import os
 from pathlib import Path
 
 import geopandas as gpd
@@ -7,6 +8,10 @@ from geopy.geocoders import Nominatim
 from shapely.geometry import MultiLineString, MultiPolygon, Point, box
 
 from src.geometry.model import NJ_STATE_PLANE_FT, WGS84, buffer_point_wgs84, reproject_to_state_plane
+
+
+class OfflineCacheMiss(RuntimeError):
+    """HOPEWELL_OFFLINE is set and a fetch wasn't satisfied from the fixture cache."""
 
 DATA_DIR = Path(__file__).resolve().parent.parent.parent / "data"  # src/sources/data_loader.py -> repo root
 # Defaults only - a site's config.yaml (data_sources:) can point at different
@@ -43,16 +48,46 @@ OVERPASS_MIRRORS = [
 INTERSECTION_MATCH_TOLERANCE_DEG = 0.0007
 
 
-def query_overpass(query: str, attempts_per_mirror: int = 2, timeout: int = 30) -> dict:
-    """POST an Overpass QL query, retrying across mirrors on timeout/5xx errors."""
+_pinned_mirror: list[str] = []
+
+
+def query_overpass(query: str, attempts_per_mirror: int = 4, timeout: int = 30) -> dict:
+    """POST an Overpass QL query, retrying across mirrors on timeout/5xx errors.
+
+    Once a mirror answers, it is PINNED for the rest of the process. Mirrors replicate
+    OSM edits at different rates, so failing over mid-run mixes replication states: during
+    one editing session this produced 4 tactile pads then 0 at the same junction on
+    consecutive fetches, and 0 then 3 at another. Pinning makes a run internally
+    consistent - every fetch sees the same snapshot - and the mirror is printed so a
+    surprising result can be attributed rather than puzzled over.
+
+    Retries are per-mirror before failover, so a briefly slow primary doesn't silently
+    demote the whole run to a staler replica.
+    """
+    if os.environ.get("HOPEWELL_OFFLINE"):
+        # The test suite runs against a committed fixture cache. If something reaches this
+        # far it means the fixture is missing, and the honest outcome is a loud failure -
+        # not a silent network call that makes the tests depend on Overpass's uptime and
+        # current replication state.
+        raise OfflineCacheMiss(
+            "HOPEWELL_OFFLINE is set and this query is not in the fixture cache. Add the "
+            "response to tests/fixtures/osm_cache (see tests/conftest.py) rather than "
+            f"letting a test reach the network. Query was:\n{query.strip()[:400]}")
+
+    ordered = ([m for m in _pinned_mirror if m in OVERPASS_MIRRORS]
+               + [m for m in OVERPASS_MIRRORS if m not in _pinned_mirror])
     last_error = None
-    for mirror in OVERPASS_MIRRORS:
+    for mirror in ordered:
         for attempt in range(attempts_per_mirror):
             try:
                 resp = requests.post(
                     mirror, data={"data": query}, headers={"User-Agent": OVERPASS_USER_AGENT}, timeout=timeout
                 )
                 resp.raise_for_status()
+                if not _pinned_mirror:
+                    _pinned_mirror.append(mirror)
+                    print(f"  Overpass: using {mirror.split('//')[1].split('/')[0]} "
+                          f"(pinned for this run so every fetch sees one replication state)")
                 return resp.json()
             except (requests.exceptions.RequestException, requests.exceptions.HTTPError) as e:
                 last_error = e

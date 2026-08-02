@@ -14,6 +14,54 @@ python scripts/phase4_render_3d.py --site broad_st_greenwood   # export geometry
 
 `--site` defaults to `broad_st_greenwood` if omitted. Outputs land in `output/<site>/`: `phase1_network_plot.png`, `phase2_geometry_plot.png`, `phase3_before_after.png`, `phase4_render_existing.png`, `phase4_render_proposed.png`.
 
+To rebuild **everything** — all sites, all proposals — in one command instead of ~30:
+
+```bash
+python scripts/build_all.py                  # 2D for every site and scenario (~110s)
+python scripts/build_all.py --render-3d      # ...and the Blender renders
+python scripts/build_all.py --dpi 90         # faster pictures while iterating on geometry
+python scripts/build_all.py --refresh-osm    # re-pull OSM after tracing kerbs/crossings
+```
+
+It writes the same files the phase scripts do, runs sites in parallel (`--jobs`), and checks every scenario against the scene invariants.
+
+**If you just traced something in OSM, use `--refresh-osm`.** The Overpass cache in `output/.cache/` is keyed by (centre, radius) and never expires, so a kerb, crossing or `tactile_paving=yes` pad you mapped this morning stays invisible to the build until it's re-pulled — ground truth present, but never reaching the render, which is exactly the failure this project keeps guarding against. So every build prints how old the layers it read are:
+
+```
+  columbia_princeton     4 scenario(s)    6.9s  ok
+                         OSM cache: 3 layer(s), oldest 3 days old (--refresh-osm to re-pull)
+```
+
+`--refresh-osm` re-pulls each layer once per site (not once per scenario) and rewrites the cache; the line then reports what was pulled fresh. It is ignored under `HOPEWELL_OFFLINE`, so it can never make the test suite reach the network.
+
+## Tests
+
+```bash
+./scripts/test.sh          # takes pytest's arguments:  ./scripts/test.sh -k traced_curbs -x
+```
+
+This runs `.venv/bin/python -m pytest` and works whether or not the venv is active. Plain `python -m pytest` only works once you've run `source .venv/bin/activate` — without it, `python` is whatever is on your PATH, and if that interpreter happens to have pytest but not geopandas the suite fails at collection. The root `conftest.py` detects that case and prints one message telling you which interpreter you're on and what to run instead, rather than five `ModuleNotFoundError` tracebacks.
+
+84 tests, ~1.5 s, **no network**: they run against a committed snapshot of the OSM responses in `tests/fixtures/osm_cache/`, and `HOPEWELL_OFFLINE=1` makes any un-snapshotted fetch fail loudly rather than reach Overpass. Refresh the snapshot with `cp output/.cache/*.json tests/fixtures/osm_cache/`.
+
+`tests/test_checks.py` covers the scene invariants (see below), `tests/test_traced_curbs.py` covers building curb lines from traced OSM kerbs, and `tests/test_sites.py` asserts all four real junctions and their proposals satisfy the invariants.
+
+## Scene invariants
+
+`src/checks.py` holds the things that must be true of every render, checked on **both** the 2D plan view and the 3D export — a check that guards only one lets the two drift, and the entire premise here is that the 2D reconstruction shows what the 3D render will show.
+
+| Invariant | Catches |
+|---|---|
+| `furniture_in_roadway` | a sign, signal, pushbutton or tactile paving pad standing in the street |
+| `pad_off_the_kerb` | a tactile pad nowhere near a curb — it marks a ramp, so it belongs at one |
+| `curb_through_junction` | a curb line drawn across the middle of the intersection |
+| `curbs_cross` | a leg's two curb lines crossing, closing the roadway to zero width |
+| `pavement_ring` | a pavement polygon that isn't simple |
+| `crosswalk_off_the_roadway` | a crosswalk floating outside the roadway it crosses |
+| `stop_bar_crosses_centerline` | a stop bar painted across the opposing lanes |
+
+All violations are collected and reported together rather than failing on the first, and each carries coordinates so the plan view can ring them in red where they happen. A violation at a *surveyed* OSM position (an `emergency=fire_hydrant` node inside our modelled roadway) is reported as a source conflict rather than a failure: one of the two sources is wrong, but no edit to this repo fixes it.
+
 If you edit `sites/<site>/config.yaml` (widths, corner radius, crosswalks, treatments, props), rerun from Phase 2 onward — Phase 1 doesn't depend on it.
 
 Phase 4 shells out to Blender (not the project venv — `blender_scene.py` runs under Blender's own bundled Python, with no network access and none of this project's packages). Needs Blender on `PATH`, or set `BLENDER_BIN` — defaults to `/Applications/Blender.app/Contents/MacOS/Blender` on Mac if nothing else is found.
@@ -106,6 +154,7 @@ scripts/
   phase3_treatments.py    Apply demo scenario, plot before/after
   phase4_export_geometry.py  Export-only (no Blender) - useful for debugging the JSON
   phase4_render_3d.py    Full Phase 4 pipeline: fetch theme + export + shell out to Blender
+  test.sh                 Run the suite under .venv/bin/python, activated or not
   blender/                Runs INSIDE Blender's own Python (no network, no venv) - add a new prop/marking
                            DRAWING function here (its placement lives in src/render/ above)
     blender_scene.py       Entry point + top-level scene assembly; imports the 4 sibling modules below

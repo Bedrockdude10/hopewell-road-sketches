@@ -8,7 +8,7 @@ import numpy as np
 from shapely.geometry import LineString, Point
 
 from src.geometry.intersection import IntersectionModel
-from src.geometry.model import bollard_points_ft, leg_clearance_ft
+from src.geometry.model import bollard_points_ft, build_pavement_polygon, leg_clearance_ft
 from src.geometry.treatments import DesignState
 from src.render.coords import wgs84_to_state_plane
 
@@ -43,6 +43,7 @@ def _osm_streetlight_props(nodes_ft: list[dict]) -> list[dict]:
         pos = (node["point_ft"].x, node["point_ft"].y)
         props.append({
             "type": "streetlight", "position_ft": pos, "heading_deg": 0.0,
+            "surveyed_position": True,
             "source": "real (OSM highway=street_lamp node): surveyed pole position, not derived from "
                       "the corner geometry.",
         })
@@ -54,14 +55,16 @@ def _osm_streetlight_props(nodes_ft: list[dict]) -> list[dict]:
 # the odd case where a mapper split them; anything further away is a different crossing.
 CROSSING_NODE_MATCH_FT = 20.0
 
-# A detectable warning surface spans the width of the curb ramp and is shallow in the
-# direction of travel: ~5 ft along the curb by ~3 ft deep (PROWAG asks for 24 in minimum
-# depth; 3 ft is a common build). Defined here, with placement, and passed through to the
-# renderer in the prop dict so the pad Blender draws is exactly the pad this module
-# positioned - the offset below depends on the depth, so the two cannot be allowed to
-# disagree.
-TACTILE_PAD_DEPTH_FT = 3.0
-TACTILE_PAD_WIDTH_FT = 5.0
+# A detectable warning surface: 2 ft deep (into the footway, along the crossing) by 3 ft
+# wide (along the kerb) - wider than it is long, as built. 24 in depth is the PROWAG
+# minimum, so this is at standard rather than a generous guess; the previous 3x5 ft read
+# visibly oversized at this scale.
+#
+# Defined here alongside placement and passed to the renderer in the prop dict, because
+# the step-back that keeps a pad off the roadway is half the DEPTH - placement and
+# geometry must agree on that number or pads end up in the carriageway (they have, twice).
+TACTILE_PAD_DEPTH_FT = 2.0
+TACTILE_PAD_WIDTH_FT = 3.0
 
 
 def _merged_crossing_tags(line, crossing_tags: dict, nodes_ft: list[dict]) -> dict:
@@ -99,14 +102,25 @@ def _crossing_endpoint_props(line, leg, tags: dict, leg_name: str, pavement) -> 
 
     if tags.get("button_operated") == "yes":
         for i, (px, py) in enumerate(((x0, y0), (x1, y1))):
+            # A pushbutton pole stands on the footway. The crossing way's endpoint is a
+            # real surveyed position there, but our modelled pavement can be wider than
+            # the real roadway and swallow it - at Broad & Greenwood that put 6 of 8
+            # buttons in the carriageway. Step out along the crossing until clear, the
+            # same treatment tactile pads get.
+            placed = _step_clear_of_roadway((px, py), (x0, y0), (x1, y1), pavement)
+            if placed is None:
+                print(f"  NOTE: {leg_name} has a pushbutton-actuated crossing, but this end can't be "
+                      f"placed clear of the modelled roadway - the modelled pavement covers the real "
+                      f"footway here. Not drawn.")
+                continue
             props.append({
-                "type": "pedestrian_pushbutton", "position_ft": (px, py),
+                "type": "pedestrian_pushbutton", "position_ft": placed,
                 # Face back along the crossing, toward the pedestrian waiting to use it.
                 "heading_deg": heading + (180 if i == 0 else 0),
                 "source": f"real (OSM button_operated=yes on {leg_name}'s crossing): a pushbutton-actuated "
                           "pedestrian phase really exists here, and this end of the surveyed crossing way is "
-                          "where the pole stands. Approximation: the button's height and its exact offset "
-                          "from the pole are generic.",
+                          "where the pole stands. Approximation: stepped clear of the modelled roadway if "
+                          "needed, and the button's height/offset from the pole are generic.",
             })
 
     if tags.get("flashing_lights") == "button":
@@ -114,6 +128,7 @@ def _crossing_endpoint_props(line, leg, tags: dict, leg_name: str, pavement) -> 
             props.append({
                 "type": "rrfb", "position_ft": (px, py),
                 "heading_deg": heading + (180 if i == 0 else 0),
+                "surveyed_position": True,
                 "source": f"real (OSM flashing_lights=button on {leg_name}'s crossing): a rectangular rapid "
                           "flashing beacon, at the surveyed end of the crossing way.",
             })
@@ -121,6 +136,38 @@ def _crossing_endpoint_props(line, leg, tags: dict, leg_name: str, pavement) -> 
     if tags.get("tactile_paving") == "yes":
         props += _tactile_pad_props(line, pavement, leg_name, heading)
     return props
+
+
+PUSHBUTTON_CLEARANCE_FT = 1.0   # a pole is a point; this much off the kerb reads as "on the footway"
+PUSHBUTTON_MAX_STEP_FT = 12.0
+
+
+def _step_clear_of_roadway(point, end_a, end_b, pavement):
+    """Move `point` outward along the crossing until it is off the pavement, or None.
+
+    Outward is away from the crossing's midpoint, which is always in the road. Returns
+    the original point unchanged when it is already clear, so surveyed positions are only
+    adjusted where our own geometry demands it.
+    """
+    if pavement is None:
+        return point
+    from shapely.geometry import Point as _P
+
+    if not pavement.contains(_P(*point)):
+        return point
+    mid = ((end_a[0] + end_b[0]) / 2.0, (end_a[1] + end_b[1]) / 2.0)
+    out_x, out_y = point[0] - mid[0], point[1] - mid[1]
+    norm = np.hypot(out_x, out_y)
+    if norm < 1e-6:
+        return None
+    out_x, out_y = out_x / norm, out_y / norm
+    step = PUSHBUTTON_CLEARANCE_FT
+    while step <= PUSHBUTTON_MAX_STEP_FT:
+        candidate = (point[0] + out_x * step, point[1] + out_y * step)
+        if not pavement.contains(_P(*candidate)):
+            return candidate
+        step += 0.5
+    return None
 
 
 def _pad_polygon(x: float, y: float, heading_deg: float):
@@ -140,62 +187,68 @@ def _pad_polygon(x: float, y: float, heading_deg: float):
     ])
 
 
-def _kerb_tactile_pad_props(kerb_ways: list, crossings: list[dict], pavement, center_ft=None) -> list[dict]:
-    """A tactile pad at every node SHARED between a crossing way and a kerb way.
+def _kerb_tactile_pad_props(kerb_ways: list, crossings: list[dict], pavement, center_ft=None):
+    """One tactile pad per ATTACH NODE - a node shared by a crossing way and a
+    tactile_paving kerb way - deduplicated by node id.
 
-    A shared node is precisely a curb ramp: it's where a crosswalk meets the kerb. Using
-    it means a corner where two crosswalks land on the same kerb gets two pads, which is
-    what's actually there - placing one pad per kerb way (an earlier version of this)
-    collapsed those into one.
+    That single rule expresses both real-world cases, because the surveyor mapped the
+    distinction into the topology:
 
-    Sharing is detected by node ID, not proximity, so it reflects the mapper's actual
-    topology rather than a distance guess. Two things had to be fixed before this worked:
-    the Overpass queries used `out geom tags`, and `tags` is an out MODE that suppresses
-    the node-reference array entirely - so every way came back with no node IDs and this
-    found nothing. Bare `out geom` (mode `body`) returns tags, node IDs and geometry.
+      * One lowered kerb serving two crosswalks -> BOTH crossings attach at the SAME
+        node -> the dedupe collapses them to ONE shared pad. (Three of the four corners
+        at Broad & Greenwood.)
+      * Two separate ramps on one lowered kerb -> the crossings attach at TWO DIFFERENT
+        nodes on that kerb way -> TWO pads. (Every corner at Columbia & Princeton.)
+
+    The kerb WAY is not the unit and must not be: at Columbia every corner is a single
+    kerb way carrying two distinct pads, and at Broad & Greenwood a single kerb way
+    carries one. Keying on the way collapsed Columbia's eight pads to four. The attach
+    node is the ramp; the way is just the kerb it sits on.
+
+    Returns (props, covered_crossing_ids) so the caller can skip crossing-inferred pads
+    for crossings already served by a traced ramp.
     """
+    # node id -> the kerb way it belongs to, for tactile kerbs near this junction only
     kerb_by_node: dict[int, dict] = {}
     for kerb in kerb_ways:
-        if not kerb.get("coords_wgs84"):
+        coords = kerb.get("coords_wgs84")
+        if not coords or kerb.get("tags", {}).get("tactile_paving") != "yes":
             continue
+        kxs, kys = wgs84_to_state_plane.transform([c[0] for c in coords], [c[1] for c in coords])
+        kerb_line = LineString(zip(kxs, kys))
+        if center_ft is not None and kerb_line.distance(center_ft) > PAD_NEAR_JUNCTION_FT:
+            continue  # a ramp at a neighbouring junction, pulled in by the context fetch radius
         for node_id in kerb.get("node_ids") or []:
-            kerb_by_node[node_id] = kerb
+            kerb_by_node[node_id] = {"kerb": kerb, "line": kerb_line}
 
     props = []
-    seen: set[int] = set()
     covered_ways: set[int] = set()
+    seen: set[int] = set()
     for crossing in crossings:
-        node_ids = crossing.get("node_ids") or []
-        coords = crossing.get("coords_wgs84") or []
-        for node_id, coord in zip(node_ids, coords):
-            kerb = kerb_by_node.get(node_id)
-            if kerb is None or node_id in seen:
+        for node_id, coord in zip(crossing.get("node_ids") or [], crossing.get("coords_wgs84") or []):
+            entry = kerb_by_node.get(node_id)
+            if entry is None:
                 continue
+            covered_ways.add(id(crossing))
+            if node_id in seen:
+                continue  # a second crossing on the SAME ramp - one pad, not two
             seen.add(node_id)
-            # Only draw where tactile paving is actually attested, on either feature.
-            if (kerb.get("tags", {}).get("tactile_paving") != "yes"
-                    and crossing["tags"].get("tactile_paving") != "yes"):
-                continue
+
             x, y = wgs84_to_state_plane.transform(coord[0], coord[1])
-            if center_ft is not None and Point(x, y).distance(center_ft) > PAD_NEAR_JUNCTION_FT:
-                continue  # a ramp at a neighbouring junction, pulled in by the context fetch radius
-            kxs, kys = wgs84_to_state_plane.transform([c[0] for c in kerb["coords_wgs84"]],
-                                                        [c[1] for c in kerb["coords_wgs84"]])
-            placed = _pad_orientation(x, y, LineString(zip(kxs, kys)), pavement)
+            placed = _pad_orientation(x, y, entry["line"], pavement)
             if placed is None:
-                print(f"  NOTE: ramp node {node_id} has tactile paving, but no pad can be placed clear of "
-                      f"the modelled roadway - the modelled pavement covers the real footway here. "
+                print(f"  NOTE: ramp node {node_id} has tactile paving, but no pad can be placed clear "
+                      f"of the modelled roadway - the modelled pavement covers the real footway here. "
                       f"Not drawn. Check this junction's widths and corner radii.")
                 continue
             heading, pos = placed
-            covered_ways.add(id(crossing))
             props.append({
                 "type": "tactile_paving_pad", "position_ft": pos, "heading_deg": heading,
                 "pad_depth_ft": TACTILE_PAD_DEPTH_FT, "pad_width_ft": TACTILE_PAD_WIDTH_FT,
-                "source": f"real (OSM node {node_id}, shared between a crossing way and a "
-                          "barrier=kerb way tagged tactile_paving=yes): the surveyed curb ramp itself. "
-                          "Position is the mapped node, stepped back onto the footway by half the pad "
-                          "depth. Approximation: pad size is a standard one, not surveyed.",
+                "source": f"real (OSM node {node_id}, where a crossing way meets barrier=kerb way "
+                          f"{entry['kerb']['id']} tagged tactile_paving=yes): the surveyed curb ramp. "
+                          f"One pad per attach node, so two crossings meeting at one node render as the "
+                          f"single shared ramp they are. Approximation: pad size is a standard one.",
             })
     return props, covered_ways
 
@@ -381,25 +434,88 @@ def _hydrant_props(nodes_ft: list[dict]) -> list[dict]:
         props.append({
             "type": "fire_hydrant", "position_ft": (node["point_ft"].x, node["point_ft"].y),
             "heading_deg": 0.0,
+            "surveyed_position": True,
             "source": "real (OSM emergency=fire_hydrant node): surveyed position.",
         })
     return props
 
 
-def _leg_sign_position_ft(leg, offset_ft: float, side: str) -> tuple[tuple[float, float], float]:
+SIGN_MAX_STEP_FT = 30.0  # past this the modelled pavement has swallowed the footway entirely
+
+
+def _sign_offset_ft(state: DesignState, leg_name: str, requested_ft: float) -> float:
+    """How far out a sign post on this leg has to stand: at least clear of the corner return.
+
+    A sign placed at the crosswalk offset is level with the corner, where "sideways off this
+    leg" points straight into the cross street - so stepping laterally never leaves the
+    roadway, and the sign ends up standing in the middle of the junction. Beyond the return
+    the only thing beside the leg is its own footway. This is where a sign post physically
+    is, too: past the curve, not in it.
+    """
+    try:
+        clearance_ft = leg_clearance_ft(leg_name, state.legs, state.corner_fillets)
+    except (KeyError, ValueError):
+        return requested_ft
+    return max(requested_ft, clearance_ft)
+
+
+def _leg_sign_position_ft(leg, offset_ft: float, side: str,
+                           pavement=None) -> tuple[tuple[float, float], float]:
     """A point offset_ft along a leg's centerline from the intersection, pushed
     laterally past the curb (left or right, per `side`) onto the sidewalk.
-    Returns (position, heading_deg) with heading pointing back toward the road."""
+    Returns (position, heading_deg) with heading pointing back toward the road.
+
+    Half the NOMINAL width is only a first guess at where the curb is, and since the curb
+    lines became the surveyor's traced kerbs it is frequently an underestimate - the real
+    kerb flares wider than curb_to_curb_ft/2 approaching a corner, which is exactly where
+    signs go. Trusting the nominal figure put NO TURN ON RED signs inside the carriageway
+    at Broad & Greenwood. So the nominal offset is a starting point and the sign then steps
+    outward until it is genuinely clear of the modelled roadway.
+    """
     centerline = leg.centerline
     p = centerline.interpolate(min(offset_ft, centerline.length))
     p2 = centerline.interpolate(min(offset_ft + 1, centerline.length))
     u = np.array([p2.x - p.x, p2.y - p.y])
     u = u / np.linalg.norm(u)
     n = np.array([-u[1], u[0]]) if side == "left" else np.array([u[1], -u[0]])
-    half_w = leg.curb_to_curb_ft / 2
-    pos = (p.x + n[0] * (half_w + SIGN_SIDEWALK_SETBACK_FT), p.y + n[1] * (half_w + SIGN_SIDEWALK_SETBACK_FT))
-    heading = np.degrees(np.arctan2(-n[1], -n[0]))  # face back toward the road
-    return pos, heading
+    heading = float(np.degrees(np.arctan2(-n[1], -n[0])))  # face back toward the road
+
+    # Measure from the CURB on this side, not from half the nominal width. Those are the
+    # same number only where the curb is a centerline offset; where it is the surveyor's
+    # traced kerb - which is everywhere now - the kerb flares past half-width approaching a
+    # corner, and half-width put signs in the carriageway.
+    base = np.array([p.x, p.y])
+    curb = getattr(leg, f"{side}_curb", None)
+    to_curb = curb.distance(p) if curb is not None and not curb.is_empty else leg.curb_to_curb_ft / 2
+    lateral = to_curb + SIGN_SIDEWALK_SETBACK_FT
+    pos = base + n * lateral
+    pos = _step_outward_clear(base, n, lateral, pavement, extra_ft=SIGN_SIDEWALK_SETBACK_FT)
+    return (tuple(pos) if pos is not None else None), heading
+
+
+def _step_outward_clear(base, direction, lateral_ft: float, pavement, extra_ft: float = 0.0,
+                         max_step_ft: float = SIGN_MAX_STEP_FT):
+    """Push `base + direction * lateral_ft` further out until it clears the roadway.
+
+    Used for anything whose position we DERIVE rather than read from a survey - signs,
+    signal poles. A derived position that lands in the carriageway is our error to correct;
+    a surveyed one is not ours to move (see checks.py's surveyed_furniture_in_roadway).
+    """
+    pos = base + direction * lateral_ft
+    if pavement is None or pavement.is_empty:
+        return pos
+    step = 0.0
+    while pavement.contains(Point(*pos)) and step < max_step_ft:
+        step += 1.0
+        pos = base + direction * (lateral_ft + step)
+    if pavement.contains(Point(*pos)):
+        # Nowhere along this ray is off the roadway. Rather than draw the thing in the
+        # carriageway, return nothing and let the caller say so: an absent prop is an honest
+        # "we could not place this", a prop standing in the road is a false claim.
+        return None
+    if step:  # clear of the kerb now, plus whatever footway setback we owed it
+        pos = base + direction * (lateral_ft + step + extra_ft)
+    return pos
 
 
 # An approaching driver travels INWARD along a leg, i.e. opposite the centerline's own
@@ -418,7 +534,7 @@ STOP_NODE_MAX_PERP_FT = 25.0
 OSM_CONTROL_TO_PROP = {"stop": "stop_sign", "give_way": "yield_sign"}
 
 
-def _osm_control_props(state: DesignState, nodes_ft: list[dict]) -> list[dict]:
+def _osm_control_props(state: DesignState, nodes_ft: list[dict], pavement=None) -> list[dict]:
     """Stop / give-way signs at the approaches OSM actually records them on.
 
     A stop node sits ON the road way at the approach it governs, so matching it to a leg
@@ -446,7 +562,11 @@ def _osm_control_props(state: DesignState, nodes_ft: list[dict]) -> list[dict]:
         if along > STOP_NODE_MAX_ALONG_FT or perp > STOP_NODE_MAX_PERP_FT or along <= 0:
             continue  # governs a different junction, or isn't on any of our legs
         leg = state.legs[leg_name]
-        pos, heading = _leg_sign_position_ft(leg, along, side=APPROACHING_DRIVER_RIGHT)
+        pos, heading = _leg_sign_position_ft(leg, _sign_offset_ft(state, leg_name, along),
+                                              side=APPROACHING_DRIVER_RIGHT, pavement=pavement)
+        if pos is None:
+            print(f"  NOTE: a sign for {leg_name} can't be placed clear of the modelled roadway. Not drawn.")
+            continue
         props.append({
             "type": prop_type, "position_ft": pos, "heading_deg": heading,
             "source": f"real (OSM highway={node['tags'].get('highway')} node on {leg_name}, "
@@ -480,7 +600,8 @@ def _bollard_props(state: DesignState) -> list[dict]:
     return props
 
 
-def _traffic_signal_props(model: IntersectionModel, state: DesignState, center_ft: Point) -> list[dict]:
+def _traffic_signal_props(model: IntersectionModel, state: DesignState, center_ft: Point,
+                           pavement=None) -> list[dict]:
     """
     Traffic signal pole + pedestrian signal head at each corner listed in the
     site config's `signals.corners` (see sites/README.md) - confirmed via
@@ -522,8 +643,18 @@ def _traffic_signal_props(model: IntersectionModel, state: DesignState, center_f
         outward = np.array([mid.x - center_ft.x, mid.y - center_ft.y])
         norm = np.linalg.norm(outward)
         outward = outward / norm if norm > 1e-6 else np.array([1.0, 0.0])
-        pole_pos = (mid.x + outward[0] * STREETLIGHT_SIDEWALK_SETBACK_FT,
-                    mid.y + outward[1] * STREETLIGHT_SIDEWALK_SETBACK_FT)
+        # A signal pole stands on the corner footway. The fillet arc midpoint is on the
+        # kerb only when the corner is right; where a junction falls back to a fitted
+        # fillet (W Broad & Louellen's acute Y), the arc cuts inside the real corner and a
+        # fixed 4 ft setback leaves the pole standing in the carriageway.
+        placed = _step_outward_clear(np.array([mid.x, mid.y]), outward,
+                                      STREETLIGHT_SIDEWALK_SETBACK_FT, pavement)
+        if placed is None:
+            print(f"  NOTE: the signal pole for corner {leg_a}/{leg_b} can't be placed clear of the "
+                  f"modelled roadway - the modelled pavement covers the real corner footway here. "
+                  f"Not drawn.")
+            continue
+        pole_pos = tuple(placed)
         pole_heading = np.degrees(np.arctan2(outward[1], outward[0]))
 
         # leg_a's own outward direction - the axis the arm/crosswalk are actually
@@ -570,7 +701,8 @@ def _traffic_signal_props(model: IntersectionModel, state: DesignState, center_f
     return props
 
 
-def _no_turn_on_red_props(model: IntersectionModel, state: DesignState, offsets_ft: dict) -> list[dict]:
+def _no_turn_on_red_props(model: IntersectionModel, state: DesignState, offsets_ft: dict,
+                           pavement=None) -> list[dict]:
     """NO TURN ON RED restriction signs for the legs listed in the site config's
     `signals.no_turn_on_red_legs` (confirmed via street-view photo review, not
     a signage-inventory survey). Positioned the same way as the automatic
@@ -584,7 +716,11 @@ def _no_turn_on_red_props(model: IntersectionModel, state: DesignState, offsets_
         if leg is None:
             continue
         offset_ft = offsets_ft[leg_name][0]
-        pos, heading = _leg_sign_position_ft(leg, offset_ft, side="right")
+        pos, heading = _leg_sign_position_ft(leg, _sign_offset_ft(state, leg_name, offset_ft),
+                                              side=APPROACHING_DRIVER_RIGHT, pavement=pavement)
+        if pos is None:
+            print(f"  NOTE: a sign for {leg_name} can't be placed clear of the modelled roadway. Not drawn.")
+            continue
         props.append({
             "type": "no_turn_on_red_sign", "position_ft": pos, "heading_deg": heading,
             "source": "confirmed (street-view photo review, site config.yaml signals.no_turn_on_red_legs) "
@@ -595,7 +731,8 @@ def _no_turn_on_red_props(model: IntersectionModel, state: DesignState, offsets_
     return props
 
 
-def _extra_props_from_config(model: IntersectionModel, state: DesignState, offsets_ft: dict) -> list[dict]:
+def _extra_props_from_config(model: IntersectionModel, state: DesignState, offsets_ft: dict,
+                              pavement=None) -> list[dict]:
     """User-specified extra signage (e.g. a school zone sign) from the site's
     config.yaml `props.extra` list - explicitly site-specific knowledge that
     doesn't belong in the general pipeline. See sites/README.md."""
@@ -605,7 +742,12 @@ def _extra_props_from_config(model: IntersectionModel, state: DesignState, offse
         if leg is None:
             continue
         offset_ft = entry.get("offset_ft", offsets_ft.get(entry["leg"], (10, ""))[0])
-        pos, heading = _leg_sign_position_ft(leg, offset_ft, side=entry.get("side", "right"))
+        pos, heading = _leg_sign_position_ft(leg, _sign_offset_ft(state, entry["leg"], offset_ft),
+                                              side=entry.get("side", "right"), pavement=pavement)
+        if pos is None:
+            print(f"  NOTE: the configured {entry['type']} on {entry['leg']} can't be placed clear of the "
+                  f"modelled roadway. Not drawn.")
+            continue
         props.append({
             "type": entry["type"], "position_ft": pos, "heading_deg": heading,
             "source": f"user-specified in site config.yaml (props.extra): {entry.get('note', 'no note given')}",
@@ -613,7 +755,7 @@ def _extra_props_from_config(model: IntersectionModel, state: DesignState, offse
     return props
 
 
-def _extra_props_from_state(state: DesignState, offsets_ft: dict) -> list[dict]:
+def _extra_props_from_state(state: DesignState, offsets_ft: dict, pavement=None) -> list[dict]:
     """Scenario-specific extra signage added by a treatment
     (src/geometry/treatments.py:add_extra_prop) - e.g. an RRFB or a relocated
     school-zone sign that only exists in one particular proposal, not the
@@ -627,7 +769,12 @@ def _extra_props_from_state(state: DesignState, offsets_ft: dict) -> list[dict]:
         # offset_ft may be explicitly None (see add_extra_prop) - `or` (not .get's
         # default) is required to fall through to the real crosswalk offset in that case.
         offset_ft = entry.get("offset_ft") or offsets_ft.get(entry["leg"], (10, ""))[0]
-        pos, heading = _leg_sign_position_ft(leg, offset_ft, side=entry.get("side", "right"))
+        pos, heading = _leg_sign_position_ft(leg, _sign_offset_ft(state, entry["leg"], offset_ft),
+                                              side=entry.get("side", "right"), pavement=pavement)
+        if pos is None:
+            print(f"  NOTE: the configured {entry['type']} on {entry['leg']} can't be placed clear of the "
+                  f"modelled roadway. Not drawn.")
+            continue
         props.append({
             "type": entry["type"], "position_ft": pos, "heading_deg": heading,
             "source": f"scenario-specified (treatment-level prop, not site config): {entry.get('note') or 'no note given'}",
@@ -702,27 +849,36 @@ def build_props(model: IntersectionModel, state: DesignState, offsets_ft: dict, 
     signalized = bool(model.config.get("signals"))
     furniture_ft = control_nodes_ft(street_furniture)  # same lon/lat -> point_ft conversion
     control_ft = control_nodes_ft(traffic_control)
+    # The real modelled roadway, so every sign can be placed clear of IT rather than clear
+    # of a nominal half-width that the traced kerb often exceeds near a corner.
+    try:
+        pavement = build_pavement_polygon(state.corner_fillets)
+    except ValueError:
+        pavement = None
     return (
         _osm_streetlight_props(furniture_ft)
-        + _osm_control_props(state, control_ft)
+        + _osm_control_props(state, control_ft, pavement)
         + _osm_crossing_hardware_props(state, crossings or [], control_ft, kerb_ways, center_ft)
         + _hydrant_props(furniture_ft)
-        + _traffic_signal_props(model, state, center_ft)
-        + _no_turn_on_red_props(model, state, offsets_ft)
-        + _extra_props_from_config(model, state, offsets_ft)
-        + _extra_props_from_state(state, offsets_ft)
+        + _traffic_signal_props(model, state, center_ft, pavement)
+        + _no_turn_on_red_props(model, state, offsets_ft, pavement)
+        + _extra_props_from_config(model, state, offsets_ft, pavement)
+        + _extra_props_from_state(state, offsets_ft, pavement)
         + _bollard_props(state)
         + _parking_buffer_bollard_props(state)
     )
 
 
-class TactilePadInRoadwayError(AssertionError):
-    """A tactile paving pad overlaps the modelled roadway."""
+# The pad/furniture-in-the-roadway invariant moved to src/checks.py, where it runs
+# alongside every other scene invariant and reports all violations at once instead of
+# stopping at the first. Re-exported so existing imports keep working.
+from src.checks import (  # noqa: E402
+    MAX_PAD_ROADWAY_OVERLAP,
+    PedestrianFurnitureInRoadwayError,
+    TactilePadInRoadwayError,
+    check_furniture_off_roadway,
+)
 
-
-# A pad may graze the kerb line by a hair from polygon tolerance; more than this and it
-# is genuinely sitting in the carriageway.
-MAX_PAD_ROADWAY_OVERLAP = 0.02
 PAD_MAX_STEP_FT = 12.0   # past this, the modelled pavement has swallowed the footway
 PAD_NEAR_JUNCTION_FT = 90.0  # a ramp belonging to THIS junction; crossings/kerbs are fetched
                               # over a much wider radius for context, and three of Columbia &
@@ -730,38 +886,11 @@ PAD_NEAR_JUNCTION_FT = 90.0  # a ramp belonging to THIS junction; crossings/kerb
 
 
 def assert_pads_off_roadway(props: list[dict], pavement) -> None:
-    """Fail loudly if any tactile paving pad overlaps the roadway.
-
-    A detectable warning surface is on the footway at a kerb ramp, by definition. A pad
-    drawn in the carriageway is not a cosmetic slip - it is the render asserting
-    something false about an accessibility feature, and it has now been shipped twice:
-    first by centring pads on the kerb line (half in the road), then by stepping them out
-    a fixed distance that didn't clear a curved boundary.
-
-    Both times the geometry was plausible enough to look fine at a glance and only got
-    caught by eye. This is the invariant that should have caught them instead, so it
-    raises rather than warns - if it fires, either pad placement is wrong or the modelled
-    pavement is too wide, and both are worth stopping for.
-    """
-    offenders = []
-    for prop in props:
-        if prop.get("type") != "tactile_paving_pad":
-            continue
-        pad = _pad_polygon(*prop["position_ft"], prop["heading_deg"])
-        if pavement is None or pad.is_empty or pad.area <= 0:
-            continue
-        overlap = pad.intersection(pavement).area / pad.area
-        if overlap > MAX_PAD_ROADWAY_OVERLAP:
-            offenders.append((prop["position_ft"], overlap))
-    if offenders:
-        detail = "; ".join(f"pad at ({x:.1f}, {y:.1f}) is {o * 100:.0f}% inside the roadway"
-                            for (x, y), o in offenders)
-        raise TactilePadInRoadwayError(
-            f"{len(offenders)} tactile paving pad(s) overlap the modelled roadway: {detail}. "
-            "A detectable warning surface belongs on the footway at a kerb ramp. Either the pad "
-            "placement is wrong (src/render/props.py) or this junction's modelled widths/corner "
-            "radii are too large, pushing the pavement over the real footway."
-        )
+    """Back-compat shim for the narrower original check. Prefer checks.assert_scene_valid."""
+    violations = check_furniture_off_roadway(props, pavement)
+    if violations:
+        raise PedestrianFurnitureInRoadwayError(
+            "\n  ".join(["pedestrian furniture in the modelled roadway:"] + [str(v) for v in violations]))
 
 
 def data_gaps(traffic_control: list[dict] | None, street_furniture: list[dict] | None,

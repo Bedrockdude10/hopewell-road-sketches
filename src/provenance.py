@@ -67,6 +67,40 @@ def leg_width_provenance(leg_cfg: dict) -> str:
     return FIELD_MEASURED if leg_cfg.get("confirmed") else ESTIMATED
 
 
+# WHERE a width was measured, which matters as much as how well-sourced it is. A tape
+# measure is authoritative for the cross-section it was laid across, and these are old
+# streets with uneven layouts - a road can genuinely be 68 ft mid-block and narrower at
+# the corner. So a field measurement taken BESIDE a junction does not automatically
+# describe the junction, and should not override corner-specific evidence there.
+AT_INTERSECTION = "intersection"
+NEAR_INTERSECTION = "near_intersection"
+LOCATION_UNKNOWN = "unknown"
+VALID_WIDTH_LOCATIONS = (AT_INTERSECTION, NEAR_INTERSECTION, LOCATION_UNKNOWN)
+
+
+def leg_width_location(leg_cfg: dict) -> str:
+    """Where a leg's width was measured. Defaults to LOCATION_UNKNOWN: claiming a
+    measurement was taken at the corner is a positive assertion, so it has to be stated."""
+    declared = leg_cfg.get("width_measured_at", LOCATION_UNKNOWN)
+    if declared not in VALID_WIDTH_LOCATIONS:
+        raise ValueError(
+            f"Unknown width_measured_at {declared!r} - expected one of {VALID_WIDTH_LOCATIONS}."
+        )
+    return declared
+
+
+def field_measurement_governs_corner(leg_cfg: dict) -> bool:
+    """Whether this leg's width should be treated as authoritative AT THE JUNCTION.
+
+    True only for a field measurement explicitly recorded as taken at the intersection.
+    A field measurement from nearby, or of unrecorded location, still outranks estimates
+    everywhere - but it does not outrank a kerb traced at the corner itself, because the
+    two are describing different cross-sections of the same street.
+    """
+    return (leg_width_provenance(leg_cfg) == FIELD_MEASURED
+            and leg_width_location(leg_cfg) == AT_INTERSECTION)
+
+
 def supersedes(candidate: str, existing: str) -> bool:
     """True if a `candidate`-tier value may replace an `existing`-tier one.
 

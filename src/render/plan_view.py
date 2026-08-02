@@ -8,14 +8,16 @@ from shapely.geometry import LineString, Polygon
 from src.geometry.model import (
     bollard_points_ft, build_pavement_polygon, corner_overlay_polygon, lane_narrowing_edge_lines_ft,
     lane_narrowing_polygons_ft, lane_narrowing_taper_ft, lane_narrowing_taper_polygons_ft, leg_clearance_ft,
-    parking_lane_edge_line_ft, parking_stall_count_ft, parking_stall_lines_ft,
+    parking_lane_edge_line_ft, parking_stall_count_ft, parking_stall_lines_ft, trimmed_curb_lines,
 )
 from src.geometry.intersection import IntersectionModel, kerb_lines_with_tags_ft
 from src.geometry.treatments import LEGAL_PARKING_SETBACK_FT, DesignState
 from src.provenance import PLOT_STYLE, leg_width_provenance
 from src.render.props import build_props, data_gaps, signalization_conflicts
 from src.render.coords import FT_TO_M, wgs84_to_state_plane
-from src.render.crosswalks import (CROSSWALK_CLEARANCE_FT, CROSSWALK_DEPTH_M, resolve_crosswalk_offsets,
+from src.render.crosswalks import (CROSSWALK_CLEARANCE_FT, CROSSWALK_DEPTH_M, STOP_BAR_PLAN_DEPTH_FT,
+                                   crosswalk_band_ft, crosswalk_bands_ft, stop_bar_bands_ft,
+                                   resolve_crosswalk_offsets,
                                    resolve_crosswalk_skews, resolve_stop_bar_offsets,
                                    stop_bar_band_geometry_ft, stop_bar_width_ft)
 from src.sources.osm_context import (fetch_crossings, fetch_kerbs, fetch_sidewalks,
@@ -35,48 +37,6 @@ def sidewalk_lines_ft(sidewalks: list[dict] | None) -> list[LineString]:
         lines.append(LineString(zip(xs, ys)))
     return lines
 
-
-def _crosswalk_band(leg, offset_ft: float, depth_ft: float, skew_deg: float = 0.0,
-                     span_ft: float | None = None, lateral_offset_ft: float = 0.0) -> Polygon:
-    """The rectangle a painted crosswalk occupies: `depth_ft` along the leg, centered on
-    `offset_ft`, spanning the leg's full curb-to-curb width. Built from the leg's own
-    centerline and width, the same inputs blender_crosswalks.py uses (near + u*offset,
-    then out to +/- width/2 along n), so the band drawn here is the footprint the 3D
-    render will fill with stripes.
-
-    `skew_deg` rotates the band off square to the leg, to match the orientation of the
-    surveyed crossing it came from (src/render/crosswalks.py:_crossing_skew_deg). The
-    span is divided by cos(skew) so a rotated band still reaches both curb lines rather
-    than falling short of them - a crossing at an angle has further to go.
-
-    `span_ft` overrides the full curb-to-curb width, and `lateral_offset_ft` shifts the
-    band off the road centerline - together these draw a stop bar, which covers only the
-    entering half of the roadway (see src/render/crosswalks.py:stop_bar_band_geometry_ft).
-    """
-    centerline = leg.centerline
-    (x0, y0), (x1, y1) = centerline.coords[0], centerline.coords[1]
-    length = np.hypot(x1 - x0, y1 - y0)
-    ux, uy = (x1 - x0) / length, (y1 - y0) / length
-    cx, cy = x0 + ux * offset_ft, y0 + uy * offset_ft
-
-    skew = np.radians(skew_deg)
-    cos_s, sin_s = np.cos(skew), np.sin(skew)
-    # Rotate the leg's own axes by the skew: n is the across-road axis the crosswalk
-    # spans, u the along-travel axis its depth runs down.
-    nx, ny = -uy, ux
-    nx, ny = nx * cos_s - ny * sin_s, nx * sin_s + ny * cos_s
-    ux, uy = ux * cos_s - uy * sin_s, ux * sin_s + uy * cos_s
-
-    span = leg.curb_to_curb_ft if span_ft is None else span_ft
-    half_w, half_d = span / (2 * max(cos_s, 0.2)), depth_ft / 2
-    cx += nx * lateral_offset_ft
-    cy += ny * lateral_offset_ft
-    return Polygon([
-        (cx + nx * half_w + ux * half_d, cy + ny * half_w + uy * half_d),
-        (cx - nx * half_w + ux * half_d, cy - ny * half_w + uy * half_d),
-        (cx - nx * half_w - ux * half_d, cy - ny * half_w - uy * half_d),
-        (cx + nx * half_w - ux * half_d, cy + ny * half_w - uy * half_d),
-    ])
 
 
 def _draw_props(ax, model: IntersectionModel, state: DesignState, crosswalk_offsets: dict,
@@ -160,6 +120,10 @@ def _draw_props(ax, model: IntersectionModel, state: DesignState, crosswalk_offs
         ax.annotate(control, xy=(0.5, 0.005), xycoords="axes fraction", ha="center", va="bottom",
                     fontsize=8, fontweight="bold", color="black" if signal_count else "dimgrey",
                     bbox=dict(boxstyle="round,pad=0.25", fc="white", ec="0.7", alpha=0.9))
+    # Handed to the invariant pass rather than rebuilt there: build_props is the most
+    # expensive thing in the plan view, and checking a DIFFERENT set of props from the one
+    # drawn would defeat the point of checking at all.
+    return props
 
 
 def _draw_surveyed_crossings(ax, crossings: list[dict] | None):
@@ -202,7 +166,7 @@ def _draw_crosswalks(ax, model: IntersectionModel, state: DesignState, crosswalk
         offset_ft, source = crosswalk_offsets[leg_name]
         surveyed = source.startswith("osm_survey")
         painted = leg_name in marked and leg_name not in raised
-        band = _crosswalk_band(leg, offset_ft, depth_ft, crosswalk_skews.get(leg_name, 0.0))
+        band = crosswalk_band_ft(leg, offset_ft, depth_ft, crosswalk_skews.get(leg_name, 0.0))
         edge = "darkviolet" if surveyed else "crimson"
 
         if painted:
@@ -230,7 +194,8 @@ def _draw_crosswalks(ax, model: IntersectionModel, state: DesignState, crosswalk
             # surveyed skew, being painted parallel to it.
             leg = state.legs[leg_name]
             span_ft, lateral_ft = stop_bar_band_geometry_ft(stop_bar_width_ft(state, leg_name))
-            bar = _crosswalk_band(leg, stop_offset_ft, 1.5, crosswalk_skews.get(leg_name, 0.0),
+            bar = crosswalk_band_ft(leg, stop_offset_ft, STOP_BAR_PLAN_DEPTH_FT,
+                                    crosswalk_skews.get(leg_name, 0.0),
                                    span_ft=span_ft, lateral_offset_ft=lateral_ft)
             gpd.GeoSeries([bar]).plot(ax=ax, color="dimgrey", alpha=0.9, zorder=4)
 
@@ -276,11 +241,15 @@ def plot_design_state(ax, model: IntersectionModel, state: DesignState, title: s
         gpd.GeoSeries([walk]).plot(ax=ax, color="steelblue", linewidth=1.0, linestyle=(0, (4, 2)),
                                     alpha=0.65, zorder=2)
 
+    # Curb lines as the corners trim them. The raw lines overshoot into the junction on
+    # purpose (fillet material), so drawing them raw would draw curb across the middle of
+    # the intersection - marking a curb that isn't there and isn't in the 3D render.
+    curbs_by_leg = trimmed_curb_lines(state.legs, state.corner_fillets)
     for name, leg in state.legs.items():
         tier = leg_width_provenance(model.config["legs"][name])
         style_kw = PLOT_STYLE[tier]
         color = style_kw["color"]
-        for curb in (leg.left_curb, leg.right_curb):
+        for curb in curbs_by_leg[name].values():
             gpd.GeoSeries([curb]).plot(ax=ax, linewidth=2, zorder=3, **style_kw)
         if dimension_labels:
             mid = leg.centerline.interpolate(min(leg.centerline.length * 0.85, leg.centerline.length - 5))
@@ -338,8 +307,8 @@ def plot_design_state(ax, model: IntersectionModel, state: DesignState, title: s
 
     _draw_surveyed_crossings(ax, crossings)
     _draw_crosswalks(ax, model, state, crosswalk_offsets, crosswalk_skews, dimension_labels)
-    _draw_props(ax, model, state, crosswalk_offsets, traffic_control, street_furniture, crossings,
-                 dimension_labels)
+    props = _draw_props(ax, model, state, crosswalk_offsets, traffic_control, street_furniture,
+                         crossings, dimension_labels)
 
     for leg_name, stripe_width_ft in state.lane_narrowing.items():
         line_only = leg_name in state.lane_narrowing_line_only
@@ -450,12 +419,53 @@ def plot_design_state(ax, model: IntersectionModel, state: DesignState, title: s
             ax.scatter(xs, ys, color="darkorange", marker="o", s=10, zorder=6)
 
     ax.scatter([model.center_ft.x], [model.center_ft.y], color="blue", zorder=6, s=40)
+
+    violations = _mark_violations(ax, model, state, crossings, props)
+
     ax.set_title(title, fontsize=11)
     ax.set_aspect("equal")
     zoom_ft = 110
     ax.set_xlim(model.center_ft.x - zoom_ft, model.center_ft.x + zoom_ft)
     ax.set_ylim(model.center_ft.y - zoom_ft, model.center_ft.y + zoom_ft)
     ax.set_xlabel("Feet (EPSG:3424)")
+    return violations
+
+
+def _mark_violations(ax, model, state, crossings, props):
+    """Run the scene invariants and draw whatever failed, right where it failed.
+
+    The plan view reports rather than raises, and the phase script asserts after saving -
+    so a failure always arrives with a picture of itself. Reading "tactile pad 40% in the
+    roadway at (419160, 566742)" next to a red ring around that exact pad is the difference
+    between one round trip and several.
+    """
+    from src.checks import check_scene
+
+    try:
+        pavement = build_pavement_polygon(state.corner_fillets)
+    except ValueError:
+        pavement = None
+    offsets = resolve_crosswalk_offsets(state, crossings)
+    skews = resolve_crosswalk_skews(state, crossings)
+    stop_offsets = resolve_stop_bar_offsets(state, offsets) if model.config.get("signals") else {}
+
+    violations = check_scene(
+        model, state, props, pavement,
+        crosswalk_bands=crosswalk_bands_ft(state, offsets, skews, CROSSWALK_DEPTH_M / FT_TO_M),
+        stop_bars=stop_bar_bands_ft(state, stop_offsets, skews))
+
+    located = [v for v in violations if v.where]
+    if located:
+        xs, ys = zip(*(v.where for v in located))
+        ax.scatter(xs, ys, s=260, facecolors="none", edgecolors="red", linewidths=2.0, zorder=10)
+        ax.annotate(f"{len(violations)} INVARIANT FAILURE(S) - see console",
+                    xy=(0.5, 0.975), xycoords="axes fraction", ha="center", va="top",
+                    fontsize=9, fontweight="bold", color="red",
+                    bbox=dict(boxstyle="round,pad=0.3", fc="white", ec="red", alpha=0.95))
+    for violation in violations:
+        label = "INVARIANT FAILED" if violation.fatal else "SOURCE CONFLICT"
+        print(f"  {label}: {violation}")
+    return violations
 
 
 def legend_handles():

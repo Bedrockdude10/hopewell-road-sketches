@@ -28,6 +28,12 @@ from blender_geometry import add_stripe_rect
 EXISTING_MARKING_Z_BASE = 0.06  # PAVEMENT_HEIGHT_M (0.05) + one MARKING_CLEARANCE_M (0.01) gap
 EXISTING_MARKING_THICKNESS_M = 0.01
 
+# Fallback only - the real value arrives per-render in the geometry JSON as
+# `crosswalk_depth_m`, from src/render/crosswalks.py:CROSSWALK_DEPTH_FT (6 ft, Mercer
+# County's recommended transverse crosswalk width). Kept in step with it so a JSON
+# missing the field degrades to the same number rather than silently to a stale one.
+CROSSWALK_DEPTH_FALLBACK_M = 1.829  # 6 ft
+
 
 def _skewed_axes(u, n, skew_deg: float):
     """Rotate a leg's (along-travel, across-road) axes by `skew_deg` about z, and return
@@ -62,13 +68,13 @@ def _crosswalk_bars(name, near, u, n, width_m, material, offset_m, depth_m, stri
 
 
 def add_crosswalk_continental(name: str, near, u, n, width_m: float, material, offset_m: float = 3.0,
-                               depth_m: float = 3.0, stripe_width_m: float = 0.5, gap_m: float = 0.5):
+                               depth_m: float = CROSSWALK_DEPTH_FALLBACK_M, stripe_width_m: float = 0.5, gap_m: float = 0.5):
     """Continental: parallel bars only, no framing rails."""
     _crosswalk_bars(name, near, u, n, width_m, material, offset_m, depth_m, stripe_width_m, gap_m)
 
 
 def add_crosswalk_ladder(name: str, near, u, n, width_m: float, material, offset_m: float = 3.0,
-                          depth_m: float = 3.0, stripe_width_m: float = 0.5, gap_m: float = 0.5,
+                          depth_m: float = CROSSWALK_DEPTH_FALLBACK_M, stripe_width_m: float = 0.5, gap_m: float = 0.5,
                           rail_width_m: float = 0.3):
     """Ladder: continental bars framed by two rails spanning the crossing width at
     each end of the depth - the rails are what distinguish it from bare continental."""
@@ -81,7 +87,7 @@ def add_crosswalk_ladder(name: str, near, u, n, width_m: float, material, offset
 
 
 def add_crosswalk_lines(name: str, near, u, n, width_m: float, material, offset_m: float = 3.0,
-                         depth_m: float = 3.0, line_width_m: float = 0.3):
+                         depth_m: float = CROSSWALK_DEPTH_FALLBACK_M, line_width_m: float = 0.3):
     """Simple/standard marking: just two transverse lines bounding the crossing, no
     bars in between - the least visible of the three styles (FHWA/NACTO recommend
     upgrading this to continental or ladder for visibility, hence it being the
@@ -102,7 +108,7 @@ CROSSWALK_STYLES = {
 
 
 def add_crosswalk(name: str, near, u, n, width_m: float, material, offset_m: float = 3.0, style: str = "lines",
-                   depth_m: float = 3.0, skew_deg: float = 0.0):
+                   depth_m: float = CROSSWALK_DEPTH_FALLBACK_M, skew_deg: float = 0.0):
     """`depth_m` is forwarded from the geometry JSON's `crosswalk_depth_m`, which
     src/render/export.py writes from src/render/crosswalks.py:CROSSWALK_DEPTH_M - the
     same constant src/render/plan_view.py draws the 2D crosswalk from, so the plan

@@ -12,22 +12,26 @@ from pathlib import Path
 from shapely.geometry import Point, Polygon
 
 from src.render.coords import FT_TO_M, building_footprint_ft, pt_to_local_m, ring_to_local_m, wgs84_ring_to_local_m
-from src.render.crosswalks import CROSSWALK_CLEARANCE_FT, resolve_crosswalk_offsets, resolve_stop_bar_offsets
+from src.render.crosswalks import (CROSSWALK_CLEARANCE_FT, CROSSWALK_DEPTH_M, STOP_BAR_CURB_CLEARANCE_M,
+                                   resolve_crosswalk_offsets, resolve_crosswalk_skews,
+                                   resolve_stop_bar_offsets, stop_bar_width_ft)
 from src.geometry.model import (
     build_pavement_polygon, corner_overlay_polygon, hatch_lines_ft, lane_narrowing_edge_lines_ft,
     lane_narrowing_polygons_ft, lane_narrowing_taper_ft, lane_narrowing_taper_polygons_ft, leg_clearance_ft,
     parking_lane_edge_line_ft, parking_stall_lines_ft,
 )
-from src.geometry.intersection import IntersectionModel
+from src.geometry.intersection import IntersectionModel, kerb_lines_with_tags_ft
 from src.render.mesh_utils import build_decimated_building_mesh
-from src.sources.osm_context import fetch_buildings, fetch_crossings
-from src.render.props import build_props
+from src.sources.osm_context import (fetch_buildings, fetch_crossings, fetch_kerbs,
+                                     fetch_street_furniture, fetch_traffic_control)
+from src.render.props import assert_pads_off_roadway, build_props, control_nodes_ft, osm_tree_points_ft
 from src.geometry.treatments import DEFAULT_CENTERLINE_STYLE, LEGAL_PARKING_SETBACK_FT, DesignState, build_sidewalk_pieces
 
 BUILDING_CONTEXT_RADIUS_M = 130
+KERB_RADIUS_M = 120
+TRAFFIC_CONTROL_RADIUS_M = 60  # control nodes govern THIS junction; a wider net just pulls in neighbours
 SIDEWALK_WIDTH_FT = 6
 NEAR_ZONE_BUFFER_FT = 10  # how far past the farthest crosswalk the "near" (4k texture) pavement zone extends
-TREE_SPACING_FT = 25  # typical municipal street-tree spacing (NACTO/street-design guidance), not a fabricated guess
 PAINT_HATCH_SPACING_FT = 8.0  # spacing between rendered diagonal hatch lines - a rendering choice, not MUTCD-specified.
                                # At the original 2.5ft spacing, each stroke (which runs the buffer's full diagonal
                                # width, edge-to-edge, per hatch_lines_ft) touched the inner lane-edge line so
@@ -43,31 +47,6 @@ def _leg_heading_deg(leg) -> float:
     on one leg and nearly parallel on another depending on the leg's bearing."""
     (x0, y0), (x1, y1) = leg.centerline.coords[0], leg.centerline.coords[1]
     return math.degrees(math.atan2(y1 - y0, x1 - x0))
-
-
-def _entering_lane_width_ft(state: DesignState, leg_name: str) -> float | None:
-    """The real width of the entering travel lane (this leg's own "left" side
-    - see add_stop_bar's docstring) if it's been narrowed by EITHER
-    add_lane_narrowing or add_marked_parking on that side, else None (full
-    curb-to-curb half, unchanged behavior). Used to size the stop bar
-    (stop_bar_width_m below) so it stops at the real lane edge instead of
-    running across a no-parking buffer or a marked-parking lane a stopped
-    vehicle would never occupy."""
-    half_ft = state.legs[leg_name].curb_to_curb_ft / 2
-    if leg_name in state.lane_narrowing and "left" in state.lane_narrowing_sides.get(leg_name, ("left", "right")):
-        return half_ft - state.lane_narrowing[leg_name]
-    parking_zone = state.parking_zones.get((leg_name, "left"))
-    if parking_zone is not None:
-        return half_ft - parking_zone["curb_offset_ft"] - parking_zone["depth_ft"]
-    return None
-
-
-def _stop_bar_width_m(state: DesignState, leg_name: str) -> float | None:
-    """2x the entering lane's real width in meters (see add_stop_bar's own
-    docstring for why the FULL width, not the half, is what its width_m
-    param expects), or None to fall back to the full curb-to-curb width."""
-    entering_ft = _entering_lane_width_ft(state, leg_name)
-    return 2 * entering_ft * FT_TO_M if entering_ft is not None else None
 
 
 def _split_near_far(polygons: list[Polygon], center_ft: Point, near_radius_ft: float):
@@ -89,61 +68,10 @@ def _split_near_far(polygons: list[Polygon], center_ft: Point, near_radius_ft: f
     return near_polys, far_polys
 
 
-def _tree_points_along_piece(piece: Polygon, spacing_ft: float) -> list[tuple[float, float]]:
-    """Sample points along a sidewalk piece's long axis at spacing_ft intervals.
-    Corner wedge pieces (not meaningfully elongated) are skipped - trees belong
-    along the straight runs of sidewalk, not crammed into a tiny corner fillet.
-    Proximity to the corner itself is filtered separately (_is_clear_of_corner)
-    since that needs to know which leg a point is actually alongside, not just
-    the piece's own shape."""
-    mrr = piece.minimum_rotated_rectangle
-    if mrr.geom_type != "Polygon":
-        return []
-    coords = list(mrr.exterior.coords)[:4]
-    edges = [(coords[i], coords[(i + 1) % 4]) for i in range(4)]
-    lengths = [((b[0] - a[0]) ** 2 + (b[1] - a[1]) ** 2) ** 0.5 for a, b in edges]
-    long_idx = max(range(4), key=lambda i: lengths[i])
-    long_len, short_len = lengths[long_idx], lengths[(long_idx + 1) % 4]
-    if short_len < 1e-6 or long_len / short_len < 1.8 or long_len < spacing_ft:
-        return []
-
-    a, b = edges[long_idx]
-    n_trees = max(int(long_len // spacing_ft), 1)
-    points = []
-    for i in range(n_trees):
-        t = (i + 0.5) / n_trees
-        pt = Point(a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t)
-        if piece.buffer(1).contains(pt):
-            points.append((pt.x, pt.y))
-    return points
-
-
-def _is_clear_of_corner(pt: tuple[float, float], legs: dict, corner_fillets: dict) -> bool:
-    """A point counts as clear of the corner only if, projected onto whichever
-    leg's centerline it's actually alongside, it falls past that leg's own
-    real leg_clearance_ft() - the same curb-return clearance distance already
-    used to place crosswalks and stop bars. Filtering by raw distance from
-    the intersection CENTER point (an earlier version of this function did)
-    doesn't work: a wide road's own half-width alone can already exceed a
-    fixed clearance radius at every point along it, so the filter ends up
-    doing nothing on a 60+ ft road while over-filtering a narrow one - the
-    same Euclidean-vs-projected mistake leg_clearance_ft() itself was
-    originally written to avoid (see README.md's Phase 4 general notes)."""
-    point = Point(pt)
-    best_leg, best_along, best_perp = None, 0.0, float("inf")
-    for leg_name, leg in legs.items():
-        along = leg.centerline.project(point)
-        perp = leg.centerline.interpolate(along).distance(point)
-        if perp < best_perp:
-            best_leg, best_along, best_perp = leg_name, along, perp
-    if best_leg is None:
-        return True
-    return best_along >= leg_clearance_ft(best_leg, legs, corner_fillets)
-
-
 def export_scenario(model: IntersectionModel, state: DesignState, name: str, out_path: Path,
                      buildings: list[dict] | None = None, crossings: list[dict] | None = None,
-                     theme: dict | None = None) -> Path:
+                     theme: dict | None = None, traffic_control: list[dict] | None = None,
+                     street_furniture: list[dict] | None = None) -> Path:
     center_ft = model.center_ft
     if theme is None:
         from src.render.theme import build_default_theme
@@ -154,7 +82,12 @@ def export_scenario(model: IntersectionModel, state: DesignState, name: str, out
         buildings = fetch_buildings(model.center_wgs84, radius_m=BUILDING_CONTEXT_RADIUS_M)
     if crossings is None:
         crossings = fetch_crossings(model.center_wgs84, radius_m=BUILDING_CONTEXT_RADIUS_M)
+    if traffic_control is None:
+        traffic_control = fetch_traffic_control(model.center_wgs84, radius_m=TRAFFIC_CONTROL_RADIUS_M)
+    if street_furniture is None:
+        street_furniture = fetch_street_furniture(model.center_wgs84, radius_m=BUILDING_CONTEXT_RADIUS_M)
     crosswalk_offsets = resolve_crosswalk_offsets(state, crossings)
+    crosswalk_skews = resolve_crosswalk_skews(state, crossings)
     # Stop bars only make sense at a signalized intersection (this site's
     # config.yaml `signals` block is what "signalized" means - see
     # src/render/props.py's _traffic_signal_props/_no_turn_on_red_props, which gate
@@ -170,13 +103,16 @@ def export_scenario(model: IntersectionModel, state: DesignState, name: str, out
     pavement_near, pavement_far = _split_near_far([pavement], center_ft, near_radius_ft)
     sidewalks_near, sidewalks_far = _split_near_far(sidewalk_pieces, center_ft, near_radius_ft)
 
-    tree_points_ft = [
-        pt for piece in sidewalk_pieces
-        for pt in _tree_points_along_piece(piece, TREE_SPACING_FT)
-        if _is_clear_of_corner(pt, state.legs, state.corner_fillets)
-    ]
+    # Street trees come only from real OSM natural=tree nodes. They were previously
+    # generated by walking each sidewalk piece at TREE_SPACING_FT, which invented 6-24
+    # trees per site; nothing recorded says a tree is there, so nothing is drawn.
+    tree_points_ft = osm_tree_points_ft(control_nodes_ft(street_furniture))
 
-    props = build_props(model, state, crosswalk_offsets, center_ft)
+    props = build_props(model, state, crosswalk_offsets, center_ft, traffic_control, street_furniture,
+                         crossings, fetch_kerbs(model.center_wgs84, radius_m=KERB_RADIUS_M))
+    # Invariant, not a warning: a pad in the carriageway is a false claim about an
+    # accessibility feature. See assert_pads_off_roadway.
+    assert_pads_off_roadway(props, pavement)
 
     # Paint-only / no-curb-change proposal treatments (see src/geometry/treatments.py:
     # add_lane_narrowing / add_corner_hatching / add_mountable_apron) - all flush
@@ -280,9 +216,11 @@ def export_scenario(model: IntersectionModel, state: DesignState, name: str, out
         anchor_ft = leg_clearance_ft(leg_name, state.legs, state.corner_fillets)
         legal_start_ft = crosswalk_offsets[leg_name][0] + LEGAL_PARKING_SETBACK_FT
         parking_start_ft = max(anchor_ft, legal_start_ft)
-        parking_edge_lines.append(ring_to_local_m(
-            parking_lane_edge_line_ft(leg, side, depth_ft, parking_start_ft, curb_offset_ft=curb_offset_ft).coords,
-            center_ft))
+        parking_edge = parking_lane_edge_line_ft(leg, side, depth_ft, parking_start_ft,
+                                                  curb_offset_ft=curb_offset_ft)
+        if parking_edge is None:
+            continue  # corner return leaves no room on this leg - see the plan view's note
+        parking_edge_lines.append(ring_to_local_m(parking_edge.coords, center_ft))
         parking_stall_divider_lines += [
             ring_to_local_m(line.coords, center_ft)
             for line in parking_stall_lines_ft(leg, side, depth_ft, stall_length_ft, parking_start_ft,
@@ -337,6 +275,11 @@ def export_scenario(model: IntersectionModel, state: DesignState, name: str, out
         "units": "meters",
         "notes": state.notes,
         "theme": theme,
+        # Shared with src/render/plan_view.py via src/render/crosswalks.py:CROSSWALK_DEPTH_M so the
+        # 2D reconstruction and this 3D render draw the same crosswalk - Blender can't import from src/.
+        "crosswalk_depth_m": CROSSWALK_DEPTH_M,
+        # Likewise shared, so the 2D stop bar and the rendered one are the same bar.
+        "stop_bar_curb_clearance_m": STOP_BAR_CURB_CLEARANCE_M,
         "existing_marked_crosswalks": model.config["intersection"].get("existing_marked_crosswalks", []),
         "pavement_near": [ring_to_local_m(p.exterior.coords, center_ft) for p in pavement_near],
         "pavement_far": [ring_to_local_m(p.exterior.coords, center_ft) for p in pavement_far],
@@ -358,6 +301,10 @@ def export_scenario(model: IntersectionModel, state: DesignState, name: str, out
                 **p,
                 "position_m": pt_to_local_m(p["position_ft"][0], p["position_ft"][1], center_ft),
                 **({"arm_length_m": p["arm_length_ft"] * FT_TO_M} if "arm_length_ft" in p else {}),
+                # Pad dimensions travel with the prop so Blender draws the pad this
+                # module positioned - the sidewalk offset is derived from the depth.
+                **({"pad_depth_m": p["pad_depth_ft"] * FT_TO_M,
+                    "pad_width_m": p["pad_width_ft"] * FT_TO_M} if "pad_depth_ft" in p else {}),
             }
             for p in props
         ],
@@ -372,6 +319,10 @@ def export_scenario(model: IntersectionModel, state: DesignState, name: str, out
                 "confirmed": model.config["legs"][leg_name].get("confirmed", False),
                 "crosswalk_offset_m": crosswalk_offsets[leg_name][0] * FT_TO_M,
                 "crosswalk_offset_source": crosswalk_offsets[leg_name][1],
+                # How far the surveyed crossing is rotated off square to this leg
+                # (src/render/crosswalks.py:_crossing_skew_deg). 0 for a leg with no
+                # matched crossing - we don't invent an orientation we didn't survey.
+                "crosswalk_skew_deg": crosswalk_skews.get(leg_name, 0.0),
                 # A treatment (e.g. upgrade_crosswalk_markings) can override the style;
                 # otherwise default to what OSM says exists today ("lines" if unmapped).
                 "crosswalk_style": state.crosswalk_styles.get(leg_name, "lines"),
@@ -380,9 +331,9 @@ def export_scenario(model: IntersectionModel, state: DesignState, name: str, out
                 # A stop bar only ever belongs across the real entering travel lane, not the full
                 # curb-to-curb half (which can include a painted no-parking buffer or a marked-parking
                 # lane next to the curb that a stopped vehicle would never actually occupy) - see
-                # _entering_lane_width_ft. None falls back to the full half-width (blender_scene.py),
+                # src/render/crosswalks.py:entering_lane_width_ft, shared with the 2D plan view,
                 # i.e. unchanged behavior for any leg that hasn't been narrowed on its entering side.
-                "stop_bar_width_m": _stop_bar_width_m(state, leg_name),
+                "stop_bar_width_m": stop_bar_width_ft(state, leg_name) * FT_TO_M,
                 # Real per-leg fact from config.yaml (street-view confirmed), not an OSM tag - see
                 # src/geometry/treatments.py:set_centerline_style / DEFAULT_CENTERLINE_STYLE.
                 "centerline_style": state.centerline_styles.get(leg_name, DEFAULT_CENTERLINE_STYLE),

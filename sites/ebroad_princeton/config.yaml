@@ -1,0 +1,171 @@
+# East Broad St (CR 518) & Princeton Ave (CR 569), Hopewell Borough, NJ 08525.
+#
+# GROUND-TRUTH SITE. This config exists to render EXISTING conditions from the
+# July 2026 Hopewell Crosswalk Inventory; no treatment proposal has been designed
+# here yet (see scenarios.py). NO leg here is field-measured - the inventory took no
+# measurements at all (LIMITATIONS.md section 6), unlike sites/broad_st_greenwood.
+# Both E Broad legs are `osm_derived` (constrained by OSM's surveyed sidewalk
+# centerlines, which proved the earlier 50 ft parcel-gap estimate impossible);
+# Princeton Ave remains `estimated`. See sites/README.md for what the tiers mean.
+#
+# See sites/README.md for the schema.
+
+data_sources:
+  road_network: data/NJ_Roadway_Network.geojson
+  parcels: data/MercerCountyParcels.shp
+
+intersection:
+  name: "E Broad St (CR 518) & Princeton Ave (CR 569), Hopewell Borough, NJ 08525"
+  center_wgs84: [-74.7583397, 40.3902329]
+  street1: "East Broad Street"
+  street2: "Princeton Avenue"
+  anchor_query: "East Broad Street, Hopewell, NJ 08525"
+  resolution_method: >
+    OSM/Overpass shared-node match (src/sources/data_loader.py:geocode_intersection).
+    NOTE: this junction is exactly why that function had to stop matching on way
+    ENDPOINTS only - Princeton Ave runs through here as one continuous OSM way, so
+    the old endpoint match found nothing closer than ~893 ft (an unrelated junction)
+    and raised. Independently cross-checked: the resolved node is 0 ft from this
+    junction's coordinate in the crosswalk inventory's own map.geojson, which was
+    derived separately from surveyed photo GPS matched to OSM junction nodes.
+  clip_radius_m: 150
+  leg_working_length_ft: 130
+  # A 3-leg T: Princeton Ave (CR 569) terminates at E Broad St from the south and
+  # does NOT continue north. Hamilton Ave is a SEPARATE junction ~154 ft west (its
+  # own stop sign, NJDOT SRI 11051006__) - it is not a fourth leg here, despite
+  # NJDOT's SLD describing the "Route 569/Hamilton Ave signal" in this vicinity.
+  #
+  # Crosswalks below are from the crosswalk inventory
+  # (photo-intersection-matches.csv, 2 crossings recorded here) and agree exactly
+  # with OSM's own surveyed crossing ways:
+  #   - E Broad St, WEST leg: inventory "faded"/poor/parallel_lines (IMG_9867, side
+  #     not recorded); OSM way 376498323, crossing:markings=lines, signalised.
+  #     The inventory did not say which E Broad leg, so the leg assignment here is
+  #     OSM's - the repo already treats OSM crossing geometry as source of truth
+  #     for crosswalk POSITION (see README "core design principle" table).
+  #   - Princeton Ave, SOUTH leg: inventory "yes"/fair/parallel_lines, reported by
+  #     the surveyor without a photograph and explicitly citing OSM way 376498301,
+  #     which is the crossing OSM maps on this leg. Same crossing, two sources.
+  # No crossing on the E Broad EAST leg in either source.
+  existing_marked_crosswalks: ["e_broad_st_west", "princeton_ave_south"]
+
+corridor:
+  jurisdiction: "County"
+  # CR 518 corridor facts carried over from the NJDOT Straight Line Diagram
+  # (data/00000518__8.000-11.000.pdf) used for sites/broad_st_greenwood. This
+  # junction is on the same route, ~1,050 ft east of Greenwood Ave, so the
+  # corridor-level values apply; the per-leg widths below do NOT come from them.
+  speed_limit_mph: 25   # OSM maxspeed=25 mph on both East Broad Street and Princeton Avenue
+  lanes: 2              # OSM lanes=2 on both streets
+  sld_pavement_width_ft: 48  # Route 518 nominal/segment-average - see legs.*.curb_to_curb_ft
+
+legs:
+  e_broad_st_west:
+    sri: "00000518__"
+    bearing_deg: 247.8
+    street_name: "East Broad Street (west of Princeton Ave, toward Greenwood Ave)"
+    curb_to_curb_ft: 36  # OSM-DERIVED - see source
+    width_provenance: osm_derived
+    confirmed: false
+    centerline_style: double_yellow
+    # NOT confirmed at this location. Carried over from the street-view-confirmed
+    # double_yellow on the same route (CR 518) at Broad/Greenwood, 1,050 ft west.
+    # Needs its own street-view review before being relied on.
+    source: >
+      OSM-DERIVED, not a field measurement. Was 50 ft by the parcel-gap method (66.0 ft
+      platted ROW minus an assumed 8 ft/side); that value is IMPOSSIBLE and has been
+      replaced. OSM's surveyed sidewalk centerlines on this leg are only 51.4 ft apart,
+      which would have left 0.7 ft between the curb and the middle of the sidewalk - the
+      curb cannot sit outside the sidewalk. The parcel-gap method failed here because the
+      platted 66 ft ROW is much wider than the built roadway on this block.
+      .
+      Derived instead as walk-to-walk minus twice the curb-to-sidewalk-centerline setback
+      CALIBRATED against the only two field-measured legs in this project (Broad St at
+      Greenwood): 11.8 ft/side on the west leg and 4.0 ft/side on the east, mean 7.9.
+      51.4 - 2(7.9) = 35.6, rounded to 36 ft. Sanity: 36 ft is two 10 ft lanes plus two
+      8 ft parking lanes, which matches what the aerial shows on this block.
+      .
+      UNCERTAINTY IS WIDE. Those two calibration points differ by 3x, so the defensible
+      range from this method is 28-43 ft; 36 is the midpoint, not a measurement. What IS
+      solid is the ceiling: 45.4 ft, above which the curb would breach the sidewalk. Do
+      not cost work off this - field-measure it, and if you do, set width_provenance:
+      field_measured, which supersedes this outright.
+
+  e_broad_st_east:
+    sri: "00000518__"
+    bearing_deg: 75.6
+    street_name: "East Broad Street (east of Princeton Ave)"
+    curb_to_curb_ft: 39  # OSM-DERIVED - see source
+    width_provenance: osm_derived
+    confirmed: false
+    centerline_style: double_yellow  # NOT confirmed here - same basis as e_broad_st_west
+    source: >
+      OSM-DERIVED, not a field measurement. Same story and same method as
+      e_broad_st_west: the previous 50 ft parcel-gap value was impossible against OSM's
+      sidewalks (54.7 ft walk-to-walk here, leaving only 2.4 ft/side to the sidewalk
+      centerline). Derived as 54.7 - 2(7.9) = 38.9, rounded to 39 ft, using the same
+      curb-to-sidewalk setback calibrated on the two field-measured Broad St legs.
+      Defensible range 31-47 ft; hard ceiling 48.7 ft. Slightly wider than
+      e_broad_st_west, consistent with the sidewalks themselves being further apart on
+      this side. No OSM crossing way here to cross-check against, because this leg has
+      no crosswalk - so this is the weaker of the two E Broad estimates.
+
+  princeton_ave_south:
+    sri: "00000569__"
+    bearing_deg: 157.1
+    street_name: "Princeton Avenue (south of E Broad St)"
+    curb_to_curb_ft: 34  # ESTIMATE - see source
+    confirmed: false
+    centerline_style: single_yellow_dashed
+    # NOT confirmed - this is the repo default (src/geometry/treatments.py:
+    # DEFAULT_CENTERLINE_STYLE), retained deliberately rather than guessed at.
+    # Needs street-view review.
+    source: >
+      ESTIMATE, same parcel-gap methodology: stable 50.0 ft parcel-to-parcel ROW gap
+      (zero spread across the 50/70/90 ft samples - the standard 50 ft platted ROW),
+      minus an assumed 8 ft/side sidewalk + verge. No NJDOT SLD exists for CR 569
+      in data/, so there is no corridor nominal to check against. OSM's crossing way
+      on this leg (376498301) spans 45 ft sidewalk-to-sidewalk, consistent with a
+      50 ft ROW but too coarse to pin the curb line. NOT a field measurement.
+
+# SIGNALIZED - and unlike the signals block at sites/broad_st_greenwood (which is
+# street-view photo confirmation), the primary evidence here is OSM's own surveyed
+# data. Its limits are spelled out in `source` below: the FACT of signalization is
+# well sourced, the per-corner hardware detail is NOT.
+signals:
+  pole_type: >
+    UNCONFIRMED. No street-view review has been done for this junction. Mast arm is
+    assumed because that is what was confirmed at the other CR 518 signal in the
+    borough (Broad/Greenwood), not because it was observed here.
+  source: >
+    Signalization confirmed from OSM: node 104041625 at this exact junction is
+    tagged highway=traffic_signals, traffic_signals:direction=both, and both mapped
+    crossings (ways 376498301 / 376498323) are crossing=traffic_signals with
+    button_operated=yes - i.e. pedestrian signal heads with pushbuttons really do
+    exist here. That is real surveyed third-party data, NOT a field survey and NOT
+    a street-view review by us. What is NOT sourced: the pole hardware type above,
+    and the per-corner pedestrian_head placement below.
+  corners:
+    # Only the two REAL corners of this T are listed. build_corner_fillets() also
+    # produces a third "corner" between e_broad_st_west and e_broad_st_east - that
+    # is the continuous north curb of E Broad St opposite the Princeton Ave stem,
+    # not a street corner, and it deliberately gets no signal pole.
+    - legs: [e_broad_st_east, princeton_ave_south]
+      pedestrian_head: same_pole   # UNCONFIRMED - see signals.source. Defaulted to
+                                    # same_pole (the majority case at Broad/Greenwood);
+                                    # verify by street view before relying on it.
+    - legs: [princeton_ave_south, e_broad_st_west]
+      pedestrian_head: same_pole   # UNCONFIRMED - same basis as above.
+  # No no_turn_on_red_legs: nothing in OSM or the inventory records an NTOR
+  # restriction here, and absence of evidence is not evidence of absence - left
+  # empty rather than guessed either way.
+
+treatments:
+  existing_corner_radius_ft: 20  # ESTIMATE
+  existing_corner_radius_source: >
+    No survey, aerial measurement or field visit. 20 ft placeholder, the same value
+    and the same reasoning as sites/broad_st_greenwood: typical as-built radius for
+    an older small-borough arterial/local corner predating modern truck-accommodating
+    design standards. Mercer County parcel boundaries at these corners are straight
+    lot lines with no chamfer encoding a real curb return, so it cannot be read off
+    the parcel data either. Replace once actually measured.

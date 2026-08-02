@@ -311,6 +311,102 @@ def add_bollard(name: str, position: tuple):
     return post
 
 
+
+PUSHBUTTON_POST_HEIGHT_M = 1.2      # APS pushbutton mounting height, ~42-48 in per MUTCD/PROWAG
+PUSHBUTTON_HOUSING_YELLOW = (0.85, 0.72, 0.08)
+TACTILE_PAD_FALLBACK_M = (0.9, 1.5)  # depth along the crossing, width across it - only used if the
+                                      # prop dict carries no pad_depth_m/pad_width_m
+TACTILE_PAD_HEIGHT_M = 0.015
+# The pad straddles the kerb, where the pavement slab (0.05) meets the lower sidewalk
+# slab (0.03), so it has to sit on top of the HIGHER of the two or it is simply buried -
+# which is exactly what happened first time round. Sharing the crosswalk markings' own
+# base height puts it on the established surface-treatment layer instead of inventing a
+# second one that could drift from it.
+from blender_crosswalks import EXISTING_MARKING_Z_BASE as TACTILE_PAD_Z_BASE
+TACTILE_PAD_YELLOW = (0.82, 0.60, 0.06)
+HYDRANT_HEIGHT_M = 0.75
+HYDRANT_RED = (0.62, 0.05, 0.05)
+
+
+def add_pedestrian_pushbutton(name: str, position: tuple, heading_deg: float, post_mat):
+    """Accessible pedestrian pushbutton: a short post with a yellow housing facing the
+    waiting pedestrian. Placement comes from the surveyed end of an OSM crossing way
+    tagged button_operated=yes (src/render/props.py:_crossing_endpoint_props), so WHICH
+    crossings are actuated and where the poles stand is real; the housing's size and
+    mounting height are generic."""
+    x, y = position
+    bpy.ops.mesh.primitive_cylinder_add(radius=0.04, depth=PUSHBUTTON_POST_HEIGHT_M,
+                                         location=(x, y, PUSHBUTTON_POST_HEIGHT_M / 2))
+    post = bpy.context.active_object
+    post.name = f"{name}_post"
+    post.data.materials.append(post_mat)
+
+    face = math.radians(heading_deg)
+    fx, fy = math.cos(face), math.sin(face)
+    bpy.ops.mesh.primitive_cube_add(size=1.0,
+                                     location=(x + fx * 0.05, y + fy * 0.05, PUSHBUTTON_POST_HEIGHT_M - 0.1))
+    housing = bpy.context.active_object
+    housing.name = f"{name}_housing"
+    housing.scale = (0.06, 0.13, 0.2)
+    housing.rotation_euler = (0, 0, face)
+    housing.data.materials.append(make_material(f"{name}_housing_mat", PUSHBUTTON_HOUSING_YELLOW, roughness=0.4))
+    return post
+
+
+def add_tactile_paving_pad(name: str, position: tuple, heading_deg: float,
+                            depth_m: float = TACTILE_PAD_FALLBACK_M[0],
+                            width_m: float = TACTILE_PAD_FALLBACK_M[1]):
+    """Detectable warning surface (truncated domes) at a curb ramp - the yellow pad a
+    cane or a foot registers at the kerb edge. Modeled as a flat plate rather than
+    individual domes: at this render's scale the dome pattern is sub-pixel, and a plate
+    reads correctly while costing four vertices instead of hundreds.
+
+    Position comes from src/render/props.py, already stepped back off the roadway so the
+    curb line is the pad's inner edge - a pad centred on the curb line would lie half in
+    the road. Dimensions arrive with the prop for the same reason: that offset is half the
+    depth, so placement and geometry have to agree on what the depth is."""
+    x, y = position
+    bpy.ops.mesh.primitive_cube_add(size=1.0,
+                                     location=(x, y, TACTILE_PAD_Z_BASE + TACTILE_PAD_HEIGHT_M / 2))
+    pad = bpy.context.active_object
+    pad.name = f"{name}_pad"
+    # heading_deg runs ALONG the crossing, so local X is the pad's depth (into the
+    # footway) and local Y its width (along the curb) - transposing these made the
+    # pad long in the wrong direction and pushed it further into the road.
+    pad.scale = (depth_m, width_m, TACTILE_PAD_HEIGHT_M)
+    pad.rotation_euler = (0, 0, math.radians(heading_deg))
+    pad.data.materials.append(make_material(f"{name}_pad_mat", TACTILE_PAD_YELLOW, roughness=0.6))
+    return pad
+
+
+def add_fire_hydrant(name: str, position: tuple):
+    """Fire hydrant: barrel, domed bonnet and two side outlets. Real OSM-surveyed
+    position. Background detail, but it is also one of the things that genuinely
+    constrains where a curb extension or a parking stall can go."""
+    x, y = position
+    bpy.ops.mesh.primitive_cylinder_add(radius=0.09, depth=HYDRANT_HEIGHT_M,
+                                         location=(x, y, HYDRANT_HEIGHT_M / 2))
+    barrel = bpy.context.active_object
+    barrel.name = f"{name}_barrel"
+    hydrant_mat = make_material(f"{name}_mat", HYDRANT_RED, roughness=0.45)
+    barrel.data.materials.append(hydrant_mat)
+
+    bpy.ops.mesh.primitive_uv_sphere_add(radius=0.1, location=(x, y, HYDRANT_HEIGHT_M))
+    bonnet = bpy.context.active_object
+    bonnet.name = f"{name}_bonnet"
+    bonnet.scale = (1.0, 1.0, 0.55)
+    bonnet.data.materials.append(hydrant_mat)
+
+    for i, sign in enumerate((1, -1)):
+        bpy.ops.mesh.primitive_cylinder_add(radius=0.045, depth=0.16,
+                                             location=(x + sign * 0.1, y, HYDRANT_HEIGHT_M * 0.62),
+                                             rotation=(0, math.radians(90), 0))
+        outlet = bpy.context.active_object
+        outlet.name = f"{name}_outlet_{i}"
+        outlet.data.materials.append(hydrant_mat)
+    return barrel
+
+
 def add_prop(name: str, prop: dict, streetlight_template, pole_mat, signal_housing_mat, ped_signal_housing_mat):
     """Build the Blender geometry for one exported prop dict (placement
     decided upstream by src/render/props.py), dispatching on its "type" field to the
@@ -335,6 +431,21 @@ def add_prop(name: str, prop: dict, streetlight_template, pole_mat, signal_housi
         add_rrfb(name, pos, heading, pole_mat)
     elif ptype == "bollard":
         add_bollard(name, pos)
+    elif ptype == "pedestrian_pushbutton":
+        add_pedestrian_pushbutton(name, pos, heading, pole_mat)
+    elif ptype == "tactile_paving_pad":
+        add_tactile_paving_pad(name, pos, heading,
+                                depth_m=prop.get("pad_depth_m", TACTILE_PAD_FALLBACK_M[0]),
+                                width_m=prop.get("pad_width_m", TACTILE_PAD_FALLBACK_M[1]))
+    elif ptype == "fire_hydrant":
+        add_fire_hydrant(name, pos)
+    else:
+        # Placement upstream (src/render/props.py) can emit a type this renderer has no
+        # builder for - e.g. yield_sign, which OSM's highway=give_way nodes produce but
+        # nothing here draws yet. Say so rather than silently dropping it: a prop visible
+        # in the 2D plan view but missing from the render is exactly the kind of
+        # disagreement between the two views this project keeps having to chase down.
+        print(f"WARNING: no Blender builder for prop type {ptype!r} ({name}) - not drawn.")
 
 
 def build_tree_proxy(trunk_mat, foliage_mat):

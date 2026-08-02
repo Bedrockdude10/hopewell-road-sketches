@@ -218,6 +218,10 @@ def build_scene(data: dict):
     # (config: intersection.existing_marked_crosswalks) - don't assume every
     # approach is marked just because it's a signalized 4-way.
     marked_leg_names = set(data.get("existing_marked_crosswalks", []))
+    # Depth comes from src/render/crosswalks.py:CROSSWALK_DEPTH_M via the JSON, so the 2D plan
+    # view (src/render/plan_view.py) and this render draw an identically-sized crosswalk.
+    crosswalk_depth_m = data.get("crosswalk_depth_m", 3.0)
+    stop_bar_curb_clearance_m = data.get("stop_bar_curb_clearance_m", 0.5)
     for leg in data.get("legs", []):
         near = mathutils.Vector((*leg["near_m"], 0.0))
         far = mathutils.Vector((*leg["far_m"], 0.0))
@@ -230,12 +234,16 @@ def build_scene(data: dict):
         if leg["name"] in marked_leg_names and leg["name"] not in raised_leg_names:
             style = leg.get("crosswalk_style", "lines")
             add_crosswalk(f"crosswalk_{leg['name']}", near, u, n, leg["width_m"], marking_mat,
-                           offset_m=offset_m, style=style)
+                           offset_m=offset_m, style=style, depth_m=crosswalk_depth_m,
+                           skew_deg=leg.get("crosswalk_skew_deg", 0.0))
         stop_bar_offset_m = leg.get("stop_bar_offset_m")
         if stop_bar_offset_m is not None:
             stop_bar_width_m = leg.get("stop_bar_width_m") or leg["width_m"]
+            # A stop bar is painted parallel to the crosswalk ahead of it, so it takes
+            # the same surveyed skew.
             add_stop_bar(f"stop_bar_{leg['name']}", near, u, n, stop_bar_width_m, marking_mat,
-                         offset_m=stop_bar_offset_m)
+                         offset_m=stop_bar_offset_m, skew_deg=leg.get("crosswalk_skew_deg", 0.0),
+                         curb_clearance_m=stop_bar_curb_clearance_m)
         # Real per-leg fact (confirmed via street-view, see src/geometry/treatments.py
         # DEFAULT_CENTERLINE_STYLE) - some legs get no centerline paint at all, so this
         # is NOT drawn unconditionally the way it used to be.

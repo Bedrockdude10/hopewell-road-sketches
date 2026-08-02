@@ -6,6 +6,7 @@ import geopandas as gpd
 import numpy as np
 from shapely.geometry import LineString, Point, Polygon
 from shapely.ops import substring
+from shapely.validation import explain_validity
 
 WGS84 = "EPSG:4326"
 NJ_STATE_PLANE_FT = "EPSG:3424"  # NAD83(HARN) / New Jersey (ftUS)
@@ -107,18 +108,36 @@ def fillet_curb_corner(
 
     Returns (trimmed_curb_a, arc, trimmed_curb_b): concatenate the three pieces,
     in that order, for one continuous rounded curb path.
+
+    Two curb lines meeting at ~180 degrees are not a corner at all - they're one
+    straight run of curb. That is the normal case on the far side of a T or Y
+    junction, where the through road's two legs are collinear and the pair of curbs
+    facing away from the stem never actually turns (e.g. e_broad_st_east's left curb
+    and e_broad_st_west's right curb, the continuous north edge of E Broad St at
+    E Broad & Princeton, at 179.9 degrees). There's nothing to round, and no true
+    corner vertex to round it about - the two curb rays are parallel, so solving for
+    their crossing point is singular. Joined with a straight bridge instead.
     """
     pa, da = np.array(curb_a.coords[0]), _unit(np.array(curb_a.coords[1]) - np.array(curb_a.coords[0]))
     pb, db = np.array(curb_b.coords[0]), _unit(np.array(curb_b.coords[1]) - np.array(curb_b.coords[0]))
+
+    theta = np.arccos(np.clip(np.dot(da, db), -1, 1))
+    if theta < np.radians(1):
+        # The curbs double back along each other - a real geometry problem, not a
+        # flat corner. Still an error.
+        raise ValueError(f"Curb lines meet at an implausible angle ({np.degrees(theta):.1f} deg) - check inputs.")
+    if theta > np.radians(179):
+        # Collinear: no rounding, no trimming. The "arc" is the straight bridge
+        # across the small gap between the two curb lines' start points, which keeps
+        # the (trimmed_a, arc, trimmed_b) contract - and build_pavement_polygon's
+        # ring walk - working unchanged.
+        bridge = LineString([tuple(pa), tuple(pb)])
+        return curb_a, bridge, curb_b
 
     # true square-corner vertex: intersection of the two curb lines, extended
     a_matrix = np.array([da, -db]).T
     t, _s = np.linalg.solve(a_matrix, pb - pa)
     vertex = pa + t * da
-
-    theta = np.arccos(np.clip(np.dot(da, db), -1, 1))
-    if theta < np.radians(1) or theta > np.radians(179):
-        raise ValueError(f"Curb lines meet at an implausible angle ({np.degrees(theta):.1f} deg) - check inputs.")
 
     tangent_dist = radius_ft / np.tan(theta / 2)
     center_dist = radius_ft / np.sin(theta / 2)
@@ -146,7 +165,7 @@ def _leg_bearing(leg: "Leg") -> float:
     return np.arctan2(d[1], d[0])
 
 
-def build_corner_fillets(legs: dict, radius_ft: float) -> dict:
+def build_corner_fillets(legs: dict, radius_ft, corner_radii: dict | None = None) -> dict:
     """
     Given >=2 Legs with curb lines already computed, sort them by compass bearing
     and fillet the corner between each pair of angularly-adjacent legs (wrapping
@@ -166,9 +185,13 @@ def build_corner_fillets(legs: dict, radius_ft: float) -> dict:
     for i in range(n):
         name_a, leg_a = ordered[i]
         name_b, leg_b = ordered[(i + 1) % n]
+        # A traced kerb gives this specific corner its own measured radius; anything
+        # untraced falls back to the site-wide placeholder (see corner_radii_from_kerbs).
+        this_radius = (corner_radii or {}).get(frozenset((name_a, name_b)), radius_ft)
         try:
-            trimmed_a, arc, trimmed_b = fillet_curb_corner(leg_a.left_curb, leg_b.right_curb, radius_ft)
-            results[(name_a, name_b)] = {"trimmed_a": trimmed_a, "arc": arc, "trimmed_b": trimmed_b, "radius_ft": radius_ft}
+            trimmed_a, arc, trimmed_b = fillet_curb_corner(leg_a.left_curb, leg_b.right_curb, this_radius)
+            results[(name_a, name_b)] = {"trimmed_a": trimmed_a, "arc": arc, "trimmed_b": trimmed_b,
+                                          "radius_ft": this_radius}
         except ValueError as e:
             results[(name_a, name_b)] = {"error": str(e)}
     return results
@@ -417,7 +440,7 @@ def parking_stall_count_ft(leg: "Leg", stall_length_ft: float, start_ft: float, 
 
 
 def parking_lane_edge_line_ft(leg: "Leg", side: str, depth_ft: float, start_ft: float,
-                               end_ft: float | None = None, curb_offset_ft: float = 0.0) -> LineString:
+                               end_ft: float | None = None, curb_offset_ft: float = 0.0) -> LineString | None:
     """The line marking the inner edge of a curbside marked-parking lane -
     depth_ft in from the curb (or from curb_offset_ft in from the curb, if
     the parking lane doesn't hug the curb directly - see below) on the given
@@ -439,6 +462,13 @@ def parking_lane_edge_line_ft(leg: "Leg", side: str, depth_ft: float, start_ft: 
     inner_half = max(half - curb_offset_ft - depth_ft, 0.5)
     inner = leg.centerline.offset_curve(sign * inner_half)
     end_ft = inner.length if end_ft is None else end_ft
+    if start_ft >= min(end_ft, inner.length):
+        # No room left on this leg to mark parking. Happens where the corner return eats
+        # the whole leg: at W Broad & Louellen's acute Y, leg_clearance_ft comes out at
+        # 133 ft on a 130 ft leg, so parking would start past the end of the road.
+        # substring() then returns an empty geometry, and callers that interpolate along
+        # it fail with an unhelpful shapely type error - so say "nothing here" explicitly.
+        return None
     return substring(inner, start_ft, end_ft)
 
 
@@ -548,4 +578,221 @@ def build_pavement_polygon(corner_fillets: dict) -> Polygon:
         ring.extend(reversed(list(trimmed_a_next.coords)))
         ring.extend(list(arc_next.coords)[1:-1])
 
-    return Polygon(ring)
+    polygon = Polygon(ring)
+    if not polygon.is_valid:
+        raise ValueError(
+            "Pavement ring is self-intersecting: "
+            f"{explain_validity(polygon)}. {_acute_corner_diagnosis(corner_fillets, order)}"
+        )
+    return polygon
+
+
+def _acute_corner_diagnosis(corner_fillets: dict, order: list[str]) -> str:
+    """Explain a self-intersecting pavement ring in terms of the legs that caused it.
+
+    The corner-fillet model assumes each pair of angularly-adjacent legs meets at a
+    distinct, roundable corner - which requires the two roads' pavement envelopes to
+    be separate everywhere outside that corner. At a sharply acute junction (a Y, a
+    skewed fork) that fails: two wide roads diverging at a narrow angle overlap near
+    the junction, forming one continuous paved throat/gore rather than two roads with
+    a corner between them. The ring then folds through itself, and no corner radius
+    fixes it - the overlap is a function of the legs' widths and the angle only.
+
+    W Broad St & Louellen St is the worked example: W Broad southwest (50 ft) and
+    Louellen west (34 ft) diverge at 43.6 degrees, so their curb envelopes overlap
+    within ~56 ft of the junction.
+    """
+    culprits = []
+    for i, name_a in enumerate(order):
+        name_b = order[(i + 1) % len(order)]
+        pieces = corner_fillets.get((name_a, name_b))
+        if pieces is None or "error" in pieces:
+            continue
+        # The fillet arc bulges toward the corner vertex; an acute corner is the one
+        # whose trimmed curbs run far past where the opposite leg's curb already is.
+        if pieces["trimmed_a"].intersects(pieces["trimmed_b"]):
+            culprits.append(f"{name_a}/{name_b}")
+    detail = (
+        f" The curb lines of {' and '.join(culprits)} cross each other."
+        if culprits else ""
+    )
+    return (
+        "This usually means two legs meet at too acute an angle for their widths, so "
+        "their pavement envelopes overlap and the intersection is really one merged "
+        f"throat rather than a set of separate rounded corners.{detail} Check the "
+        "legs' bearing_deg and curb_to_curb_ft in the site config; if the geometry is "
+        "right, this junction shape is not representable by the corner-fillet model."
+    )
+
+
+# Where along a leg to probe for the flanking sidewalks. Far enough out to be clear of
+# the corner returns (which curve the sidewalk in toward the crossing) but still within
+# a typical leg_working_length_ft.
+SIDEWALK_PROBE_DISTANCES_FT = (40.0, 60.0, 80.0)
+SIDEWALK_PROBE_REACH_FT = 120.0
+
+
+def sidewalk_span_ft(centerline: LineString, sidewalk_lines: list[LineString],
+                      distances_ft=SIDEWALK_PROBE_DISTANCES_FT) -> dict | None:
+    """Distance from a leg's centerline out to the sidewalk on each side.
+
+    Casts a perpendicular ray both ways at each probe distance and takes the nearest
+    sidewalk hit, then medians across probes so one gap in the sidewalk network (or one
+    driveway apron mapped as a footway) can't skew the answer. Returns
+    {"left_ft", "right_ft", "span_ft", "probes"} or None if either side never hit
+    anything - a leg with sidewalk mapped on only one side gives no usable span.
+
+    `span_ft` is sidewalk-centerline to sidewalk-centerline. It is an UPPER BOUND on
+    curb-to-curb, never the width itself: the curb is somewhere inside it, by a verge
+    that varies a lot in practice (11.8 ft/side vs 4.0 ft/side on the two field-measured
+    legs in this project). See src/sources/osm_context.py:fetch_sidewalks.
+    """
+    left, right = [], []
+    for dist in distances_ft:
+        if dist >= centerline.length:
+            continue
+        point = centerline.interpolate(dist)
+        ahead = centerline.interpolate(min(dist + 5, centerline.length))
+        vx, vy = ahead.x - point.x, ahead.y - point.y
+        norm = np.hypot(vx, vy)
+        if norm == 0:
+            continue
+        px, py = -vy / norm, vx / norm
+        for sign, bucket in ((1, left), (-1, right)):
+            ray = LineString([
+                (point.x, point.y),
+                (point.x + sign * SIDEWALK_PROBE_REACH_FT * px, point.y + sign * SIDEWALK_PROBE_REACH_FT * py),
+            ])
+            nearest = None
+            for walk in sidewalk_lines:
+                hit = ray.intersection(walk)
+                if hit.is_empty:
+                    continue
+                points = [hit] if hit.geom_type == "Point" else list(getattr(hit, "geoms", []))
+                for candidate in points:
+                    if candidate.geom_type != "Point":
+                        continue
+                    d = point.distance(candidate)
+                    if nearest is None or d < nearest:
+                        nearest = d
+            if nearest is not None:
+                bucket.append(nearest)
+
+    if not left or not right:
+        return None
+    left_ft, right_ft = float(np.median(left)), float(np.median(right))
+    return {"left_ft": left_ft, "right_ft": right_ft, "span_ft": left_ft + right_ft,
+            "probes": min(len(left), len(right))}
+
+
+# Gates on a circle fitted to a traced kerb, before its radius is trusted as a corner
+# radius. A short arc barely constrains a circle: 8 ft of kerb spanning 36 degrees
+# happened to fit well at Columbia & Princeton, but only because the tracing was careful.
+MIN_KERB_ARC_SWEEP_DEG = 25.0
+MAX_KERB_FIT_RESIDUAL_FT = 1.0
+PLAUSIBLE_CORNER_RADIUS_FT = (5.0, 60.0)  # outside this it isn't a street corner return
+
+
+def fit_circle_ft(line: LineString) -> dict | None:
+    """Least-squares (Kasa) circle fit to a traced kerb line.
+
+    Returns {"radius_ft", "center", "sweep_deg", "max_residual_ft"} or None if the fit is
+    degenerate. `sweep_deg` is how much of the circle the trace actually covers and is the
+    key quality signal - a wide sweep with a small residual is a trustworthy radius; a
+    narrow sweep is a circle inferred from almost-straight input.
+    """
+    coords = np.asarray(line.coords)
+    if len(coords) < 3:
+        return None
+    xs, ys = coords[:, 0], coords[:, 1]
+    a_matrix = np.c_[2 * xs, 2 * ys, np.ones(len(xs))]
+    try:
+        cx, cy, c = np.linalg.lstsq(a_matrix, xs ** 2 + ys ** 2, rcond=None)[0]
+    except np.linalg.LinAlgError:
+        return None
+    inner = c + cx ** 2 + cy ** 2
+    if inner <= 0:
+        return None
+    radius = float(np.sqrt(inner))
+    residual = float(np.abs(np.hypot(xs - cx, ys - cy) - radius).max())
+    angles = np.unwrap(np.sort(np.arctan2(ys - cy, xs - cx)))
+    sweep = float(np.degrees(angles.max() - angles.min()))
+    return {"radius_ft": radius, "center": (float(cx), float(cy)),
+            "sweep_deg": sweep, "max_residual_ft": residual}
+
+
+def kerb_radius_is_usable(fit: dict | None) -> bool:
+    """Whether a circle fit is well-enough conditioned to use as a corner radius."""
+    if fit is None:
+        return False
+    low, high = PLAUSIBLE_CORNER_RADIUS_FT
+    return (fit["sweep_deg"] >= MIN_KERB_ARC_SWEEP_DEG
+            and fit["max_residual_ft"] <= MAX_KERB_FIT_RESIDUAL_FT
+            and low <= fit["radius_ft"] <= high)
+
+
+def corner_radii_from_kerbs(legs: dict, kerb_lines_ft: list[LineString],
+                             fallback_radius_ft: float) -> tuple[dict, list[str]]:
+    """Per-corner radii derived from traced OSM kerb lines, plus notes on what happened.
+
+    Returns ({frozenset(leg_a, leg_b): radius_ft}, notes). Corners with no usable traced
+    kerb are simply absent - the caller uses `fallback_radius_ft` for those, so a site
+    with one traced corner gets one real radius and keeps the placeholder elsewhere
+    rather than having one corner's measurement spread over the whole junction.
+
+    A kerb way is assigned to the corner between the two legs it sits closest to. Several
+    traces at one corner are combined by median, which is what makes two independent
+    tracings of the same return (13.6 and 13.4 ft at Columbia & Princeton) reinforce each
+    other, and stops a single odd trace from deciding the answer alone.
+    """
+    by_corner: dict[frozenset, list[float]] = {}
+    notes: list[str] = []
+
+    for line in kerb_lines_ft:
+        fit = fit_circle_ft(line)
+        midpoint = line.interpolate(0.5, normalized=True)
+        ranked = sorted(legs.items(), key=lambda kv: kv[1].centerline.distance(midpoint))
+        if len(ranked) < 2:
+            continue
+        corner = frozenset((ranked[0][0], ranked[1][0]))
+        if not kerb_radius_is_usable(fit):
+            reason = ("degenerate fit" if fit is None else
+                      f"sweep {fit['sweep_deg']:.0f} deg, residual {fit['max_residual_ft']:.2f} ft, "
+                      f"radius {fit['radius_ft']:.1f} ft")
+            notes.append(f"kerb trace at {'/'.join(sorted(corner))} not usable as a corner radius "
+                          f"({reason}) - too short an arc, too poor a fit, or not a corner return.")
+            continue
+        by_corner.setdefault(corner, []).append(fit["radius_ft"])
+
+    radii = {}
+    for corner, values in by_corner.items():
+        radius = float(np.median(values))
+        radii[corner] = radius
+        spread = f", {len(values)} traces spanning {min(values):.1f}-{max(values):.1f} ft" if len(values) > 1 else ""
+        notes.append(f"corner {'/'.join(sorted(corner))}: radius {radius:.1f} ft from traced OSM kerb"
+                      f"{spread} (placeholder was {fallback_radius_ft:.0f} ft).")
+
+    # Untraced corners: prefer the median of THIS junction's own measured corners over the
+    # site-wide placeholder. A generic 20 ft next to corners measured at 13.5 ft inflates
+    # the modelled throat enough to swallow the real footway - which is what was dropping
+    # tactile pads at Columbia & Princeton. Still an inference, but one drawn from the same
+    # junction rather than from a typical-value assumption, and reported as such.
+    if radii:
+        local_default = float(np.median(list(radii.values())))
+        untraced = [frozenset((a, b)) for a, b in _corner_pairs(legs)
+                     if frozenset((a, b)) not in radii]
+        if untraced and abs(local_default - fallback_radius_ft) > 1.0:
+            for corner in untraced:
+                radii[corner] = local_default
+            names = ", ".join("/".join(sorted(c)) for c in untraced)
+            notes.append(f"untraced corner(s) {names}: using {local_default:.1f} ft, the median of this "
+                          f"junction's own traced corners, instead of the {fallback_radius_ft:.0f} ft "
+                          f"site placeholder. Trace them to replace this.")
+    return radii, notes
+
+
+def _corner_pairs(legs: dict) -> list[tuple[str, str]]:
+    """Angularly adjacent leg pairs - the same corners build_corner_fillets() forms."""
+    usable = {name: leg for name, leg in legs.items() if leg.left_curb is not None}
+    ordered = sorted(usable.items(), key=lambda kv: _leg_bearing(kv[1]))
+    return [(ordered[i][0], ordered[(i + 1) % len(ordered)][0]) for i in range(len(ordered))]

@@ -448,13 +448,32 @@ def build_sidewalk_pieces(state: DesignState, sidewalk_width_ft: float = 6) -> l
         except ValueError:
             continue
         outer_by_corner[corner] = {"trimmed_a": trimmed_a, "arc": arc, "trimmed_b": trimmed_b}
-        pieces.append(Polygon(list(inner["arc"].coords) + list(reversed(arc.coords))))
+        _append_band(pieces, inner["arc"], arc)
 
     for corner, inner in state.corner_fillets.items():
         outer = outer_by_corner.get(corner)
         if outer is None:
             continue
-        pieces.append(Polygon(list(inner["trimmed_a"].coords) + list(reversed(outer["trimmed_a"].coords))))
-        pieces.append(Polygon(list(inner["trimmed_b"].coords) + list(reversed(outer["trimmed_b"].coords))))
+        _append_band(pieces, inner["trimmed_a"], outer["trimmed_a"])
+        _append_band(pieces, inner["trimmed_b"], outer["trimmed_b"])
 
     return [p for p in pieces if p.is_valid and not p.is_empty]
+
+
+def _append_band(pieces: list, inner_line, outer_line) -> None:
+    """Append the quad between an inner and outer curb/arc line, skipping the pair
+    if together they can't form a ring.
+
+    Where two legs meet at a nearly straight angle - the "corner" opposite the stem
+    of a T or Y junction, e.g. w_broad_st_northeast/w_broad_st_southwest at 170.9
+    degrees - the fillet's tangent points can consume essentially the whole curb
+    segment, leaving a trimmed line of one or even zero coordinates. A ring needs 4,
+    so building a Polygon from such a pair raises instead of just producing a
+    degenerate shape the `is_valid` filter would drop. Skip it: this band is
+    explicitly visual context for the Phase 4 render, not survey-grade geometry, and
+    a sliver of sidewalk across the far side of a T is not worth failing the export.
+    """
+    coords = list(inner_line.coords) + list(reversed(outer_line.coords))
+    if len(coords) < 4:
+        return
+    pieces.append(Polygon(coords))

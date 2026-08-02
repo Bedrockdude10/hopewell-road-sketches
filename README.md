@@ -48,6 +48,16 @@ When no real source exists (e.g. Greenwood Ave has no NJDOT SLD at all — it's 
 ## Data (`data/`, gitignored — large binaries, not in git)
 
 - `NJ_Roadway_Network.geojson` (170MB) — NJDOT's **statewide** SRI/SLD linear-referencing roadway layer (despite living in a "Hopewell" folder, it's not pre-clipped). Has jurisdiction/route-ID fields (SRI, ROUTE_SUBTYPE, ROAD_NUM) but **no lane count, width, or surface type** — that's why Phase 2 needs the SLD PDF + field measurements.
+
+  **Convert this once, before doing anything else:**
+
+  ```bash
+  python scripts/convert_road_network.py
+  ```
+
+  GeoJSON carries no spatial index, so a bbox-filtered read still parses the whole file — pulling the ~9 segments around one intersection out of the statewide layer costs **~2.2 s**, versus ~2.5 s to read all 105,838 features (i.e. the bbox filter saves almost nothing). The script writes a FlatGeobuf sibling with a packed Hilbert R-tree, dropping the same read to **~0.002 s** and `load_intersection_model()` from ~2.5 s to ~0.10 s. Every phase script pays that cost at least once, and Phase 3/4 are separate processes that each pay it again.
+
+  It's safe: the script verifies the copy is WKB-identical to the original before keeping it (and deletes it if not), the `.geojson` stays the canonical source and is never modified, and `sites/*/config.yaml` keeps pointing at the `.geojson`. `src/sources/data_loader.py` picks up the sibling automatically (`_resolve_indexed_path`) and ignores it if it's older than the source. The `.fgb` is gitignored — rebuild it, don't commit it. Skipping this step changes nothing but speed.
 - `00000518__8.000-11.000.pdf` — NJDOT Straight Line Diagram for Route 518 (Broad St), milepost 8.000–11.000. Our intersection is **MP 10.30**, a signalized crossing inside NJDOT's "West Broad Street" segment. Read this by rendering locally at high DPI (`pdftoppm -r 400 file.pdf page`) and cropping — the pdf-viewer MCP tool's own screenshot is too low-res to read the tick labels.
 - `MercerCountyParcels.*` (shapefile) — Mercer County parcel polygons, used for ROW/corner context and to estimate Greenwood Ave's width (see below). `MUN=1105` is Hopewell Borough.
 - `MercerTaxList.dbf` — MOD-IV tax attributes, joinable by PIN, not currently used.

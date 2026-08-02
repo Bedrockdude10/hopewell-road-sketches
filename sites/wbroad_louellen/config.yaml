@@ -1,0 +1,173 @@
+# West Broad St & Louellen St, Hopewell Borough, NJ 08525.
+#
+# GROUND-TRUTH SITE. Renders EXISTING conditions from the July 2026 Hopewell
+# Crosswalk Inventory; no treatment proposal designed yet (see scenarios.py).
+# NO leg here is field-measured - the inventory took no measurements at all
+# (LIMITATIONS.md section 6). Widths are `osm_derived` where OSM's surveyed sidewalk
+# centerlines constrain them and `estimated` otherwise; see `width_provenance` on each
+# leg and sites/README.md for what those tiers mean.
+#
+# This is the worst-condition junction of the three ground-truth sites, and sits on
+# the W Broad corridor the inventory identifies as materially worse than E Broad.
+#
+# See sites/README.md for the schema.
+
+data_sources:
+  road_network: data/NJ_Roadway_Network.geojson
+  parcels: data/MercerCountyParcels.shp
+
+intersection:
+  name: "W Broad St & Louellen St, Hopewell Borough, NJ 08525"
+  center_wgs84: [-74.7659448, 40.3870407]
+  street1: "West Broad Street"
+  street2: "Louellen Street"
+  anchor_query: "West Broad Street, Hopewell, NJ 08525"
+  resolution_method: >
+    OSM/Overpass shared-node match (src/sources/data_loader.py:geocode_intersection).
+    This one also resolved under the old endpoint-only match, because OSM splits
+    West Broad Street into two ways here. Cross-checked: 0 ft from this junction's
+    coordinate in the crosswalk inventory's own map.geojson.
+  clip_radius_m: 150
+  leg_working_length_ft: 130
+  # A 3-leg junction, and NOT the "W Broad crossing Louellen" shape the name
+  # suggests. CR 518 arrives from the northeast along W Broad St and turns WEST onto
+  # Louellen St; W Broad St continues to the southwest as CR 654. See the legs below.
+  #
+  # Crosswalks from the crosswalk inventory (4 rows recorded here); the inventory
+  # and OSM agree exactly - ONE marked crossing, on the Louellen St leg only:
+  #   louellen_st_west      - "yes", poor, parallel_lines (IMG_9847). OSM way
+  #                           376498339, crossing:markings=lines, signalised.
+  #   w_broad_st_southwest  - "none". Inventory: "no markings on this leg of W Broad
+  #                           St"; surveyor corrected the agent's original reading of
+  #                           worn parallel lines to unmarked (IMG_9848, side SW).
+  #   w_broad_st_northeast  - "none". Same correction, two photos (IMG_9849, IMG_9850,
+  #                           side NE). OSM maps no crossing on either W Broad leg here.
+  # IMPORTANT - IMG_9850 carries the single unresolved judgement call left in the
+  # whole survey's cost-relevant category (LIMITATIONS.md section 2): review_flag
+  # "none/poor boundary - markings may be entirely gone, not merely worn". The
+  # surveyor's review settled it as UNMARKED, which is the expensive direction (a
+  # new installation, not a repaint). Modelled here as unmarked, per that review.
+  existing_marked_crosswalks: ["louellen_st_west"]
+
+corridor:
+  jurisdiction: "County"
+  speed_limit_mph: 25   # OSM maxspeed=25 mph on both W Broad St ways; Louellen St is 30 mph
+  lanes: 2              # OSM lanes=2 on both W Broad St ways (Louellen St untagged)
+  sld_pavement_width_ft: 48  # Route 518 nominal/segment-average - see legs.*.curb_to_curb_ft
+  # RESOLVES an open question in the inventory. LIMITATIONS.md section 7 flags
+  # "Louellen Street is tagged CR 518 in OSM and that looks wrong - CR 518 is the
+  # Broad Street corridor. Either OSM is mis-tagged or the route jogs." It jogs, and
+  # OSM is right. Two independent sources agree:
+  #   - OSM: Louellen Street way 11643345 is ref=CR 518; W Broad St way 11646785
+  #     (northeast, toward Greenwood) is ref=CR 518; W Broad St way 27459436
+  #     (southwest) is ref=CR 654.
+  #   - NJDOT: SRI 00000518__ covers BOTH the northeast W Broad leg and the
+  #     due-west Louellen leg at this junction; the southwest W Broad leg is a
+  #     different SRI entirely, 11000654__, SLD_NAME "MERCER COUNTY 654".
+  # So CR 518 runs Greenwood Ave -> southwest along W Broad -> turns west onto
+  # Louellen St, and W Broad St southwest of Louellen is CR 654. Jurisdiction claims
+  # for Louellen intersections are therefore sound; the caution in LIMITATIONS.md
+  # section 7 can be retired. (Its second caution stands: roadway ownership still
+  # does not settle who maintains the crosswalk.)
+
+legs:
+  w_broad_st_northeast:
+    sri: "00000518__"
+    bearing_deg: 55.8
+    street_name: "West Broad Street (northeast of Louellen St, toward Greenwood Ave) - CR 518"
+    curb_to_curb_ft: 33  # OSM-DERIVED - see source
+    width_provenance: osm_derived
+    confirmed: false
+    centerline_style: double_yellow
+    # NOT confirmed here. Carried over from the street-view-confirmed double_yellow
+    # on this same leg of CR 518 at Broad/Greenwood, ~1,350 ft northeast (that
+    # config's broad_st_west is the far end of this same segment). Still needs its
+    # own street-view review.
+    source: >
+      OSM-DERIVED, not a field measurement. The previous 50 ft parcel-gap value (66 ft
+      platted ROW minus an assumed 8 ft/side) is IMPOSSIBLE: OSM's surveyed sidewalk
+      centerlines here are only 49.2 ft apart, so a 50 ft roadway would put the curb
+      OUTSIDE the sidewalk. Derived instead as 49.2 - 2(7.9) = 33.4, rounded to 33 ft,
+      using the curb-to-sidewalk-centerline setback calibrated on the two field-measured
+      Broad St legs at Greenwood (11.8 and 4.0 ft/side, mean 7.9). Defensible range
+      25-41 ft; hard ceiling 43.2 ft.
+      .
+      WORTH KNOWING FOR THE CORRIDOR ARGUMENT: this is the same physical CR 518 segment
+      whose far (northeast) end at Greenwood Ave was field-measured at 55.5 ft. The
+      sidewalks say it is much narrower down here, and that is not a measurement error -
+      a 49.2 ft walk-to-walk span cannot contain a 55.5 ft roadway. W Broad really does
+      narrow west of Greenwood. Field-measure before using this in any corridor argument.
+
+  louellen_st_west:
+    sri: "00000518__"
+    bearing_deg: 270.3
+    street_name: "Louellen Street (west of W Broad St) - CR 518"
+    curb_to_curb_ft: 34  # ESTIMATE, and the LEAST reliable one in this file - see source
+    confirmed: false
+    centerline_style: single_yellow_dashed  # NOT confirmed - repo default, retained
+                                             # rather than guessed. Needs street-view review.
+    source: >
+      ESTIMATE, not a field measurement, and flagged as the weakest width in this
+      file - do not cost anything off it. Parcel-gap method as elsewhere, but the
+      samples were NOT stable here: 129.2 ft at 50 ft out, then 50.0 ft at both 70
+      and 90 ft. The 129 ft reading is a miss (the perpendicular ray escaping between
+      parcel polygons near the corner), so the 50.0 ft median was used, minus an
+      assumed 8 ft/side sidewalk + verge. Actively contradicted by the other
+      available signal: OSM's surveyed crossing way on this leg (376498339) spans
+      78 ft end-to-end, more than double the estimate. That crossing carries the
+      junction's only marked crosswalk, so its real width is exactly what a repaint
+      or upgrade here would be costed on. FIELD-MEASURE THIS LEG before using it.
+
+  w_broad_st_southwest:
+    sri: "11000654__"   # NJDOT "MERCER COUNTY 654" - NOT Route 518; see the corridor note
+    bearing_deg: 226.7
+    street_name: "West Broad Street (southwest of Louellen St) - CR 654"
+    curb_to_curb_ft: 50  # ESTIMATE - see source
+    confirmed: false
+    centerline_style: double_yellow  # NOT confirmed - same basis as w_broad_st_northeast
+    source: >
+      ESTIMATE, not a field measurement. Parcel-gap method as elsewhere, with one
+      unstable sample: 147.2 ft at 50 ft out (a ray escaping between parcel polygons
+      near the corner), then 66.1 ft at both 70 and 90 ft. The 66.1 ft median was
+      used - the platted 66 ft ROW, same as the northeast leg - minus an assumed
+      8 ft/side sidewalk + verge. No NJDOT SLD is available for CR 654 in data/, and
+      there is no OSM crossing way on this leg to cross-check against (it is unmarked).
+
+# SIGNALIZED. As at ebroad_princeton, the primary evidence is OSM's surveyed data
+# rather than our own street-view review - see `source` for exactly what that does
+# and does not establish.
+signals:
+  pole_type: >
+    UNCONFIRMED. No street-view review has been done for this junction. Mast arm is
+    assumed because that is what was confirmed at the other CR 518 signal in the
+    borough (Broad/Greenwood), not because it was observed here.
+  source: >
+    Signalization confirmed from OSM: node 104043149 at this exact junction is
+    tagged highway=traffic_signals, traffic_signals:direction=both, and the Louellen
+    St crossing (way 376498339 / node 3674859831) is crossing=traffic_signals with
+    button_operated=no and crossing:island=no - a signalised crossing on automatic
+    recall, no pushbutton, no refuge island. That is real surveyed third-party data,
+    NOT a field survey and NOT a street-view review by us. What is NOT sourced: the
+    pole hardware type above, and the per-corner pedestrian_head placement below.
+  corners:
+    # Only the two corners that actually face the Louellen St stem are listed.
+    # build_corner_fillets() also produces a corner between w_broad_st_northeast and
+    # w_broad_st_southwest - that is the continuous southeast curb of W Broad St
+    # opposite the stem, not a street corner, and it gets no signal pole.
+    - legs: [w_broad_st_southwest, louellen_st_west]
+      pedestrian_head: same_pole   # UNCONFIRMED - see signals.source. Defaulted to
+                                    # same_pole (the majority case at Broad/Greenwood);
+                                    # verify by street view before relying on it.
+    - legs: [louellen_st_west, w_broad_st_northeast]
+      pedestrian_head: same_pole   # UNCONFIRMED - same basis as above.
+  # No no_turn_on_red_legs: nothing in OSM or the inventory records an NTOR
+  # restriction here - left empty rather than guessed either way.
+
+treatments:
+  existing_corner_radius_ft: 20  # ESTIMATE
+  existing_corner_radius_source: >
+    No survey, aerial measurement or field visit. 20 ft placeholder, same value and
+    same reasoning as sites/broad_st_greenwood: typical as-built radius for an older
+    small-borough arterial/local corner predating modern truck-accommodating design
+    standards. Mercer County parcel boundaries at these corners are straight lot
+    lines with no chamfer encoding a real curb return. Replace once actually measured.

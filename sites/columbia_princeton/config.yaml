@@ -1,0 +1,136 @@
+# Columbia Ave & Princeton Ave (CR 569), Hopewell Borough, NJ 08525.
+#
+# GROUND-TRUTH SITE. Renders EXISTING conditions from the July 2026 Hopewell
+# Crosswalk Inventory; no treatment proposal designed yet (see scenarios.py).
+# NO leg here is field-measured - the inventory took no measurements at all
+# (LIMITATIONS.md section 6). Widths are `osm_derived` where OSM's surveyed sidewalk
+# centerlines constrain them and `estimated` otherwise; see `width_provenance` on each
+# leg and sites/README.md for what those tiers mean.
+#
+# See sites/README.md for the schema.
+
+data_sources:
+  road_network: data/NJ_Roadway_Network.geojson
+  parcels: data/MercerCountyParcels.shp
+
+intersection:
+  name: "Columbia Ave & Princeton Ave (CR 569), Hopewell Borough, NJ 08525"
+  center_wgs84: [-74.7577601, 40.3891689]
+  street1: "Columbia Avenue"
+  street2: "Princeton Avenue"
+  anchor_query: "Princeton Avenue, Hopewell, NJ 08525"
+  resolution_method: >
+    OSM/Overpass shared-node match (src/sources/data_loader.py:geocode_intersection).
+    Like ebroad_princeton, this junction fails an endpoint-only match - both streets
+    run through as continuous OSM ways, and the nearest pair of way endpoints is
+    ~1,264 ft away at unrelated junctions. Cross-checked: the resolved node is 0 ft
+    from this junction's coordinate in the crosswalk inventory's own map.geojson.
+    Also worth knowing: NJDOT records Columbia Ave under SRI 11051089__ - the SAME
+    SRI as N/S Greenwood Ave, which NJDOT likewise names "COLUMBIA AVE" (see the
+    main README's key findings). Here the NJDOT name is the correct one.
+  clip_radius_m: 150
+  leg_working_length_ft: 130
+  # A full 4-leg crossing, and all four legs are marked. The inventory records
+  # exactly four crossings here (Columbia W and E, Princeton N and S) and OSM maps
+  # exactly four crossing ways, one per leg (376498284 / 376498282 / 376498356 /
+  # 376498335) - the two sources agree completely on which legs are marked.
+  #
+  # This is one of the two locations LIMITATIONS.md section 4 calls out as having
+  # been badly under-counted on the first pass: the AI agent recorded ONE crossing
+  # here, and the surveyor's review found four. Three of the four are therefore
+  # reported from memory rather than photographed (only the Columbia WEST leg,
+  # IMG_9866, has an image). Per-leg condition from the inventory:
+  #   columbia_ave_west  - "faded", poor, parallel_lines  (IMG_9866, "markings worn")
+  #   columbia_ave_east  - "yes",   fair, parallel_lines  (no photo)
+  #   princeton_ave_north- "yes",   fair, parallel_lines  (no photo)
+  #   princeton_ave_south- "yes",   poor, parallel_lines  (no photo)
+  # NOTE the style conflict: the inventory calls all four parallel_lines, but OSM
+  # tags all four crossing=zebra. LIMITATIONS.md section 3 found OSM and the
+  # surveyor agreeing against the agent everywhere they could be compared, so this
+  # disagreement is unusual and unresolved. Nothing in this config depends on it -
+  # existing crosswalk style is set per scenario, not here - but do not present the
+  # style at this junction as settled.
+  existing_marked_crosswalks:
+    ["columbia_ave_west", "columbia_ave_east", "princeton_ave_north", "princeton_ave_south"]
+
+corridor:
+  jurisdiction: "County"   # Princeton Ave is CR 569; Columbia Ave is a borough local road
+  speed_limit_mph: 25      # OSM maxspeed=25 mph on both streets
+  lanes: 2                 # OSM lanes=2 on both streets
+
+legs:
+  princeton_ave_north:
+    sri: "00000569__"
+    bearing_deg: 337.9
+    street_name: "Princeton Avenue (north of Columbia Ave, toward E Broad St)"
+    curb_to_curb_ft: 34  # ESTIMATE - see source
+    confirmed: false
+    centerline_style: single_yellow_dashed  # NOT confirmed - repo default, retained
+                                             # rather than guessed. Needs street-view review.
+    source: >
+      ESTIMATE, not a field measurement. Parcel-gap method, identical to the one
+      documented for greenwood_ave_north in sites/broad_st_greenwood/config.yaml:
+      a stable 50.0 ft parcel-to-parcel ROW gap (Mercer County parcels, sampled at
+      50/70/90 ft up the leg, zero spread - the standard 50 ft platted ROW), minus
+      an assumed 8 ft/side sidewalk + verge. No NJDOT SLD exists for CR 569 in
+      data/, so there is no corridor nominal to check against. OSM's crossing way
+      on this leg (376498356) spans 48 ft sidewalk-to-sidewalk, an upper bound only.
+
+  princeton_ave_south:
+    sri: "00000569__"
+    bearing_deg: 157.1
+    street_name: "Princeton Avenue (south of Columbia Ave)"
+    curb_to_curb_ft: 34  # ESTIMATE - see source
+    confirmed: false
+    centerline_style: single_yellow_dashed  # NOT confirmed - same basis as above
+    source: >
+      ESTIMATE, same parcel-gap methodology and the same 50.0 ft platted ROW as
+      princeton_ave_north (zero spread across samples). OSM crossing way 376498335
+      spans 47 ft sidewalk-to-sidewalk. NOT a field measurement.
+
+  columbia_ave_east:
+    sri: "11051089__"   # NJDOT's "COLUMBIA AVE" SRI - here the name is correct
+    bearing_deg: 71.0
+    street_name: "Columbia Avenue (east of Princeton Ave)"
+    curb_to_curb_ft: 34  # ESTIMATE - see source
+    confirmed: false
+    centerline_style: none
+    # NOT confirmed. Set to `none` because this is a borough local street and the
+    # one local street in this project that HAS been street-view confirmed
+    # (greenwood_ave_south, same NJDOT SRI 11051089__) has no centreline paint.
+    # That is an inference from a neighbouring segment, not an observation here.
+    source: >
+      ESTIMATE, same parcel-gap methodology: stable 50.0 ft parcel-to-parcel ROW gap
+      (zero spread across the 50/70/90 ft samples), minus an assumed 8 ft/side
+      sidewalk + verge. No NJDOT SLD exists for this local/municipal road
+      (ROUTE_SUBTYPE 7). OSM crossing way 376498282 spans 42 ft sidewalk-to-sidewalk.
+      NOT a field measurement.
+
+  columbia_ave_west:
+    sri: "11051089__"
+    bearing_deg: 252.0
+    street_name: "Columbia Avenue (west of Princeton Ave)"
+    curb_to_curb_ft: 34  # ESTIMATE - see source
+    confirmed: false
+    centerline_style: none  # NOT confirmed - same basis as columbia_ave_east
+    source: >
+      ESTIMATE, same parcel-gap methodology and the same 50.0 ft platted ROW as
+      columbia_ave_east. OSM crossing way 376498284 spans 43 ft
+      sidewalk-to-sidewalk. NOT a field measurement.
+
+# NO `signals` block: this junction is NOT signalized. OSM maps no traffic_signals
+# node here, and instead has two highway=stop nodes on the Columbia Ave approaches
+# (13778328728 eastbound-facing, 13778328729 westbound-facing) - i.e. two-way stop
+# control on Columbia, with Princeton Ave (CR 569) as the free-flowing through
+# street. All four OSM crossing ways are crossing=zebra (uncontrolled), consistent
+# with an unsignalized junction. src/render/export.py places the per-approach stop
+# signs automatically from the leg geometry.
+
+treatments:
+  existing_corner_radius_ft: 20  # ESTIMATE
+  existing_corner_radius_source: >
+    No survey, aerial measurement or field visit. 20 ft placeholder, same value and
+    same reasoning as sites/broad_st_greenwood: typical as-built radius for an older
+    small-borough local corner predating modern truck-accommodating design standards.
+    Mercer County parcel boundaries at these corners are straight lot lines with no
+    chamfer encoding a real curb return. Replace once actually measured.

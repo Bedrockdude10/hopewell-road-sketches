@@ -40,9 +40,30 @@ legs:
                                        # get this from the resolved centerline's own geometry, not a guess.
     street_name: "..."                # human-readable
     curb_to_curb_ft: <number>         # the actual width used for curb-line construction
-    confirmed: true|false             # true = field-measured/surveyed; false = geometric/estimated placeholder
-    source: >                         # REQUIRED if confirmed: false - explain the estimation methodology
-      ...                             # and REQUIRED either way - cite where curb_to_curb_ft came from
+    width_provenance: field_measured|osm_derived|estimated   # how well-sourced that width is.
+                                       # See src/provenance.py. Optional - if omitted it's inferred from
+                                       # `confirmed` below (true -> field_measured, else -> estimated), so
+                                       # older configs keep working. Prefer stating it explicitly.
+                                       #   field_measured - someone measured the real roadway. This is
+                                       #     reality: it supersedes OSM and every estimate, and nothing in
+                                       #     this repo will override it. If OSM disagrees, OSM is wrong, and
+                                       #     phase2 reports it as a CONFLICT against OSM rather than the leg.
+                                       #   osm_derived - computed from real third-party surveyed geometry
+                                       #     (sidewalk centerlines, crossing ways). Better than a guess, but
+                                       #     it measures something adjacent to what we want, so it carries
+                                       #     its own error - say what the derivation was.
+                                       #   estimated - inferred from something that only correlates (platted
+                                       #     ROW minus an assumed verge, a typical radius). Placeholder only.
+    confirmed: true|false             # legacy boolean, kept for back-compat. true == field_measured.
+    source: >                         # REQUIRED always - cite where curb_to_curb_ft came from, and if it
+      ...                             # isn't field_measured, the methodology AND its uncertainty range.
+
+    # Phase 2 cross-checks every leg against OSM's surveyed sidewalk centerlines
+    # (src/geometry/model.py:sidewalk_span_ft): the curb line must sit inside them. A
+    # width leaving under ~3 ft between the curb and the sidewalk CENTERLINE is
+    # physically impossible and is reported as IMPLAUSIBLE WIDTH. This is a bound and a
+    # sanity check, not a measurement - the curb-to-sidewalk setback measured 11.8 ft/side
+    # on one field-measured leg and 4.0 ft/side on another 100 ft away.
     centerline_style: single_yellow_dashed|double_yellow|none  # optional, defaults to single_yellow_dashed
                                        # (src/geometry/treatments.py:DEFAULT_CENTERLINE_STYLE) - what's actually
                                        # painted down the middle of this leg TODAY. No OSM tag for this; state
@@ -52,6 +73,16 @@ legs:
 signals:                              # optional - only for signalized intersections. Presence of this block
                                        # IS what "signalized" means now (replaces the old `signalized: true`
                                        # flag, which nothing downstream ever read).
+                                       #
+                                       # TRAFFIC CONTROL PRECEDENCE (src/render/props.py:build_props):
+                                       #   1. this block - direct observation, and the ONLY source that says
+                                       #      where each pole and pedestrian head actually is. Supersedes OSM.
+                                       #   2. OSM highway=stop / give_way nodes - surveyed, and they say which
+                                       #      approaches are controlled. Used wherever we have no observation.
+                                       #   3. a guess (one stop sign per approach) - only when neither exists,
+                                       #      and labelled GUESS in the prop's `source`.
+                                       # Phase 2 prints a NOTE if this block and OSM's traffic_signals node
+                                       # disagree either way. The observation wins; the note is advisory.
   pole_type: >                        # free text - what kind of signal hardware (informs blender_scene.py's
     ...                               # procedural geometry, e.g. "full-width mast arm" or "pole-mounted
                                        # rigid/davit arm" - a mast arm's reach is derived from real adjacent

@@ -76,6 +76,7 @@ legs:
     bearing_deg: 235.6
     street_name: "West Broad Street (west of Greenwood Ave)"
     curb_to_curb_ft: 55.5  # 55 ft 6 in
+    width_provenance: field_measured  # reality - supersedes OSM and any estimate (see src/provenance.py)
     confirmed: true
     centerline_style: double_yellow  # confirmed via street-view photo review, 2026-07-02
     source: >
@@ -93,6 +94,7 @@ legs:
     bearing_deg: 57.3
     street_name: "East Broad Street (east of Greenwood Ave)"
     curb_to_curb_ft: 68  # measured pedestrian crossing distance (curb-to-curb, incl. parking/shoulder zone)
+    width_provenance: field_measured  # reality - supersedes OSM and any estimate (see src/provenance.py)
     confirmed: true
     centerline_style: double_yellow  # confirmed via street-view photo review, 2026-07-02
     source: >
@@ -171,15 +173,20 @@ signals:
 # from real fillet/leg geometry. `props.extra` entries are NOT grounded in a
 # real signage inventory for this corridor - placement is a request from the
 # fidelity pass, not a surveyed fact. See src/render/export.py:_extra_props_from_config.
-props:
-  extra:
-    - type: school_zone_sign
-      leg: broad_st_west
-      offset_ft: 20
-      side: right
-      note: >
-        Placed per fidelity-pass request (west-side crossing), not confirmed
-        against a real school-zone signage inventory for this corridor.
+# REMOVED: a school_zone_sign on broad_st_west. Its own note admitted it was "placed per
+# fidelity-pass request ... not confirmed against a real school-zone signage inventory",
+# i.e. nothing recorded says a school zone sign is there. Under the project's rule that
+# nothing unattested is drawn (src/render/props.py:build_props), it does not belong in the
+# render. Restore it if a real signage inventory - or a street-view check - confirms it.
+#
+# props:
+#   extra:
+#     - type: school_zone_sign
+#       leg: broad_st_west
+#       offset_ft: 20
+#       side: right
+#       note: >
+#         Confirmed by <source>.
 
 # Phase 3 inputs.
 treatments:

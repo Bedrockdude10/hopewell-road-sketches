@@ -100,7 +100,7 @@ def main():
 
     print(f"Resolving intersection: {street1} & {street2} (anchor query: {anchor!r})")
     center = geocode_intersection(street1, street2, anchor)
-    print(f"  -> lon={center.x:.7f}, lat={center.y:.7f} (resolved via OSM way-endpoint match, not address geocoding)")
+    print(f"  -> lon={center.x:.7f}, lat={center.y:.7f} (resolved via OSM shared-node match, not address geocoding)")
     print("  Save this as intersection.center_wgs84 in the site's config.yaml.")
 
     bbox = buffer_point_wgs84(center, args.clip_radius_m * 1.3)

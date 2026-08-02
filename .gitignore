@@ -179,16 +179,28 @@ cython_debug/
 #  refer to https://docs.cursor.com/context/ignore-files
 .cursorignore
 .cursorindexingignore
-data/NJ_Roadway_Network.geojson
-data/MercerTaxList.dbf.xml
-data/MercerTaxList.dbf
-data/MercerTaxList.CPG
-data/MercerCountyParcels.shx
-data/MercerCountyParcels.shp.xml
-data/MercerCountyParcels.shp
-data/MercerCountyParcels.sbx
-data/MercerCountyParcels.sbn
-data/MercerCountyParcels.prj
-data/MercerCountyParcels.dbf
-data/MercerCountyParcels.CPG
-data/00000518__8.000-11.000.pdf
+# The whole data/ directory: large third-party inputs (NJDOT's statewide roadway
+# GeoJSON, Mercer County parcels, SLD PDFs), the indexed copies built from them by
+# scripts/convert_road_network.py, and any working screenshots. README's "Data" section
+# already describes data/ as gitignored - it was previously a per-FILE list, which is
+# fragile and had already let 22.5 MB of ad-hoc screenshots into the repo. A directory
+# rule can't miss a new file the way a filename list does.
+data/
+
+# Downloaded/derived caches under output/. .textures is 138 MB of Poly Haven CC0
+# textures and glTF models fetched by src/render/theme.py:build_default_theme(), and
+# .cache is Overpass responses - both are re-downloaded on demand and neither belongs
+# in the repo. The renders and geometry JSON in output/<site>/ ARE committed; these two
+# directories are not.
+output/.textures/
+output/.cache/
+
+# The 3D renders themselves: ~3 MB each and growing by one per proposal per site (60 MB
+# across 21 files already). They are regenerable from the committed geometry_*.json by
+# scripts/phase4_render_3d.py, so the reconstruction is preserved in git while the
+# pictures of it are not. Everything else under output/ - the geometry JSON, the phase 2
+# plan views and the phase 3 before/after plots - IS committed: small, diffable, and the
+# 2D plan view is the reviewable artifact this project checks its 3D renders against.
+output/**/phase4_render_*.png
+
+.DS_Store

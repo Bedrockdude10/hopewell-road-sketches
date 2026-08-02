@@ -10,7 +10,9 @@ from pathlib import Path
 
 from shapely.geometry import Point
 
-from src.sources.data_loader import query_overpass
+import requests
+
+from src.sources.data_loader import OVERPASS_USER_AGENT, query_overpass
 from src.geometry.model import buffer_point_wgs84
 
 DEFAULT_BUILDING_HEIGHT_M = 7.0  # ~2 stories, typical for small-borough Main St buildings
@@ -155,254 +157,239 @@ def _humanize_age(seconds: float) -> str:
     return "less than a minute"
 
 
-def fetch_buildings(center_wgs84: Point, radius_m: float, use_cache: bool = True) -> list[dict]:
-    """Fetch OSM building footprints within radius_m of a WGS84 point.
-    Returns [{"coords_wgs84": [(lon, lat), ...], "height_m": float}, ...].
+# ---------------------------------------------------------------------------
+# The borough snapshot: one request, every layer.
+# ---------------------------------------------------------------------------
+#
+# All six layers below are now VIEWS over a single download of the whole borough, rather
+# than six bbox queries each. The measurements that decided it: the entire municipality is
+# 2.86 MB and 1.25 s from api.openstreetmap.org, against 20-24 Overpass requests for a
+# strict subset of the same data - any one of which can block for minutes when the
+# volunteer mirrors are unwell, as all three were on 2026-08-02.
+#
+# Three things fall out of it beyond uptime:
+#   * ONE CONSISTENT SNAPSHOT. Every layer and every site comes from the same read, so the
+#     replication skew that mirror-pinning exists to paper over cannot happen at all.
+#   * The main OSM API is the live database, not a replica - a kerb traced a minute ago is
+#     there, which is the whole point of --refresh-osm.
+#   * A new site inside the borough costs zero extra requests.
+#
+# Overpass stays as the fallback. It filters server-side, which is genuinely nicer when it
+# is healthy.
+OSM_API_MAP = "https://api.openstreetmap.org/api/0.6/map.json"
 
-    Building footprints don't change between iterations of the same scene, and
-    the public Overpass mirrors are slow/flaky - cache the raw response to disk
-    keyed by (center, radius) so re-rendering doesn't re-hit the network."""
-    cache_path = _cache_path("buildings", center_wgs84, radius_m)
+# Hopewell Borough, with margin for the context radii (130 m) at the edge sites. 0.000364
+# sq deg against the API's 0.25 limit. Sites outside it are refused loudly rather than
+# silently returning nothing - see assert_within_snapshot.
+BOROUGH_BBOX = (-74.7760, 40.3830, -74.7500, 40.3970)   # west, south, east, north
 
-    if use_cache and _cache_hit(cache_path):
-        return _memoized(cache_path, lambda: json.loads(cache_path.read_text()))
 
-    west, south, east, north = buffer_point_wgs84(center_wgs84, radius_m)
-    query = f"""
-    [out:json][timeout:25];
-    way["building"]({south},{west},{north},{east});
-    out geom;
+class SiteOutsideSnapshotError(RuntimeError):
+    """A site's context window reaches outside the downloaded borough bbox."""
+
+
+def _snapshot_path() -> Path:
+    key = hashlib.sha1(f"borough,v1,{BOROUGH_BBOX}".encode()).hexdigest()[:16]
+    return CACHE_DIR / f"borough_{key}.json"
+
+
+def _download_snapshot() -> list[dict]:
+    """The whole borough from the OSM API, falling back to Overpass."""
+    if os.environ.get("HOPEWELL_OFFLINE"):
+        # The Overpass path is guarded inside query_overpass, but this one calls requests
+        # directly - without this the test suite would reach the network for the snapshot
+        # and quietly depend on OSM's uptime and current contents.
+        from src.sources.data_loader import OfflineCacheMiss
+        raise OfflineCacheMiss(
+            "HOPEWELL_OFFLINE is set and the borough snapshot is not in the fixture cache. "
+            "Refresh it with: cp output/.cache/borough_*.json tests/fixtures/osm_cache/")
+
+    west, south, east, north = BOROUGH_BBOX
+    try:
+        resp = requests.get(f"{OSM_API_MAP}?bbox={west},{south},{east},{north}",
+                            headers={"User-Agent": OVERPASS_USER_AGENT}, timeout=(5, 120))
+        resp.raise_for_status()
+        return resp.json()["elements"]
+    except requests.exceptions.RequestException as e:
+        print(f"  OSM API unavailable ({type(e).__name__}); falling back to Overpass")
+        # `out meta` for ways + `>` to pull their nodes: the same shape /map.json returns,
+        # so everything downstream is indifferent to which source answered.
+        return query_overpass(f"""
+        [out:json][timeout:180];
+        ( node({south},{west},{north},{east});
+          way({south},{west},{north},{east}); );
+        out body;
+        """)["elements"]
+
+
+def fetch_borough_osm(use_cache: bool = True) -> dict:
+    """{"nodes": {id: element}, "ways": [element]} for the whole borough.
+
+    Raises if any way references a node that isn't present. The OSM API completes ways
+    whose nodes fall outside the bbox, so a gap means a truncated download - and half a
+    kerb is worse than no kerb, because it looks like geometry.
     """
-    elements = query_overpass(query)["elements"]
+    cache_path = _snapshot_path()
+    if use_cache and _cache_hit(cache_path):
+        raw = _memoized(cache_path, lambda: json.loads(cache_path.read_text()))
+    else:
+        raw = _download_snapshot()
+        if use_cache:
+            _write_cache(cache_path, raw)
 
-    buildings = []
-    for el in elements:
-        geom = el.get("geometry")
-        if not geom or len(geom) < 3:
+    key = f"parsed:{cache_path}"
+    if key not in _MEMO:
+        nodes = {el["id"]: el for el in raw if el["type"] == "node"}
+        ways = [el for el in raw if el["type"] == "way"]
+        dangling = sum(1 for w in ways for nid in w.get("nodes", []) if nid not in nodes)
+        if dangling:
+            raise RuntimeError(
+                f"{dangling} way node reference(s) in the borough snapshot don't resolve - the "
+                f"download is truncated. Delete {cache_path} and re-pull; do not build geometry "
+                f"from it, the ways would come out with missing vertices.")
+        _MEMO[key] = {"nodes": nodes, "ways": ways}
+    return _MEMO[key]
+
+
+def assert_within_snapshot(center_wgs84: Point, radius_m: float) -> None:
+    """A site reaching outside the borough bbox gets NOTHING, silently, which is precisely
+    how ground truth disappears in this project. Refuse instead."""
+    west, south, east, north = buffer_point_wgs84(center_wgs84, radius_m)
+    bw, bs, be, bn = BOROUGH_BBOX
+    if west < bw or south < bs or east > be or north > bn:
+        raise SiteOutsideSnapshotError(
+            f"this site's {radius_m:.0f} m context window ({west:.5f},{south:.5f},{east:.5f},"
+            f"{north:.5f}) reaches outside the downloaded borough bbox {BOROUGH_BBOX}. Widen "
+            f"BOROUGH_BBOX in src/sources/osm_context.py and delete the cached snapshot.")
+
+
+def _in_bbox(bbox, lon: float, lat: float) -> bool:
+    west, south, east, north = bbox
+    return west <= lon <= east and south <= lat <= north
+
+
+def _way_coords(snapshot: dict, way: dict) -> list[tuple[float, float]]:
+    nodes = snapshot["nodes"]
+    return [(nodes[nid]["lon"], nodes[nid]["lat"]) for nid in way.get("nodes", [])]
+
+
+def _ways_near(center_wgs84: Point, radius_m: float, predicate) -> list[tuple[dict, list]]:
+    """[(way, coords)] for tagged ways with at least one vertex in the leg's bbox.
+
+    Same rectangle-and-any-vertex rule Overpass applies to a bbox query, so switching
+    source doesn't quietly change which elements a junction sees.
+    """
+    assert_within_snapshot(center_wgs84, radius_m)
+    snapshot = fetch_borough_osm()
+    bbox = buffer_point_wgs84(center_wgs84, radius_m)
+    out = []
+    for way in snapshot["ways"]:
+        if not predicate(way.get("tags") or {}):
             continue
-        tags = el.get("tags", {})
-        height_m = _estimate_height(tags)
-        coords = [(pt["lon"], pt["lat"]) for pt in geom]
-        buildings.append({"coords_wgs84": coords, "height_m": height_m})
+        coords = _way_coords(snapshot, way)
+        if any(_in_bbox(bbox, lon, lat) for lon, lat in coords):
+            out.append((way, coords))
+    return out
 
-    if use_cache:
-        _write_cache(cache_path, buildings)
-    return buildings
+
+def _nodes_near(center_wgs84: Point, radius_m: float, predicate) -> list[dict]:
+    assert_within_snapshot(center_wgs84, radius_m)
+    snapshot = fetch_borough_osm()
+    bbox = buffer_point_wgs84(center_wgs84, radius_m)
+    return [n for n in snapshot["nodes"].values()
+            if predicate(n.get("tags") or {}) and _in_bbox(bbox, n["lon"], n["lat"])]
+
+
+def fetch_buildings(center_wgs84: Point, radius_m: float, use_cache: bool = True) -> list[dict]:
+    """OSM building footprints near a point.
+    Returns [{"coords_wgs84": [(lon, lat), ...], "height_m": float}, ...]."""
+    out = []
+    for way, coords in _ways_near(center_wgs84, radius_m, lambda t: "building" in t):
+        if len(coords) < 3:
+            continue
+        out.append({"coords_wgs84": coords, "height_m": _estimate_height(way.get("tags") or {})})
+    return out
 
 
 def fetch_crossings(center_wgs84: Point, radius_m: float, use_cache: bool = True) -> list[dict]:
-    """Fetch OSM-mapped pedestrian crossings (highway=footway/footway=crossing
-    ways) within radius_m of a WGS84 point - real surveyed crosswalk lines,
-    rather than a geometric estimate of where one probably is.
-    Returns [{"coords_wgs84": [(lon, lat), ...], "tags": {...}}, ...]."""
-    # "v2": now carries node_ids, needed to detect nodes shared with kerb ways.
-    cache_path = _cache_path("crossings", center_wgs84, radius_m, version="v2")
-
-    if use_cache and _cache_hit(cache_path):
-        return _memoized(cache_path, lambda: json.loads(cache_path.read_text()))
-
-    west, south, east, north = buffer_point_wgs84(center_wgs84, radius_m)
-    query = f"""
-    [out:json][timeout:25];
-    way["footway"="crossing"]({south},{west},{north},{east});
-    out geom;
-    """
-    elements = query_overpass(query)["elements"]
-
-    crossings = []
-    for el in elements:
-        geom = el.get("geometry")
-        if not geom or len(geom) < 2:
-            continue
-        crossings.append({"coords_wgs84": [(pt["lon"], pt["lat"]) for pt in geom], "tags": el.get("tags", {}),
-                           "node_ids": el.get("nodes", [])})
-
-    if use_cache:
-        _write_cache(cache_path, crossings)
-    return crossings
+    """OSM-mapped pedestrian crossings (footway=crossing ways) - real surveyed crosswalk
+    lines rather than a geometric estimate of where one probably is.
+    Returns [{"coords_wgs84": [...], "tags": {...}, "node_ids": [...]}, ...]."""
+    return [{"coords_wgs84": coords, "tags": way.get("tags", {}), "node_ids": way.get("nodes", [])}
+            for way, coords in _ways_near(center_wgs84, radius_m,
+                                           lambda t: t.get("footway") == "crossing")
+            if len(coords) >= 2]
 
 
 def fetch_sidewalks(center_wgs84: Point, radius_m: float, use_cache: bool = True) -> list[dict]:
-    """Fetch OSM-mapped sidewalk centerlines (highway=footway/footway=sidewalk ways)
-    within radius_m of a WGS84 point.
-    Returns [{"coords_wgs84": [(lon, lat), ...], "tags": {...}}, ...].
+    """OSM-mapped sidewalk centerlines (footway=sidewalk ways).
 
-    These are real surveyed geometry, and they are what OSM's crossing ways actually
-    connect to - a crossing runs sidewalk-centerline to sidewalk-centerline, not
-    curb to curb. Measured across this project's sites, a crossing way's length
-    matches the sidewalk-to-sidewalk span to within 0.4-2.6 ft, which is what makes
-    the sidewalks usable as an independent check on a leg's configured width: the
-    curb line must sit INSIDE them (see src/geometry/model.py:sidewalk_span_ft).
-
-    What they cannot do is give the width directly. Calibrated against the only two
-    field-measured legs in the project, the gap between sidewalk centerline and curb
-    is 11.8 ft/side on one and 4.0 ft/side on the other - on the same street, 100 ft
-    apart. So this is a bound and a sanity check, not a measurement.
+    Real surveyed geometry, and what OSM's crossing ways actually connect to - a crossing
+    runs sidewalk-centerline to sidewalk-centerline, not curb to curb. That makes them an
+    independent bound on a leg's width (src/geometry/model.py:sidewalk_span_ft), though not
+    a measurement of it: the centerline-to-curb gap measured 11.8 ft/side on one
+    field-measured leg and 4.0 ft/side on another, on the same street 100 ft apart.
     """
-    cache_path = _cache_path("sidewalks", center_wgs84, radius_m)
-
-    if use_cache and _cache_hit(cache_path):
-        return _memoized(cache_path, lambda: json.loads(cache_path.read_text()))
-
-    west, south, east, north = buffer_point_wgs84(center_wgs84, radius_m)
-    query = f"""
-    [out:json][timeout:25];
-    way["footway"="sidewalk"]({south},{west},{north},{east});
-    out geom;
-    """
-    elements = query_overpass(query)["elements"]
-
-    sidewalks = []
-    for el in elements:
-        geom = el.get("geometry")
-        if not geom or len(geom) < 2:
-            continue
-        sidewalks.append({"coords_wgs84": [(pt["lon"], pt["lat"]) for pt in geom], "tags": el.get("tags", {})})
-
-    if use_cache:
-        _write_cache(cache_path, sidewalks)
-    return sidewalks
+    return [{"coords_wgs84": coords, "tags": way.get("tags", {})}
+            for way, coords in _ways_near(center_wgs84, radius_m,
+                                           lambda t: t.get("footway") == "sidewalk")
+            if len(coords) >= 2]
 
 
 def fetch_traffic_control(center_wgs84: Point, radius_m: float, use_cache: bool = True) -> list[dict]:
-    """Fetch OSM-mapped traffic control nodes (highway=traffic_signals / stop / give_way)
-    within radius_m of a WGS84 point.
+    """OSM traffic control nodes: highway=traffic_signals / stop / give_way / crossing.
     Returns [{"lon": float, "lat": float, "tags": {...}}, ...].
 
-    Real surveyed control, instead of guessing. src/render/props.py previously placed one
-    stop sign per approach on an arbitrary side, admitting in its own docstring that this
-    was "not a real traffic-direction/engineering placement study". At Columbia &
-    Princeton that guess is simply wrong: OSM maps exactly two stop nodes, both on
-    Columbia Ave, because Princeton Ave (CR 569) is the free-flowing through street. The
-    guess put stop signs on all four approaches, including the two that don't have them.
+    Real surveyed control instead of guessing. At Columbia & Princeton OSM maps exactly two
+    stop nodes, both on Columbia Ave, because Princeton Ave (CR 569) runs free - the old
+    one-sign-per-approach guess put stop signs on two approaches that don't have them.
 
-    A stop/give_way node sits ON the road way at the approach it governs, so it gives
-    both the leg and the real distance from the junction. A traffic_signals node normally
-    sits at the junction itself and says only THAT the junction is signalized - not where
-    the poles are - so per-corner signal hardware still comes from the site config's
-    `signals` block, which is direct observation (see props.py:_traffic_signal_props).
-
-    highway=crossing nodes are included too. They are not signs, and _osm_control_props
-    ignores them, but they are where OSM records the pedestrian-facing detail that lives
-    on the node rather than the crossing way: tactile_paving (ADA truncated domes),
-    button_operated (a pushbutton-actuated ped phase) and crossing:island. Fetching the
-    crossing WAYS alone misses all of it - which made an earlier version of data_gaps()
-    report "no ADA data" at Broad/Greenwood, where all four crossings are in fact tagged
+    highway=crossing nodes are included because that is where OSM records the
+    pedestrian-facing detail that lives on the node rather than the way: tactile_paving,
+    button_operated, crossing:island. Reading only the ways is what once made data_gaps()
+    report "no ADA data" at Broad/Greenwood, where all four crossings are tagged
     tactile_paving=yes.
     """
-    # "v2" in the key: this query grew to include highway=crossing nodes, and a cache
-    # entry written by the earlier narrower query would silently under-report.
-    cache_path = _cache_path("traffic_control", center_wgs84, radius_m, version="v2")
-
-    if use_cache and _cache_hit(cache_path):
-        return _memoized(cache_path, lambda: json.loads(cache_path.read_text()))
-
-    west, south, east, north = buffer_point_wgs84(center_wgs84, radius_m)
-    query = f"""
-    [out:json][timeout:25];
-    node["highway"~"^(traffic_signals|stop|give_way|crossing)$"]({south},{west},{north},{east});
-    out geom;
-    """
-    nodes = [
-        {"lon": el["lon"], "lat": el["lat"], "tags": el.get("tags", {})}
-        for el in query_overpass(query)["elements"] if "lon" in el and "lat" in el
-    ]
-
-    if use_cache:
-        _write_cache(cache_path, nodes)
-    return nodes
+    wanted = ("traffic_signals", "stop", "give_way", "crossing")
+    return [{"lon": n["lon"], "lat": n["lat"], "tags": n.get("tags", {})}
+            for n in _nodes_near(center_wgs84, radius_m, lambda t: t.get("highway") in wanted)]
 
 
 def fetch_street_furniture(center_wgs84: Point, radius_m: float, use_cache: bool = True) -> list[dict]:
-    """Fetch OSM-mapped street furniture (highway=street_lamp, emergency=fire_hydrant,
-    natural=tree) within radius_m of a WGS84 point.
+    """OSM street furniture: highway=street_lamp, emergency=fire_hydrant, natural=tree.
     Returns [{"lon": float, "lat": float, "tags": {...}}, ...].
 
-    STREET LAMPS ARE NOT MAPPED AT ANY OF THIS PROJECT'S FOUR SITES - a survey of every
-    OSM element within 80 m of each junction found zero highway=street_lamp nodes. This
-    fetcher exists so that a site where they ARE mapped gets real pole positions instead
-    of the derived one-per-corner placement (src/render/props.py:_corner_streetlight_props),
-    and so the absence is reported rather than quietly papered over. Mapping the lamps in
-    OSM is what would improve these four.
+    STREET LAMPS ARE NOT MAPPED AT ANY OF THIS PROJECT'S FOUR SITES. This exists so a site
+    where they ARE mapped gets real pole positions rather than a derived one-per-corner
+    placement, and so the absence is reported (see data_gaps) rather than papered over.
     """
-    # "v2": the query grew to include natural=tree, so an entry written by the earlier
-    # narrower query would silently report no trees.
-    cache_path = _cache_path("street_furniture", center_wgs84, radius_m, version="v2")
-
-    if use_cache and _cache_hit(cache_path):
-        return _memoized(cache_path, lambda: json.loads(cache_path.read_text()))
-
-    west, south, east, north = buffer_point_wgs84(center_wgs84, radius_m)
-    query = f"""
-    [out:json][timeout:25];
-    (
-      node["highway"="street_lamp"]({south},{west},{north},{east});
-      node["emergency"="fire_hydrant"]({south},{west},{north},{east});
-      node["natural"="tree"]({south},{west},{north},{east});
-    );
-    out geom;
-    """
-    nodes = [
-        {"lon": el["lon"], "lat": el["lat"], "tags": el.get("tags", {})}
-        for el in query_overpass(query)["elements"] if "lon" in el and "lat" in el
-    ]
-
-    if use_cache:
-        _write_cache(cache_path, nodes)
-    return nodes
+    def wanted(t):
+        return (t.get("highway") == "street_lamp" or t.get("emergency") == "fire_hydrant"
+                or t.get("natural") == "tree")
+    return [{"lon": n["lon"], "lat": n["lat"], "tags": n.get("tags", {})}
+            for n in _nodes_near(center_wgs84, radius_m, wanted)]
 
 
 def fetch_kerbs(center_wgs84: Point, radius_m: float, use_cache: bool = True) -> list[dict]:
-    """Fetch OSM-mapped kerb lines and kerb nodes (barrier=kerb) within radius_m.
-    Returns [{"coords_wgs84": [(lon, lat), ...] | None, "lon"/"lat" for nodes, "tags": {...}}].
+    """OSM-mapped kerb lines and kerb nodes (barrier=kerb).
+    Returns [{"coords_wgs84": [...] | None, "lon"/"lat" for nodes, "tags", "id", "node_ids"}].
 
-    A traced kerb way is the most direct geometry this project can get for two things it
-    otherwise has to guess or infer:
+    The most direct geometry this project can get: a traced kerb IS the curb, so it gives
+    the curb line, the corner radius (nothing in OSM carries a radius tag) and the position
+    of tactile paving, none of which have to be inferred from our own estimated widths.
 
-      * The CORNER RADIUS. Nothing else in OSM carries it - there is no radius tag, no
-        area:highway coverage here, and the sidewalk ways turn at a single sharp vertex.
-        A traced kerb IS the curb, so a circle fitted to it needs no verge subtraction.
-      * TACTILE PAVING position. A kerb way tagged tactile_paving=yes is the real ramp,
-        so pads can be placed on it directly instead of inferred from where a crossing
-        line leaves our (over-wide) pavement polygon.
+    Two-vertex ways are kept. A straight run of kerb is two points, and dropping them (an
+    old circle-fitting precondition applied at the wrong layer) threw away 12 of the 23
+    traced ways at two of these sites.
     """
-    # "v3": keeps 2-vertex ways, which v2 dropped (see below).
-    cache_path = _cache_path("kerbs", center_wgs84, radius_m, version="v3")
-
-    if use_cache and _cache_hit(cache_path):
-        return _memoized(cache_path, lambda: json.loads(cache_path.read_text()))
-
-    west, south, east, north = buffer_point_wgs84(center_wgs84, radius_m)
-    query = f"""
-    [out:json][timeout:25];
-    (
-      way["barrier"="kerb"]({south},{west},{north},{east});
-      node["barrier"="kerb"]({south},{west},{north},{east});
-    );
-    out geom;
-    """
-    kerbs = []
-    for el in query_overpass(query)["elements"]:
-        tags = el.get("tags", {})
-        if el["type"] == "way":
-            geom = el.get("geometry")
-            # A 2-vertex way is a straight run of kerb, and straight runs are most of what
-            # gets traced along a block. Dropping them here (the old "need 3+ points to fit
-            # anything" rule, which was really a circle-fitting precondition applied to the
-            # wrong layer) threw away 12 of the 23 traced ways at Columbia & Princeton and
-            # at E Broad & Princeton, and 5 of 12 at W Broad & Louellen - so the curb lines
-            # fell back to centerline offsets on sides the surveyor had actually traced.
-            # Consumers that genuinely need 3+ points (circle fitting) check for themselves.
-            if not geom or len(geom) < 2:
-                continue
-            kerbs.append({"coords_wgs84": [(p["lon"], p["lat"]) for p in geom], "tags": tags,
-                           "id": el["id"], "node_ids": el.get("nodes", [])})
-        elif "lon" in el:
-            kerbs.append({"coords_wgs84": None, "lon": el["lon"], "lat": el["lat"], "tags": tags,
-                           "id": el["id"]})
-
-    if use_cache:
-        _write_cache(cache_path, kerbs)
+    kerbs = [{"coords_wgs84": coords, "tags": way.get("tags", {}), "id": way["id"],
+              "node_ids": way.get("nodes", [])}
+             for way, coords in _ways_near(center_wgs84, radius_m,
+                                            lambda t: t.get("barrier") == "kerb")
+             if len(coords) >= 2]
+    kerbs += [{"coords_wgs84": None, "lon": n["lon"], "lat": n["lat"],
+               "tags": n.get("tags", {}), "id": n["id"]}
+              for n in _nodes_near(center_wgs84, radius_m, lambda t: t.get("barrier") == "kerb")]
     return kerbs
 
 

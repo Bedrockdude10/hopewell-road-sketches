@@ -53,9 +53,7 @@ from src.render.export import BUILDING_CONTEXT_RADIUS_M, KERB_RADIUS_M, TRAFFIC_
 from src.render.plan_view import legend_handles, plot_design_state
 from src.render.theme import build_default_theme
 from src.site import list_sites, load_site_config, load_site_scenarios, scenario_label, site_output_dir
-from src.sources.osm_context import (REFRESH_ENV, cache_summary, fetch_buildings, fetch_crossings,
-                                     fetch_kerbs, fetch_sidewalks, fetch_street_furniture,
-                                     fetch_traffic_control)
+from src.sources.osm_context import REFRESH_ENV, cache_summary, fetch_borough_osm, fetch_crossings
 
 # Plot resolution. 150 matches what the phase scripts write; matplotlib rasterization is
 # the single biggest cost in a 2D-only build, so --dpi 90 roughly halves it when you are
@@ -107,56 +105,33 @@ def draw_before_after(model, baseline, state, scenario_name: str, out_path: Path
 
 
 def refresh_osm_serially(sites: list[str], render_3d: bool) -> None:
-    """Re-pull every OSM layer for every site, one request at a time, in THIS process.
+    """Re-pull the borough snapshot - one request, in THIS process, before the pool starts.
 
-    Two reasons this can't live in the workers, both learned the hard way in one 30-minute
-    stall that printed nothing:
+    It used to be one request per layer per site (20-24 of them), fanned out across the
+    worker processes. That was wrong twice over: it pointed four concurrent clients at
+    shared public infrastructure, and the workers capture stdout so a fetch that blocked for
+    minutes was indistinguishable from a hang. Both were live on 2026-08-02, when all three
+    Overpass mirrors went down and the build sat silent for half an hour.
 
-    * POLITENESS. The workers exist to parallelise matplotlib and Blender. Letting them
-      parallelise the network too pointed four concurrent clients at shared, rate-limited
-      public Overpass mirrors - which is how you get throttled, and then retried, and then
-      throttled again.
-    * VISIBILITY. Worker stdout is captured so four sites don't interleave their notes into
-      an unreadable mess. That is fine for bounded CPU work and actively harmful for network
-      work that can block for minutes: a stalled fetch looked identical to a hang. Here, in
-      the parent, every layer prints as it lands.
-
-    Afterwards the cache is warm, so the workers do the whole build with no network at all.
+    Now every layer for every site is a view over one 2.9 MB download, so this is a single
+    visible round trip and the workers touch no network at all.
     """
-    layers = [("kerbs", fetch_kerbs, KERB_RADIUS_M),
-              ("crossings", fetch_crossings, BUILDING_CONTEXT_RADIUS_M),
-              ("sidewalks", fetch_sidewalks, BUILDING_CONTEXT_RADIUS_M),
-              ("traffic_control", fetch_traffic_control, TRAFFIC_CONTROL_RADIUS_M),
-              ("street_furniture", fetch_street_furniture, BUILDING_CONTEXT_RADIUS_M)]
-    if render_3d:
-        layers.append(("buildings", fetch_buildings, BUILDING_CONTEXT_RADIUS_M))
-
     os.environ[REFRESH_ENV] = "1"
-    total = len(sites) * len(layers)
-    done = 0
     started = time.perf_counter()
-    print(f"Re-pulling {total} OSM layer(s) from Overpass, one at a time")
+    print("Re-pulling the borough OSM snapshot (one request, covers every site)...",
+          end="", flush=True)
     try:
-        for site in sites:
-            centre = load_site_config(site)["intersection"]["center_wgs84"]
-            centre_point = Point(*centre)
-            for name, fetch, radius_m in layers:
-                done += 1
-                label = f"  [{done}/{total}] {site} {name}"
-                print(f"{label} ...", end="", flush=True)
-                layer_started = time.perf_counter()
-                try:
-                    count = len(fetch(centre_point, radius_m=radius_m))
-                    print(f"\r{label}: {count} element(s) in {time.perf_counter() - layer_started:.1f}s",
-                          flush=True)
-                except Exception as e:  # noqa: BLE001 - a dead mirror must not sink the build
-                    print(f"\r{label}: FAILED ({type(e).__name__}) - keeping the cached copy",
-                          flush=True)
+        snapshot = fetch_borough_osm()
+        print(f"\r  OSM snapshot: {len(snapshot['nodes'])} nodes, {len(snapshot['ways'])} ways "
+              f"in {time.perf_counter() - started:.1f}s", flush=True)
+    except Exception as e:  # noqa: BLE001 - an outage must not sink a build that can use the cache
+        print(f"\r  OSM refresh FAILED ({type(e).__name__}: {e}). Building from the cached "
+              f"snapshot instead - your latest tracing is NOT in this build.", flush=True)
     finally:
-        # The workers must not re-fetch: they'd hit the network again, in parallel, which is
-        # the whole thing this function exists to avoid.
+        # The workers must not re-fetch: they'd go to the network in parallel, which is the
+        # whole thing this function exists to avoid.
         os.environ.pop(REFRESH_ENV, None)
-    print(f"OSM refresh finished in {time.perf_counter() - started:.1f}s\n")
+    print()
 
 
 def build_site(site: str, render_3d: bool = False, dpi: int = 150,

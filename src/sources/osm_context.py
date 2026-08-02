@@ -405,3 +405,17 @@ def _estimate_height(tags: dict) -> float:
         except ValueError:
             pass
     return DEFAULT_BUILDING_HEIGHT_M
+
+
+def fetch_roads(center_wgs84: Point, radius_m: float, use_cache: bool = True) -> list[dict]:
+    """OSM highway ways near a point, with their tags and geometry.
+
+    The road ways themselves, not the furniture on them - this is where OSM records facts
+    about how the carriageway is operated rather than where things are. `overtaking=no` is
+    the one currently used: it is what a double-yellow centerline MEANS, and five ways in
+    Hopewell carry it (both Broad Streets, both Greenwood Avenues, Princeton Avenue).
+    Returns [{"coords_wgs84": [...], "tags": {...}, "id": int}, ...].
+    """
+    return [{"coords_wgs84": coords, "tags": way.get("tags", {}), "id": way["id"]}
+            for way, coords in _ways_near(center_wgs84, radius_m, lambda t: "highway" in t)
+            if len(coords) >= 2]

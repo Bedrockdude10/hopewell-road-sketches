@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 
 from shapely.geometry import Polygon
 
-from src.geometry.model import Leg, fillet_curb_corner, leg_clearance_ft
+from src.geometry.model import Leg, build_pavement_polygon, fillet_curb_corner, leg_clearance_ft
 
 NACTO_MIN_REFUGE_ISLAND_WIDTH_FT = 6
 LANE_NARROWING_DEFAULT_STRIPE_FT = 5.0  # common low-cost NACTO paint buffer/shoulder-stripe width
@@ -65,10 +65,23 @@ class DesignState:
 
     @classmethod
     def from_model(cls, model) -> "DesignState":
-        centerline_styles = {
-            name: leg_cfg.get("centerline_style", DEFAULT_CENTERLINE_STYLE)
-            for name, leg_cfg in model.config["legs"].items()
-        }
+        # A double yellow centerline IS the no-passing marking, so OSM's overtaking=no is a
+        # direct statement about what is painted on the road - better evidence than this
+        # project's dashed-line default, which was only ever a placeholder. Five ways in
+        # Hopewell carry it, covering both Broad Streets, both Greenwood Avenues and
+        # Princeton Avenue.
+        #
+        # An explicit centerline_style in config.yaml still wins: that is direct observation
+        # (src/provenance.py - if OSM disagrees with something we looked at, OSM is wrong).
+        osm_tags = getattr(model, "leg_osm_tags", {})
+        centerline_styles = {}
+        for name, leg_cfg in model.config["legs"].items():
+            if "centerline_style" in leg_cfg:
+                centerline_styles[name] = leg_cfg["centerline_style"]
+            elif osm_tags.get(name, {}).get("overtaking") == "no":
+                centerline_styles[name] = "double_yellow"
+            else:
+                centerline_styles[name] = DEFAULT_CENTERLINE_STYLE
         return cls(legs=deepcopy(model.legs), corner_fillets=deepcopy(model.corner_fillets),
                    centerline_styles=centerline_styles)
 
@@ -422,42 +435,44 @@ def add_extra_prop(state: DesignState, leg_name: str, prop_type: str, offset_ft:
 
 
 def build_sidewalk_pieces(state: DesignState, sidewalk_width_ft: float = 6) -> list[Polygon]:
+    """A sidewalk band hugging the real kerb, all the way round the junction.
+
+    Built by widening each piece of the ACTUAL pavement boundary - the same
+    (trimmed_a, arc, trimmed_b) that build_pavement_polygon walks - and cutting the roadway
+    back out. Every piece therefore follows the surveyor's traced kerb by construction,
+    including round the corner returns.
+
+    It used to re-derive the outer edge instead: same centerlines, widened by
+    2 * sidewalk_width_ft, re-filleted. That was correct only while the curbs were symmetric
+    offsets of the NJDOT centerline, and they stopped being that when they became traced
+    kerbs. Measured against the real pavement, 11-19% of the kerb had no sidewalk against it
+    at all - gaps up to 27 ft where grass ran straight up to the roadway - and at W Broad
+    658 sq ft of "sidewalk" lay inside the carriageway.
+
+    Emitted as separate pieces rather than one ring on purpose: the renderer draws a
+    polygon from its exterior only (scripts/blender/blender_scene.py:extrude_polygon), so a
+    ring-with-a-hole would come out as a slab over the whole intersection.
     """
-    Approximate sidewalk band around the pavement: re-run the fillet pipeline on
-    the same legs widened by sidewalk_width_ft per side, at (existing corner
-    radius + sidewalk_width_ft), then take each corner's arc-to-arc and
-    curb-to-curb gap as a separate sidewalk piece. This is visual context for
-    the Phase 4 render, not survey-grade geometry.
-    """
-    outer_legs = {
-        name: Leg(name=name, centerline=leg.centerline, curb_to_curb_ft=leg.curb_to_curb_ft + 2 * sidewalk_width_ft)
-        for name, leg in state.legs.items()
-    }
+    try:
+        pavement = build_pavement_polygon(state.corner_fillets)
+    except ValueError:
+        return []   # no closed roadway to lay a sidewalk against
 
     pieces = []
-    outer_by_corner = {}
-    for corner, inner in state.corner_fillets.items():
-        if "error" in inner:
+    for corner, parts in state.corner_fillets.items():
+        if "error" in parts:
             continue
-        leg_a, leg_b = corner
-        radius_ft = inner.get("radius_ft", 20) + sidewalk_width_ft
-        try:
-            trimmed_a, arc, trimmed_b = fillet_curb_corner(
-                outer_legs[leg_a].left_curb, outer_legs[leg_b].right_curb, radius_ft
-            )
-        except ValueError:
-            continue
-        outer_by_corner[corner] = {"trimmed_a": trimmed_a, "arc": arc, "trimmed_b": trimmed_b}
-        _append_band(pieces, inner["arc"], arc)
-
-    for corner, inner in state.corner_fillets.items():
-        outer = outer_by_corner.get(corner)
-        if outer is None:
-            continue
-        _append_band(pieces, inner["trimmed_a"], outer["trimmed_a"])
-        _append_band(pieces, inner["trimmed_b"], outer["trimmed_b"])
-
-    return [p for p in pieces if p.is_valid and not p.is_empty]
+        for key in ("trimmed_a", "arc", "trimmed_b"):
+            edge = parts.get(key)
+            if edge is None or edge.is_empty or edge.length <= 0:
+                continue
+            # Flat caps: a round cap would spill a half-disc past the end of each leg.
+            band = edge.buffer(sidewalk_width_ft, cap_style=2).difference(pavement)
+            if band.is_empty:
+                continue
+            pieces.extend(g for g in getattr(band, "geoms", [band])
+                          if g.geom_type == "Polygon" and g.is_valid and not g.is_empty)
+    return pieces
 
 
 def _append_band(pieces: list, inner_line, outer_line) -> None:

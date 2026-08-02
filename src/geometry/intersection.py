@@ -2,7 +2,7 @@
 from a site's config.yaml + the data sources it points to. Shared by every phase
 script, for every site - nothing in this module is specific to any one
 intersection (see sites/README.md for what a site provides instead)."""
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 import geopandas as gpd
@@ -12,9 +12,10 @@ from shapely.geometry import LineString, Point
 
 from src.sources.data_loader import load_parcels_near, load_road_network
 from src.render.coords import wgs84_to_state_plane
-from src.sources.osm_context import fetch_kerbs
+from src.sources.osm_context import fetch_kerbs, fetch_roads
 from src.geometry.model import (
     Leg,
+    _line_direction,
     assign_curb_points_to_legs,
     assign_kerbs_to_corners,
     curb_line_from_points,
@@ -42,6 +43,10 @@ class IntersectionModel:
     corner_fillets: dict
     parcels: gpd.GeoDataFrame
     corner_parcels: gpd.GeoDataFrame
+    # {leg name: OSM tags of the highway way carrying it}. How the carriageway is OPERATED,
+    # as opposed to where things are: overtaking=no is what a double-yellow centerline
+    # means, and reading it beats defaulting every leg to a dashed line.
+    leg_osm_tags: dict = field(default_factory=dict)
 
 
 def _bearing_deg(from_pt, to_pt) -> float:
@@ -59,6 +64,7 @@ def _bearing_diff(a: float, b: float) -> float:
 # the snap below is worth reporting. Sub-foot gaps are digitizing noise; anything larger
 # is a real disagreement between the two sources and worth seeing in the phase output.
 SNAP_REPORT_THRESHOLD_FT = 2.0
+ROAD_CONTEXT_RADIUS_M = 130
 KERB_CONTEXT_RADIUS_M = 120  # fetch radius, metres - generous enough to catch a whole return
 KERB_NEAR_JUNCTION_FT = 80   # but a return belonging to THIS junction is within this of centre
 KERB_PLAUSIBLE_HALF_WIDTH_FT = (8.0, 45.0)  # a kerb this far off a centerline is that leg's kerb
@@ -249,6 +255,48 @@ def _widths_from_traced_kerbs(legs: dict, kerb_lines: list, legs_cfg: dict) -> d
 UNTRACED_CORNER_THRESHOLD_FT = 35.0
 
 
+# A leg is matched to the OSM way whose geometry it lies along: within this far of the
+# leg's own centerline, and pointing the same way. Both are needed - the cross street
+# passes just as close to the junction, and a parallel service road points the same way.
+ROAD_MATCH_MAX_OFFSET_FT = 40.0
+ROAD_MATCH_MAX_ANGLE_DEG = 30.0
+
+
+def _match_legs_to_osm_roads(legs: dict, center_wgs84: Point, center_ft: Point) -> dict:
+    """{leg name: tags} for the OSM highway way each leg runs along.
+
+    Matched on geometry rather than on the street name in config.yaml: names disagree
+    between sources ("W Broad St" vs "West Broad Street"), and a leg is a piece of a
+    specific way, not of a name.
+    """
+    try:
+        roads = fetch_roads(center_wgs84, radius_m=ROAD_CONTEXT_RADIUS_M)
+    except Exception as e:  # noqa: BLE001 - operational tags are an enhancement, not a dependency
+        print(f"  NOTE: couldn't read OSM road tags ({type(e).__name__}); centerline styles "
+              f"fall back to the site config.")
+        return {}
+
+    out = {}
+    for name, leg in legs.items():
+        leg_dir = _line_direction(leg.centerline)
+        best = None
+        for road in roads:
+            xs, ys = wgs84_to_state_plane.transform([c[0] for c in road["coords_wgs84"]],
+                                                     [c[1] for c in road["coords_wgs84"]])
+            line = LineString(zip(xs, ys))
+            offset = line.distance(leg.centerline.interpolate(leg.centerline.length / 2))
+            if offset > ROAD_MATCH_MAX_OFFSET_FT:
+                continue
+            angle = np.degrees(np.arccos(np.clip(abs(np.dot(_line_direction(line), leg_dir)), -1, 1)))
+            if angle > ROAD_MATCH_MAX_ANGLE_DEG:
+                continue
+            if best is None or offset < best[0]:
+                best = (offset, road)
+        if best is not None:
+            out[name] = best[1]["tags"]
+    return out
+
+
 def _apply_traced_curb_lines(legs: dict, kerb_ways: list, center_ft: Point, working_len: float) -> None:
     """Replace a leg's derived curb lines with the surveyor's traced kerbs.
 
@@ -394,6 +442,7 @@ def load_intersection_model(config: dict | None = None, site: str | None = None)
 
     kerb_ways = kerb_lines_with_tags_ft(center, center_ft)
     _apply_traced_curb_lines(legs, kerb_ways, center_ft, working_len)
+    leg_osm_tags = _match_legs_to_osm_roads(legs, center, center_ft)
 
     radius_ft = config["treatments"]["existing_corner_radius_ft"]
     # Traced OSM kerbs give a real measured radius per corner where they exist; the
@@ -414,6 +463,7 @@ def load_intersection_model(config: dict | None = None, site: str | None = None)
         center_ft=center_ft,
         legs=legs,
         corner_fillets=corner_fillets,
+        leg_osm_tags=leg_osm_tags,
         parcels=parcels,
         corner_parcels=corner_parcels,
     )

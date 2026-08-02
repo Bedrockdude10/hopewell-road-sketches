@@ -204,3 +204,5 @@ output/.cache/
 output/**/phase4_render_*.png
 
 .DS_Store
+.DS_Store
+output/.DS_Store

@@ -53,7 +53,8 @@ from src.render.export import BUILDING_CONTEXT_RADIUS_M, KERB_RADIUS_M, TRAFFIC_
 from src.render.plan_view import legend_handles, plot_design_state
 from src.render.theme import build_default_theme
 from src.site import list_sites, load_site_config, load_site_scenarios, scenario_label, site_output_dir
-from src.sources.osm_context import REFRESH_ENV, cache_summary, fetch_borough_osm, fetch_crossings
+from src.sources.osm_context import (REFRESH_ENV, cache_summary, fetch_borough_osm,
+                                     fetch_buildings, fetch_crossings)
 
 # Plot resolution. 150 matches what the phase scripts write; matplotlib rasterization is
 # the single biggest cost in a 2D-only build, so --dpi 90 roughly halves it when you are
@@ -202,7 +203,9 @@ def main():
     parser.add_argument("--site", action="append", help="limit to this site (repeatable)")
     parser.add_argument("--render-3d", action="store_true", help="also run the Blender renders")
     parser.add_argument("--jobs", type=int, default=4,
-                        help="parallel worker processes, for both the 2D build and Blender (default 4)")
+                        help="parallel worker processes for the 2D build (default 4)")
+    parser.add_argument("--render-jobs", type=int, default=None,
+                        help="parallel Blender processes (default: derived from RAM, ~11 GB each)")
     parser.add_argument("--dpi", type=int, default=PLOT_DPI,
                         help=f"plan-view resolution (default {PLOT_DPI}; try 90 while iterating)")
     parser.add_argument("--refresh-osm", action="store_true",
@@ -232,13 +235,18 @@ def main():
             blender_jobs += site_jobs
 
     if blender_jobs:
-        from scripts.phase4_render_3d import find_blender, render_all
+        from scripts.phase4_render_3d import blender_job_limit, find_blender, render_all
         blender_bin = find_blender()
-        print(f"Rendering {len(blender_jobs)} scene(s) via {blender_bin} ({args.jobs} at a time)")
+        # Deliberately NOT --jobs. That number sizes matplotlib workers, which cost a few
+        # hundred MB; Blender costs ~11 GB. Sharing one number is how four renders asked for
+        # 44 GB on a 36 GB machine and were all OOM-killed.
+        render_jobs = blender_job_limit(args.render_jobs)
+        print(f"Rendering {len(blender_jobs)} scene(s) via {blender_bin} "
+              f"({render_jobs} at a time, ~11 GB each)")
         # Blender dominates the wall clock (~17 s per scene against ~0.25 s of geometry) and
         # each render is an independent subprocess, so this is where parallelism pays.
-        chunks = [blender_jobs[i::args.jobs] for i in range(args.jobs)]
-        with ThreadPoolExecutor(max_workers=args.jobs) as pool:
+        chunks = [blender_jobs[i::render_jobs] for i in range(render_jobs)]
+        with ThreadPoolExecutor(max_workers=render_jobs) as pool:
             for future in [pool.submit(render_all, blender_bin, chunk) for chunk in chunks if chunk]:
                 try:
                     future.result()

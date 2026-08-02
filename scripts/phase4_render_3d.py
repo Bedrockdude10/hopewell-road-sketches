@@ -17,6 +17,7 @@ Requires Blender on PATH, or set BLENDER_BIN to the executable
 import argparse
 import os
 import shutil
+import signal
 import subprocess
 import sys
 from pathlib import Path
@@ -48,16 +49,56 @@ def find_blender() -> str:
     )
 
 
+# Peak resident memory of one headless Blender rendering these scenes, measured on this
+# project's own output: ~11 GB, dominated by the 4k near-zone textures and the ~80-100
+# building meshes. Used to decide how many can run at once - see blender_job_limit.
+BLENDER_PEAK_RAM_GB = 11
+# Left for the OS and whatever else is open. Without it a "safe" job count still pushes the
+# machine into swap, which is slower than rendering serially.
+RAM_HEADROOM_GB = 8
+
+
+def blender_job_limit(requested: int | None = None) -> int:
+    """How many Blender processes this machine can actually hold at once.
+
+    Blender is not the kind of job you scale to core count. At ~11 GB peak each, four
+    instances need 44 GB; on a 36 GB machine that exhausted RAM and all 7 GB of swap, and
+    the OOM killer took every one of them - surfacing as `zsh: terminated` and exit 137,
+    which look nothing like "out of memory" unless you already suspect it.
+    """
+    if requested:
+        return max(1, requested)
+    try:
+        total_gb = os.sysconf("SC_PAGE_SIZE") * os.sysconf("SC_PHYS_PAGES") / 1024 ** 3
+    except (ValueError, OSError, AttributeError):
+        return 1  # can't tell: the safe answer is one at a time
+    return max(1, int((total_gb - RAM_HEADROOM_GB) // BLENDER_PEAK_RAM_GB))
+
+
 def render_all(blender_bin: str, jobs: list[tuple[Path, Path]]):
     """Render every (geometry.json, output.png) job in a single Blender process -
     each launch has ~1-1.5s of fixed startup overhead, not worth paying per-render."""
     args = [str(p) for pair in jobs for p in pair]
     cmd = [blender_bin, "--background", "--python", str(BLENDER_SCENE_SCRIPT), "--", *args]
     result = subprocess.run(cmd, capture_output=True, text=True)
-    if result.returncode != 0 or result.stdout.count("RENDER_DONE") != len(jobs):
+    rendered = result.stdout.count("RENDER_DONE")
+    if result.returncode != 0 or rendered != len(jobs):
+        scenes = ", ".join(out.name for _, out in jobs)
+        # A negative return code is death by signal, and -9 is the OOM killer. Saying so is
+        # the difference between a five-minute fix and an afternoon: Blender's own output
+        # says nothing, because it never got to run its error handling.
+        if result.returncode == -signal.SIGKILL:
+            raise RuntimeError(
+                f"Blender was killed by the OS (SIGKILL) after {rendered}/{len(jobs)} scene(s) - "
+                f"almost always out of memory. Each instance peaks around "
+                f"{BLENDER_PEAK_RAM_GB} GB; lower --render-jobs. Scenes in this batch: {scenes}")
+        if result.returncode < 0:
+            raise RuntimeError(f"Blender was killed by signal {-result.returncode} after "
+                               f"{rendered}/{len(jobs)} scene(s). Scenes: {scenes}")
         print(result.stdout[-3000:])
         print(result.stderr[-3000:])
-        raise RuntimeError("Blender render failed")
+        raise RuntimeError(f"Blender render failed after {rendered}/{len(jobs)} scene(s). "
+                           f"Scenes in this batch: {scenes}")
     for _, output_path in jobs:
         print(f"Rendered {output_path}")
 

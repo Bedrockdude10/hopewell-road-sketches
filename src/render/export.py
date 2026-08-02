@@ -13,7 +13,7 @@ from shapely.geometry import Point, Polygon
 
 from src.render.coords import FT_TO_M, building_footprint_ft, pt_to_local_m, ring_to_local_m, wgs84_ring_to_local_m
 from src.render.crosswalks import (CROSSWALK_CLEARANCE_FT, CROSSWALK_DEPTH_M, STOP_BAR_CURB_CLEARANCE_M,
-                                   crosswalk_bands_ft, stop_bar_bands_ft,
+                                   crosswalk_bands_ft, crosswalk_reaches_ft, stop_bar_bands_ft,
                                    resolve_crosswalk_offsets, resolve_crosswalk_skews,
                                    resolve_stop_bar_offsets, stop_bar_width_ft)
 from src.geometry.model import (
@@ -90,6 +90,7 @@ def export_scenario(model: IntersectionModel, state: DesignState, name: str, out
         street_furniture = fetch_street_furniture(model.center_wgs84, radius_m=BUILDING_CONTEXT_RADIUS_M)
     crosswalk_offsets = resolve_crosswalk_offsets(state, crossings)
     crosswalk_skews = resolve_crosswalk_skews(state, crossings)
+    crosswalk_reaches = crosswalk_reaches_ft(state, crosswalk_offsets, crosswalk_skews)
     # Stop bars only make sense at a signalized intersection (this site's
     # config.yaml `signals` block is what "signalized" means - see
     # src/render/props.py's _traffic_signal_props/_no_turn_on_red_props, which gate
@@ -332,6 +333,16 @@ def export_scenario(model: IntersectionModel, state: DesignState, name: str, out
                 # (src/render/crosswalks.py:_crossing_skew_deg). 0 for a leg with no
                 # matched crossing - we don't invent an orientation we didn't survey.
                 "crosswalk_skew_deg": crosswalk_skews.get(leg_name, 0.0),
+                # How far the crossing actually runs to each kerb, left and right of the
+                # centerline. A crosswalk goes kerb to kerb, and since the curb lines became
+                # the surveyor's traced kerbs they are neither symmetric about NJDOT's
+                # centerline nor at the nominal half-width - so `width_m` alone drew a
+                # crossing that stopped short of the kerb on one side. See
+                # src/render/crosswalks.py:crosswalk_reach_to_curbs_ft.
+                "crosswalk_reach_left_m": crosswalk_reaches.get(leg_name, (None, None))[0] * FT_TO_M
+                    if leg_name in crosswalk_reaches else None,
+                "crosswalk_reach_right_m": crosswalk_reaches.get(leg_name, (None, None))[1] * FT_TO_M
+                    if leg_name in crosswalk_reaches else None,
                 # A treatment (e.g. upgrade_crosswalk_markings) can override the style;
                 # otherwise default to what OSM says exists today ("lines" if unmapped).
                 "crosswalk_style": state.crosswalk_styles.get(leg_name, "lines"),

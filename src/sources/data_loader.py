@@ -50,6 +50,16 @@ INTERSECTION_MATCH_TOLERANCE_DEG = 0.0007
 
 _pinned_mirror: list[str] = []
 
+# How long to wait for the TCP handshake, separately from the read. Overpass queries can
+# legitimately take tens of seconds to ANSWER, but connecting is either quick or the mirror
+# is not there.
+CONNECT_TIMEOUT_S = 5
+
+# Mirrors that have already failed their whole retry budget this run. Without this, every
+# subsequent layer pays the same dead mirror's timeouts again - six layers x four sites was
+# a 30+ minute stall against one unreachable host.
+_dead_mirrors: set[str] = set()
+
 
 def query_overpass(query: str, attempts_per_mirror: int = 4, timeout: int = 30) -> dict:
     """POST an Overpass QL query, retrying across mirrors on timeout/5xx errors.
@@ -78,19 +88,36 @@ def query_overpass(query: str, attempts_per_mirror: int = 4, timeout: int = 30) 
                + [m for m in OVERPASS_MIRRORS if m not in _pinned_mirror])
     last_error = None
     for mirror in ordered:
+        host = mirror.split("//")[1].split("/")[0]
+        if host in _dead_mirrors:
+            continue  # already proved unreachable this run; don't pay the timeout again
         for attempt in range(attempts_per_mirror):
             try:
                 resp = requests.post(
-                    mirror, data={"data": query}, headers={"User-Agent": OVERPASS_USER_AGENT}, timeout=timeout
+                    mirror, data={"data": query}, headers={"User-Agent": OVERPASS_USER_AGENT},
+                    # (connect, read). A mirror that is blackholing packets never completes
+                    # the TCP handshake, and a single 30 s number spent the whole budget
+                    # there: one editing session sat 10+ minutes in SYN_SENT against
+                    # overpass.kumi.systems with nothing printed. A connect is either fast
+                    # or not happening; a read legitimately takes a while.
+                    timeout=(CONNECT_TIMEOUT_S, timeout),
                 )
                 resp.raise_for_status()
                 if not _pinned_mirror:
                     _pinned_mirror.append(mirror)
-                    print(f"  Overpass: using {mirror.split('//')[1].split('/')[0]} "
+                    print(f"  Overpass: using {host} "
                           f"(pinned for this run so every fetch sees one replication state)")
                 return resp.json()
             except (requests.exceptions.RequestException, requests.exceptions.HTTPError) as e:
                 last_error = e
+                # Say so as it happens. A retry loop that prints nothing is indistinguishable
+                # from a hang, which is exactly how this failure presented.
+                print(f"  Overpass: {host} attempt {attempt + 1}/{attempts_per_mirror} failed "
+                      f"({type(e).__name__}); {'retrying' if attempt + 1 < attempts_per_mirror else 'giving up on it'}",
+                      flush=True)
+                if isinstance(e, requests.exceptions.ConnectTimeout):
+                    break  # unreachable, not busy - further attempts just burn the budget
+        _dead_mirrors.add(host)
     raise RuntimeError(f"All Overpass mirrors failed after retries. Last error: {last_error}")
 
 

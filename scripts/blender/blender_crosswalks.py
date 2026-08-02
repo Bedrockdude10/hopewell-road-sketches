@@ -92,7 +92,11 @@ def add_crosswalk_lines(name: str, near, u, n, width_m: float, material, offset_
     bars in between - the least visible of the three styles (FHWA/NACTO recommend
     upgrading this to continental or ladder for visibility, hence it being the
     'existing conditions' style here while proposed treatments upgrade it)."""
-    line_width = max(width_m - 1.0, 0.5)
+    # Full width: a transverse crossing's two boundary lines are painted kerb to kerb.
+    # They were inset by 1.0 m (~3.3 ft) total, which at this scale reads as a floating
+    # box that stops short of the kerb - not what is on the street, and not what OSM's
+    # crossing ways show either.
+    line_width = max(width_m, 0.5)
     center = near + u * offset_m
     for side, sign in [("near", -1), ("far", 1)]:
         line_center = center + u * (sign * depth_m / 2)
@@ -108,7 +112,8 @@ CROSSWALK_STYLES = {
 
 
 def add_crosswalk(name: str, near, u, n, width_m: float, material, offset_m: float = 3.0, style: str = "lines",
-                   depth_m: float = CROSSWALK_DEPTH_FALLBACK_M, skew_deg: float = 0.0):
+                   depth_m: float = CROSSWALK_DEPTH_FALLBACK_M, skew_deg: float = 0.0,
+                   reach_left_m: float = None, reach_right_m: float = None):
     """`depth_m` is forwarded from the geometry JSON's `crosswalk_depth_m`, which
     src/render/export.py writes from src/render/crosswalks.py:CROSSWALK_DEPTH_M - the
     same constant src/render/plan_view.py draws the 2D crosswalk from, so the plan
@@ -116,10 +121,22 @@ def add_crosswalk(name: str, near, u, n, width_m: float, material, offset_m: flo
     centre = near + u * offset_m
     u_s, n_s, span_factor = _skewed_axes(u, n, skew_deg)
     draw_fn = CROSSWALK_STYLES.get(style, add_crosswalk_lines)
+
+    # A crosswalk runs kerb to kerb, and the kerbs are the surveyor's traced ones - neither
+    # symmetric about the leg centerline nor at half the nominal width. `reach_*_m` carry
+    # the real distance to each kerb (src/render/crosswalks.py:crosswalk_reach_to_curbs_ft);
+    # re-centring on the midpoint of the two and spanning their sum is what makes the
+    # painted crossing actually meet the kerb on both sides instead of stopping short.
+    if reach_left_m is not None and reach_right_m is not None:
+        centre = centre + n_s * ((reach_left_m - reach_right_m) / 2)
+        span_m = reach_left_m + reach_right_m
+    else:
+        span_m = width_m * span_factor
+
     # offset_m=0 because `centre` already has the offset applied along the UNSKEWED
     # axis - rotating first and then stepping out would move the crosswalk along the
     # leg as well as turning it.
-    draw_fn(name, centre, u_s, n_s, width_m * span_factor, material, offset_m=0.0, depth_m=depth_m)
+    draw_fn(name, centre, u_s, n_s, span_m, material, offset_m=0.0, depth_m=depth_m)
 
 
 def add_stop_bar(name: str, near, u, n, width_m: float, material, offset_m: float, line_width_m: float = 0.5,

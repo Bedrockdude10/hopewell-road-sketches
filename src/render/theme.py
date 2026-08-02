@@ -4,6 +4,8 @@ own bundled Python has no network access / requests / this project's venv, so
 blender_scene.py never fetches anything itself - it only reads the local paths
 this module resolves, with every entry allowed to be None (asset unavailable ->
 blender_scene.py falls back to a flat color / procedural shape)."""
+from functools import lru_cache
+
 from src.render.assets import fetch_polyhaven_model, fetch_polyhaven_texture
 
 # Poly Haven slugs chosen by browsing api.polyhaven.com/assets?t=textures - see
@@ -28,12 +30,19 @@ def _texture_paths(slug: str, resolution: str) -> dict[str, str] | None:
     return {k: str(v) for k, v in paths.items()}
 
 
+@lru_cache(maxsize=1)
 def build_default_theme() -> dict:
     """{"asphalt_near": {...} | None, "asphalt_far": ..., "concrete_near": ...,
     "concrete_far": ..., "apron_near": ..., "apron_far": ...,
     "streetlight_gltf": str | None}. Fetched once and shared across every
     scenario export for a render (the assets don't vary per-scenario) - see
-    scripts/phase4_render_3d.py."""
+    scripts/phase4_render_3d.py.
+
+    Cached for the life of the process. The assets are the same for every site and every
+    scenario, but this was called once per site, so a four-site 3D build repeated the whole
+    resolution twice over. The returned dict is treated as read-only by every caller (it is
+    serialized into the geometry JSON, never mutated).
+    """
     return {
         "asphalt_near": _texture_paths(ASPHALT_SLUG, NEAR_RESOLUTION),
         "asphalt_far": _texture_paths(ASPHALT_SLUG, FAR_RESOLUTION),

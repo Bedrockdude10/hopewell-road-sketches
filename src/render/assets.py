@@ -28,6 +28,25 @@ def _get_json(url: str) -> dict | None:
         return None
 
 
+# One manifest per slug, per process. Poly Haven's /files/<slug> response covers every
+# resolution of an asset, but this module asks for one resolution at a time - so the same
+# manifest was being fetched once per resolution (3 of every 7 requests were exact
+# duplicates within a single build_default_theme call).
+_manifests: dict[str, dict | None] = {}
+
+
+def _manifest(slug: str) -> dict | None:
+    if slug not in _manifests:
+        _manifests[slug] = _get_json(f"{POLYHAVEN_API}/files/{slug}")
+    return _manifests[slug]
+
+
+def _texture_dest(slug: str, resolution: str, map_name: str) -> Path:
+    """Where a texture map lands on disk. Fully determined by (slug, resolution, map) - no
+    manifest needed - which is what lets a warm cache skip the network entirely."""
+    return CACHE_DIR / slug / resolution / f"{slug}_{map_name}_{resolution}.jpg"
+
+
 def _download(url: str, dest: Path) -> bool:
     if dest.exists():
         return True
@@ -45,18 +64,26 @@ def fetch_polyhaven_texture(slug: str, resolution: str = "2k",
                              maps: tuple[str, ...] = ("Diffuse", "Rough", "nor_gl")) -> dict[str, Path] | None:
     """Download (or reuse cached) Diffuse/Roughness/Normal jpgs for a Poly Haven
     texture at the given resolution. Returns {"Diffuse": path, "Rough": path,
-    "nor_gl": path} or None if the asset/network is unavailable."""
-    manifest = _get_json(f"{POLYHAVEN_API}/files/{slug}")
+    "nor_gl": path} or None if the asset/network is unavailable.
+
+    Checks the disk BEFORE the network. The manifest fetch used to come first, so a fully
+    cached theme still made 7 HTTPS round trips per call - asking the API to describe files
+    already sitting in output/.textures - and 3D rendering couldn't work offline at all.
+    """
+    dests = {map_name: _texture_dest(slug, resolution, map_name) for map_name in maps}
+    if all(dest.exists() for dest in dests.values()):
+        return dests
+
+    manifest = _manifest(slug)
     if manifest is None:
         return None
 
     out = {}
-    for map_name in maps:
+    for map_name, dest in dests.items():
         try:
             file_info = manifest[map_name][resolution]["jpg"]
         except KeyError:
             return None
-        dest = CACHE_DIR / slug / resolution / f"{slug}_{map_name}_{resolution}.jpg"
         if not _download(file_info["url"], dest):
             return None
         out[map_name] = dest
@@ -67,20 +94,22 @@ def fetch_polyhaven_model(slug: str, resolution: str = "1k") -> Path | None:
     """Download (or reuse cached) a Poly Haven model as a glTF bundle (the .gltf
     JSON + its .bin + referenced textures, preserving the relative folder layout
     the glTF expects). Returns the local path to the .gltf file, or None."""
-    manifest = _get_json(f"{POLYHAVEN_API}/files/{slug}")
+    model_dir = CACHE_DIR / "models" / f"{slug}_{resolution}"
+    gltf_path = model_dir / f"{slug}_{resolution}.gltf"
+    manifest_path = model_dir / "_manifest.json"  # marks a fully-downloaded bundle
+
+    # The completed-bundle marker is checked first now. This test already existed but sat
+    # BELOW the manifest fetch, so it saved the file downloads and nothing else.
+    if manifest_path.exists():
+        return gltf_path
+
+    manifest = _manifest(slug)
     if manifest is None:
         return None
     try:
         gltf_entry = manifest["gltf"][resolution]["gltf"]
     except KeyError:
         return None
-
-    model_dir = CACHE_DIR / "models" / f"{slug}_{resolution}"
-    gltf_path = model_dir / f"{slug}_{resolution}.gltf"
-    manifest_path = model_dir / "_manifest.json"  # marks a fully-downloaded bundle
-
-    if manifest_path.exists():
-        return gltf_path
 
     if not _download(gltf_entry["url"], gltf_path):
         return None

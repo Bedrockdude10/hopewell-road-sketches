@@ -21,7 +21,8 @@ from src.render.crosswalks import (CROSSWALK_CLEARANCE_FT, CROSSWALK_DEPTH_M, ST
                                    resolve_crosswalk_skews, resolve_stop_bar_offsets,
                                    stop_bar_band_geometry_ft, stop_bar_width_ft)
 from src.sources.osm_context import (fetch_crossings, fetch_kerbs, fetch_sidewalks,
-                                     fetch_street_furniture, fetch_traffic_control)
+                                     fetch_stop_lines, fetch_street_furniture,
+                                     fetch_traffic_control)
 
 TRAFFIC_CONTROL_RADIUS_M = 60  # matches src/render/export.py
 BUILDING_CONTEXT_RADIUS_M = 130  # matches src/render/export.py - same real-world radius crossings are searched
@@ -186,7 +187,9 @@ def _draw_crosswalks(ax, model: IntersectionModel, state: DesignState, crosswalk
 
     # Stop bars, on the same terms the export uses: signalized sites only.
     if model.config.get("signals"):
-        for leg_name, stop_offset_ft in resolve_stop_bar_offsets(state, crosswalk_offsets).items():
+        stop_lines = fetch_stop_lines(model.center_wgs84, radius_m=BUILDING_CONTEXT_RADIUS_M)
+        for leg_name, stop_offset_ft in resolve_stop_bar_offsets(
+                state, crosswalk_offsets, stop_lines).items():
             # A stop bar covers only the ENTERING half of the roadway - a driver stops
             # in their own lanes, never across the opposing ones. Sized and positioned
             # from the same shared rule blender_crosswalks.add_stop_bar uses, so the 2D
@@ -447,7 +450,9 @@ def _mark_violations(ax, model, state, crossings, props):
         pavement = None
     offsets = resolve_crosswalk_offsets(state, crossings)
     skews = resolve_crosswalk_skews(state, crossings)
-    stop_offsets = resolve_stop_bar_offsets(state, offsets) if model.config.get("signals") else {}
+    stop_offsets = (resolve_stop_bar_offsets(
+        state, offsets, fetch_stop_lines(model.center_wgs84, radius_m=BUILDING_CONTEXT_RADIUS_M))
+        if model.config.get("signals") else {})
 
     violations = check_scene(
         model, state, props, pavement,

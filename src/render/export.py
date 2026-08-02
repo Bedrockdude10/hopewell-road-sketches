@@ -13,7 +13,8 @@ from shapely.geometry import Point, Polygon
 
 from src.render.coords import FT_TO_M, building_footprint_ft, pt_to_local_m, ring_to_local_m, wgs84_ring_to_local_m
 from src.render.crosswalks import (CROSSWALK_CLEARANCE_FT, CROSSWALK_DEPTH_M, STOP_BAR_CURB_CLEARANCE_M,
-                                   crosswalk_bands_ft, crosswalk_reaches_ft, stop_bar_bands_ft,
+                                   centerline_start_ft, crosswalk_bands_ft, crosswalk_reaches_ft,
+                                   stop_bar_bands_ft,
                                    resolve_crosswalk_offsets, resolve_crosswalk_skews,
                                    resolve_stop_bar_offsets, stop_bar_width_ft)
 from src.geometry.model import (
@@ -24,13 +25,14 @@ from src.geometry.model import (
 from src.geometry.intersection import IntersectionModel, kerb_lines_with_tags_ft
 from src.render.mesh_utils import build_decimated_building_mesh
 from src.sources.osm_context import (fetch_buildings, fetch_crossings, fetch_kerbs,
-                                     fetch_street_furniture, fetch_traffic_control)
+                                     fetch_stop_lines, fetch_street_furniture, fetch_traffic_control)
 from src.checks import assert_scene_valid
 from src.render.props import build_props, control_nodes_ft, osm_tree_points_ft
 from src.geometry.treatments import DEFAULT_CENTERLINE_STYLE, LEGAL_PARKING_SETBACK_FT, DesignState, build_sidewalk_pieces
 
 BUILDING_CONTEXT_RADIUS_M = 130
 KERB_RADIUS_M = 120
+STOP_LINE_RADIUS_M = 130  # a bar governing this junction sits 33-67 ft out; this is generous
 TRAFFIC_CONTROL_RADIUS_M = 60  # control nodes govern THIS junction; a wider net just pulls in neighbours
 SIDEWALK_WIDTH_FT = 6
 NEAR_ZONE_BUFFER_FT = 10  # how far past the farthest crosswalk the "near" (4k texture) pavement zone extends
@@ -95,7 +97,10 @@ def export_scenario(model: IntersectionModel, state: DesignState, name: str, out
     # config.yaml `signals` block is what "signalized" means - see
     # src/render/props.py's _traffic_signal_props/_no_turn_on_red_props, which gate
     # the same way).
-    stop_bar_offsets = resolve_stop_bar_offsets(state, crosswalk_offsets) if model.config.get("signals") else {}
+    stop_bar_offsets = (resolve_stop_bar_offsets(
+        state, crosswalk_offsets,
+        fetch_stop_lines(model.center_wgs84, radius_m=STOP_LINE_RADIUS_M))
+        if model.config.get("signals") else {})
 
     # OSM building footprints are independent of (and coarser than) our SLD/field-measured
     # curb geometry - a few end up drawn overlapping the actual pavement. Drop those rather
@@ -357,6 +362,12 @@ def export_scenario(model: IntersectionModel, state: DesignState, name: str, out
                 # Real per-leg fact from config.yaml (street-view confirmed), not an OSM tag - see
                 # src/geometry/treatments.py:set_centerline_style / DEFAULT_CENTERLINE_STYLE.
                 "centerline_style": state.centerline_styles.get(leg_name, DEFAULT_CENTERLINE_STYLE),
+                # Where the centerline paint starts. Resolved here, not in Blender, so the
+                # rule ("stop at the stop bar") lives with the geometry and is testable -
+                # see src/render/crosswalks.py:centerline_start_ft.
+                "centerline_start_m": centerline_start_ft(
+                    crosswalk_offsets[leg_name][0],
+                    stop_bar_offsets.get(leg_name)) * FT_TO_M,
             }
             for leg_name, leg in state.legs.items()
         ],

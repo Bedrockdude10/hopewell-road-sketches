@@ -419,3 +419,17 @@ def fetch_roads(center_wgs84: Point, radius_m: float, use_cache: bool = True) ->
     return [{"coords_wgs84": coords, "tags": way.get("tags", {}), "id": way["id"]}
             for way, coords in _ways_near(center_wgs84, radius_m, lambda t: "highway" in t)
             if len(coords) >= 2]
+
+
+def fetch_stop_lines(center_wgs84: Point, radius_m: float, use_cache: bool = True) -> list[dict]:
+    """OSM-mapped stop bars (road_marking=stop_line ways) near a point.
+
+    A surveyed stop bar gives all three things this project was previously deriving: how far
+    back from the junction it sits, how wide it is, and which half of the roadway it covers.
+    The derived version could only ever place it a fixed setback behind the crosswalk.
+    Returns [{"coords_wgs84": [...], "tags": {...}, "id": int}, ...].
+    """
+    return [{"coords_wgs84": coords, "tags": way.get("tags", {}), "id": way["id"]}
+            for way, coords in _ways_near(center_wgs84, radius_m,
+                                           lambda t: t.get("road_marking") == "stop_line")
+            if len(coords) >= 2]

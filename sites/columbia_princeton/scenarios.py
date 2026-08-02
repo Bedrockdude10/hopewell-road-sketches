@@ -11,8 +11,7 @@ measured, so treat the lane/parking dimensions below as a design study rather th
 construction drawing.
 """
 from src.geometry.treatments import (
-    DesignState, add_lane_narrowing, add_marked_parking, add_mountable_apron,
-    upgrade_crosswalk_markings,
+    DesignState, add_lane_narrowing, add_marked_parking, apply_osm_parking, upgrade_crosswalk_markings,
 )
 
 TARGET_LANE_WIDTH_FT = 11.0   # NACTO/AASHTO urban minimum travel lane - the width the road diet aims at
@@ -66,49 +65,18 @@ def _parking_and_narrowing(state: DesignState) -> DesignState:
     return state
 
 
-def build_proposal_1_continental(baseline: DesignState) -> DesignState:
-    """Proposal 1 - continental crosswalks only.
+def build_demo_scenario(baseline: DesignState, model=None) -> DesignState:
+    """Default scenario for phase3/phase4 when no --scenario is given.
 
-    The lowest-cost option: repaint the existing crosswalks from their current parallel-
-    line markings to continental (FHWA/NACTO treat this as a visibility upgrade). No curb,
-    pavement or lane geometry changes at all, so nothing here needs survey work first.
+    The named proposals were cleared for re-audit, so this is no longer a proposal: it just
+    paints each kerb the way OSM says it is used - crossed hatching where parking is
+    restricted, marked stalls where it isn't. Every mark here is derived from surveyed data,
+    so nothing in it is a design choice waiting to be reviewed.
+
+    Needs the model for the OSM tags, so it falls back to the untouched baseline when called
+    with a state alone (the older single-argument convention).
     """
-    return _continental_everywhere(baseline)
+    if model is None:
+        return baseline
+    return apply_osm_parking(baseline, model)
 
-
-def build_proposal_2_continental_parking_narrowing(baseline: DesignState) -> DesignState:
-    """Proposal 2 - continental crosswalks + 11 ft lanes + marked parking.
-
-    Proposal 1, plus a paint-only road diet: travel lanes narrowed to 11 ft and the
-    recovered width marked as parallel parking (see _parking_and_narrowing for how legs
-    too narrow for a stall are handled). Still entirely paint - no curb is moved - so it
-    stays reversible and cheap, but it narrows the visual carriageway, which is the part
-    that actually slows traffic.
-    """
-    return _parking_and_narrowing(_continental_everywhere(baseline))
-
-
-def build_proposal_3_continental_parking_narrowing_bulbouts(baseline: DesignState) -> DesignState:
-    """Proposal 3 - Proposal 2 + mountable pedestrian bulb-outs at every corner.
-
-    add_mountable_apron builds a textured curb extension that is FLUSH WITH GRADE rather
-    than a poured kerb, so a fire apparatus or a turning truck can simply drive over it
-    while it still visually narrows the corner and shortens the pedestrian crossing. That
-    was the explicit requirement here: bulb-outs emergency vehicles can mount.
-
-    It's the most substantial of the three, but still reversible - no drainage work, no
-    kerb reconstruction. Corners whose fillet failed to build are skipped by
-    add_mountable_apron's consumers (src/render/export.py, plan_view.py).
-    """
-    state = build_proposal_2_continental_parking_narrowing(baseline)
-    for corner in list(state.corner_fillets):
-        if "error" in state.corner_fillets[corner]:
-            continue
-        state = add_mountable_apron(state, corner)
-    return state
-
-
-def build_demo_scenario(baseline: DesignState) -> DesignState:
-    """Default scenario for phase3/phase4 when no --scenario is given: Proposal 3, the
-    full set. The individual proposals are available by name via --scenario."""
-    return build_proposal_3_continental_parking_narrowing_bulbouts(baseline)

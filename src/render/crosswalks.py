@@ -277,17 +277,106 @@ def resolve_crosswalk_skews(state: DesignState, crossings: list[dict]) -> dict[s
     return skews
 
 
-def resolve_stop_bar_offsets(state: DesignState, crosswalk_offsets: dict[str, tuple[float, str]]) -> dict[str, float]:
-    """{leg_name: offset_ft} - where a signalized approach's stop bar sits,
-    derived from that leg's already-resolved crosswalk offset (real or
-    estimated, overrides included) minus STOP_BAR_SETBACK_FT. Clamped to
-    leg_clearance_ft() so a short leg or a tight corner radius never pushes
-    the stop bar back into the curb-return curve."""
+# A stop bar crosses its approach, so it should sit square-ish to the leg, and it belongs
+# to the leg it is painted on rather than the one it happens to point at. Same shape of test
+# the crossing matcher uses, and the same reason: the cross street passes just as close.
+STOP_LINE_MIN_ANGLE_DEG = 45.0
+STOP_LINE_MAX_OFFSET_FT = 40.0   # lateral distance from the leg centerline to the bar's midpoint
+STOP_LINE_MAX_ALONG_FT = 120.0   # beyond this it belongs to a neighbouring junction
+
+
+def match_stop_lines_to_legs(legs: dict, stop_lines: list[dict]) -> dict:
+    """{leg_name: LineString} for legs with a surveyed stop bar.
+
+    A bar is credited to the leg whose centerline it crosses most nearly square, ahead of
+    the junction and within a plausible distance. One bar per leg: where several qualify the
+    nearest to the junction wins, which is the one governing this approach.
+    """
+    lines_ft = []
+    for entry in stop_lines:
+        coords = entry["coords_wgs84"]
+        xs, ys = wgs84_to_state_plane.transform([c[0] for c in coords], [c[1] for c in coords])
+        lines_ft.append(LineString(zip(xs, ys)))
+
+    out = {}
+    for name, leg in legs.items():
+        best = None
+        for line in lines_ft:
+            mid = line.interpolate(0.5, normalized=True)
+            along = leg.centerline.project(mid)
+            if not 0 < along <= STOP_LINE_MAX_ALONG_FT:
+                continue
+            if leg.centerline.distance(mid) > STOP_LINE_MAX_OFFSET_FT:
+                continue
+            if _crossing_angle_deg(line, leg.centerline) < STOP_LINE_MIN_ANGLE_DEG:
+                continue
+            if best is None or along < best[0]:
+                best = (along, line)
+        if best is not None:
+            out[name] = best[1]
+    return out
+
+
+def resolve_stop_bar_offsets(state: DesignState, crosswalk_offsets: dict[str, tuple[float, str]],
+                              stop_lines: list[dict] | None = None) -> dict[str, float]:
+    """{leg_name: offset_ft} - where a signalized approach's stop bar sits.
+
+    Prefers the SURVEYED position: a road_marking=stop_line way is the painted bar itself, so
+    its distance along the leg is the answer, not something to infer. Ten are mapped across
+    this project's three signalized junctions.
+
+    Falls back to the previous derivation - the leg's resolved crosswalk offset minus
+    STOP_BAR_SETBACK_FT - for any approach nobody has traced. Either way the result is
+    clamped to leg_clearance_ft() so a short leg or tight corner never pushes the bar back
+    into the curb return.
+    """
+    surveyed = match_stop_lines_to_legs(state.legs, stop_lines or {})
     out = {}
     for leg_name, (crosswalk_offset_ft, _source) in crosswalk_offsets.items():
         min_offset_ft = leg_clearance_ft(leg_name, state.legs, state.corner_fillets)
-        out[leg_name] = max(crosswalk_offset_ft - STOP_BAR_SETBACK_FT, min_offset_ft)
+        line = surveyed.get(leg_name)
+        if line is None:
+            # Derived: clamp, because nothing here knows where the bar really is and the
+            # corner return is the one place it certainly isn't.
+            out[leg_name] = max(crosswalk_offset_ft - STOP_BAR_SETBACK_FT, min_offset_ft)
+            continue
+
+        # Surveyed: use it as painted. Clamping a real position to our own corner clearance
+        # is the modelled geometry overruling the street, and it fired on 3 of 9 traced bars
+        # - two of them at W Broad, whose corners fall back to fitted fillets and whose
+        # throat is therefore known to be too big. A bar inside our corner return is
+        # evidence about OUR geometry, so it is reported rather than quietly moved.
+        offset_ft = state.legs[leg_name].centerline.project(line.interpolate(0.5, normalized=True))
+        if offset_ft < min_offset_ft:
+            print(f"  SOURCE CONFLICT: {leg_name}'s surveyed stop bar sits {offset_ft:.1f} ft out, "
+                  f"inside this junction's modelled corner return ({min_offset_ft:.1f} ft). Drawing it "
+                  f"where it is painted - the modelled corner is the thing more likely to be wrong.")
+        out[leg_name] = offset_ft
     return out
+
+
+# Clearance past the crosswalk where a leg has no stop bar to end the centerline at. The
+# painted centerline stops before the crossing, it doesn't run into it.
+CENTERLINE_CROSSWALK_GAP_FT = 2 / FT_TO_M   # the historical 2 m, kept as-is
+
+
+def centerline_start_ft(crosswalk_offset_ft: float, stop_bar_offset_ft: float | None) -> float:
+    """How far out along a leg its centerline paint begins.
+
+    A centerline terminates AT the stop bar - it does not continue into the junction past
+    the line drivers stop on. Before stop bars were surveyed this was approximated as a
+    fixed gap past the crosswalk, which was fine while the bar was itself derived from the
+    crosswalk. It stopped being fine the moment real bars arrived: E Broad's east approach
+    has its bar 52.9 ft out against a crosswalk at ~39 ft, so the centerline ran 14 ft past
+    the bar and into the intersection.
+
+    max() rather than just the bar, so a leg whose surveyed bar sits unusually close in
+    still doesn't get centerline paint laid across its crosswalk.
+    """
+    past_crosswalk_ft = crosswalk_offset_ft + CENTERLINE_CROSSWALK_GAP_FT
+    if stop_bar_offset_ft is None:
+        return past_crosswalk_ft
+    return max(stop_bar_offset_ft, past_crosswalk_ft)
 
 
 def crosswalk_axes(leg, offset_ft: float, skew_deg: float = 0.0):

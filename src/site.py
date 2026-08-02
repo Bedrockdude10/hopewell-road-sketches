@@ -83,3 +83,18 @@ def load_site_scenarios(site: str) -> ModuleType:
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
+
+
+def run_scenario(builder, baseline, model):
+    """Call a site's scenario builder, passing the model only if it wants one.
+
+    Scenarios were originally `build_x(baseline) -> DesignState`. Some now need the model
+    too, because the facts they act on (OSM parking restrictions, road tags) live there
+    rather than in the DesignState. Rather than churn every site's signature - and silently
+    turn a scenario into a no-op wherever a call site forgets the second argument, which is
+    exactly what happened here - the call sites go through this and it adapts.
+    """
+    import inspect
+
+    takes_model = len(inspect.signature(builder).parameters) > 1
+    return builder(baseline, model) if takes_model else builder(baseline)

@@ -27,7 +27,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from src.render.export import BUILDING_CONTEXT_RADIUS_M, export_scenario
 from src.geometry.intersection import load_intersection_model
 from src.sources.osm_context import fetch_buildings, fetch_crossings
-from src.site import add_scenario_arg, add_site_arg, load_site_scenarios, scenario_label, site_output_dir
+from src.site import add_scenario_arg, add_site_arg, load_site_scenarios, scenario_label, site_output_dir, run_scenario
 from src.render.theme import build_default_theme
 from src.geometry.treatments import DesignState
 
@@ -114,7 +114,7 @@ def main():
     model = load_intersection_model(site=args.site)
     baseline = DesignState.from_model(model)
     build_scenario = getattr(load_site_scenarios(args.site), args.scenario)
-    scenario = build_scenario(baseline)
+    scenario = run_scenario(build_scenario, baseline, model)
 
     print("Fetching OSM building context...")
     buildings = fetch_buildings(model.center_wgs84, radius_m=BUILDING_CONTEXT_RADIUS_M)

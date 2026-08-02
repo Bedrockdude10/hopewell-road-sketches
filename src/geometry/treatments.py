@@ -73,13 +73,27 @@ class DesignState:
         #
         # An explicit centerline_style in config.yaml still wins: that is direct observation
         # (src/provenance.py - if OSM disagrees with something we looked at, OSM is wrong).
+        # Precedence is by PROVENANCE, not by which file the value came from. A config entry
+        # that merely repeats DEFAULT_CENTERLINE_STYLE is not an observation - it is this
+        # repo's own placeholder written down, and every config that has one says so in its
+        # comment ("NOT confirmed - repo default, retained"). Letting that outrank a surveyed
+        # OSM tag is the project's core principle exactly backwards: it is the generic guess
+        # beating the real sourced data. So a default-valued entry defers to OSM, while any
+        # other value (double_yellow, none) is a positive statement and wins.
         osm_tags = getattr(model, "leg_osm_tags", {})
         centerline_styles = {}
         for name, leg_cfg in model.config["legs"].items():
-            if "centerline_style" in leg_cfg:
-                centerline_styles[name] = leg_cfg["centerline_style"]
-            elif osm_tags.get(name, {}).get("overtaking") == "no":
+            configured = leg_cfg.get("centerline_style")
+            no_passing = osm_tags.get(name, {}).get("overtaking") == "no"
+            if configured is not None and configured != DEFAULT_CENTERLINE_STYLE:
+                centerline_styles[name] = configured
+            elif no_passing:
                 centerline_styles[name] = "double_yellow"
+                if configured is not None:
+                    print(f"  NOTE: {name} is tagged overtaking=no in OSM - drawing a double "
+                          f"yellow centerline, over the retained repo default in config.yaml. "
+                          f"Set a non-default centerline_style there if you've observed "
+                          f"otherwise.")
             else:
                 centerline_styles[name] = DEFAULT_CENTERLINE_STYLE
         return cls(legs=deepcopy(model.legs), corner_fillets=deepcopy(model.corner_fillets),
@@ -492,3 +506,55 @@ def _append_band(pieces: list, inner_line, outer_line) -> None:
     if len(coords) < 4:
         return
     pieces.append(Polygon(coords))
+
+
+def apply_osm_parking(state: DesignState, model, depth_ft: float = PARKING_STALL_DEPTH_DEFAULT_FT,
+                       stripe_width_ft: float = LANE_NARROWING_DEFAULT_STRIPE_FT) -> DesignState:
+    """Paint each kerb according to what OSM says about parking there.
+
+    Restricted (parking:*:restriction = no_parking / no_standing / no_stopping) gets crossed
+    hatching - that kerb cannot hold parked cars, and a proposal that drew stalls there
+    would be proposing something illegal. Everything else gets marked stalls: both an
+    explicit restriction=none, which is a positive statement that parking is allowed, and an
+    untagged side, which is the ordinary residential-street default.
+
+    "Unless otherwise specified": a side the scenario has ALREADY treated is left alone, so
+    this can be applied as a baseline and then overridden per side.
+
+    Side mapping goes through parking_restriction_by_side, which flips OSM's left/right for
+    legs that run against their way - without which half these legs would have the
+    restriction painted on the wrong kerb.
+    """
+    from src.geometry.intersection import parking_is_restricted, parking_restriction_by_side
+
+    new_state = state
+    for leg_name in sorted(state.legs):
+        tags = getattr(model, "leg_osm_tags", {}).get(leg_name, {})
+        aligned = getattr(model, "leg_osm_aligned", {}).get(leg_name, True)
+        sides = parking_restriction_by_side(tags, aligned)
+
+        def already_treated(side):
+            return ((leg_name, side) in new_state.parking_zones
+                    or (leg_name in new_state.lane_narrowing
+                        and side in new_state.lane_narrowing_sides.get(leg_name, ("left", "right"))))
+
+        free = [s for s in ("left", "right")
+                if not already_treated(s) and not parking_is_restricted(sides[s])]
+        restricted = [s for s in ("left", "right")
+                      if not already_treated(s) and parking_is_restricted(sides[s])]
+
+        # Both restricted sides go in ONE call. add_lane_narrowing keeps a single
+        # lane_narrowing_sides entry per leg, so calling it once per side made the second
+        # call overwrite the first - a leg restricted on both kerbs silently lost one of
+        # them and got stalls painted on it.
+        if restricted:
+            new_state = add_lane_narrowing(new_state, leg_name, stripe_width_ft=stripe_width_ft,
+                                            sides=tuple(restricted))
+            for side in restricted:
+                new_state.notes.append(f"apply_osm_parking({leg_name}, {side}): hatched - OSM "
+                                        f"says {sides[side]!r} here")
+        for side in free:
+            new_state = add_marked_parking(new_state, leg_name, side, depth_ft=depth_ft)
+            stated = "restriction=none" if sides[side] == "none" else "no restriction tagged"
+            new_state.notes.append(f"apply_osm_parking({leg_name}, {side}): marked stalls - {stated}")
+    return new_state

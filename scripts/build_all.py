@@ -52,7 +52,7 @@ from src.geometry.treatments import DesignState
 from src.render.export import BUILDING_CONTEXT_RADIUS_M, KERB_RADIUS_M, TRAFFIC_CONTROL_RADIUS_M, export_scenario
 from src.render.plan_view import legend_handles, plot_design_state
 from src.render.theme import build_default_theme
-from src.site import list_sites, load_site_config, load_site_scenarios, scenario_label, site_output_dir
+from src.site import list_sites, load_site_config, load_site_scenarios, scenario_label, site_output_dir, run_scenario
 from src.sources.osm_context import (REFRESH_ENV, cache_summary, fetch_borough_osm,
                                      fetch_buildings, fetch_crossings)
 
@@ -119,14 +119,16 @@ def refresh_osm_serially(sites: list[str], render_3d: bool) -> None:
     """
     os.environ[REFRESH_ENV] = "1"
     started = time.perf_counter()
-    print("Re-pulling the borough OSM snapshot (one request, covers every site)...",
-          end="", flush=True)
+    # Plain lines, not a \r-overwritten one: the result line is shorter than the status
+    # line, so the tail of the status line survived the overwrite and every run printed
+    # "...1.3sst, covers every site)...".
+    print("  Re-pulling the borough OSM snapshot (one request, covers every site)...", flush=True)
     try:
         snapshot = fetch_borough_osm()
-        print(f"\r  OSM snapshot: {len(snapshot['nodes'])} nodes, {len(snapshot['ways'])} ways "
+        print(f"  OSM snapshot: {len(snapshot['nodes'])} nodes, {len(snapshot['ways'])} ways "
               f"in {time.perf_counter() - started:.1f}s", flush=True)
     except Exception as e:  # noqa: BLE001 - an outage must not sink a build that can use the cache
-        print(f"\r  OSM refresh FAILED ({type(e).__name__}: {e}). Building from the cached "
+        print(f"  OSM refresh FAILED ({type(e).__name__}: {e}). Building from the cached "
               f"snapshot instead - your latest tracing is NOT in this build.", flush=True)
     finally:
         # The workers must not re-fetch: they'd go to the network in parallel, which is the
@@ -163,7 +165,8 @@ def build_site(site: str, render_3d: bool = False, dpi: int = 150,
     for name in scenarios_for(site):
         with contextlib.redirect_stdout(quiet):
             states.append((scenario_label(name), name,
-                            getattr(load_site_scenarios(site), name)(DesignState.from_model(model))))
+                            run_scenario(getattr(load_site_scenarios(site), name),
+                                          DesignState.from_model(model), model)))
 
     theme = buildings = None
     if render_3d:

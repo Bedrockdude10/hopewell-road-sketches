@@ -250,11 +250,17 @@ def build_scene(data: dict):
         # DEFAULT_CENTERLINE_STYLE) - some legs get no centerline paint at all, so this
         # is NOT drawn unconditionally the way it used to be.
         centerline_style = leg.get("centerline_style", "single_yellow_dashed")
+        # Where the paint starts is decided upstream (src/render/crosswalks.py:
+        # centerline_start_ft) so the "stop at the stop bar" rule is testable and can't
+        # drift from the bar this same scene draws. Falls back to the old fixed gap past
+        # the crosswalk for geometry written before that field existed.
+        centerline_start_m = leg.get("centerline_start_m", offset_m + 2)
         if centerline_style == "double_yellow":
             add_double_yellow_centerline(f"centerline_{leg['name']}", near, far, centerline_mat,
-                                          start_m=offset_m + 2)
+                                          start_m=centerline_start_m)
         elif centerline_style == "single_yellow_dashed":
-            add_dashed_centerline(f"centerline_{leg['name']}", near, far, centerline_mat, start_m=offset_m + 2)
+            add_dashed_centerline(f"centerline_{leg['name']}", near, far, centerline_mat,
+                                   start_m=centerline_start_m)
 
     # Props: real streetlight model (or procedural fallback) at each corner,
     # procedural signage incl. traffic signals (no CC0 source available - see

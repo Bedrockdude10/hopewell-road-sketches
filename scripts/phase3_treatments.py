@@ -14,7 +14,7 @@ import matplotlib.pyplot as plt
 
 from src.geometry.intersection import load_intersection_model
 from src.render.plan_view import BUILDING_CONTEXT_RADIUS_M, legend_handles, plot_design_state
-from src.site import DEFAULT_SCENARIO, add_scenario_arg, add_site_arg, load_site_scenarios, scenario_label, site_output_dir
+from src.site import DEFAULT_SCENARIO, add_scenario_arg, add_site_arg, load_site_scenarios, scenario_label, site_output_dir, run_scenario
 from src.geometry.treatments import DesignState
 from src.sources.osm_context import fetch_crossings
 
@@ -24,7 +24,7 @@ def main():
     model = load_intersection_model(site=args.site)
     baseline = DesignState.from_model(model)
     build_scenario = getattr(load_site_scenarios(args.site), args.scenario)
-    scenario = build_scenario(baseline)
+    scenario = run_scenario(build_scenario, baseline, model)
 
     print(f"=== Treatments applied ({args.scenario}) ===")
     for note in scenario.notes:

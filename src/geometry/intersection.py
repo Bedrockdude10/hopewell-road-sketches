@@ -47,6 +47,11 @@ class IntersectionModel:
     # as opposed to where things are: overtaking=no is what a double-yellow centerline
     # means, and reading it beats defaulting every leg to a dashed line.
     leg_osm_tags: dict = field(default_factory=dict)
+    # {leg name: True if the OSM way runs the same way the leg points outward}. OSM's
+    # left/right are relative to the WAY's direction; a leg's are relative to its own
+    # outward direction. Where they disagree the sides swap, so anything side-specific
+    # (parking restrictions) is wrong on half the legs without this.
+    leg_osm_aligned: dict = field(default_factory=dict)
 
 
 def _bearing_deg(from_pt, to_pt) -> float:
@@ -263,7 +268,10 @@ ROAD_MATCH_MAX_ANGLE_DEG = 30.0
 
 
 def _match_legs_to_osm_roads(legs: dict, center_wgs84: Point, center_ft: Point) -> dict:
-    """{leg name: tags} for the OSM highway way each leg runs along.
+    """{leg name: (tags, aligned)} for the OSM highway way each leg runs along.
+
+    `aligned` is True when the way is drawn in the same direction the leg points outward.
+    It decides whether OSM's left/right mean the leg's left/right or the reverse.
 
     Matched on geometry rather than on the street name in config.yaml: names disagree
     between sources ("W Broad St" vs "West Broad Street"), and a leg is a piece of a
@@ -291,9 +299,11 @@ def _match_legs_to_osm_roads(legs: dict, center_wgs84: Point, center_ft: Point) 
             if angle > ROAD_MATCH_MAX_ANGLE_DEG:
                 continue
             if best is None or offset < best[0]:
-                best = (offset, road)
+                best = (offset, road, line)
         if best is not None:
-            out[name] = best[1]["tags"]
+            _offset, road, line = best
+            out[name] = (road["tags"],
+                          bool(np.dot(_line_direction(line), leg_dir) >= 0))
     return out
 
 
@@ -442,7 +452,9 @@ def load_intersection_model(config: dict | None = None, site: str | None = None)
 
     kerb_ways = kerb_lines_with_tags_ft(center, center_ft)
     _apply_traced_curb_lines(legs, kerb_ways, center_ft, working_len)
-    leg_osm_tags = _match_legs_to_osm_roads(legs, center, center_ft)
+    matched_roads = _match_legs_to_osm_roads(legs, center, center_ft)
+    leg_osm_tags = {name: tags for name, (tags, _aligned) in matched_roads.items()}
+    leg_osm_aligned = {name: aligned for name, (_tags, aligned) in matched_roads.items()}
 
     radius_ft = config["treatments"]["existing_corner_radius_ft"]
     # Traced OSM kerbs give a real measured radius per corner where they exist; the
@@ -464,6 +476,42 @@ def load_intersection_model(config: dict | None = None, site: str | None = None)
         legs=legs,
         corner_fillets=corner_fillets,
         leg_osm_tags=leg_osm_tags,
+        leg_osm_aligned=leg_osm_aligned,
         parcels=parcels,
         corner_parcels=corner_parcels,
     )
+
+
+# OSM records kerbside parking per side of the way: parking:left:restriction,
+# parking:right:restriction, or parking:both:restriction. Any value other than "none" is a
+# prohibition of some kind (no_parking, no_standing, no_stopping); "none" is an explicit
+# statement that parking IS allowed, which is different from the tag being absent.
+PARKING_RESTRICTION_KEYS = {"left": "parking:left:restriction",
+                            "right": "parking:right:restriction",
+                            "both": "parking:both:restriction"}
+
+
+def parking_restriction_by_side(tags: dict, aligned: bool) -> dict:
+    """{"left": value|None, "right": value|None} in the LEG's frame.
+
+    OSM's left and right are relative to the direction the way was drawn; a leg's are
+    relative to the direction it points outward from the junction. Half this project's legs
+    run against their way - Columbia Ave's west leg, Princeton Ave's north leg - so reading
+    parking:left straight through would put the restriction on the wrong kerb for them, and
+    it would look entirely plausible in the render.
+
+    A value of None means OSM says nothing about that side. That is NOT the same as "none",
+    which is a positive statement that parking is permitted.
+    """
+    both = tags.get(PARKING_RESTRICTION_KEYS["both"])
+    if both is not None:
+        return {"left": both, "right": both}
+    osm = {side: tags.get(key) for side, key in PARKING_RESTRICTION_KEYS.items() if side != "both"}
+    if aligned:
+        return {"left": osm["left"], "right": osm["right"]}
+    return {"left": osm["right"], "right": osm["left"]}
+
+
+def parking_is_restricted(restriction: str | None) -> bool:
+    """True where OSM prohibits kerbside parking. Absent or "none" is not a prohibition."""
+    return restriction is not None and restriction != "none"

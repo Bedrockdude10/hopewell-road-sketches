@@ -129,3 +129,49 @@ def test_points_are_ordered_along_the_leg():
     curb = curb_line_from_points([(80.0, 15.0), (20.0, 15.0), (50.0, 15.0)], leg, working_length_ft=120.0)
     stations, _ = station_offset_many(leg.centerline, np.asarray(curb.coords, dtype=float))
     assert list(stations) == sorted(stations)
+
+
+# --------------------------------------------------------------------------
+# Curb points addressed by centerline station
+# --------------------------------------------------------------------------
+
+def test_a_curb_point_is_found_at_the_station_asked_for():
+    """`curb.interpolate(station)` measures along the CURB, not the centerline.
+
+    Those agree only while the curb is a symmetric offset starting at the junction. Traced
+    kerbs start 14-47 ft out and run at their own bearing, so asking for station 40 landed
+    at 51-86 ft - which is what bent the lane-narrowing taper arcs and made the hatching fan
+    around the corners.
+    """
+    from src.geometry.model import curb_point_at_station
+
+    leg = a_leg(length_ft=120.0)
+    # A traced kerb: starts 25 ft out, drifts, and is NOT an offset of the centerline.
+    leg.left_curb = LineString([(25, 15.0), (60, 15.8), (110, 16.4)])
+
+    for station in (30.0, 55.0, 90.0):
+        point = curb_point_at_station(leg, "left", station)
+        landed, offset = station_offset_many(leg.centerline, np.asarray([point]))
+        assert landed[0] == pytest.approx(station, abs=1e-6)
+        assert offset[0] > 0, "the left curb is on the left"
+
+
+def test_the_curb_point_follows_the_traced_offset():
+    """It must sit ON the traced kerb, not at some nominal half-width."""
+    from src.geometry.model import curb_point_at_station
+
+    leg = a_leg(width_ft=30.0)                       # nominal half-width 15 ft
+    leg.left_curb = LineString([(0, 20.0), (120, 20.0)])   # but traced at 20 ft
+    point = curb_point_at_station(leg, "left", 60.0)
+    _station, offset = station_offset_many(leg.centerline, np.asarray([point]))
+    assert offset[0] == pytest.approx(20.0, abs=1e-6)
+
+
+def test_a_missing_curb_gives_nothing_rather_than_guessing():
+    """A leg with a width always has derived curbs (Leg.__post_init__), so the no-curb case
+    only arises where one was explicitly cleared - a leg of unknown width."""
+    from src.geometry.model import curb_point_at_station
+
+    leg = a_leg()
+    leg.left_curb = None
+    assert curb_point_at_station(leg, "left", 40.0) is None

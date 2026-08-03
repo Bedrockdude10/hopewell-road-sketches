@@ -11,7 +11,7 @@ measured, so treat the lane/parking dimensions below as a design study rather th
 construction drawing.
 """
 from src.geometry.treatments import (
-    DesignState, add_lane_narrowing, add_marked_parking, apply_osm_parking, upgrade_crosswalk_markings,
+    all_crosswalks_continental, complete_centerlines, DesignState, add_lane_narrowing, add_marked_parking, apply_osm_parking, upgrade_crosswalk_markings,
 )
 
 TARGET_LANE_WIDTH_FT = 11.0   # NACTO/AASHTO urban minimum travel lane - the width the road diet aims at
@@ -78,5 +78,7 @@ def build_demo_scenario(baseline: DesignState, model=None) -> DesignState:
     """
     if model is None:
         return baseline
-    return apply_osm_parking(baseline, model)
+    state = apply_osm_parking(baseline, model)
+    state = complete_centerlines(state)
+    return all_crosswalks_continental(state)
 

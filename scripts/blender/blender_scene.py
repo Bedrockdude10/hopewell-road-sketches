@@ -237,7 +237,8 @@ def build_scene(data: dict):
                            offset_m=offset_m, style=style, depth_m=crosswalk_depth_m,
                            skew_deg=leg.get("crosswalk_skew_deg", 0.0),
                            reach_left_m=leg.get("crosswalk_reach_left_m"),
-                           reach_right_m=leg.get("crosswalk_reach_right_m"))
+                           reach_right_m=leg.get("crosswalk_reach_right_m"),
+                           n_stripes=leg.get("crosswalk_bar_count"))
         stop_bar_offset_m = leg.get("stop_bar_offset_m")
         if stop_bar_offset_m is not None:
             stop_bar_width_m = leg.get("stop_bar_width_m") or leg["width_m"]

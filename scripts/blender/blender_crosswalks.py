@@ -52,34 +52,60 @@ def _skewed_axes(u, n, skew_deg: float):
     return u_s, n_s, 1.0 / max(cos_s, 0.2)
 
 
-def _crosswalk_bars(name, near, u, n, width_m, material, offset_m, depth_m, stripe_width_m, gap_m):
+def _crosswalk_bars(name, near, u, n, width_m, material, offset_m, depth_m, stripe_width_m, gap_m,
+                     n_stripes=None):
     """Parallel bars (rungs) running along travel (u), spaced across the crossing (n).
-    Returns (center, span) so callers (ladder) can reuse the layout for framing rails."""
-    usable_width = max(width_m - 1.5, 0.5)  # keep clear of the curb edges
+    Returns (center, span) so callers (ladder) can reuse the layout for framing rails.
+
+    The bars run kerb to kerb. `width_m` already IS the kerb-to-kerb span, measured to the
+    surveyor's traced kerbs (src/render/crosswalks.py:crosswalk_reach_to_curbs_ft), so the
+    outermost bar's OUTER EDGE is placed at that span rather than its centre - a continental
+    crossing whose end bar is half a bar short of the kerb reads as stopping short.
+
+    There used to be a flat 1.5 m "keep clear of the curb edges" inset here on top of that,
+    costing ~2.5 ft at each kerb. add_crosswalk_lines had the same fudge and it was removed
+    when the crossings were made to reach the kerb; this copy was missed, so the simple
+    crossings reached and the continental ones - which every proposal now uses - did not.
+    """
     period = stripe_width_m + gap_m
-    n_stripes = max(int(usable_width / period), 1)
-    span = (n_stripes - 1) * period
+    # n bars with n-1 gaps between them must fit inside width_m. Normally the count arrives
+    # from the geometry JSON as `crosswalk_bar_count`, computed by
+    # src/render/crosswalks.py:continental_bar_count; the local formula is the fallback for
+    # a JSON without the field, kept identical to it.
+    if n_stripes is None:
+        n_stripes = max(int((width_m + gap_m) / period), 1)
+    # The leftover is spread across the gaps rather than left at the ends, so the two end
+    # bars land exactly ON the kerbs. A whole-period pitch leaves up to one period unpainted
+    # - 3.2 ft at Columbia Ave, which still reads as a crossing stopping short. Real striping
+    # adjusts the spacing to fit the road; the bars keep their width, only the gaps stretch.
+    span = max(width_m - stripe_width_m, 0.0)   # centre-to-centre of the outermost pair
+    pitch = span / (n_stripes - 1) if n_stripes > 1 else 0.0
     center = near + u * offset_m
     for i in range(n_stripes):
-        lateral = -span / 2 + i * period
+        lateral = -span / 2 + i * pitch
         add_stripe_rect(f"{name}_stripe_{i}", center + n * lateral, u, n, depth_m, stripe_width_m,
                          EXISTING_MARKING_THICKNESS_M, material, z_base=EXISTING_MARKING_Z_BASE)
     return center, span
 
 
 def add_crosswalk_continental(name: str, near, u, n, width_m: float, material, offset_m: float = 3.0,
-                               depth_m: float = CROSSWALK_DEPTH_FALLBACK_M, stripe_width_m: float = 0.5, gap_m: float = 0.5):
+                               depth_m: float = CROSSWALK_DEPTH_FALLBACK_M, stripe_width_m: float = 0.5,
+                               gap_m: float = 0.5, n_stripes=None):
     """Continental: parallel bars only, no framing rails."""
-    _crosswalk_bars(name, near, u, n, width_m, material, offset_m, depth_m, stripe_width_m, gap_m)
+    _crosswalk_bars(name, near, u, n, width_m, material, offset_m, depth_m, stripe_width_m, gap_m,
+                     n_stripes)
 
 
 def add_crosswalk_ladder(name: str, near, u, n, width_m: float, material, offset_m: float = 3.0,
-                          depth_m: float = CROSSWALK_DEPTH_FALLBACK_M, stripe_width_m: float = 0.5, gap_m: float = 0.5,
-                          rail_width_m: float = 0.3):
+                          depth_m: float = CROSSWALK_DEPTH_FALLBACK_M, stripe_width_m: float = 0.5,
+                          gap_m: float = 0.5, rail_width_m: float = 0.3, n_stripes=None):
     """Ladder: continental bars framed by two rails spanning the crossing width at
     each end of the depth - the rails are what distinguish it from bare continental."""
-    center, span = _crosswalk_bars(name, near, u, n, width_m, material, offset_m, depth_m, stripe_width_m, gap_m)
-    rail_length = span + stripe_width_m + gap_m
+    center, span = _crosswalk_bars(name, near, u, n, width_m, material, offset_m, depth_m,
+                                    stripe_width_m, gap_m, n_stripes)
+    # span is now centre-to-centre of the end bars, so adding one bar width reaches their
+    # outer edges - which is the kerb-to-kerb width. The rails end where the bars do.
+    rail_length = span + stripe_width_m
     for side, sign in [("near", -1), ("far", 1)]:
         rail_center = center + u * (sign * depth_m / 2)
         add_stripe_rect(f"{name}_rail_{side}", rail_center, n, u, rail_length, rail_width_m,
@@ -87,7 +113,8 @@ def add_crosswalk_ladder(name: str, near, u, n, width_m: float, material, offset
 
 
 def add_crosswalk_lines(name: str, near, u, n, width_m: float, material, offset_m: float = 3.0,
-                         depth_m: float = CROSSWALK_DEPTH_FALLBACK_M, line_width_m: float = 0.3):
+                         depth_m: float = CROSSWALK_DEPTH_FALLBACK_M, line_width_m: float = 0.3,
+                         n_stripes=None):
     """Simple/standard marking: just two transverse lines bounding the crossing, no
     bars in between - the least visible of the three styles (FHWA/NACTO recommend
     upgrading this to continental or ladder for visibility, hence it being the
@@ -113,7 +140,7 @@ CROSSWALK_STYLES = {
 
 def add_crosswalk(name: str, near, u, n, width_m: float, material, offset_m: float = 3.0, style: str = "lines",
                    depth_m: float = CROSSWALK_DEPTH_FALLBACK_M, skew_deg: float = 0.0,
-                   reach_left_m: float = None, reach_right_m: float = None):
+                   reach_left_m: float = None, reach_right_m: float = None, n_stripes=None):
     """`depth_m` is forwarded from the geometry JSON's `crosswalk_depth_m`, which
     src/render/export.py writes from src/render/crosswalks.py:CROSSWALK_DEPTH_M - the
     same constant src/render/plan_view.py draws the 2D crosswalk from, so the plan
@@ -136,7 +163,8 @@ def add_crosswalk(name: str, near, u, n, width_m: float, material, offset_m: flo
     # offset_m=0 because `centre` already has the offset applied along the UNSKEWED
     # axis - rotating first and then stepping out would move the crosswalk along the
     # leg as well as turning it.
-    draw_fn(name, centre, u_s, n_s, span_m, material, offset_m=0.0, depth_m=depth_m)
+    draw_fn(name, centre, u_s, n_s, span_m, material, offset_m=0.0, depth_m=depth_m,
+             n_stripes=n_stripes)
 
 
 def add_stop_bar(name: str, near, u, n, width_m: float, material, offset_m: float, line_width_m: float = 0.5,

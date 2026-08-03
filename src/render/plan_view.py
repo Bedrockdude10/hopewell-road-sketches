@@ -5,17 +5,14 @@ from matplotlib.lines import Line2D
 from matplotlib.patches import Patch
 from shapely.geometry import LineString, Polygon
 
-from src.geometry.model import (
-    bollard_points_ft, build_pavement_polygon, corner_overlay_polygon, lane_narrowing_edge_lines_ft,
-    lane_narrowing_polygons_ft, lane_narrowing_taper_ft, lane_narrowing_taper_polygons_ft, leg_clearance_ft,
-    parking_lane_edge_line_ft, parking_stall_count_ft, parking_stall_lines_ft, trimmed_curb_lines,
-)
+from src.geometry.model import build_pavement_polygon, trimmed_curb_lines
+from src.geometry.paint import curbside_paint_ft
 from src.geometry.intersection import IntersectionModel, kerb_lines_with_tags_ft
-from src.geometry.treatments import LEGAL_PARKING_SETBACK_FT, DesignState
+from src.geometry.treatments import DesignState
 from src.provenance import PLOT_STYLE, leg_width_provenance
-from src.render.props import build_props, data_gaps, signalization_conflicts
+from src.render.props import build_props, signalization_conflicts
 from src.render.coords import FT_TO_M, wgs84_to_state_plane
-from src.render.crosswalks import (CROSSWALK_CLEARANCE_FT, CROSSWALK_DEPTH_M, STOP_BAR_PLAN_DEPTH_FT,
+from src.render.crosswalks import (CROSSWALK_DEPTH_M, STOP_BAR_PLAN_DEPTH_FT,
                                    crosswalk_band_ft, crosswalk_bands_ft, stop_bar_bands_ft,
                                    resolve_crosswalk_offsets,
                                    resolve_crosswalk_skews, resolve_stop_bar_offsets,
@@ -23,6 +20,10 @@ from src.render.crosswalks import (CROSSWALK_CLEARANCE_FT, CROSSWALK_DEPTH_M, ST
 from src.sources.osm_context import (fetch_crossings, fetch_kerbs, fetch_sidewalks,
                                      fetch_stop_lines, fetch_street_furniture,
                                      fetch_traffic_control)
+
+# Matches TACTILE_PAD_RED in scripts/blender/blender_props.py - the plan view and the 3D
+# render must not disagree about what a detectable warning surface looks like.
+TACTILE_PAD_COLOR = "#8c1f14"
 
 TRAFFIC_CONTROL_RADIUS_M = 60  # matches src/render/export.py
 BUILDING_CONTEXT_RADIUS_M = 130  # matches src/render/export.py - same real-world radius crossings are searched
@@ -100,7 +101,7 @@ def _draw_props(ax, model: IntersectionModel, state: DesignState, crosswalk_offs
                 (x - ux * depth / 2 - nx * width / 2, y - uy * depth / 2 - ny * width / 2),
                 (x + ux * depth / 2 - nx * width / 2, y + uy * depth / 2 - ny * width / 2),
             ])
-            gpd.GeoSeries([pad]).plot(ax=ax, color="darkorange", alpha=0.85, zorder=8)
+            gpd.GeoSeries([pad]).plot(ax=ax, color=TACTILE_PAD_COLOR, alpha=0.85, zorder=8)
             gpd.GeoSeries([pad]).boundary.plot(ax=ax, color="black", linewidth=0.5, zorder=8)
         elif kind == "rrfb":
             ax.scatter([x], [y], color="gold", marker="D", s=30, edgecolors="black", linewidths=0.6, zorder=8)
@@ -145,7 +146,7 @@ def _draw_surveyed_crossings(ax, crossings: list[dict] | None):
 
 
 def _draw_crosswalks(ax, model: IntersectionModel, state: DesignState, crosswalk_offsets: dict,
-                      crosswalk_skews: dict, dimension_labels: bool):
+                      crosswalk_skews: dict, dimension_labels: bool, pavement=None):
     """Draw each leg's crosswalk and stop bar exactly where the 3D export puts them.
 
     Gating mirrors scripts/blender/blender_scene.py precisely - a crosswalk is painted
@@ -167,7 +168,8 @@ def _draw_crosswalks(ax, model: IntersectionModel, state: DesignState, crosswalk
         offset_ft, source = crosswalk_offsets[leg_name]
         surveyed = source.startswith("osm_survey")
         painted = leg_name in marked and leg_name not in raised
-        band = crosswalk_band_ft(leg, offset_ft, depth_ft, crosswalk_skews.get(leg_name, 0.0))
+        band = crosswalk_band_ft(leg, offset_ft, depth_ft, crosswalk_skews.get(leg_name, 0.0),
+                                  roadway=pavement)
         edge = "darkviolet" if surveyed else "crimson"
 
         if painted:
@@ -234,7 +236,7 @@ def plot_design_state(ax, model: IntersectionModel, state: DesignState, title: s
         pavement = build_pavement_polygon(state.corner_fillets)
         gpd.GeoSeries([pavement]).plot(ax=ax, color="#d9d9d9", zorder=2)
     except ValueError:
-        pass
+        pavement = None
 
     # Real OSM sidewalk centerlines, drawn behind everything else. These are what the
     # crossing ways actually connect to, and they bound where the curb can possibly be
@@ -309,121 +311,61 @@ def plot_design_state(ax, model: IntersectionModel, state: DesignState, title: s
     crosswalk_skews = resolve_crosswalk_skews(state, crossings)
 
     _draw_surveyed_crossings(ax, crossings)
-    _draw_crosswalks(ax, model, state, crosswalk_offsets, crosswalk_skews, dimension_labels)
+    _draw_crosswalks(ax, model, state, crosswalk_offsets, crosswalk_skews, dimension_labels,
+                      pavement)
     props = _draw_props(ax, model, state, crosswalk_offsets, traffic_control, street_furniture,
                          crossings, dimension_labels)
 
-    for leg_name, stripe_width_ft in state.lane_narrowing.items():
-        line_only = leg_name in state.lane_narrowing_line_only
-        sides = state.lane_narrowing_sides.get(leg_name, ("left", "right"))
-        anchor_ft = leg_clearance_ft(leg_name, state.legs, state.corner_fillets)
-        target_ft = crosswalk_offsets[leg_name][0] + CROSSWALK_CLEARANCE_FT
-        leg = state.legs[leg_name]
+    # Every painted marking comes from src/geometry/paint.py - the same builder the 3D
+    # export draws from and src/checks.py inspects. This block used to assemble the paint
+    # itself, in parallel with export.py doing the same, and the two had already drifted on
+    # where a parking buffer's taper starts and on whether taper fill is cut around a
+    # crossing. Both views now show the same geometry because it IS the same geometry.
+    bands = crosswalk_bands_ft(state, crosswalk_offsets, crosswalk_skews,
+                                CROSSWALK_DEPTH_M / FT_TO_M, pavement)
+    paint = curbside_paint_ft(state, crosswalk_offsets, model.center_ft, bands, props,
+                               marked_crosswalks=set(model.config["intersection"].get(
+                                   "existing_marked_crosswalks", [])))
 
-        if line_only:
-            for line in lane_narrowing_edge_lines_ft(leg, stripe_width_ft,
-                                                      start_left_ft=anchor_ft, start_right_ft=anchor_ft,
-                                                      sides=sides):
-                gpd.GeoSeries([line]).plot(ax=ax, color="goldenrod", linewidth=1.5, zorder=3)
-        else:
-            for poly in lane_narrowing_polygons_ft(leg, stripe_width_ft,
-                                                    start_left_ft=anchor_ft, start_right_ft=anchor_ft, sides=sides):
-                gpd.GeoSeries([poly]).plot(ax=ax, color="gold", alpha=0.5, hatch="//", zorder=3)
-                gpd.GeoSeries([poly]).boundary.plot(ax=ax, color="goldenrod", linewidth=1, zorder=3)
-            for poly in lane_narrowing_taper_polygons_ft(leg, stripe_width_ft, anchor_ft, target_ft, sides=sides):
-                gpd.GeoSeries([poly]).plot(ax=ax, color="gold", alpha=0.5, hatch="//", zorder=3)
+    STYLE = {   # kind -> (matplotlib kwargs, whether it's a filled/hatched zone)
+        "lane_narrowing_fill":  dict(color="gold", alpha=0.5, hatch="//", zorder=3),
+        "taper_fill":           dict(color="gold", alpha=0.5, hatch="//", zorder=3),
+        "buffer_fill":          dict(color="gold", alpha=0.5, hatch="//", zorder=3),
+        # The statutory no-parking zone at the corner (R.S. 39:4-138). Drawn in a distinct
+        # colour from the ordinary buffer hatch because it is a different claim: not "this
+        # asphalt is spare", but "parking here is illegal and this proposal marks it".
+        "daylight_fill":        dict(color="orangered", alpha=0.40, hatch="xx", zorder=3),
+        "corner_hatch_fill":    dict(color="gold", alpha=0.5, hatch="//", zorder=3),
+        "apron":                dict(color="peru", alpha=0.6, zorder=3),
+        "lane_edge_line":       dict(color="goldenrod", linewidth=1.5, zorder=3),
+        "taper_line":           dict(color="goldenrod", linewidth=1.5, zorder=3),
+        "buffer_edge_line":     dict(color="goldenrod", linewidth=1.5, zorder=3),
+        "daylight_edge_line":   dict(color="orangered", linewidth=1.5, zorder=3),
+        "crossing_rim_line":    dict(color="orangered", linewidth=1.5, zorder=3),
+        "parking_edge_line":    dict(color="steelblue", linewidth=1.5, zorder=3),
+        "stall_divider":        dict(color="steelblue", linewidth=1, zorder=3),
+    }
+    EDGE = {"gold": "goldenrod", "peru": "saddlebrown", "orangered": "orangered"}
 
-        # The taper's own curve (src/geometry/model.py:lane_narrowing_taper_ft) - drawn either way,
-        # since it's the boundary line itself (chevron-filled or not, per line_only above), the same
-        # curve src/render/export.py feeds the 3D render so the two views can be checked against
-        # each other directly instead of trying to eyeball it off the 3D render alone.
-        for taper in lane_narrowing_taper_ft(leg, stripe_width_ft, anchor_ft, target_ft, sides=sides):
-            gpd.GeoSeries([taper]).plot(ax=ax, color="goldenrod", linewidth=1.5, zorder=3)
-
-        if dimension_labels:
-            # One label PER SIDE actually narrowed, offset into that lane itself - not a single label
-            # sitting on the centerline, which reads as "this road is one 11 ft lane" instead of what's
-            # actually there (see sides above - not always both).
-            lane_ft = leg.curb_to_curb_ft / 2 - stripe_width_ft
-            along_dist = min(leg.centerline.length * 0.6, leg.centerline.length - 5)
-            for side, sign in (("left", 1), ("right", -1)):
-                if side not in sides:
-                    continue
-                lane_mid = leg.centerline.offset_curve(sign * lane_ft / 2).interpolate(along_dist)
-                ax.annotate(f"lane {lane_ft:.1f} ft", (lane_mid.x, lane_mid.y), fontsize=6.5, color="goldenrod",
-                            ha="center", bbox=dict(boxstyle="round,pad=0.15", fc="white", ec="none", alpha=0.75))
-
-    for corner, depth_ft in state.corner_hatching.items():
-        if "error" in state.corner_fillets[corner]:
+    for piece in paint:
+        if piece.kind == "bollard":
+            c = piece.geometry.centroid
+            ax.scatter([c.x], [c.y], color="darkorange", marker="o", s=10, zorder=6)
             continue
-        poly = corner_overlay_polygon(state.corner_fillets[corner], model.center_ft, depth_ft)
-        gpd.GeoSeries([poly]).plot(ax=ax, color="gold", alpha=0.5, hatch="//", zorder=3)
-        gpd.GeoSeries([poly]).boundary.plot(ax=ax, color="goldenrod", linewidth=1, zorder=3)
-
-    for corner, extent_ft in state.corner_aprons.items():
-        if "error" in state.corner_fillets[corner]:
+        style = STYLE.get(piece.kind)
+        if style is None:
             continue
-        poly = corner_overlay_polygon(state.corner_fillets[corner], model.center_ft, extent_ft)
-        gpd.GeoSeries([poly]).plot(ax=ax, color="peru", alpha=0.6, zorder=3)
-        gpd.GeoSeries([poly]).boundary.plot(ax=ax, color="saddlebrown", linewidth=1, zorder=3)
-        if dimension_labels:
-            c = poly.centroid
-            ax.annotate("mountable\napron", (c.x, c.y), fontsize=6, color="saddlebrown",
-                        ha="center", va="center", fontweight="bold")
+        series = gpd.GeoSeries([piece.geometry])
+        series.plot(ax=ax, **style)
+        if piece.is_fill:
+            series.boundary.plot(ax=ax, color=EDGE[style["color"]], linewidth=1, zorder=3)
 
-    for (leg_name, side), zone in state.parking_zones.items():
-        leg = state.legs[leg_name]
-        anchor_ft = leg_clearance_ft(leg_name, state.legs, state.corner_fillets)
-        legal_start_ft = crosswalk_offsets[leg_name][0] + LEGAL_PARKING_SETBACK_FT
-        parking_start_ft = max(anchor_ft, legal_start_ft)
-        depth_ft, stall_length_ft, curb_offset_ft = zone["depth_ft"], zone["stall_length_ft"], zone["curb_offset_ft"]
-        edge = parking_lane_edge_line_ft(leg, side, depth_ft, parking_start_ft, curb_offset_ft=curb_offset_ft)
-        if edge is None:
-            print(f"  NOTE: no room to mark parking on {leg_name} ({side}) - the corner return "
-                  f"consumes the whole leg, so it is drawn without parking.")
-            continue
-        gpd.GeoSeries([edge]).plot(ax=ax, color="steelblue", linewidth=1.5, zorder=3)
-        for divider in parking_stall_lines_ft(leg, side, depth_ft, stall_length_ft, parking_start_ft,
-                                               curb_offset_ft=curb_offset_ft):
-            gpd.GeoSeries([divider]).plot(ax=ax, color="steelblue", linewidth=1, zorder=3)
-        if dimension_labels:
-            n_stalls = parking_stall_count_ft(leg, stall_length_ft, parking_start_ft)
-            mid = edge.interpolate(0.5, normalized=True)
-            ax.annotate(f"parking\n{n_stalls} stalls ({depth_ft:.0f} ft)", (mid.x, mid.y), fontsize=6, color="steelblue",
-                        ha="center", va="center", fontweight="bold",
-                        bbox=dict(boxstyle="round,pad=0.15", fc="white", ec="none", alpha=0.75))
-
-        # The striped no-parking buffer between the parking lane and the curb itself
-        # (add_marked_parking's curb_offset_ft) - same chevron treatment as a lane-narrowing buffer,
-        # just built with `sides=` restricted to this one side (see export.py's mirroring block).
-        if curb_offset_ft:
-            target_ft = crosswalk_offsets[leg_name][0] + CROSSWALK_CLEARANCE_FT
-            for poly in lane_narrowing_polygons_ft(leg, curb_offset_ft, start_left_ft=anchor_ft,
-                                                    start_right_ft=anchor_ft, sides=(side,)):
-                gpd.GeoSeries([poly]).plot(ax=ax, color="gold", alpha=0.5, hatch="//", zorder=3)
-                gpd.GeoSeries([poly]).boundary.plot(ax=ax, color="goldenrod", linewidth=1, zorder=3)
-            for poly in lane_narrowing_taper_polygons_ft(leg, curb_offset_ft, anchor_ft, target_ft, sides=(side,)):
-                gpd.GeoSeries([poly]).plot(ax=ax, color="gold", alpha=0.5, hatch="//", zorder=3)
-            for taper in lane_narrowing_taper_ft(leg, curb_offset_ft, anchor_ft, target_ft, sides=(side,)):
-                gpd.GeoSeries([taper]).plot(ax=ax, color="goldenrod", linewidth=1.5, zorder=3)
-            if (leg_name, side) in state.parking_buffer_bollards:
-                spacing_ft = state.parking_buffer_bollards[(leg_name, side)]
-                points = bollard_points_ft(leg, curb_offset_ft, anchor_ft, spacing_ft, sides=(side,))
-                if points:
-                    xs, ys = zip(*points)
-                    ax.scatter(xs, ys, color="darkorange", marker="o", s=10, zorder=6)
-
-    for leg_name, spacing_ft in state.bollard_lines.items():
-        stripe_width_ft = state.lane_narrowing[leg_name]
-        start_ft = leg_clearance_ft(leg_name, state.legs, state.corner_fillets)
-        points = bollard_points_ft(state.legs[leg_name], stripe_width_ft, start_ft, spacing_ft)
-        if points:
-            xs, ys = zip(*points)
-            ax.scatter(xs, ys, color="darkorange", marker="o", s=10, zorder=6)
+    if dimension_labels:
+        _label_paint(ax, state, paint, crosswalk_offsets)
 
     ax.scatter([model.center_ft.x], [model.center_ft.y], color="blue", zorder=6, s=40)
 
-    violations = _mark_violations(ax, model, state, crossings, props)
+    violations = _mark_violations(ax, model, state, crossings, props, paint, pavement)
 
     ax.set_title(title, fontsize=11)
     ax.set_aspect("equal")
@@ -434,7 +376,40 @@ def plot_design_state(ax, model: IntersectionModel, state: DesignState, title: s
     return violations
 
 
-def _mark_violations(ax, model, state, crossings, props):
+def _label_paint(ax, state, paint, crosswalk_offsets):
+    """Dimension labels for the curbside paint: what each treatment actually measures.
+
+    One lane label PER SIDE narrowed, offset into that lane - not a single label on the
+    centerline, which reads as "this road is one 11 ft lane" rather than what is there
+    (a leg is not always narrowed on both sides).
+    """
+    for leg_name, stripe_width_ft in state.lane_narrowing.items():
+        leg = state.legs[leg_name]
+        lane_ft = leg.curb_to_curb_ft / 2 - stripe_width_ft
+        along_ft = min(leg.centerline.length * 0.6, leg.centerline.length - 5)
+        for side, sign in (("left", 1), ("right", -1)):
+            if side not in state.lane_narrowing_sides.get(leg_name, ("left", "right")):
+                continue
+            at = leg.centerline.offset_curve(sign * lane_ft / 2).interpolate(along_ft)
+            ax.annotate(f"lane {lane_ft:.1f} ft", (at.x, at.y), fontsize=6.5, color="goldenrod",
+                        ha="center", bbox=dict(boxstyle="round,pad=0.15", fc="white", ec="none", alpha=0.75))
+
+    # One label per RUN of stalls, not per side: a hydrant mid-block splits a kerb into two
+    # separate runs, and a single label would be counting stalls that are not in one place.
+    for piece in paint:
+        if piece.kind != "parking_edge_line":
+            continue
+        zone = state.parking_zones.get((piece.leg, piece.side))
+        if zone is None:
+            continue
+        n_stalls = int(piece.geometry.length // zone["stall_length_ft"])
+        mid = piece.geometry.interpolate(0.5, normalized=True)
+        ax.annotate(f"parking\n{n_stalls} stalls ({zone['depth_ft']:.0f} ft)", (mid.x, mid.y),
+                    fontsize=6, color="steelblue", ha="center", va="center", fontweight="bold",
+                    bbox=dict(boxstyle="round,pad=0.15", fc="white", ec="none", alpha=0.75))
+
+
+def _mark_violations(ax, model, state, crossings, props, paint, pavement=None):
     """Run the scene invariants and draw whatever failed, right where it failed.
 
     The plan view reports rather than raises, and the phase script asserts after saving -
@@ -444,10 +419,6 @@ def _mark_violations(ax, model, state, crossings, props):
     """
     from src.checks import check_scene
 
-    try:
-        pavement = build_pavement_polygon(state.corner_fillets)
-    except ValueError:
-        pavement = None
     offsets = resolve_crosswalk_offsets(state, crossings)
     skews = resolve_crosswalk_skews(state, crossings)
     stop_offsets = (resolve_stop_bar_offsets(
@@ -456,8 +427,10 @@ def _mark_violations(ax, model, state, crossings, props):
 
     violations = check_scene(
         model, state, props, pavement,
-        crosswalk_bands=crosswalk_bands_ft(state, offsets, skews, CROSSWALK_DEPTH_M / FT_TO_M),
-        stop_bars=stop_bar_bands_ft(state, stop_offsets, skews))
+        crosswalk_bands=crosswalk_bands_ft(state, offsets, skews, CROSSWALK_DEPTH_M / FT_TO_M,
+                                            pavement),
+        stop_bars=stop_bar_bands_ft(state, stop_offsets, skews),
+        paint=paint, crosswalk_offsets=offsets)
 
     located = [v for v in violations if v.where]
     if located:
@@ -485,6 +458,8 @@ def legend_handles():
         Line2D([0], [0], color="slateblue", lw=6, alpha=0.35, label="Raised crossing"),
         Patch(facecolor="gold", alpha=0.5, hatch="//", edgecolor="goldenrod", label="Lane narrowing / corner hatching"),
         Line2D([0], [0], color="goldenrod", lw=1.5, label="Lane narrowing - line only (no chevron fill)"),
+        Patch(facecolor="orangered", alpha=0.40, hatch="xx", edgecolor="orangered",
+               label="Daylighting - no parking (R.S. 39:4-138)"),
         Patch(facecolor="peru", alpha=0.6, edgecolor="saddlebrown", label="Mountable apron"),
         Line2D([0], [0], marker="o", color="darkorange", lw=0, label="Bollard"),
         Line2D([0], [0], color="steelblue", lw=1.5, label="Marked parking lane + stalls"),
@@ -501,7 +476,7 @@ def legend_handles():
         Line2D([0], [0], marker="*", color="dimgrey", lw=0, label="Streetlight"),
         Line2D([0], [0], marker="P", color="gold", markeredgecolor="black", lw=0,
                 label="Pedestrian pushbutton (OSM)"),
-        Patch(facecolor="darkorange", edgecolor="black", label="Tactile paving / curb ramp (OSM)"),
+        Patch(facecolor=TACTILE_PAD_COLOR, edgecolor="black", label="Tactile paving / curb ramp (OSM)"),
         Line2D([0], [0], color="black", lw=2.2, label="Traced kerb (OSM barrier=kerb)"),
         Line2D([0], [0], marker="D", color="gold", markeredgecolor="black", lw=0, label="RRFB beacon (OSM)"),
         Line2D([0], [0], marker="P", color="firebrick", lw=0, label="Fire hydrant (OSM)"),

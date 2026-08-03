@@ -1,7 +1,7 @@
 """Example treatment scenarios, shared by the Phase 3 plan-view render and the
 Phase 4 3D export so both phases show the exact same design."""
 from src.geometry.treatments import (
-    DesignState, add_lane_narrowing, add_marked_parking, apply_osm_parking,
+    all_crosswalks_continental, complete_centerlines, DesignState, add_lane_narrowing, add_marked_parking, apply_osm_parking,
 )
 
 TIGHTENED_RADIUS_FT = 10
@@ -20,7 +20,9 @@ def build_demo_scenario(baseline: DesignState, model=None) -> DesignState:
     """
     if model is None:
         return baseline
-    return apply_osm_parking(baseline, model)
+    state = apply_osm_parking(baseline, model)
+    state = complete_centerlines(state)
+    return all_crosswalks_continental(state)
 
 
 PARKING_SIDES = ("left", "right")  # both Broad St legs now mark parking on BOTH sides - see

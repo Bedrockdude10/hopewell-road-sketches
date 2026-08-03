@@ -10,6 +10,16 @@ from src.geometry.model import Leg, build_pavement_polygon, fillet_curb_corner, 
 
 NACTO_MIN_REFUGE_ISLAND_WIDTH_FT = 6
 LANE_NARROWING_DEFAULT_STRIPE_FT = 5.0  # common low-cost NACTO paint buffer/shoulder-stripe width
+
+# The travel lane width every road diet here aims at: NACTO/AASHTO urban minimum. Defined
+# once, in src, because it is a standard rather than a per-site choice - it was previously
+# redeclared in each site's scenarios.py, which is how nothing ended up enforcing it.
+TARGET_LANE_WIDTH_FT = 11.0
+# A parking lane is a STANDARD width, not "whatever is left over". Anything wider than this
+# isn't a wider parking space, it's a parking space plus unmarked asphalt - which is what
+# gets hatched. Where the spare width can't even cover one standard stall, no parking is
+# marked at all rather than a token strip painted.
+MIN_MARKED_PARKING_DEPTH_FT = 8.0
 CORNER_HATCHING_DEFAULT_DEPTH_FT = 6.0  # paint-only zone depth, comparable footprint to a modest real curb extension
 CORNER_APRON_DEFAULT_EXTENT_FT = 5.0  # mountable-apron zone depth - same shape as hatching, different surface finish
 
@@ -529,6 +539,7 @@ def apply_osm_parking(state: DesignState, model, depth_ft: float = PARKING_STALL
 
     new_state = state
     for leg_name in sorted(state.legs):
+        leg = state.legs[leg_name]
         tags = getattr(model, "leg_osm_tags", {}).get(leg_name, {})
         aligned = getattr(model, "leg_osm_aligned", {}).get(leg_name, True)
         sides = parking_restriction_by_side(tags, aligned)
@@ -538,23 +549,94 @@ def apply_osm_parking(state: DesignState, model, depth_ft: float = PARKING_STALL
                     or (leg_name in new_state.lane_narrowing
                         and side in new_state.lane_narrowing_sides.get(leg_name, ("left", "right"))))
 
-        free = [s for s in ("left", "right")
-                if not already_treated(s) and not parking_is_restricted(sides[s])]
-        restricted = [s for s in ("left", "right")
-                      if not already_treated(s) and parking_is_restricted(sides[s])]
+        untouched = [s for s in ("left", "right") if not already_treated(s)]
 
-        # Both restricted sides go in ONE call. add_lane_narrowing keeps a single
-        # lane_narrowing_sides entry per leg, so calling it once per side made the second
-        # call overwrite the first - a leg restricted on both kerbs silently lost one of
-        # them and got stalls painted on it.
+        # The allowance is PER SIDE, and it is half the road minus one target lane - not the
+        # spare width divided by however many sides happen to be untreated. Those coincide
+        # at two sides and diverge at one: handing a lone side the whole spare would shrink
+        # its own lane to 2*target - half, well under the target it is supposed to protect.
+        half_ft = leg.curb_to_curb_ft / 2
+        allowance_ft = half_ft - TARGET_LANE_WIDTH_FT
+        if allowance_ft <= 0 or not untouched:
+            if untouched:
+                print(f"  NOTE: {leg_name} is {leg.curb_to_curb_ft:.1f} ft curb to curb - too narrow "
+                      f"for two {TARGET_LANE_WIDTH_FT:.0f} ft lanes, so no kerbside paint is marked "
+                      f"here. Its lanes are {half_ft:.1f} ft as they stand.")
+            continue
+
+        restricted = [s for s in untouched if parking_is_restricted(sides[s])]
+        # A standard stall or nothing: an unrestricted kerb with less than one stall's worth
+        # of room gets its spare width HATCHED, not left bare. Leaving it bare was keeping
+        # the lane at 18 ft on E Broad, which defeats the whole point of the target - and
+        # hatching beside a travel lane reads as a buffer/shoulder, the same thing the strip
+        # between a parking lane and the kerb already is, not as a parking prohibition.
+        parkable = [s for s in untouched
+                    if s not in restricted and allowance_ft >= MIN_MARKED_PARKING_DEPTH_FT]
+        hatched = [s for s in untouched if s not in restricted and s not in parkable]
+        for side in hatched:
+            print(f"  NOTE: {leg_name} {side} is unrestricted, but only {allowance_ft:.1f} ft is "
+                  f"spare beside a {TARGET_LANE_WIDTH_FT:.0f} ft lane - under one "
+                  f"{MIN_MARKED_PARKING_DEPTH_FT:.0f} ft stall, so it is hatched as buffer "
+                  f"rather than marked for parking.")
+        restricted = restricted + hatched
+
         if restricted:
-            new_state = add_lane_narrowing(new_state, leg_name, stripe_width_ft=stripe_width_ft,
+            new_state = add_lane_narrowing(new_state, leg_name, stripe_width_ft=allowance_ft,
                                             sides=tuple(restricted))
             for side in restricted:
-                new_state.notes.append(f"apply_osm_parking({leg_name}, {side}): hatched - OSM "
-                                        f"says {sides[side]!r} here")
-        for side in free:
-            new_state = add_marked_parking(new_state, leg_name, side, depth_ft=depth_ft)
+                why = (f"OSM says {sides[side]!r}" if parking_is_restricted(sides[side])
+                       else "too narrow for a stall")
+                new_state.notes.append(f"apply_osm_parking({leg_name}, {side}): {allowance_ft:.1f} ft "
+                                        f"hatched - {why}")
+        for side in parkable:
+            # The stall is a fixed standard depth and the leftover between it and the kerb is
+            # hatched (add_marked_parking's curb_offset_ft draws that buffer with the same
+            # geometry a lane-narrowing buffer uses). Handing the whole allowance to depth_ft
+            # instead produced 10-12 ft "parking spaces", which is a stall plus a strip of
+            # unmarked asphalt drawn as though you could park on it.
+            buffer_ft = allowance_ft - PARKING_STALL_DEPTH_DEFAULT_FT
+            new_state = add_marked_parking(new_state, leg_name, side,
+                                            depth_ft=PARKING_STALL_DEPTH_DEFAULT_FT,
+                                            curb_offset_ft=buffer_ft)
             stated = "restriction=none" if sides[side] == "none" else "no restriction tagged"
-            new_state.notes.append(f"apply_osm_parking({leg_name}, {side}): marked stalls - {stated}")
+            extra = (f" + {buffer_ft:.1f} ft hatched to the kerb" if buffer_ft > 0.05 else "")
+            new_state.notes.append(f"apply_osm_parking({leg_name}, {side}): "
+                                    f"{PARKING_STALL_DEPTH_DEFAULT_FT:.0f} ft stalls{extra} - {stated}")
+    return new_state
+
+
+def complete_centerlines(state: DesignState, style: str = "double_yellow") -> DesignState:
+    """Give every leg that has no centerline paint one.
+
+    An unmarked centerline is a real gap in the street's markings, not a design preference -
+    Greenwood Ave south of Broad has none today, so nothing tells a driver where their half
+    of the road ends. Adding it is part of completing the markings, and it is exactly the
+    kind of thing a proposal should carry.
+
+    Only legs recorded as having NOTHING are changed. A leg already marked - dashed or
+    double - is left alone: whether to upgrade a dashed line to a no-passing double is a
+    traffic-engineering judgement about sight lines, not a gap to be filled in.
+    """
+    new_state = state.clone()
+    for leg_name, current in sorted(state.centerline_styles.items()):
+        if current != "none":
+            continue
+        new_state.centerline_styles[leg_name] = style
+        new_state.notes.append(
+            f"complete_centerlines({leg_name}): {style} added - the leg has no centerline "
+            f"paint today, so nothing marks the middle of the road")
+    return new_state
+
+
+def all_crosswalks_continental(state: DesignState) -> DesignState:
+    """Repaint every marked crossing at this junction to continental.
+
+    FHWA and NACTO both rank crosswalk visibility roughly lines < continental < ladder, and
+    continental is the low-cost repaint that every proposal here starts from - so it applies
+    to all legs rather than being chosen one at a time. Existing conditions keep whatever
+    OSM's crossing:markings records; this only changes the proposal.
+    """
+    new_state = state
+    for leg_name in sorted(state.legs):
+        new_state = upgrade_crosswalk_markings(new_state, leg_name, "continental")
     return new_state

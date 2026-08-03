@@ -273,9 +273,97 @@ def leg_clearance_ft(leg_name: str, legs: dict, corner_fillets: dict, buffer_ft:
     return max_along_dist + buffer_ft
 
 
+# How finely a curbside strip is sampled along the leg. The curb is a traced polyline whose
+# vertices fall wherever the surveyor clicked, so the strip is resampled on a regular station
+# grid instead: both of its boundaries then have matching vertices at matching stations, and
+# the strip stays a strip rather than a wedge.
+STRIP_SAMPLE_FT = 2.0
+
+
+def curb_offsets_at_stations(leg: "Leg", side: str, stations: np.ndarray) -> np.ndarray | None:
+    """Signed offsets of a side's real curb at the given CENTERLINE stations.
+
+    The vectorized form of curb_point_at_station's interpolation - see that function for why
+    a curb cannot be addressed by its own arc length.
+    """
+    curb = getattr(leg, f"{side}_curb", None)
+    if curb is None or curb.is_empty:
+        return None
+    coords = np.asarray(curb.coords, dtype=float)
+    curb_stations, curb_offsets = station_offset_many(leg.centerline, coords)
+    order = np.argsort(curb_stations)
+    return np.interp(stations, curb_stations[order], curb_offsets[order])
+
+
+def curb_station_span(leg: "Leg", side: str) -> tuple[float, float] | None:
+    """The stations along the leg that this side's curb was actually traced across, clipped
+    to the leg itself.
+
+    A traced kerb runs on its own terms: it starts 13-47 ft out (the corner return is traced
+    separately) and several of them carry on 11-78 ft PAST the end of the 130 ft leg, because
+    the tracing continues down the block. Paint has to be built inside that span - outside it
+    there is no curb to measure from, only extrapolation.
+    """
+    curb = getattr(leg, f"{side}_curb", None)
+    if curb is None or curb.is_empty:
+        return None
+    stations, _offsets = station_offset_many(leg.centerline, np.asarray(curb.coords, dtype=float))
+    lo = max(float(stations.min()), 0.0)
+    hi = min(float(stations.max()), leg.centerline.length)
+    return (lo, hi) if hi > lo else None
+
+
+def curbside_strip_polygon(leg: "Leg", side: str, inner_offset_ft: float,
+                            start_ft: float, end_ft: float | None = None) -> Polygon | None:
+    """The strip of roadway between a leg's real curb and a line inner_offset_ft from its
+    centerline, between two centerline stations.
+
+    Both boundaries are sampled at the SAME stations, which is the whole point. The previous
+    construction paired `substring(curb, start_ft, curb.length)` with
+    `substring(inner, start_ft, inner.length)`, and those two substrings have nothing to do
+    with each other: substring measures arc length along each line from that line's own
+    start, so the curb was cut at a station 20-30 ft from where the inner line was cut, and
+    the far ends differed by as much as 49 ft where the tracing ran past the leg. Closing
+    that ring produced a wedge with two long diagonal ends instead of a strip, which is what
+    fragmented the hatching and pushed paint outside the curb.
+
+    Returns None where there is no room - the curb comes inside inner_offset_ft (paint would
+    be outside the roadway) or the span is empty.
+    """
+    span = curb_station_span(leg, side)
+    if span is None:
+        return None
+    lo, hi = span
+    lo = max(lo, start_ft)
+    hi = min(hi, leg.centerline.length if end_ft is None else end_ft)
+    if hi - lo < STRIP_SAMPLE_FT:
+        return None
+
+    n = max(int(np.ceil((hi - lo) / STRIP_SAMPLE_FT)) + 1, 2)
+    stations = np.linspace(lo, hi, n)
+    curb_offsets = curb_offsets_at_stations(leg, side, stations)
+    if curb_offsets is None:
+        return None
+
+    # The inner edge never crosses outside the real curb. On several sides the traced kerb
+    # comes inside the nominal half-width (broad_st_east left is traced at 22.7 ft against a
+    # nominal 24.2 ft), and taking the nominal figure on faith is how paint ended up over the
+    # kerb. Where the curb is inside the lane edge the strip simply pinches to nothing.
+    sign = 1.0 if side == "left" else -1.0
+    inner = sign * np.minimum(inner_offset_ft, np.abs(curb_offsets))
+
+    outer_pts = [_point_at(leg.centerline, s, float(o)) for s, o in zip(stations, curb_offsets)]
+    inner_pts = [_point_at(leg.centerline, s, float(o)) for s, o in zip(stations, inner)]
+    poly = Polygon(list(outer_pts) + list(reversed(inner_pts)))
+    if not poly.is_valid:
+        poly = poly.buffer(0)
+    return poly if (not poly.is_empty and poly.area > 1e-6) else None
+
+
 def lane_narrowing_polygons_ft(leg: "Leg", stripe_width_ft: float,
                                 start_left_ft: float = 0.0, start_right_ft: float = 0.0,
-                                sides: tuple = ("left", "right")) -> list[Polygon]:
+                                sides: tuple = ("left", "right"),
+                                end_ft: float | None = None) -> list[Polygon]:
     """Two thin paint-only strips just inside each curb line - a visual lane
     narrowing treatment achieved with paint, NOT a curb_to_curb_ft change (no
     pavement/curb geometry is touched). Used by paint-only proposals - see
@@ -299,16 +387,12 @@ def lane_narrowing_polygons_ft(leg: "Leg", stripe_width_ft: float,
     half = leg.curb_to_curb_ft / 2
     inner_half = max(half - stripe_width_ft, 0.5)
     polys = []
-    for curb, sign, start_ft, side in ((leg.left_curb, 1, start_left_ft, "left"),
-                                        (leg.right_curb, -1, start_right_ft, "right")):
+    for start_ft, side in ((start_left_ft, "left"), (start_right_ft, "right")):
         if side not in sides:
             continue
-        inner = leg.centerline.offset_curve(sign * inner_half)
-        trimmed_curb = substring(curb, start_ft, curb.length)
-        trimmed_inner = substring(inner, start_ft, inner.length)
-        ring = list(trimmed_curb.coords) + list(reversed(trimmed_inner.coords))
-        if len(ring) >= 3:
-            polys.append(Polygon(ring))
+        poly = curbside_strip_polygon(leg, side, inner_half, start_ft, end_ft)
+        if poly is not None:
+            polys.append(poly)
     return polys
 
 
@@ -328,12 +412,39 @@ def lane_narrowing_edge_lines_ft(leg: "Leg", stripe_width_ft: float,
     half = leg.curb_to_curb_ft / 2
     inner_half = max(half - stripe_width_ft, 0.5)
     lines = []
-    for sign, start_ft, side in ((1, start_left_ft, "left"), (-1, start_right_ft, "right")):
+    for start_ft, side in ((start_left_ft, "left"), (start_right_ft, "right")):
         if side not in sides:
             continue
-        inner = leg.centerline.offset_curve(sign * inner_half)
-        lines.append(substring(inner, start_ft, inner.length))
+        line = inset_line_ft(leg, side, inner_half, start_ft)
+        if line is not None:
+            lines.append(line)
     return lines
+
+
+def inset_line_ft(leg: "Leg", side: str, offset_ft: float,
+                   start_ft: float, end_ft: float | None = None) -> LineString | None:
+    """A line offset_ft from the centerline on one side, over the stations where that side's
+    curb exists - the inner boundary of curbside_strip_polygon, drawn on its own.
+
+    Built on the same station grid as the strip so the two cannot disagree, and clamped
+    inside the real curb for the same reason. NOT `offset_curve(...).interpolate(d)`: an
+    offset curve's arc length differs from the centerline's, so `d` there is not station `d`,
+    which is what let the parking stall ticks drift along the leg.
+    """
+    span = curb_station_span(leg, side)
+    if span is None:
+        return None
+    lo, hi = span
+    lo = max(lo, start_ft)
+    hi = min(hi, leg.centerline.length if end_ft is None else end_ft)
+    if hi - lo < STRIP_SAMPLE_FT:
+        return None
+    n = max(int(np.ceil((hi - lo) / STRIP_SAMPLE_FT)) + 1, 2)
+    stations = np.linspace(lo, hi, n)
+    curb_offsets = curb_offsets_at_stations(leg, side, stations)
+    sign = 1.0 if side == "left" else -1.0
+    inner = sign * np.minimum(offset_ft, np.abs(curb_offsets))
+    return LineString([_point_at(leg.centerline, s, float(o)) for s, o in zip(stations, inner)])
 
 
 def _corner_bulge_normal(leg: "Leg", role: str) -> np.ndarray:
@@ -347,6 +458,33 @@ def _corner_bulge_normal(leg: "Leg", role: str) -> np.ndarray:
     c0, c1 = np.array(leg.centerline.coords[0]), np.array(leg.centerline.coords[1])
     u = _unit(c1 - c0)
     return np.array([-u[1], u[0]]) if role == "left" else np.array([u[1], -u[0]])
+
+
+
+def curb_point_at_station(leg: "Leg", side: str, station_ft: float) -> np.ndarray | None:
+    """The point on a leg's real curb at `station_ft` ALONG THE CENTERLINE.
+
+    Not `curb.interpolate(station_ft)`. That measures distance along the curb line from the
+    curb line's own start, which coincides with the centerline station only while the curb
+    is a symmetric offset of the centerline starting at the junction. Since the curbs became
+    traced kerbs neither holds - they start 14-47 ft out and run at their own bearing - and
+    asking for station 40 landed anywhere from 51 to 86 ft down the leg.
+    """
+    curb = getattr(leg, f"{side}_curb", None)
+    if curb is None or curb.is_empty:
+        return None
+    coords = np.asarray(curb.coords, dtype=float)
+    stations, offsets = station_offset_many(leg.centerline, coords)
+    order = np.argsort(stations)
+    offset_ft = float(np.interp(station_ft, stations[order], offsets[order]))
+    return np.asarray(_point_at(leg.centerline, station_ft, offset_ft), dtype=float)
+
+
+def inset_point_at_station(leg: "Leg", station_ft: float, offset_ft: float) -> np.ndarray:
+    """A point offset laterally from the centerline at a given station - exactly, via the
+    leg frame, rather than by interpolating along an offset_curve whose own arc length
+    differs from the centerline's."""
+    return np.asarray(_point_at(leg.centerline, station_ft, offset_ft), dtype=float)
 
 
 def lane_narrowing_taper_ft(leg: "Leg", stripe_width_ft: float, anchor_ft: float, target_ft: float,
@@ -377,13 +515,21 @@ def lane_narrowing_taper_ft(leg: "Leg", stripe_width_ft: float, anchor_ft: float
     two ways of describing similarly-scaled curves at the same corner.)"""
     half = leg.curb_to_curb_ft / 2
     inner_half = max(half - stripe_width_ft, 0.5)
+    # A taper runs from the straight run's start INWARD to the curb. When target_ft is
+    # further out than anchor_ft there is no room between the corner return and the
+    # crosswalk for one, and solving the arc anyway sweeps it backwards - which is what
+    # mangled the hatching on Princeton Ave's north leg (anchor 27.5 ft, target 28.6 ft)
+    # while the south leg, whose target sits properly inside its anchor, looked fine.
+    if target_ft >= anchor_ft:
+        return []
     tapers = []
     for curb, sign, role in ((leg.left_curb, 1, "left"), (leg.right_curb, -1, "right")):
         if role not in sides:
             continue
-        inset = leg.centerline.offset_curve(sign * inner_half)
-        p1 = np.array(inset.interpolate(anchor_ft).coords[0])
-        p2 = np.array(curb.interpolate(target_ft).coords[0])
+        p1 = inset_point_at_station(leg, anchor_ft, sign * inner_half)
+        p2 = curb_point_at_station(leg, role, target_ft)
+        if p2 is None:
+            continue
         n = _corner_bulge_normal(leg, role)
         d = p2 - p1
         denom = 2 * np.dot(d, n)
@@ -415,13 +561,21 @@ def lane_narrowing_taper_polygons_ft(leg: "Leg", stripe_width_ft: float, anchor_
     the two zones read as one continuous stripe with no visible seam."""
     half = leg.curb_to_curb_ft / 2
     inner_half = max(half - stripe_width_ft, 0.5)
+    # A taper runs from the straight run's start INWARD to the curb. When target_ft is
+    # further out than anchor_ft there is no room between the corner return and the
+    # crosswalk for one, and solving the arc anyway sweeps it backwards - which is what
+    # mangled the hatching on Princeton Ave's north leg (anchor 27.5 ft, target 28.6 ft)
+    # while the south leg, whose target sits properly inside its anchor, looked fine.
+    if target_ft >= anchor_ft:
+        return []
     polys = []
     for curb, sign, role in ((leg.left_curb, 1, "left"), (leg.right_curb, -1, "right")):
         if role not in sides:
             continue
-        inset = leg.centerline.offset_curve(sign * inner_half)
-        p1 = np.array(inset.interpolate(anchor_ft).coords[0])
-        p2 = np.array(curb.interpolate(target_ft).coords[0])
+        p1 = inset_point_at_station(leg, anchor_ft, sign * inner_half)
+        p2 = curb_point_at_station(leg, role, target_ft)
+        if p2 is None:
+            continue
         n = _corner_bulge_normal(leg, role)
         d = p2 - p1
         denom = 2 * np.dot(d, n)
@@ -434,17 +588,32 @@ def lane_narrowing_taper_polygons_ft(leg: "Leg", stripe_width_ft: float, anchor_
         delta = (a2 - a1 + np.pi) % (2 * np.pi) - np.pi
         angles = a1 + np.linspace(0, delta, n_points)
         arc_pts = [(center[0] + radius_ft * np.cos(t), center[1] + radius_ft * np.sin(t)) for t in angles]
-        # arc_pts already ends at p2 (curb @ target_ft) - drop that duplicate
-        # point from the curb run back to anchor_ft; Polygon() closes the ring
-        # itself with the final straight segment (curb @ anchor_ft -> p1), the
-        # same "closing" segment lane_narrowing_polygons_ft relies on between
-        # its own trimmed curb/inset pair.
-        curb_forward = list(substring(curb, target_ft, anchor_ft).coords)[1:]
+        # The curb run back from target_ft to anchor_ft, sampled by STATION. `substring(curb,
+        # target_ft, anchor_ft)` was arc length along the traced kerb from the kerb's own
+        # start - the same confusion curb_point_at_station exists to avoid - which put this
+        # edge somewhere else entirely and left the taper fill 2.3 ft over the kerb on
+        # broad_st_west. arc_pts already ends at p2 (the curb at target_ft), so that
+        # duplicate is dropped; Polygon() closes the ring with the segment back to p1.
+        n_curb = max(int(np.ceil((anchor_ft - target_ft) / STRIP_SAMPLE_FT)) + 1, 2)
+        curb_stations = np.linspace(target_ft, anchor_ft, n_curb)
+        curb_offsets = curb_offsets_at_stations(leg, role, curb_stations)
+        curb_forward = [_point_at(leg.centerline, s, float(o))
+                        for s, o in zip(curb_stations, curb_offsets)][1:]
         ring = arc_pts + curb_forward
-        if len(ring) >= 3:
-            poly = Polygon(ring)
-            if poly.is_valid and poly.area > 1e-6:
-                polys.append(poly)
+        if len(ring) < 3:
+            continue
+        poly = Polygon(ring)
+        if not poly.is_valid:
+            poly = poly.buffer(0)
+        # The arc is a circle solved through two points; between them it is free to bulge
+        # past the kerb, which no amount of care about the endpoints prevents. Clipping it
+        # to the roadway on this side is what actually guarantees the fill stays on the road.
+        roadway = curbside_strip_polygon(leg, role, 0.0, target_ft, anchor_ft)
+        if roadway is not None:
+            poly = poly.intersection(roadway)
+        for part in getattr(poly, "geoms", [poly]):
+            if part.geom_type == "Polygon" and not part.is_empty and part.area > 1e-6:
+                polys.append(part)
     return polys
 
 
@@ -464,18 +633,22 @@ def bollard_points_ft(leg: "Leg", stripe_width_ft: float, start_ft: float,
     strip)."""
     half = leg.curb_to_curb_ft / 2
     inner_half = max(half - stripe_width_ft, 0.5)
-    lateral = (half + inner_half) / 2  # centered within the buffer strip
-    length = leg.centerline.length
     points = []
     for side, sign in (("left", 1), ("right", -1)):
         if side not in sides:
             continue
-        offset_line = leg.centerline.offset_curve(sign * lateral)
-        d = start_ft
-        while d <= min(length, offset_line.length):
-            pt = offset_line.interpolate(d)
-            points.append((pt.x, pt.y))
-            d += spacing_ft
+        span = curb_station_span(leg, side)
+        if span is None:
+            continue
+        station = start_ft
+        while station <= span[1]:
+            # Centered between the strip's two real boundaries at THIS station, so a bollard
+            # sits in the buffer that is actually painted even where the traced kerb comes
+            # inside the nominal half-width (see curbside_strip_polygon).
+            curb_off = abs(float(curb_offsets_at_stations(leg, side, np.array([station]))[0]))
+            lateral = (curb_off + min(inner_half, curb_off)) / 2
+            points.append(tuple(_point_at(leg.centerline, station, sign * lateral)))
+            station += spacing_ft
     return points
 
 
@@ -507,18 +680,13 @@ def parking_lane_edge_line_ft(leg: "Leg", side: str, depth_ft: float, start_ft: 
     parking sits directly against the active travel lane instead of against
     the curb. Defaults to 0 (the lane starts right at the curb, as before)."""
     half = leg.curb_to_curb_ft / 2
-    sign = 1 if side == "left" else -1
     inner_half = max(half - curb_offset_ft - depth_ft, 0.5)
-    inner = leg.centerline.offset_curve(sign * inner_half)
-    end_ft = inner.length if end_ft is None else end_ft
-    if start_ft >= min(end_ft, inner.length):
-        # No room left on this leg to mark parking. Happens where the corner return eats
-        # the whole leg: at W Broad & Louellen's acute Y, leg_clearance_ft comes out at
-        # 133 ft on a 130 ft leg, so parking would start past the end of the road.
-        # substring() then returns an empty geometry, and callers that interpolate along
-        # it fail with an unhelpful shapely type error - so say "nothing here" explicitly.
-        return None
-    return substring(inner, start_ft, end_ft)
+    # No room left on this leg to mark parking. Happens where the corner return eats the
+    # whole leg: at W Broad & Louellen's acute Y, leg_clearance_ft comes out at 133 ft on a
+    # 130 ft leg, so parking would start past the end of the road. Callers that interpolate
+    # along an empty geometry fail with an unhelpful shapely type error, so inset_line_ft
+    # says "nothing here" explicitly instead.
+    return inset_line_ft(leg, side, inner_half, start_ft, end_ft)
 
 
 def parking_stall_lines_ft(leg: "Leg", side: str, depth_ft: float, stall_length_ft: float, start_ft: float,
@@ -538,14 +706,23 @@ def parking_stall_lines_ft(leg: "Leg", side: str, depth_ft: float, stall_length_
     no-parking buffer between it and the curb."""
     half = leg.curb_to_curb_ft / 2
     sign = 1 if side == "left" else -1
-    outer = leg.centerline.offset_curve(sign * max(half - curb_offset_ft, 0.5))
-    inner = leg.centerline.offset_curve(sign * max(half - curb_offset_ft - depth_ft, 0.5))
-    end_ft = outer.length if end_ft is None else end_ft
+    outer_off = max(half - curb_offset_ft, 0.5)
+    inner_off = max(half - curb_offset_ft - depth_ft, 0.5)
+    span = curb_station_span(leg, side)
+    if span is None:
+        return []
+    end_ft = min(span[1], leg.centerline.length if end_ft is None else end_ft)
     n_stalls = parking_stall_count_ft(leg, stall_length_ft, start_ft, end_ft)
     lines = []
     for i in range(n_stalls + 1):
-        d = start_ft + i * stall_length_ft
-        lines.append(LineString([outer.interpolate(d).coords[0], inner.interpolate(d).coords[0]]))
+        # Station, not distance along an offset curve - see inset_line_ft. A divider is a
+        # cross-section of the parking lane, so both ends have to be at the same station.
+        station = start_ft + i * stall_length_ft
+        curb_off = abs(float(curb_offsets_at_stations(leg, side, np.array([station]))[0]))
+        lines.append(LineString([
+            _point_at(leg.centerline, station, sign * min(outer_off, curb_off)),
+            _point_at(leg.centerline, station, sign * min(inner_off, curb_off)),
+        ]))
     return lines
 
 
@@ -573,10 +750,46 @@ def corner_overlay_polygon(pieces: dict, center_ft: Point, depth_ft: float) -> P
     return Polygon([start.coords[0], mid.coords[0], end.coords[0], inner_pt])
 
 
-def hatch_lines_ft(polygon: Polygon, spacing_ft: float = 2.0, angle_deg: float = 45.0) -> list[LineString]:
+# A hatch stroke shorter than this is a clipping artifact, not paint. They appear where a
+# stroke grazes a corner of the polygon or crosses the needle-thin tip of a taper, and they
+# render as stubs - the "sheared in half" strokes. One came out 0.0 ft long.
+MIN_HATCH_STROKE_FT = 1.0
+
+
+def clip_paint_clear_of(geometry, keep_clear):
+    """Cut `keep_clear` out of a piece of paint, returning the surviving pieces.
+
+    Road markings are layered by priority, and a crosswalk outranks a buffer or a parking
+    lane - export.py has said so in a comment since long before anything enforced it. Doing
+    the subtraction on the GEOMETRY is what makes it true, rather than relying on the paint's
+    start station being far enough out: a skewed crossing reaches further along one kerb than
+    its centre offset suggests, which is how two hatch strokes ended up over Broad St's
+    crossing while the arithmetic said they cleared it.
+    """
+    if keep_clear is None or keep_clear.is_empty:
+        return [geometry]
+    remainder = geometry.difference(keep_clear)
+    if remainder.is_empty:
+        return []
+    parts = getattr(remainder, "geoms", [remainder])
+    return [g for g in parts if g.geom_type == geometry.geom_type and not g.is_empty]
+
+
+def hatch_lines_ft(polygon: Polygon, spacing_ft: float = 2.0, angle_deg: float = 45.0,
+                    phase_origin: tuple[float, float] = (0.0, 0.0)) -> list[LineString]:
     """Diagonal hatch lines filling a polygon, clipped to its boundary - used
     to render paint-only diagonal/chevron marking (e.g. corner_hatching_polygon
-    above) without any real curb/pavement geometry change."""
+    above) without any real curb/pavement geometry change.
+
+    phase_origin fixes WHERE the family of parallel lines falls, in world coordinates. It
+    matters because a buffer is not one polygon: the straight run, the taper into the
+    corner, and whatever survives being cut around a crossing are separate polygons hatched
+    separately. Phasing each family off its own bounding box centre - which is what this did
+    - gave each piece an independent stroke position, so at every seam the strokes stepped
+    sideways by some fraction of the spacing. Reading across the seam, one stroke looked
+    sheared into two offset halves. Passing all the pieces of one treatment the same origin
+    puts them on one continuous set of lines, and the seams disappear.
+    """
     # A corner-hatch polygon built off a traced kerb can pinch to a point where the curb
     # doubles back on itself, which is a bowtie GEOS refuses to intersect against. buffer(0)
     # resolves it into the same area without moving any edge; an empty result means the
@@ -592,18 +805,30 @@ def hatch_lines_ft(polygon: Polygon, spacing_ft: float = 2.0, angle_deg: float =
     u = np.array([np.cos(theta), np.sin(theta)])
     n = np.array([-u[1], u[0]])
 
+    # Which lines of the (infinite, origin-anchored) family actually reach this polygon:
+    # the range of the corners' distances along n, snapped outward to whole multiples of the
+    # spacing. Anchoring on multiples of the spacing from a shared origin is what keeps
+    # neighbouring pieces in phase.
+    origin = np.asarray(phase_origin, dtype=float)
+    corners = np.array([[minx, miny], [minx, maxy], [maxx, miny], [maxx, maxy]]) - origin
+    along_n, along_u = corners @ n, corners @ u
+    steps = np.arange(np.floor(along_n.min() / spacing_ft), np.ceil(along_n.max() / spacing_ft) + 1)
+
     # Every hatch line at once, and one clip against the polygon instead of one GEOS call
     # per line. Endpoints are built with numpy broadcasting; the whole family goes through
-    # a single MultiLineString intersection.
-    centers = (np.array([(minx + maxx) / 2, (miny + maxy) / 2])
-               + n * np.arange(-diag, diag + spacing_ft, spacing_ft)[:, None])
-    ends = np.stack([centers - u * diag, centers + u * diag], axis=1)
+    # a single MultiLineString intersection. Each line must span the polygon's extent ALONG
+    # u as well as sit at the right distance along n - the phase origin is the state-plane
+    # origin, half a million feet away, so a segment merely centred on it never reaches.
+    centers = origin + n * (steps * spacing_ft)[:, None]
+    lo, hi = along_u.min() - diag, along_u.max() + diag
+    ends = np.stack([centers + u * lo, centers + u * hi], axis=1)
     clipped = MultiLineString([tuple(map(tuple, pair)) for pair in ends]).intersection(polygon)
 
     if clipped.is_empty:
         return []
     pieces = clipped.geoms if hasattr(clipped, "geoms") else [clipped]
-    return [g for g in pieces if g.geom_type == "LineString" and not g.is_empty]
+    return [g for g in pieces
+            if g.geom_type == "LineString" and g.length >= MIN_HATCH_STROKE_FT]
 
 
 def build_pavement_polygon(corner_fillets: dict) -> Polygon:

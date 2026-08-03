@@ -26,7 +26,7 @@ from dataclasses import dataclass
 import numpy as np
 from shapely.geometry import Point
 
-from src.geometry.model import station_offset_many
+from src.geometry.model import curb_offsets_at_stations, station_offset_many
 
 # ---------------------------------------------------------------------------
 # Tolerances. Each is a real physical claim, not a fudge factor.
@@ -41,12 +41,34 @@ PAD_MAX_DISTANCE_FROM_CURB_FT = 12.0
 # A curb line may start a shade behind the junction node (the cross-section is not exactly
 # at the node), but not run back up the opposite leg.
 CURB_BEHIND_JUNCTION_TOLERANCE_FT = 6.0
-# A painted crosswalk should lie in the roadway it crosses. Some overhang past the curb is
-# normal where it ties into the ramp.
-MIN_CROSSWALK_IN_PAVEMENT = 0.55
+# A painted crosswalk lies in the roadway it crosses, full stop. This was 0.55 - i.e. 45% of
+# a crossing was allowed to sit on the footway - back when the span was half the leg's
+# NOMINAL width either side of the centerline and routinely overshot the traced kerb. Now the
+# reach is bounded by the roadway itself (crosswalks.crosswalk_reach_to_curbs_ft), every band
+# at every site measures 99.96% inside or better, and the loose bound was hiding exactly the
+# failure it was named for: end bars painted up the corner onto the sidewalk.
+MIN_CROSSWALK_IN_PAVEMENT = 0.99
 # A stop bar covers the entering half only. This much of it may cross the centerline before
 # it is genuinely painted across opposing lanes.
 MAX_STOP_BAR_OPPOSING_FRACTION = 0.15
+# Paint is specified to a tenth of a foot; this absorbs float noise, nothing more.
+LANE_WIDTH_TOLERANCE_FT = 0.05
+# A marking may touch the kerb - that is what a curbside marking does - and may sit a hair
+# past it where the strip is sampled across a curve between two traced vertices. Beyond this
+# it is painted on the footway.
+PAINT_PAST_CURB_TOLERANCE_FT = 0.25
+# Statutory setbacks are whole feet; this absorbs the float noise of resolving a station,
+# nothing more. It is deliberately far below a foot - the distances themselves are the law.
+PARKING_SETBACK_TOLERANCE_FT = 0.1
+# Two markings may share an edge, and clipping one against another leaves slivers along that
+# shared edge. Beyond this they genuinely cover the same ground.
+MARKING_OVERLAP_TOLERANCE_SQ_FT = 1.0
+# How close two lines have to be to count as the same line. Well under a paint stripe's own
+# width, so it only catches lines genuinely drawn on top of each other.
+COLLINEAR_PAINT_TOLERANCE_FT = 0.1
+# And how far they must run together before it is a collision rather than a shared endpoint
+# or a crossing - a stall divider meets the lane edge at right angles by design.
+MIN_COLLINEAR_OVERLAP_FT = 1.0
 
 # Props that belong on the footway. Anything not listed is assumed to belong there too -
 # a new prop type is checked by default, and the exceptions have to be declared. Bollards
@@ -205,6 +227,186 @@ def check_curbs_do_not_cross(legs: dict) -> list[Violation]:
     return violations
 
 
+def check_travel_lanes(state) -> list[Violation]:
+    """Kerbside paint must never squeeze a travel lane below the target width.
+
+    Only fires where THIS design painted something. A leg that is naturally narrower than
+    the target is a fact about the street, not an error we introduced - Louellen Street is
+    19.3 ft curb to curb and no amount of checking widens it. What must not happen is a
+    treatment taking a road that could hold two target-width lanes and marking parking or
+    hatching that leaves less: fixed 5 ft and 8 ft paint widths, applied without reference
+    to how much road was left, once produced 1.7 ft lanes there.
+    """
+    from src.geometry.treatments import TARGET_LANE_WIDTH_FT
+
+    violations = []
+    for leg_name, leg in state.legs.items():
+        if leg.curb_to_curb_ft is None:
+            continue
+        half_ft = leg.curb_to_curb_ft / 2
+        for side in ("left", "right"):
+            painted_ft = 0.0
+            if (leg_name in state.lane_narrowing
+                    and side in state.lane_narrowing_sides.get(leg_name, ("left", "right"))):
+                painted_ft = state.lane_narrowing[leg_name]
+            zone = state.parking_zones.get((leg_name, side))
+            if zone is not None:
+                painted_ft = zone["depth_ft"] + zone["curb_offset_ft"]
+            if painted_ft <= 0:
+                continue
+            lane_ft = half_ft - painted_ft
+            if lane_ft < TARGET_LANE_WIDTH_FT - LANE_WIDTH_TOLERANCE_FT:
+                violations.append(Violation(
+                    "travel_lane_too_narrow",
+                    f"{leg_name} {side} is painted {painted_ft:.1f} ft wide, leaving a "
+                    f"{lane_ft:.1f} ft travel lane - under the {TARGET_LANE_WIDTH_FT:.0f} ft "
+                    f"target. The paint has to be sized from what the road can spare",
+                    tuple(leg.centerline.interpolate(leg.centerline.length / 2).coords[0])))
+    return violations
+
+
+def check_paint_inside_the_curb(state, paint) -> list[Violation]:
+    """Road markings are painted on the road. None may cross its own side's curb.
+
+    Touching the kerb is the point of a curbside marking, so this is not a clearance check -
+    it is the difference between a line that ENDS at the kerb and one that carries on over
+    it onto the footway.
+
+    Measured against the real traced kerb at each vertex's own station, not against the
+    nominal half-width and not against the pavement polygon. Both of those hide the failure:
+    the nominal half-width IS the wrong number (broad_st_east's left kerb is traced at 22.7
+    ft against a nominal 24.2 ft, so paint sized off the nominal figure sat 1.5 ft over it),
+    and the pavement polygon is built from the same over-wide assumption, so paint outside
+    the kerb still tested as inside the roadway.
+
+    The bug this was written for: every curbside strip was built by pairing
+    `substring(curb, start, curb.length)` with `substring(inner, start, inner.length)`.
+    Those are arc lengths along two different lines, so the two boundaries were cut at
+    unrelated stations - up to 49 ft apart at the far end, where the traced kerb ran on past
+    the leg. The result was a wedge with long diagonal ends rather than a strip, which both
+    fragmented the hatching and pushed paint outside the kerb.
+    """
+    violations = []
+    for piece in paint:
+        if piece.side is None or piece.leg is None:
+            continue        # a corner treatment spans two legs - no single side to measure from
+        leg = state.legs.get(piece.leg)
+        if leg is None:
+            continue
+        coords = (piece.geometry.exterior.coords if piece.geometry.geom_type == "Polygon"
+                  else piece.geometry.coords)
+        points = np.asarray(coords, dtype=float)
+        stations, offsets = station_offset_many(leg.centerline, points)
+        curb_offsets = curb_offsets_at_stations(leg, piece.side, stations)
+        if curb_offsets is None:
+            continue        # no traced kerb on this side - nothing to be outside of
+        over_ft = np.abs(offsets) - np.abs(curb_offsets)
+        worst = float(over_ft.max())
+        if worst > PAINT_PAST_CURB_TOLERANCE_FT:
+            index = int(np.argmax(over_ft))
+            violations.append(Violation(
+                "paint_over_the_curb",
+                f"{piece.leg} {piece.side}: {piece.kind} is painted {worst:.1f} ft past the traced "
+                f"kerb (tolerance {PAINT_PAST_CURB_TOLERANCE_FT} ft) - a marking may meet the kerb, "
+                f"never cross it. Usually paint sized off the nominal half-width instead of the "
+                f"kerb that was actually traced there",
+                tuple(points[index])))
+    return violations
+
+
+def check_parking_is_legal(state, paint, crosswalk_offsets: dict,
+                            props: list[dict] | None = None) -> list[Violation]:
+    """No marked stall may sit inside a statutory no-parking setback.
+
+    A proposal that paints a stall within 25 ft of a crossing, 50 ft of a stop sign or 10 ft
+    of a hydrant is proposing something illegal under R.S. 39:4-138 - which is worse than a
+    cosmetic error, because the drawing is what someone would build from. See
+    src/geometry/daylighting.py for each distance and its citation.
+
+    Measured on the stall dividers actually drawn, not on the intended start station: the
+    two agree only if every builder downstream honoured it, and this is exactly the class of
+    thing that silently stops being true.
+    """
+    from src.geometry.daylighting import no_parking_zones_ft
+
+    violations = []
+    zones_by_side = {}
+    for piece in paint:
+        if piece.kind not in ("stall_divider", "parking_edge_line") or piece.leg is None:
+            continue
+        leg = state.legs.get(piece.leg)
+        if leg is None:
+            continue
+        key = (piece.leg, piece.side)
+        if key not in zones_by_side:
+            zones_by_side[key] = no_parking_zones_ft(state, piece.leg, piece.side,
+                                                      crosswalk_offsets, props)
+        points = np.asarray(piece.geometry.coords, dtype=float)
+        stations, _offsets = station_offset_many(leg.centerline, points)
+        for zone in zones_by_side[key]:
+            # Any part of the marking inside a prohibited interval, not just its near end -
+            # a stall run that starts legally can still cross a hydrant further along.
+            inside = ((stations > zone.start_ft + PARKING_SETBACK_TOLERANCE_FT)
+                      & (stations < zone.end_ft - PARKING_SETBACK_TOLERANCE_FT))
+            if not inside.any():
+                continue
+            index = int(np.argmax(inside))
+            violations.append(Violation(
+                "parking_inside_a_legal_setback",
+                f"{piece.leg} {piece.side}: marked parking reaches station "
+                f"{float(stations[inside].min()):.1f} ft, inside the no-parking zone from "
+                f"{zone.start_ft:.1f} to {zone.end_ft:.1f} ft - {zone.reason}",
+                tuple(points[index])))
+    return violations
+
+
+def check_markings_do_not_collide(paint) -> list[Violation]:
+    """Two painted markings may not occupy the same asphalt.
+
+    Real paint is opaque and applied once. Two hatch zones over the same ground get their
+    strokes drawn twice - z-fighting in the 3D render, double ink on the plan - and it means
+    the design is asserting two different things about one patch of road.
+
+    Written after the daylighting work put a hydrant's no-parking zone (18.9-38.9 ft on
+    broad_st_west) entirely inside the junction's (0-45.7 ft) and hatched both. Nothing
+    caught it: every other invariant here checks paint against the STREET - the kerb, the
+    roadway, the crosswalk - and none checked paint against other paint.
+    """
+    violations = []
+    fills = [p for p in paint if p.is_fill]
+    for i, a in enumerate(fills):
+        for b in fills[i + 1:]:
+            overlap = a.geometry.intersection(b.geometry).area
+            if overlap <= MARKING_OVERLAP_TOLERANCE_SQ_FT:
+                continue
+            where = a.geometry.intersection(b.geometry).centroid
+            violations.append(Violation(
+                "markings_collide",
+                f"{a.kind} and {b.kind} overlap by {overlap:.0f} sq ft"
+                + (f" on {a.leg} {a.side}" if a.leg else "")
+                + " - that ground would be painted twice",
+                (where.x, where.y)))
+
+    # Lines too, and only where they run ALONG each other. Two lines that touch or cross are
+    # ordinary - a stall divider meets the lane edge at right angles by design, and a hatch
+    # stroke ends exactly on the edge line that bounds its zone. What is wrong is two lines
+    # painted down the same stretch of road: the daylight zone's edge line and the parking
+    # lane's sit at the same offset and are kept apart only by their station ranges.
+    lines = [p for p in paint if not p.is_fill and p.kind != "bollard"]
+    for i, a in enumerate(lines):
+        for b in lines[i + 1:]:
+            shared = a.geometry.buffer(COLLINEAR_PAINT_TOLERANCE_FT).intersection(b.geometry)
+            if shared.length <= MIN_COLLINEAR_OVERLAP_FT:
+                continue
+            violations.append(Violation(
+                "markings_collide",
+                f"{a.kind} and {b.kind} run along each other for {shared.length:.1f} ft"
+                + (f" on {a.leg} {a.side}" if a.leg else "")
+                + " - two lines painted down the same stretch of road",
+                (shared.centroid.x, shared.centroid.y)))
+    return violations
+
+
 def check_pavement_ring(pavement) -> list[Violation]:
     """The pavement must be one simple polygon - no bowties, no pinches."""
     if pavement is None or pavement.is_empty:
@@ -269,23 +471,30 @@ def check_stop_bars_on_entering_half(bars: dict, legs: dict) -> list[Violation]:
 # ---------------------------------------------------------------------------
 
 def check_scene(model, state, props: list[dict], pavement, crosswalk_bands: dict | None = None,
-                 stop_bars: dict | None = None) -> list[Violation]:
+                 stop_bars: dict | None = None, paint: list | None = None,
+                 crosswalk_offsets: dict | None = None) -> list[Violation]:
     """Every invariant, all violations, no raising. See assert_scene_valid to fail on them."""
     return (
         check_furniture_off_roadway(props, pavement)
         + check_pads_against_a_curb(props, state.legs, state.corner_fillets)
         + check_curbs_clear_of_junction(state.legs)
         + check_curbs_do_not_cross(state.legs)
+        + check_travel_lanes(state)
         + check_pavement_ring(pavement)
         + check_crosswalks_cross_the_roadway(crosswalk_bands or {}, pavement)
         + check_stop_bars_on_entering_half(stop_bars or {}, state.legs)
+        + check_paint_inside_the_curb(state, paint or [])
+        + check_parking_is_legal(state, paint or [], crosswalk_offsets or {}, props)
+        + check_markings_do_not_collide(paint or [])
     )
 
 
 def assert_scene_valid(model, state, props: list[dict], pavement, crosswalk_bands: dict | None = None,
-                        stop_bars: dict | None = None, scenario: str = "") -> None:
+                        stop_bars: dict | None = None, scenario: str = "", paint: list | None = None,
+                        crosswalk_offsets: dict | None = None) -> None:
     """Raise SceneInvariantError listing EVERY violation in this scene, or return quietly."""
-    violations = check_scene(model, state, props, pavement, crosswalk_bands, stop_bars)
+    violations = check_scene(model, state, props, pavement, crosswalk_bands, stop_bars, paint,
+                              crosswalk_offsets)
     for violation in (v for v in violations if not v.fatal):
         print(f"  SOURCE CONFLICT: {violation}")
 

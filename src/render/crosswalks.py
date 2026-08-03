@@ -6,7 +6,8 @@ over guessing"."""
 import math
 
 import numpy as np
-from shapely.geometry import LineString, Point, Polygon
+import shapely
+from shapely.geometry import LineString, Polygon
 
 from src.render.coords import FT_TO_M, wgs84_to_state_plane
 from src.geometry.model import leg_clearance_ft
@@ -400,7 +401,7 @@ def crosswalk_axes(leg, offset_ft: float, skew_deg: float = 0.0):
     return centre, (ux, uy), (nx, ny), cos_s
 
 
-def crosswalk_reaches_ft(state, offsets: dict, skews: dict) -> dict:
+def crosswalk_reaches_ft(state, offsets: dict, skews: dict, roadway=None) -> dict:
     """{leg_name: (left_ft, right_ft)} - how far each crossing runs to reach its kerbs.
 
     Written into the geometry JSON so the 3D render spans the same real, asymmetric width
@@ -411,13 +412,15 @@ def crosswalk_reaches_ft(state, offsets: dict, skews: dict) -> dict:
     for name, leg in state.legs.items():
         if name not in offsets:
             continue
-        centre, _u, normal, _cos = crosswalk_axes(leg, offsets[name][0], skews.get(name, 0.0))
-        reaches[name] = crosswalk_reach_to_curbs_ft(leg, centre, normal)
+        centre, u, normal, _cos = crosswalk_axes(leg, offsets[name][0], skews.get(name, 0.0))
+        reaches[name] = crosswalk_reach_to_curbs_ft(leg, centre, normal, u, CROSSWALK_DEPTH_FT,
+                                                     roadway)
     return reaches
 
 
 def crosswalk_band_ft(leg, offset_ft: float, depth_ft: float, skew_deg: float = 0.0,
-                     span_ft: float | None = None, lateral_offset_ft: float = 0.0) -> Polygon:
+                     span_ft: float | None = None, lateral_offset_ft: float = 0.0,
+                     roadway=None) -> Polygon:
     """The rectangle a painted crosswalk occupies: `depth_ft` along the leg, centered on
     `offset_ft`, spanning the leg's full curb-to-curb width. Built from the leg's own
     centerline and width, the same inputs blender_crosswalks.py uses (near + u*offset,
@@ -436,7 +439,8 @@ def crosswalk_band_ft(leg, offset_ft: float, depth_ft: float, skew_deg: float = 
     (cx, cy), (ux, uy), (nx, ny), cos_s = crosswalk_axes(leg, offset_ft, skew_deg)
     half_d = depth_ft / 2
     if span_ft is None:
-        left_ft, right_ft = crosswalk_reach_to_curbs_ft(leg, (cx, cy), (nx, ny))
+        left_ft, right_ft = crosswalk_reach_to_curbs_ft(leg, (cx, cy), (nx, ny), (ux, uy),
+                                                         depth_ft, roadway)
     else:
         # An explicit span is a stop bar, which is sized from the entering lane rather than
         # from the kerbs - see stop_bar_band_geometry_ft.
@@ -458,43 +462,165 @@ def crosswalk_band_ft(leg, offset_ft: float, depth_ft: float, skew_deg: float = 
 CURB_SEARCH_FACTOR = 3.0
 
 
-def crosswalk_reach_to_curbs_ft(leg, center, normal) -> tuple[float, float]:
-    """(left, right) distance from `center` out to this leg's two curb lines along `normal`.
+# How finely the reach is stepped outward looking for the kerb. Well under a paint stripe's
+# width, so the crossing lands on the kerb rather than visibly short of or over it.
+REACH_STEP_FT = 0.25
 
-    A crosswalk runs kerb to kerb. It was being drawn as half the leg's NOMINAL width either
-    side of the NJDOT centerline, which is the right answer only if the curbs are a symmetric
-    offset of that centerline - and since they became the surveyor's traced kerbs, they are
-    not. The traced kerb is asymmetric about NJDOT's alignment and flares near the corner, so
-    a symmetric nominal band stops short of the kerb on one side and overshoots on the other.
 
-    Falls back to the nominal half-width per side when a side has no curb line or the ray
-    misses it, so a leg with no traced kerb behaves exactly as before.
+def crosswalk_reach_to_curbs_ft(leg, center, normal, along=None,
+                                 depth_ft: float = 0.0, roadway=None) -> tuple[float, float]:
+    """(left, right) distance from `center` out to this leg's two kerbs along `normal`.
+
+    A crosswalk runs kerb to kerb. It was drawn as half the leg's NOMINAL width either side
+    of the NJDOT centerline, which is right only if the curbs are a symmetric offset of that
+    centerline - and since they became the surveyor's traced kerbs, they are not.
+
+    The obvious repair, casting a ray from the centre until it crosses the curb LINE, is
+    wrong near a junction and is what put the crossings on the footway. A traced kerb
+    includes the corner return, which flares away from the road; a skewed crossing's ray
+    runs diagonally into that flare and hits it far outside the actual carriageway. At
+    broad_st_west the ray reached 39.8 ft on a street 27.8 ft wide, so the end bars were
+    painted 12 ft up the corner.
+
+    So the test is not "has the ray crossed the kerb line" but "is this point still inside
+    the roadway", asked in the leg's own frame: a point is outside once its perpendicular
+    offset exceeds the traced kerb's offset AT ITS OWN STATION. That never walks up a corner
+    return, because the return is at a different station from the point beside it.
+
+    `along` and `depth_ft` describe the crossing's own depth. The reach is the smallest found
+    across the near edge, centre and far edge, so the corners of the painted band stay inside
+    the roadway too, not just its centre line.
+
+    `roadway`, when given, is the junction's pavement polygon, and points must stay inside
+    it too. At a corner the pavement's edge is the fillet ARC, which cuts inside the traced
+    kerb - the kerb test alone still let a bar corner poke ~1 ft over it on three legs.
+
+    Falls back to the nominal half-width per side when a side has no traced kerb, so a leg
+    without one behaves exactly as before.
     """
+    from src.geometry.model import curb_offsets_at_stations, station_offset_many
+
     fallback = leg.curb_to_curb_ft / 2
-    origin = Point(*center)
-    direction = np.asarray(normal, dtype=float)
+    normal = np.asarray(normal, dtype=float)
+    centre = np.asarray(center, dtype=float)
+    # Sampled ACROSS the crossing's depth, not just down its centre line. Three samples
+    # (near edge, centre, far edge) is not enough: a corner fillet arc is convex toward the
+    # road, so it can cut through the middle of a bar's outer edge while both of that bar's
+    # corners are still inside. Seven keeps the residual under the paint's own thickness.
+    if along is not None and depth_ft:
+        along = np.asarray(along, dtype=float)
+        origins = centre + np.outer(np.linspace(-depth_ft / 2, depth_ft / 2, 7), along)
+    else:
+        origins = centre[None, :]
+
+    steps = np.arange(0.0, fallback * CURB_SEARCH_FACTOR + REACH_STEP_FT, REACH_STEP_FT)
     reach = []
-    # +normal is the leg's left, matching Leg.left_curb / right_curb.
-    for curb, sign in ((leg.left_curb, 1.0), (leg.right_curb, -1.0)):
-        if curb is None or curb.is_empty:
+    for side, sign in (("left", 1.0), ("right", -1.0)):
+        if getattr(leg, f"{side}_curb", None) is None:
             reach.append(fallback)
             continue
-        far = np.asarray(center) + direction * sign * fallback * CURB_SEARCH_FACTOR
-        hit = LineString([center, tuple(far)]).intersection(curb)
-        if hit.is_empty:
+        # (origin, step, xy) for every sample at once - one station_offset_many call and one
+        # point-in-polygon call rather than one per origin.
+        points = origins[:, None, :] + normal * sign * steps[None, :, None]
+        flat = points.reshape(-1, 2)
+        stations, offsets = station_offset_many(leg.centerline, flat)
+        curb_offsets = curb_offsets_at_stations(leg, side, stations)
+        if curb_offsets is None:
             reach.append(fallback)
             continue
-        points = [hit] if hit.geom_type == "Point" else [g for g in getattr(hit, "geoms", [])]
-        distances = [origin.distance(p) for p in points if p.geom_type == "Point"]
-        reach.append(min(distances) if distances else fallback)
+        outside = np.abs(offsets) > np.abs(curb_offsets)
+        if roadway is not None and not roadway.is_empty:
+            outside |= ~shapely.contains_xy(roadway, flat[:, 0], flat[:, 1])
+        outside = outside.reshape(points.shape[:2])
+        # The last step still INSIDE, on whichever sample leaves earliest - not the first
+        # step outside. Taking the first step outside put the paint's outer edge exactly ON
+        # the boundary, which the kerb test reads as inside (|offset| <= |curb|) and the
+        # pavement test reads as outside (a polygon does not contain its own boundary), so
+        # the bars kept landing a hair over the kerb.
+        any_out = outside.any(axis=1)
+        first_out = outside.argmax(axis=1)
+        limits = np.where(any_out, steps[np.maximum(first_out - 1, 0)], steps[-1])
+        reach.append(float(limits.min()))
     return reach[0], reach[1]
 
 
-def crosswalk_bands_ft(state, offsets: dict, skews: dict, depth_ft: float) -> dict:
+# A continental/ladder crossing's bars. Authoritative here in FEET, like CROSSWALK_DEPTH_FT,
+# and handed to the renderer as a bar COUNT per crossing so the layout arithmetic exists once
+# and is testable - scripts/blender/blender_crosswalks.py cannot import from src/.
+CONTINENTAL_BAR_WIDTH_FT = 0.5 / FT_TO_M     # the renderer's long-standing 0.5 m bar
+CONTINENTAL_BAR_GAP_FT = 0.5 / FT_TO_M       # and 0.5 m gap between bars
+
+
+def continental_bar_count(span_ft: float,
+                           bar_ft: float = CONTINENTAL_BAR_WIDTH_FT,
+                           gap_ft: float = CONTINENTAL_BAR_GAP_FT) -> int:
+    """How many bars a continental crossing of this kerb-to-kerb span carries.
+
+    n bars with n-1 gaps between them, at most as many as fit at the nominal pitch. The
+    renderer then spreads the leftover across the GAPS so the two end bars land exactly on
+    the kerbs (scripts/blender/blender_crosswalks.py:_crosswalk_bars) - a whole-period pitch
+    leaves up to one period unpainted, 3.2 ft at Columbia Ave, which still reads as a
+    crossing stopping short. Real striping adjusts the spacing to fit the road.
+
+    The renderer used to inset a flat 1.5 m from the span first, costing ~2.5 ft at each
+    kerb. add_crosswalk_lines carried the same fudge and lost it when crossings were made to
+    reach the kerb; the bar layout - which every continental crossing in every proposal uses
+    - was missed, so the simple crossings reached the kerb and the continental ones did not.
+    """
+    period = bar_ft + gap_ft
+    if period <= 0:
+        return 1
+    return max(int((span_ft + gap_ft) / period), 1)
+
+
+def crosswalk_reach_on_leg_side_ft(leg, side: str, crossings, inner_offset_ft: float = 0.0) -> float:
+    """The furthest station along one side of a leg that ANY painted crossing reaches.
+
+    Curbside paint has to stop before the crossing, and "before" has to be measured against
+    where the crossings actually ARE. Two things make a single number per leg wrong:
+
+      * Skew. A band pivots about its centre, so one end swings further along the leg than
+        the other. At broad_st_west, skewed 7.1 degrees, its own band reaches station 28.6
+        on the left kerb and 19.2 on the right - a 9.4 ft spread. Aiming at the centre
+        offset plus a fixed 5 ft put the taper 2.9 ft inside the crossing.
+      * The CROSS street's crossing. A taper curving into the corner runs into the crossing
+        on the intersecting leg, which has nothing to do with this leg's own offset. That is
+        the last 30 sq ft of overlap at broad_st_west, and no per-leg figure finds it.
+
+    So this measures against every crossing at the junction, restricted to the strip this
+    leg's curbside paint actually occupies on this side: from inner_offset_ft out to the
+    kerb. Restricting matters as much as including. A skewed band reaches further along the
+    leg near the centerline than it does at the kerb, and curbside paint never goes near the
+    centerline - measuring across the whole half-road made the target 6-8 ft too conservative
+    and opened a visible gap between the taper and the crossing.
+    """
+    import numpy as np
+
+    from src.geometry.model import curbside_strip_polygon, station_offset_many
+
+    if crossings is None or crossings.is_empty:
+        return 0.0
+    strip = curbside_strip_polygon(leg, side, inner_offset_ft, 0.0, leg.centerline.length)
+    if strip is None:
+        return 0.0
+    region = crossings.intersection(strip)
+    if region.is_empty:
+        return 0.0
+    points = np.asarray([xy for part in getattr(region, "geoms", [region])
+                          if part.geom_type == "Polygon"
+                          for xy in part.exterior.coords], dtype=float)
+    if not len(points):
+        return 0.0
+    stations, _offsets = station_offset_many(leg.centerline, points)
+    return float(stations.max())
+
+
+def crosswalk_bands_ft(state, offsets: dict, skews: dict, depth_ft: float, roadway=None) -> dict:
     """{leg_name: band polygon} for every leg - the footprints the 2D view draws, the 3D
     render stripes, and src/checks.py validates. One definition, so a check that passes in
     one path can't be checking different geometry from the other."""
-    return {name: crosswalk_band_ft(leg, offsets[name][0], depth_ft, skews.get(name, 0.0))
+    return {name: crosswalk_band_ft(leg, offsets[name][0], depth_ft, skews.get(name, 0.0),
+                                     roadway=roadway)
             for name, leg in state.legs.items() if name in offsets}
 
 

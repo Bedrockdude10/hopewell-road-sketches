@@ -173,9 +173,24 @@ def test_a_crosswalk_outside_the_roadway_is_a_violation():
     assert violations[0].check == "crosswalk_off_the_roadway"
 
 
-def test_a_crosswalk_across_the_roadway_is_fine():
-    band = Polygon([(57, -16), (63, -16), (63, 16), (57, 16)])
+def test_a_crosswalk_meeting_both_kerbs_is_fine():
+    """Kerb to kerb, and no further. The roadway here is +/-15 ft."""
+    band = Polygon([(57, -15), (63, -15), (63, 15), (57, 15)])
     assert check_crosswalks_cross_the_roadway({"east": band}, ROADWAY) == []
+
+
+def test_a_crosswalk_overhanging_the_kerb_is_a_violation():
+    """This band overhangs by 1 ft at each kerb - 6% of its area on the footway.
+
+    It used to pass: the tolerance was 55% inside, from when a crossing was drawn as half
+    the leg's NOMINAL width either side of the centerline and routinely overshot the traced
+    kerb. That slack hid the real thing it was named for - a skewed crossing's ray running
+    diagonally up a corner return and painting the end bars 12 ft onto the sidewalk.
+    """
+    band = Polygon([(57, -16), (63, -16), (63, 16), (57, 16)])
+    violations = check_crosswalks_cross_the_roadway({"east": band}, ROADWAY)
+    assert len(violations) == 1
+    assert violations[0].check == "crosswalk_off_the_roadway"
 
 
 def test_a_stop_bar_across_both_directions_is_a_violation():
@@ -237,3 +252,100 @@ def test_non_fatal_violations_alone_do_not_raise():
 
 def test_violation_str_is_readable_without_coordinates():
     assert str(Violation("some_check", "something is wrong")) == "[some_check] something is wrong"
+
+
+# --------------------------------------------------------------------------
+# Travel lane width
+# --------------------------------------------------------------------------
+
+def a_state_with_paint(width_ft, hatch_ft=None, parking_ft=None):
+    from src.geometry.treatments import DesignState
+
+    leg = a_leg(width_ft=width_ft)
+    state = DesignState(legs={"east": leg}, corner_fillets={})
+    if hatch_ft is not None:
+        state.lane_narrowing["east"] = hatch_ft
+        state.lane_narrowing_sides["east"] = ("left",)
+    if parking_ft is not None:
+        state.parking_zones[("east", "right")] = {"depth_ft": parking_ft, "stall_length_ft": 22,
+                                                   "curb_offset_ft": 0.0}
+    return state
+
+
+def test_paint_that_leaves_a_narrow_lane_is_a_violation():
+    """The 1.7 ft lanes: fixed-width paint applied without checking what the road can spare."""
+    from src.checks import check_travel_lanes
+
+    # 30 ft road, half is 15 ft; 8 ft of parking leaves a 7 ft lane.
+    violations = check_travel_lanes(a_state_with_paint(30.0, parking_ft=8.0))
+    assert len(violations) == 1
+    assert violations[0].check == "travel_lane_too_narrow"
+
+
+def test_paint_sized_to_leave_the_target_is_fine():
+    from src.checks import check_travel_lanes
+    from src.geometry.treatments import TARGET_LANE_WIDTH_FT
+
+    # 30 ft road: 4 ft of paint leaves exactly 11 ft.
+    allowance = 15.0 - TARGET_LANE_WIDTH_FT
+    assert check_travel_lanes(a_state_with_paint(30.0, parking_ft=allowance)) == []
+    assert check_travel_lanes(a_state_with_paint(30.0, hatch_ft=allowance)) == []
+
+
+def test_a_naturally_narrow_street_is_not_our_error():
+    """Louellen Street is 19.3 ft curb to curb. Its lanes are under target because the
+    street is, not because a treatment did it - and no check widens a road."""
+    from src.checks import check_travel_lanes
+
+    assert check_travel_lanes(a_state_with_paint(19.3)) == []
+
+
+# --------------------------------------------------------------------------
+# Paint layering and hatch quality
+# --------------------------------------------------------------------------
+
+def test_degenerate_hatch_strokes_are_dropped():
+    """Clipping produces stubs where a stroke grazes a corner or a taper's thin tip.
+
+    One came out 0.0 ft long. They render as strokes sheared off mid-buffer.
+    """
+    from src.geometry.model import MIN_HATCH_STROKE_FT, hatch_lines_ft
+
+    # A wedge: strokes near the point are arbitrarily short.
+    wedge = Polygon([(0, 0), (60, 0), (60, 12)])
+    strokes = hatch_lines_ft(wedge, spacing_ft=1.0, angle_deg=45)
+    assert strokes, "the wedge should still be hatched"
+    assert min(s.length for s in strokes) >= MIN_HATCH_STROKE_FT
+
+
+def test_paint_is_cut_around_a_keep_clear_area():
+    """A crosswalk outranks a buffer, so the buffer is cut around it geometrically.
+
+    Relying on the paint's start station instead let two strokes land on Broad St's crossing:
+    a SKEWED crossing reaches further along one kerb than its centre offset implies.
+    """
+    from src.geometry.model import clip_paint_clear_of
+
+    buffer_strip = Polygon([(0, 0), (100, 0), (100, 6), (0, 6)])
+    crossing = Polygon([(40, -2), (50, -2), (50, 8), (40, 8)])
+    pieces = clip_paint_clear_of(buffer_strip, crossing)
+
+    assert len(pieces) == 2, "the strip should be split either side of the crossing"
+    assert all(p.geom_type == "Polygon" for p in pieces)
+    assert not any(p.intersection(crossing).area > 1e-9 for p in pieces)
+    assert sum(p.area for p in pieces) == pytest.approx(buffer_strip.area - 60.0)
+
+
+def test_clipping_against_nothing_leaves_the_paint_alone():
+    from src.geometry.model import clip_paint_clear_of
+
+    strip = Polygon([(0, 0), (10, 0), (10, 5), (0, 5)])
+    assert clip_paint_clear_of(strip, None) == [strip]
+
+
+def test_paint_entirely_inside_the_keep_clear_area_disappears():
+    from src.geometry.model import clip_paint_clear_of
+
+    strip = Polygon([(1, 1), (2, 1), (2, 2), (1, 2)])
+    big = Polygon([(0, 0), (10, 0), (10, 10), (0, 10)])
+    assert clip_paint_clear_of(strip, big) == []

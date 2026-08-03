@@ -398,7 +398,8 @@ def lane_narrowing_polygons_ft(leg: "Leg", stripe_width_ft: float,
 
 def lane_narrowing_edge_lines_ft(leg: "Leg", stripe_width_ft: float,
                                   start_left_ft: float = 0.0, start_right_ft: float = 0.0,
-                                  sides: tuple = ("left", "right")) -> list[LineString]:
+                                  sides: tuple = ("left", "right"),
+                                  keep_inside_ft: float = 0.0) -> list[LineString]:
     """The solid line marking the new, narrower travel lane's outer edge on
     each side - the same inner boundary lane_narrowing_polygons_ft's buffer
     zone starts from (11 ft from centerline for this site's proposals - see
@@ -415,14 +416,15 @@ def lane_narrowing_edge_lines_ft(leg: "Leg", stripe_width_ft: float,
     for start_ft, side in ((start_left_ft, "left"), (start_right_ft, "right")):
         if side not in sides:
             continue
-        line = inset_line_ft(leg, side, inner_half, start_ft)
+        line = inset_line_ft(leg, side, inner_half, start_ft, keep_inside_ft=keep_inside_ft)
         if line is not None:
             lines.append(line)
     return lines
 
 
 def inset_line_ft(leg: "Leg", side: str, offset_ft: float,
-                   start_ft: float, end_ft: float | None = None) -> LineString | None:
+                   start_ft: float, end_ft: float | None = None,
+                   keep_inside_ft: float = 0.0) -> LineString | None:
     """A line offset_ft from the centerline on one side, over the stations where that side's
     curb exists - the inner boundary of curbside_strip_polygon, drawn on its own.
 
@@ -430,6 +432,11 @@ def inset_line_ft(leg: "Leg", side: str, offset_ft: float,
     inside the real curb for the same reason. NOT `offset_curve(...).interpolate(d)`: an
     offset curve's arc length differs from the centerline's, so `d` there is not station `d`,
     which is what let the parking stall ticks drift along the leg.
+
+    keep_inside_ft is how far short of the kerb the line must stop when it gets clamped
+    there - half the painted stripe's width, so the stripe sits inside the road instead of
+    straddling the kerb. Clamping the AXIS to the kerb hung half the paint over it wherever
+    the road was narrower than the offset asked for.
     """
     span = curb_station_span(leg, side)
     if span is None:
@@ -443,7 +450,8 @@ def inset_line_ft(leg: "Leg", side: str, offset_ft: float,
     stations = np.linspace(lo, hi, n)
     curb_offsets = curb_offsets_at_stations(leg, side, stations)
     sign = 1.0 if side == "left" else -1.0
-    inner = sign * np.minimum(offset_ft, np.abs(curb_offsets))
+    room = np.maximum(np.abs(curb_offsets) - keep_inside_ft, 0.0)
+    inner = sign * np.minimum(offset_ft, room)
     return LineString([_point_at(leg.centerline, s, float(o)) for s, o in zip(stations, inner)])
 
 

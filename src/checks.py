@@ -407,6 +407,58 @@ def check_markings_do_not_collide(paint) -> list[Violation]:
     return violations
 
 
+def check_paint_clear_of_the_travel_lane(state, paint) -> list[Violation]:
+    """The travel lane is clear asphalt, all the way to the target width.
+
+    Distinct from check_travel_lanes, which checks the DESIGN arithmetic (does the paint the
+    design calls for leave a target-width lane?). This checks the drawn geometry, and
+    crucially it accounts for the fact that PAINT HAS WIDTH. Every edge line was centred on
+    the 11 ft mark and painted 0.82 ft wide, so half its body lay inside the lane and every
+    approach at every site was really 10.59 ft. The arithmetic said 11.0 and the check that
+    only looked at the arithmetic agreed with it.
+    """
+    from src.geometry.paint import LANE_EDGE_LINE_WIDTH_FT
+    from src.geometry.treatments import TARGET_LANE_WIDTH_FT
+
+    violations = []
+    for piece in paint:
+        if piece.leg is None or piece.side is None or piece.kind == "bollard":
+            continue
+        leg = state.legs.get(piece.leg)
+        if leg is None or leg.curb_to_curb_ft is None:
+            continue
+        coords = (piece.geometry.exterior.coords if piece.geometry.geom_type == "Polygon"
+                  else piece.geometry.coords)
+        points = np.asarray(coords, dtype=float)
+        stations, offsets = station_offset_many(leg.centerline, points)
+        curb_offsets = curb_offsets_at_stations(leg, piece.side, stations)
+        if curb_offsets is None:
+            continue
+        # What the lane is entitled to AT EACH STATION: the target, or the kerb where the
+        # kerb is closer than that. A road narrower than the target is a fact about the
+        # street, not something this design introduced - and it is not hypothetical.
+        # W Broad's north-east approach has the NJDOT alignment 7.2 ft from its right kerb
+        # and 25-31 ft from its left, so on that side there is no 11 ft lane to protect and
+        # the paint correctly clamps to the kerb. Comparing against the NOMINAL half-width
+        # instead would call that a violation on every vertex.
+        entitled = np.minimum(TARGET_LANE_WIDTH_FT,
+                               np.abs(curb_offsets) - LANE_EDGE_LINE_WIDTH_FT)
+        # The painted body reaches half a stripe width inside its own centreline.
+        shortfall = entitled - (np.abs(offsets) - LANE_EDGE_LINE_WIDTH_FT / 2)
+        worst = float(shortfall.max())
+        if worst > LANE_WIDTH_TOLERANCE_FT:
+            index = int(np.argmax(shortfall))
+            inner_ft = float(np.abs(offsets[index])) - LANE_EDGE_LINE_WIDTH_FT / 2
+            violations.append(Violation(
+                "paint_in_the_travel_lane",
+                f"{piece.leg} {piece.side}: {piece.kind} is painted to {inner_ft:.2f} ft from "
+                f"the centerline, leaving a {inner_ft:.2f} ft travel lane where "
+                f"{float(entitled[index]):.2f} ft was available - the stripe's own width has "
+                f"to come out of the treatment, not out of the lane",
+                tuple(points[index])))
+    return violations
+
+
 def check_pavement_ring(pavement) -> list[Violation]:
     """The pavement must be one simple polygon - no bowties, no pinches."""
     if pavement is None or pavement.is_empty:
@@ -486,6 +538,7 @@ def check_scene(model, state, props: list[dict], pavement, crosswalk_bands: dict
         + check_paint_inside_the_curb(state, paint or [])
         + check_parking_is_legal(state, paint or [], crosswalk_offsets or {}, props)
         + check_markings_do_not_collide(paint or [])
+        + check_paint_clear_of_the_travel_lane(state, paint or [])
     )
 
 

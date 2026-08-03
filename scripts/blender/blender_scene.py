@@ -184,8 +184,14 @@ def build_scene(data: dict):
     # draws a single straight chord between whatever two points it's given,
     # so a curved line needs add_paint_polyline instead (drawing every
     # consecutive segment) or it silently collapses into a straight diagonal.
+    # add_paint_polyline, not add_paint_line(line[0], line[-1]): these are sampled polylines
+    # that follow the traced kerb, and drawing the chord between their endpoints throws away
+    # every vertex in between. It deviated 0.7 ft on Broad St's daylight zone - enough to put
+    # the painted lane edge inside the 11 ft it is supposed to mark, and to pull the line off
+    # the hatching it is supposed to bound. The hatch strokes and stall ticks below really are
+    # two-point segments, so add_paint_line is right for those.
     for i, line in enumerate(data.get("lane_narrowing_edge_lines", [])):
-        add_paint_line(f"lane_narrowing_edge_{i}", line[0], line[-1], 0.25, marking_mat, z_base=marking_z)
+        add_paint_polyline(f"lane_narrowing_edge_{i}", line, 0.25, marking_mat, z_base=marking_z)
     for i, line in enumerate(data.get("lane_narrowing_taper_lines", [])):
         add_paint_polyline(f"lane_narrowing_taper_{i}", line, 0.15, marking_mat, z_base=marking_z)
     for i, line in enumerate(data.get("lane_narrowing_hatch_lines", [])):
@@ -195,11 +201,11 @@ def build_scene(data: dict):
     for i, ring in enumerate(data.get("corner_apron_polygons", [])):
         extrude_polygon(f"corner_apron_{i}", ring, 0.01, apron_mat, z_base=marking_z)
     for i, line in enumerate(data.get("parking_edge_lines", [])):
-        add_paint_line(f"parking_edge_{i}", line[0], line[-1], 0.25, marking_mat, z_base=marking_z)
+        add_paint_polyline(f"parking_edge_{i}", line, 0.25, marking_mat, z_base=marking_z)
     for i, line in enumerate(data.get("parking_stall_divider_lines", [])):
         add_paint_line(f"parking_stall_{i}", line[0], line[-1], 0.15, marking_mat, z_base=marking_z)
     for i, line in enumerate(data.get("parking_buffer_edge_lines", [])):
-        add_paint_line(f"parking_buffer_edge_{i}", line[0], line[-1], 0.25, marking_mat, z_base=marking_z)
+        add_paint_polyline(f"parking_buffer_edge_{i}", line, 0.25, marking_mat, z_base=marking_z)
     for i, line in enumerate(data.get("parking_buffer_taper_lines", [])):
         add_paint_polyline(f"parking_buffer_taper_{i}", line, 0.15, marking_mat, z_base=marking_z)
     for i, line in enumerate(data.get("parking_buffer_hatch_lines", [])):

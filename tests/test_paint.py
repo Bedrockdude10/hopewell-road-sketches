@@ -624,3 +624,83 @@ def test_no_rim_where_there_is_no_crossing_to_cut_against():
                                                 "curb_offset_ft": 1.0}}
     paint = curbside_paint_ft(state, {"east": (21.0,)}, None)
     assert not [p for p in paint if p.kind == "crossing_rim_line"]
+
+
+def test_sampled_polylines_are_rendered_as_polylines_not_chords():
+    """add_paint_line(line[0], line[-1]) draws the straight chord between a polyline's
+    endpoints and silently discards every vertex between them.
+
+    The lane-edge lines follow the traced kerb and are sampled every 2 ft, so the chord is
+    not the line: it deviated 0.7 ft on Broad St's daylight zone, which both pulled the
+    painted edge inside the 11 ft lane it is supposed to mark and lifted it off the hatching
+    it is supposed to bound. add_paint_polyline exists precisely for this and its own
+    docstring warns about it, so this is a static guard rather than a comment.
+    """
+    import re
+    from pathlib import Path
+
+    source = (Path(__file__).resolve().parent.parent
+              / "scripts" / "blender" / "blender_scene.py").read_text()
+    # Lists whose entries come from inset_line_ft / taper arcs - many vertices apiece.
+    for name in ("lane_narrowing_edge", "lane_narrowing_taper", "parking_edge",
+                  "parking_buffer_edge", "parking_buffer_taper"):
+        chord = re.search(rf'add_paint_line\(f"{name}_\{{i\}}", line\[0\], line\[-1\]', source)
+        assert chord is None, f"{name} is drawn as a chord; it is a sampled polyline"
+        assert f'add_paint_polyline(f"{name}_{{i}}"' in source, f"{name} is not drawn at all"
+
+
+# --------------------------------------------------------------------------
+# Paint has width, and it comes out of the treatment
+# --------------------------------------------------------------------------
+
+def test_the_lane_edge_line_sits_outside_the_lane_it_marks():
+    """An edge line CENTRED on the 11 ft mark puts half its own body inside the lane.
+
+    Every approach at every site measured 10.59 ft of clear asphalt against an 11.0 ft
+    target, and the design arithmetic said 11.0 the whole time - the numbers were right and
+    the paint was in the wrong place.
+    """
+    from src.geometry.paint import LANE_EDGE_LINE_WIDTH_FT, lane_edge_stripes
+
+    line_ft, fill_ft = lane_edge_stripes(5.0)
+    assert line_ft == pytest.approx(5.0 - LANE_EDGE_LINE_WIDTH_FT / 2)
+    assert fill_ft == pytest.approx(5.0 - LANE_EDGE_LINE_WIDTH_FT)
+    assert fill_ft < line_ft, "the hatching starts outside the line, not under it"
+
+
+def test_a_treatment_thinner_than_its_own_line_collapses_rather_than_going_negative():
+    from src.geometry.paint import lane_edge_stripes
+
+    assert lane_edge_stripes(0.1) == (0.0, 0.0)
+
+
+def test_a_clamped_line_stays_inside_the_kerb_instead_of_straddling_it():
+    """Where the road is narrower than the offset asked for, the line clamps to the kerb.
+    Clamping its AXIS there hangs half the paint over the kerb - measured at W Broad's
+    north-east approach, whose right kerb comes to 7.2 ft of the NJDOT alignment."""
+    leg = traced(a_leg(width_ft=30.0), "left", [(10, 7.2), (130, 7.2)])
+    line = inset_line_ft(leg, "left", 11.0, 20.0, keep_inside_ft=0.41)
+    _stations, offsets = stations_of(line, leg)
+    assert offsets.max() == pytest.approx(7.2 - 0.41, abs=1e-6)
+
+    flush = inset_line_ft(leg, "left", 11.0, 20.0)
+    assert stations_of(flush, leg)[1].max() == pytest.approx(7.2, abs=1e-6)
+
+
+def test_the_travel_lane_check_measures_against_the_real_kerb():
+    """W Broad's north-east approach has the alignment 7.2 ft from its right kerb and 25-31 ft
+    from its left. There is no 11 ft lane to protect on that side, so paint clamped to the
+    kerb is correct - measuring against the NOMINAL half-width called it a violation."""
+    from src.checks import check_paint_clear_of_the_travel_lane
+
+    leg = traced(a_leg(width_ft=30.0), "left", [(10, 7.2), (130, 7.2)])   # nominal half 15
+    state = FakeState({"east": leg})
+    at_the_kerb = PaintPiece("lane_edge_line", LineString([(30, 6.79), (120, 6.79)]),
+                              "east", "left")
+    assert not check_paint_clear_of_the_travel_lane(state, [at_the_kerb])
+
+    roomy = traced(a_leg(width_ft=30.0), "left", [(10, 15.0), (130, 15.0)])
+    intruding = PaintPiece("lane_edge_line", LineString([(30, 11.0), (120, 11.0)]),
+                            "east", "left")
+    violations = check_paint_clear_of_the_travel_lane(FakeState({"east": roomy}), [intruding])
+    assert violations and violations[0].check == "paint_in_the_travel_lane"

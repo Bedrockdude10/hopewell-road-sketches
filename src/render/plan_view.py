@@ -5,14 +5,16 @@ from matplotlib.lines import Line2D
 from matplotlib.patches import Patch
 from shapely.geometry import LineString, Polygon
 
+from shapely.ops import substring
+
 from src.geometry.model import build_pavement_polygon, trimmed_curb_lines
 from src.geometry.paint import curbside_paint_ft
 from src.geometry.intersection import IntersectionModel, kerb_lines_with_tags_ft
-from src.geometry.treatments import DesignState
+from src.geometry.treatments import DEFAULT_CENTERLINE_STYLE, DesignState
 from src.provenance import PLOT_STYLE, leg_width_provenance
 from src.render.props import build_props, signalization_conflicts
 from src.render.coords import FT_TO_M, wgs84_to_state_plane
-from src.render.crosswalks import (CROSSWALK_DEPTH_M, STOP_BAR_PLAN_DEPTH_FT,
+from src.render.crosswalks import (CROSSWALK_DEPTH_M, STOP_BAR_PLAN_DEPTH_FT, centerline_start_ft,
                                    crosswalk_band_ft, crosswalk_bands_ft, stop_bar_bands_ft,
                                    resolve_crosswalk_offsets,
                                    resolve_crosswalk_skews, resolve_stop_bar_offsets,
@@ -365,6 +367,8 @@ def plot_design_state(ax, model: IntersectionModel, state: DesignState, title: s
 
     ax.scatter([model.center_ft.x], [model.center_ft.y], color="blue", zorder=6, s=40)
 
+    _draw_centerlines(ax, state, crosswalk_offsets, stop_bar_offsets_for(model, state, crossings))
+
     violations = _mark_violations(ax, model, state, crossings, props, paint, pavement)
 
     ax.set_title(title, fontsize=11)
@@ -374,6 +378,45 @@ def plot_design_state(ax, model: IntersectionModel, state: DesignState, title: s
     ax.set_ylim(model.center_ft.y - zoom_ft, model.center_ft.y + zoom_ft)
     ax.set_xlabel("Feet (EPSG:3424)")
     return violations
+
+
+# MUTCD/AASHTO proportions, matching scripts/blender/blender_crosswalks.py's
+# add_double_yellow_centerline: ~6 in stripes with a ~4 in gap between them.
+DOUBLE_YELLOW_GAP_FT = 0.1 / FT_TO_M
+
+
+def _draw_centerlines(ax, state, crosswalk_offsets, stop_bar_offsets):
+    """The leg centerline (the measurement datum) and the painted centerline on top of it.
+
+    Both were missing. The datum matters because every width in this drawing - the 11 ft
+    lane, the 8 ft stall, the depth of a hatched zone - is an OFFSET FROM IT, and without it
+    drawn there is nothing to check those offsets against by eye. The painted centerline
+    matters because the 3D render draws one (blender_scene.py, from state.centerline_styles)
+    and this view is supposed to show what that render will show.
+
+    The paint starts where src/render/crosswalks.py:centerline_start_ft says, which is at the
+    stop bar - the same rule the export uses, not a second copy of it.
+    """
+    for leg_name, leg in state.legs.items():
+        # The datum: thin, grey, dotted, the full length of the leg. Deliberately
+        # unobtrusive - it is a construction line, not a marking on the road.
+        ax.plot(*leg.centerline.xy, color="#3b6ea5", lw=0.9, ls=(0, (7, 3, 1, 3)), alpha=0.9,
+                zorder=4)
+
+        style = state.centerline_styles.get(leg_name, DEFAULT_CENTERLINE_STYLE)
+        if style == "none" or leg_name not in crosswalk_offsets:
+            continue
+        start_ft = centerline_start_ft(crosswalk_offsets[leg_name][0],
+                                        stop_bar_offsets.get(leg_name))
+        if start_ft >= leg.centerline.length:
+            continue
+        painted = substring(leg.centerline, start_ft, leg.centerline.length)
+        if style == "double_yellow":
+            for sign in (1, -1):
+                ax.plot(*painted.offset_curve(sign * DOUBLE_YELLOW_GAP_FT / 2).xy,
+                        color="gold", lw=1.2, zorder=4)
+        else:   # single_yellow_dashed
+            ax.plot(*painted.xy, color="gold", lw=1.2, ls=(0, (6, 6)), zorder=4)
 
 
 def _label_paint(ax, state, paint, crosswalk_offsets):
@@ -407,6 +450,16 @@ def _label_paint(ax, state, paint, crosswalk_offsets):
         ax.annotate(f"parking\n{n_stalls} stalls ({zone['depth_ft']:.0f} ft)", (mid.x, mid.y),
                     fontsize=6, color="steelblue", ha="center", va="center", fontweight="bold",
                     bbox=dict(boxstyle="round,pad=0.15", fc="white", ec="none", alpha=0.75))
+
+
+def stop_bar_offsets_for(model, state, crossings):
+    """{leg: offset} for a signalized junction, else {} - the same resolution the export and
+    the invariant check use, so all three agree on where the bar is."""
+    if not model.config.get("signals"):
+        return {}
+    return resolve_stop_bar_offsets(
+        state, resolve_crosswalk_offsets(state, crossings),
+        fetch_stop_lines(model.center_wgs84, radius_m=BUILDING_CONTEXT_RADIUS_M))
 
 
 def _mark_violations(ax, model, state, crossings, props, paint, pavement=None):
@@ -452,6 +505,8 @@ def legend_handles():
         Line2D([0], [0], color="darkviolet", lw=2, ls="-.", label="Curb line - OSM-derived width"),
         Line2D([0], [0], color="crimson", lw=2, ls="--", label="Curb line - estimated width"),
         Line2D([0], [0], color="steelblue", lw=1, ls=(0,(4,2)), label="OSM sidewalk centerline"),
+        Line2D([0], [0], color="#3b6ea5", lw=0.9, ls=(0,(7,3,1,3)), label="Leg centerline (widths measured from this)"),
+        Line2D([0], [0], color="gold", lw=1.2, label="Centerline paint (double yellow / dashed)"),
         Line2D([0], [0], color="darkviolet", lw=1, ls=":", label="OSM crossing way (as surveyed)"),
         Line2D([0], [0], color="darkorange", lw=2.5, label="Corner fillet (radius labeled)"),
         Line2D([0], [0], color="seagreen", lw=6, alpha=0.6, label="Pedestrian refuge island"),

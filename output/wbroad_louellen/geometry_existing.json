@@ -6876,15 +6876,15 @@
     {
       "type": "fire_hydrant",
       "position_ft": [
-        418094.5206407551,
-        566064.8273731712
+        418080.90791293985,
+        566067.6003771438
       ],
       "heading_deg": 0.0,
       "surveyed_position": true,
       "source": "real (OSM emergency=fire_hydrant node): surveyed position.",
       "position_m": [
-        14.53381306140544,
-        16.47785743540395
+        10.384653623324214,
+        17.32306904625278
       ]
     },
     {
@@ -6964,10 +6964,10 @@
       "crosswalk_offset_m": 9.606610078987407,
       "crosswalk_offset_source": "osm_survey",
       "crosswalk_skew_deg": 0.0,
-      "crosswalk_reach_left_m": 4.2672,
-      "crosswalk_reach_right_m": 9.906,
+      "crosswalk_reach_left_m": 6.7056000000000004,
+      "crosswalk_reach_right_m": 5.9436,
       "crosswalk_style": "lines",
-      "crosswalk_bar_count": 14,
+      "crosswalk_bar_count": 13,
       "stop_bar_offset_m": 21.577253249770777,
       "stop_bar_width_m": 12.828635181582351,
       "centerline_style": "double_yellow",

@@ -75,6 +75,12 @@ def blender_job_limit(requested: int | None = None) -> int:
     return max(1, int((total_gb - RAM_HEADROOM_GB) // BLENDER_PEAK_RAM_GB))
 
 
+# Name of the environment variable blender_scene.py reads its resolution multiplier from.
+# Defined here as well so callers (scripts/build_all.py) do not have to spell the string, and
+# so grep finds both ends of it. See blender_scene.render_scale for the meaning and the cap.
+RENDER_SCALE_ENV = "HOPEWELL_RENDER_SCALE"
+
+
 def render_all(blender_bin: str, jobs: list[tuple[Path, Path]]):
     """Render every (geometry.json, output.png) job in a single Blender process -
     each launch has ~1-1.5s of fixed startup overhead, not worth paying per-render."""
@@ -104,7 +110,11 @@ def render_all(blender_bin: str, jobs: list[tuple[Path, Path]]):
 
 
 def main():
-    args = add_scenario_arg(add_site_arg(argparse.ArgumentParser())).parse_args()
+    parser = add_scenario_arg(add_site_arg(argparse.ArgumentParser()))
+    parser.add_argument("--render-scale", type=int, default=1, choices=(1, 2, 3, 4),
+                        help="render resolution as a multiple of 1920x1440 (default 1)")
+    args = parser.parse_args()
+    os.environ[RENDER_SCALE_ENV] = str(args.render_scale)
     out_dir = site_output_dir(args.site)
     label = scenario_label(args.scenario)
 

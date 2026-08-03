@@ -210,7 +210,12 @@ def main():
     parser.add_argument("--render-jobs", type=int, default=None,
                         help="parallel Blender processes (default: derived from RAM, ~11 GB each)")
     parser.add_argument("--dpi", type=int, default=PLOT_DPI,
-                        help=f"plan-view resolution (default {PLOT_DPI}; try 90 while iterating)")
+                        help=f"PLAN-VIEW resolution in dpi (default {PLOT_DPI}; try 90 while "
+                             f"iterating). This is matplotlib's; it does NOT affect the 3D "
+                             f"renders - see --render-scale for those.")
+    parser.add_argument("--render-scale", type=int, default=1, choices=(1, 2, 3, 4),
+                        help="3D render resolution as a multiple of 1920x1440 (default 1). "
+                             "2 gives 3840x2880. Costs roughly the square in time and memory.")
     parser.add_argument("--refresh-osm", action="store_true",
                         help="re-pull every OSM layer from Overpass instead of serving output/.cache "
                              "- use after tracing kerbs/crossings/tactile paving in the OSM editor")
@@ -238,7 +243,12 @@ def main():
             blender_jobs += site_jobs
 
     if blender_jobs:
-        from scripts.phase4_render_3d import blender_job_limit, find_blender, render_all
+        from scripts.phase4_render_3d import (RENDER_SCALE_ENV, blender_job_limit, find_blender,
+                                              render_all)
+        # Through the environment rather than argv: blender_scene.py's own argument list is a
+        # flat sequence of (geometry, output) PAIRS, and an odd option in there is a parsing
+        # change for every caller of it. See RENDER_SCALE_ENV.
+        os.environ[RENDER_SCALE_ENV] = str(args.render_scale)
         blender_bin = find_blender()
         # Deliberately NOT --jobs. That number sizes matplotlib workers, which cost a few
         # hundred MB; Blender costs ~11 GB. Sharing one number is how four renders asked for

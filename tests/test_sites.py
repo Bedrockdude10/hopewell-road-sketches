@@ -8,6 +8,7 @@ this repo's geometry changes, not when someone re-traces a kerb in OSM.
 import contextlib
 import io
 
+import numpy as np
 import pytest
 
 from src.checks import check_scene
@@ -893,14 +894,22 @@ def test_adjoining_crossings_do_not_paint_over_each_other(site, site_models):
 def test_the_bollard_proposals_show_their_bollards_in_the_plan_view(site, site_models):
     """A proposal whose whole point is the posts has to draw the posts, in BOTH views.
 
-    It didn't. The plan view skipped every prop of type "bollard" on the reasoning that the
-    treatment layer already drew them from state.bollard_lines - true for the ones standing
-    in a parking buffer, false for the daylight-zone posts, which exist only as props. So
-    the 2D picture of the bollard proposals had no bollards in it and the 3D render of the
-    same scenario had thirteen, which is precisely the disagreement between the two views
-    this project exists to prevent.
+    It didn't, and it failed twice over. The plan view skipped every prop of type "bollard"
+    on the reasoning that the treatment layer already drew them from state.bollard_lines -
+    true for the ones standing in a parking buffer, false for the daylight-zone posts, which
+    exist only as props. Untagging those got them as far as the dispatch chain, where there
+    was no branch for them either, so they fell through to the generic "extras" case and came
+    out as goldenrod TRIANGLES: in the picture, but not as the thing the legend says.
+
+    So this counts markers on a real Axes. The first version asserted only that the props
+    existed and were untagged, which the second bug would have sailed straight through.
     """
-    from src.render.props import DRAWN_BY_PAINT
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+    from matplotlib.colors import to_rgba
+
+    from src.render.plan_view import BOLLARD_PLAN_COLOR, _draw_props
 
     model = site_models[site]
     builder = scenario_builders(site).get("build_proposal_daylight_bollards")
@@ -909,15 +918,21 @@ def test_the_bollard_proposals_show_their_bollards_in_the_plan_view(site, site_m
         state = builder(DesignState.from_model(model), model)
         crossings = fetch_crossings(model.center_wgs84, radius_m=130)
         offsets = resolve_crosswalk_offsets(state, crossings)
-        props = build_props(model, state, offsets, model.center_ft,
+        fig, ax = plt.subplots()
+        props = _draw_props(ax, model, state, offsets,
                              fetch_traffic_control(model.center_wgs84, radius_m=60),
                              fetch_street_furniture(model.center_wgs84, radius_m=130),
-                             crossings, fetch_kerbs(model.center_wgs84, radius_m=120))
+                             crossings, False)
 
-    bollards = [p for p in props if p["type"] == "bollard"]
-    assert bollards, "the bollard proposal produced no bollards at all"
-    drawn_in_plan = [p for p in bollards if not p.get(DRAWN_BY_PAINT)]
-    assert drawn_in_plan, (
-        "every bollard is tagged as already drawn by the paint layer, so the plan view will "
-        "skip all of them - but the daylight-zone posts are not in state.bollard_lines and "
-        "nothing else draws them")
+    expected = sum(1 for prop in props if prop["type"] == "bollard")
+    assert expected, "the bollard proposal produced no bollards at all"
+    wanted = to_rgba(BOLLARD_PLAN_COLOR)
+    drawn = 0
+    for collection in ax.collections:
+        face = collection.get_facecolor()
+        if len(face) and np.allclose(face[0], wanted, atol=0.01):
+            drawn += len(collection.get_offsets())
+    plt.close(fig)
+    assert drawn == expected, (
+        f"{expected} bollard props but {drawn} bollard markers in the plan view - they are "
+        f"either being skipped or drawn as something else")

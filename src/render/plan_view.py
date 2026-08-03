@@ -45,6 +45,12 @@ def sidewalk_lines_ft(sidewalks: list[dict] | None) -> list[LineString]:
 
 
 
+# One colour for a flex-post wherever it is drawn from - the treatment layer's own bollard
+# pieces, the daylight-zone props, and legend_handles(). Named so a test can count markers of
+# this colour rather than trusting that the dispatch has a branch for them at all.
+BOLLARD_PLAN_COLOR = "darkorange"
+
+
 def _draw_props(ax, model: IntersectionModel, state: DesignState, crosswalk_offsets: dict,
                  traffic_control: list[dict] | None, street_furniture: list[dict] | None,
                  crossings: list[dict] | None, dimension_labels: bool):
@@ -120,6 +126,13 @@ def _draw_props(ax, model: IntersectionModel, state: DesignState, crosswalk_offs
             ax.scatter([x], [y], color="white", marker="s", s=26, edgecolors="red", linewidths=1.2, zorder=7)
         elif kind == "streetlight":
             ax.scatter([x], [y], color="dimgrey", marker="*", s=34, zorder=6)
+        elif kind == "bollard":
+            # Same marker the treatment layer uses for a bollard it drew itself, and the one
+            # legend_handles() advertises. Without this branch a daylight-zone post fell
+            # through to the generic "extras" case below and came out as a goldenrod
+            # TRIANGLE - drawn, but not as the thing the legend says it is.
+            ax.scatter([x], [y], color=BOLLARD_PLAN_COLOR, marker="o", s=14,
+                        edgecolors="black", linewidths=0.4, zorder=7)
         else:  # site- or scenario-specific extras (school zone signs, etc.)
             ax.scatter([x], [y], color="darkgoldenrod", marker="^", s=30, zorder=7)
 
@@ -361,7 +374,7 @@ def plot_design_state(ax, model: IntersectionModel, state: DesignState, title: s
     for piece in paint:
         if piece.kind == "bollard":
             c = piece.geometry.centroid
-            ax.scatter([c.x], [c.y], color="darkorange", marker="o", s=10, zorder=6)
+            ax.scatter([c.x], [c.y], color=BOLLARD_PLAN_COLOR, marker="o", s=10, zorder=6)
             continue
         style = STYLE.get(piece.kind)
         if style is None:
@@ -432,6 +445,7 @@ def _draw_centerlines(ax, state, crosswalk_offsets, stop_bar_offsets):
 # What OSM says about kerbside parking, and what that produced. Colour is the OSM statement
 # alone, so a kerb the surveyor tagged and a kerb nobody has tagged never look the same.
 PARKING_LEGALITY_COLOR = {"restricted": "#b3261e", "allowed": "#1b7f3b", "untagged": "#6b6b6b"}
+
 
 
 def _label_parking_legality(ax, model, state):
@@ -600,7 +614,7 @@ def legend_handles():
         Patch(facecolor="orangered", alpha=0.40, hatch="xx", edgecolor="orangered",
                label="Daylighting - no parking (R.S. 39:4-138)"),
         Patch(facecolor="peru", alpha=0.6, edgecolor="saddlebrown", label="Mountable apron"),
-        Line2D([0], [0], marker="o", color="darkorange", lw=0, label="Bollard"),
+        Line2D([0], [0], marker="o", color=BOLLARD_PLAN_COLOR, lw=0, label="Bollard"),
         Line2D([0], [0], color="steelblue", lw=1.5, label="Marked parking lane + stalls"),
         Patch(facecolor="white", edgecolor="darkviolet", label="Crosswalk - OSM-surveyed position"),
         Patch(facecolor="white", edgecolor="crimson", ls="--", label="Crosswalk - estimated position"),

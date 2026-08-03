@@ -27,6 +27,7 @@ venv needed):
                           signals, trees - one builder function per prop type
 """
 import json
+import os
 import random
 import sys
 from pathlib import Path
@@ -328,12 +329,45 @@ def setup_camera_and_light(cx: float, cy: float, scene_radius: float, ground_siz
         bg.inputs["Strength"].default_value = 0.6
 
 
+# The render's own resolution, which --dpi does NOT control: that knob is matplotlib's and
+# reaches only the 2D plan views. Setting --dpi 300 and expecting sharper renders is the
+# obvious mistake and somebody made it, so there is now a knob for this too - a whole-number
+# multiple of the base size, from HOPEWELL_RENDER_SCALE (scripts/build_all.py --render-scale).
+# A multiplier rather than a width/height pair keeps the camera framing and the 4:3 aspect
+# fixed, so scale 2 is the same picture with four times the pixels, not a different crop.
+BASE_RESOLUTION = (1920, 1440)
+RENDER_SCALE_ENV = "HOPEWELL_RENDER_SCALE"
+
+
+def render_scale() -> int:
+    """The resolution multiplier, clamped to something a machine can actually finish.
+
+    Scale 4 is 7680x5760, which is where EEVEE's memory use starts to matter alongside the
+    ~11 GB a scene already costs (see phase4_render_3d.BLENDER_PEAK_RAM_GB) - past that the
+    OOM killer arrives and Blender says nothing about why, so the cap is kinder than the
+    crash. Anything unparseable falls back to 1 with a warning rather than failing a batch
+    of renders over an environment variable.
+    """
+    raw = os.environ.get(RENDER_SCALE_ENV, "1")
+    try:
+        scale = int(raw)
+    except ValueError:
+        print(f"WARNING: {RENDER_SCALE_ENV}={raw!r} is not an integer - rendering at 1x.")
+        return 1
+    if scale < 1 or scale > 4:
+        print(f"WARNING: {RENDER_SCALE_ENV}={scale} is outside 1-4 - clamping.")
+    return max(1, min(scale, 4))
+
+
 def configure_render():
     scene = bpy.context.scene
     scene.render.engine = "BLENDER_EEVEE_NEXT"
     scene.eevee.taa_render_samples = 64  # visually indistinguishable from 128 for this flat-shaded scene, ~30% faster
-    scene.render.resolution_x = 1920
-    scene.render.resolution_y = 1440
+    scale = render_scale()
+    scene.render.resolution_x = BASE_RESOLUTION[0] * scale
+    scene.render.resolution_y = BASE_RESOLUTION[1] * scale
+    if scale != 1:
+        print(f"Rendering at {scene.render.resolution_x}x{scene.render.resolution_y} ({scale}x)")
 
 
 def render(output_path: Path):

@@ -13,6 +13,31 @@ def make_material(name: str, color: tuple, roughness: float = 0.9):
     return mat
 
 
+def make_retroreflective_material(name: str, color: tuple, strength: float = 1.6,
+                                   roughness: float = 0.15):
+    """A material for retroreflective sheeting - hi-vis tape, sign faces.
+
+    Emissive, which is not a cheat. Retroreflective tape returns light back along the
+    incident ray, so to any observer roughly behind the light source it is far brighter than
+    its diffuse albedo can explain - that is the entire point of it, and it is why a
+    delineator post reads at night. EEVEE has no retroreflective BSDF, and a plain white
+    diffuse band in a scene lit by one soft sun renders as mid-grey and disappears against
+    the post at this camera distance. A little emission puts the band back at the brightness
+    a person on the street actually perceives.
+
+    `strength` is a look control, not a photometric quantity - there is no cd/lx/m^2 figure
+    behind it. Kept modest so the band reads as bright tape rather than a light source.
+    """
+    mat = make_material(name, color, roughness)
+    bsdf = mat.node_tree.nodes.get("Principled BSDF")
+    # Blender renamed this socket: "Emission Color" from 4.0, plain "Emission" before it.
+    emission = bsdf.inputs.get("Emission Color") or bsdf.inputs.get("Emission")
+    if emission is not None:
+        emission.default_value = (*color, 1.0)
+        bsdf.inputs["Emission Strength"].default_value = strength
+    return mat
+
+
 def make_textured_material(name: str, texture_paths: dict | None, fallback_color: tuple,
                             fallback_roughness: float = 0.9):
     """Diffuse/Roughness/Normal-mapped material from local file paths (already

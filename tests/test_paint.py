@@ -790,3 +790,94 @@ def test_a_midpoint_that_wanders_is_reported_rather_than_shifted():
     out, log = _centred(leg)
     assert list(out.centerline.coords) == before
     assert "wanders" in log and "left as surveyed" in log, log
+
+
+# --------------------------------------------------------------------------
+# The flex-post delineator, whose whole job is being seen
+# --------------------------------------------------------------------------
+
+def blender_props_module():
+    """scripts/blender/blender_props.py, importable outside Blender.
+
+    It runs under Blender's bundled Python and imports bpy at module level, so the venv
+    cannot import it as-is. Stubbing bpy in is enough to reach the pure arithmetic - the band
+    layout is just constants, and the alternative (asserting against the source TEXT, the way
+    test_sampled_polylines_are_rendered_as_polylines_not_chords has to) cannot check that the
+    numbers come out right, only that certain characters are present.
+    """
+    import sys
+    import types
+    from pathlib import Path
+
+    blender_dir = Path(__file__).resolve().parent.parent / "scripts" / "blender"
+    stubs = {"bpy": types.ModuleType("bpy"), "mathutils": types.ModuleType("mathutils")}
+    stubs["bpy"].ops = types.SimpleNamespace()
+    stubs["bpy"].data = types.SimpleNamespace()
+    stubs["bpy"].context = types.SimpleNamespace()
+    stubs["mathutils"].Vector = tuple
+    materials = types.ModuleType("blender_materials")
+    materials.make_material = lambda *a, **k: None
+    materials.make_retroreflective_material = lambda *a, **k: None
+    stubs["blender_materials"] = materials
+
+    saved = {name: sys.modules.get(name)
+             for name in (*stubs, "blender_props", "blender_crosswalks")}
+    sys.modules.update(stubs)
+    sys.path.insert(0, str(blender_dir))
+    try:
+        import importlib
+
+        sys.modules.pop("blender_props", None)
+        sys.modules.pop("blender_crosswalks", None)
+        return importlib.import_module("blender_props")
+    finally:
+        sys.path.remove(str(blender_dir))
+        for name, module in saved.items():
+            if module is None:
+                sys.modules.pop(name, None)
+            else:
+                sys.modules[name] = module
+
+
+IN_TO_M = 0.0254
+
+
+def test_the_delineator_post_is_42_inches_tall():
+    """Specified, not derived - so the test states the number rather than a formula that
+    would agree with whatever the constant happens to be."""
+    props = blender_props_module()
+    assert props.BOLLARD_HEIGHT_M / IN_TO_M == pytest.approx(42.0, abs=0.01)
+
+
+def test_the_post_carries_several_hi_vis_bands_near_its_top():
+    """One band 0.6 m up was invisible at this render's camera distance, and the docstring
+    claimed a band the code had put in only once.
+
+    Checks the banding pattern rather than the literal heights: at least two bands, the top
+    one close to the top of the post, none of them wider apart than the pattern allows, and
+    all of them above ground. That is what makes a post read; the exact stack can move.
+    """
+    props = blender_props_module()
+    centres = props.bollard_band_centres_m()
+    band = props.BOLLARD_BAND_HEIGHT_M
+
+    assert len(centres) >= 2, f"a single band does not read as a delineator: {centres}"
+    assert centres == sorted(centres, reverse=True), "expected top band first"
+    top_gap = props.BOLLARD_HEIGHT_M - (centres[0] + band / 2)
+    assert top_gap == pytest.approx(props.BOLLARD_TOP_TO_FIRST_BAND_M, abs=1e-9)
+    assert top_gap / IN_TO_M <= 2.01, f"top band sits {top_gap / IN_TO_M:.1f} in below the top"
+    for upper, lower in zip(centres, centres[1:]):
+        gap = (upper - band / 2) - (lower + band / 2)
+        assert 0 < gap / IN_TO_M <= 6.01, f"bands {gap / IN_TO_M:.1f} in apart"
+    assert min(centres) - band / 2 > 0, "a band is buried in the asphalt"
+
+
+def test_a_shorter_post_drops_bands_instead_of_burying_them(monkeypatch):
+    """The stack is measured down from the top, so a short post has to lose its lowest band
+    rather than push it underground."""
+    props = blender_props_module()
+    monkeypatch.setattr(props, "BOLLARD_HEIGHT_M", 12 * IN_TO_M)
+    centres = props.bollard_band_centres_m()
+    assert centres, "a 12 in post should still carry its top band"
+    assert all(z - props.BOLLARD_BAND_HEIGHT_M / 2 > 0 for z in centres)
+    assert len(centres) < props.BOLLARD_BAND_COUNT

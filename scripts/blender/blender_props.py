@@ -10,7 +10,7 @@ from pathlib import Path
 
 import bpy
 
-from blender_materials import make_material
+from blender_materials import make_material, make_retroreflective_material
 
 # MUTCD-ish colors for procedurally-built signage (no CC0 traffic-sign model
 # was found - see README.md "Phase 4 fidelity"). Real geometric shape/color,
@@ -43,14 +43,27 @@ RRFB_SIGN_YELLOW_GREEN = SCHOOL_ZONE_YELLOW_GREEN
 RRFB_BEACON_AMBER = (0.95, 0.55, 0.05)
 RRFB_MOUNT_HEIGHT_M = 2.3
 
-# Plastic flex-post delineator/bollard: real MUTCD/channelizer safety orange,
-# with a white reflective band near the top (both real, common features - just
-# no CC0 bollard model found, same "procedural but real colors/shape" approach
-# as the rest of this file's signage).
+# Plastic flex-post delineator/bollard: real MUTCD/channelizer safety orange, banded with
+# white retroreflective tape. No CC0 bollard model was found, so this is the same
+# "procedural, but with real colours and dimensions" approach as the rest of this file.
 BOLLARD_SAFETY_ORANGE = (0.85, 0.28, 0.03)
-BOLLARD_REFLECTIVE_WHITE = (0.92, 0.92, 0.9)
-BOLLARD_HEIGHT_M = 0.9
+BOLLARD_REFLECTIVE_WHITE = (0.96, 0.96, 0.94)
+# 42 in. SPECIFIED, not derived - the height asked for. Flex posts are sold in 28, 36 and
+# 48 in as well; 42 in is a common daylighting/bike-lane height and is tall enough to sit in
+# a driver's sight line rather than under the hood line. Was 0.9 m (35 in).
+BOLLARD_HEIGHT_M = 42 * 0.0254
 BOLLARD_RADIUS_M = 0.05
+# The banding follows the pattern MUTCD gives for tubular markers: at least two bands of
+# retroreflective sheeting, the top one close to the top, and gaps no wider than a band.
+# Three of them here - the post has to read at the distance these renders are shot from, and
+# a single band 0.6 m up did not. Sizes are in inches because that is how tape is sold.
+BOLLARD_BAND_HEIGHT_M = 3 * 0.0254
+BOLLARD_BAND_GAP_M = 4 * 0.0254
+BOLLARD_TOP_TO_FIRST_BAND_M = 2 * 0.0254
+BOLLARD_BAND_COUNT = 3
+# Bands stand proud of the post, the way a wrapped sleeve does. Also what makes them read as
+# separate rings rather than a smear: flush at 1.02x they were sub-pixel against the post.
+BOLLARD_BAND_RADIUS_SCALE = 1.18
 
 
 def import_gltf_template(gltf_path: str | None, name: str):
@@ -288,13 +301,35 @@ def add_rrfb(name: str, position: tuple, heading_deg: float, post_mat):
     return post
 
 
+def bollard_band_centres_m() -> list[float]:
+    """Height of each hi-vis band's centre above the ground, top band first.
+
+    Stepped down from the TOP of the post, not up from the ground: the top band's placement
+    is the one the banding pattern actually specifies (close to the top, so the post reads
+    when only its tip clears an obstruction), and a post of a different height should move
+    the whole stack with its top rather than leave a gap up there.
+
+    Bands that would fall below the ground are dropped, so shortening the post shortens the
+    stack instead of burying tape in the asphalt.
+    """
+    pitch = BOLLARD_BAND_HEIGHT_M + BOLLARD_BAND_GAP_M
+    first_centre = BOLLARD_HEIGHT_M - BOLLARD_TOP_TO_FIRST_BAND_M - BOLLARD_BAND_HEIGHT_M / 2
+    centres = [first_centre - i * pitch for i in range(BOLLARD_BAND_COUNT)]
+    return [z for z in centres if z - BOLLARD_BAND_HEIGHT_M / 2 > 0]
+
+
 def add_bollard(name: str, position: tuple):
-    """A single plastic flex-post delineator: a short safety-orange cylinder
-    with a white reflective band near the top. Placement (which leg, spacing,
-    centered in the painted buffer) is decided upstream in
-    src/render/props.py:_bollard_props - heading is irrelevant for a
-    rotationally-symmetric post, so unlike the other props this one takes no
-    heading_deg."""
+    """A single plastic flex-post delineator: a safety-orange post banded with white
+    retroreflective tape.
+
+    Placement (which leg, spacing, where along the daylight zone) is decided upstream in
+    src/render/props.py - heading is irrelevant for a rotationally-symmetric post, so unlike
+    the other props this one takes no heading_deg.
+
+    The bands are emissive (make_retroreflective_material) because they are retroreflectors:
+    a diffuse white ring in this scene's single-soft-sun lighting renders mid-grey and
+    vanishes into the post, which is the opposite of what the object is for.
+    """
     x, y = position
     bpy.ops.mesh.primitive_cylinder_add(radius=BOLLARD_RADIUS_M, depth=BOLLARD_HEIGHT_M,
                                          location=(x, y, BOLLARD_HEIGHT_M / 2))
@@ -302,12 +337,13 @@ def add_bollard(name: str, position: tuple):
     post.name = f"{name}_post"
     post.data.materials.append(make_material(f"{name}_post_mat", BOLLARD_SAFETY_ORANGE, roughness=0.5))
 
-    band_z = BOLLARD_HEIGHT_M * 0.7
-    bpy.ops.mesh.primitive_cylinder_add(radius=BOLLARD_RADIUS_M * 1.02, depth=BOLLARD_HEIGHT_M * 0.15,
-                                         location=(x, y, band_z))
-    band = bpy.context.active_object
-    band.name = f"{name}_band"
-    band.data.materials.append(make_material(f"{name}_band_mat", BOLLARD_REFLECTIVE_WHITE, roughness=0.2))
+    band_mat = make_retroreflective_material(f"{name}_band_mat", BOLLARD_REFLECTIVE_WHITE)
+    for i, band_z in enumerate(bollard_band_centres_m()):
+        bpy.ops.mesh.primitive_cylinder_add(radius=BOLLARD_RADIUS_M * BOLLARD_BAND_RADIUS_SCALE,
+                                             depth=BOLLARD_BAND_HEIGHT_M, location=(x, y, band_z))
+        band = bpy.context.active_object
+        band.name = f"{name}_band_{i}"
+        band.data.materials.append(band_mat)
     return post
 
 

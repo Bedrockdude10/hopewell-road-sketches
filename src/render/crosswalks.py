@@ -386,11 +386,31 @@ def crosswalk_axes(leg, offset_ft: float, skew_deg: float = 0.0):
 
     One definition of the crossing's frame, so the band the plan view draws, the reach the
     3D export writes and the check in src/checks.py are all measured off the same axes.
+
+    Read AT the station, off the polyline, not extrapolated from the leg's first segment.
+    That shortcut is exact for a straight centerline and ten of this project's twelve legs
+    are straight 2-vertex lines, which is why it survived this long. The two that are not:
+
+        louellen_st_west      first segment 15.4 ft at 239.2 deg, leg 268.6  -> 29.4 deg out
+        broad_st_east         first segment 43.1 ft at  57.3 deg, leg  61.8  ->  4.5 deg out
+
+    Louellen bends because NJDOT's alignment rounds the corner where CR 518 turns off W
+    Broad onto Louellen, and the crossing pays for it three times over: its bars came out
+    29.4 deg off square to the street they cross, its centre landed ~8 ft sideways of the
+    real carriageway centre at station 31.5 (and the first-segment ray is 62.7 ft off the
+    centerline by the far end of the leg), and crosswalk_reach_to_curbs_ft then measured
+    from that displaced centre and returned 14.0 ft to one kerb against 32.5 to the other -
+    a 46.5 ft pair of lines across a 42.1 ft street, one end of it out on the grass.
+
+    _frame_at is the same leg-frame transform station_offset_many inverts, so the centre a
+    crossing is built on and the station everything else measures it by are now the same
+    arithmetic. See src/geometry/model.py:_polyline_frame.
     """
-    (x0, y0), (x1, y1) = leg.centerline.coords[0], leg.centerline.coords[1]
-    length = np.hypot(x1 - x0, y1 - y0)
-    ux, uy = (x1 - x0) / length, (y1 - y0) / length
-    centre = (x0 + ux * offset_ft, y0 + uy * offset_ft)
+    from src.geometry.model import _frame_at
+
+    origin, tangent = _frame_at(leg.centerline, offset_ft)
+    centre = (float(origin[0]), float(origin[1]))
+    ux, uy = float(tangent[0]), float(tangent[1])
 
     skew = np.radians(skew_deg)
     cos_s, sin_s = np.cos(skew), np.sin(skew)

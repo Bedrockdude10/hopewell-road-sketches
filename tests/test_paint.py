@@ -9,6 +9,9 @@ addresses it by ARC LENGTH, or that trusts the nominal half-width, is wrong on r
 and looks fine on a synthetic straight leg - so the legs below are built to have those
 properties.
 """
+import contextlib
+import io
+
 import numpy as np
 import pytest
 from shapely.geometry import LineString
@@ -167,6 +170,10 @@ class FakeState:
     def __init__(self, legs):
         self.legs = legs
         self.corner_fillets = {}
+        self.notes = []
+
+    def clone(self):
+        return self
 
 
 def test_paint_over_the_curb_is_a_violation():
@@ -704,3 +711,82 @@ def test_the_travel_lane_check_measures_against_the_real_kerb():
                             "east", "left")
     violations = check_paint_clear_of_the_travel_lane(FakeState({"east": roomy}), [intruding])
     assert violations and violations[0].check == "paint_in_the_travel_lane"
+
+
+# --------------------------------------------------------------------------
+# Centring the design on the road rather than on the route alignment
+# --------------------------------------------------------------------------
+
+def _centred(leg, name="east"):
+    """Run the model's width-and-centre fit on one leg and hand back the result.
+
+    Calls _resize_and_centre_from_traced_kerbs directly rather than through
+    load_intersection_model: this is about the arithmetic on a known cross-section, and a
+    real junction supplies neither a known one nor a fast one.
+    """
+    from src.geometry.intersection import _resize_and_centre_from_traced_kerbs
+
+    # `traced` attaches the kerb geometry; the fit also wants the leg to SAY which sides are
+    # traced, which is what _apply_traced_curb_lines does for it on the real path.
+    leg.traced_sides = {side for side in ("left", "right")
+                        if getattr(leg, f"{side}_curb", None) is not None}
+    legs = {name: leg}
+    with contextlib.redirect_stdout(io.StringIO()) as out:
+        _resize_and_centre_from_traced_kerbs(legs, {})
+    return legs[name], out.getvalue()
+
+
+def test_recentring_splits_the_leftover_evenly_between_the_kerbs():
+    """The leg centerline is NJDOT's ROUTE alignment, which says where the route goes, not
+    where the middle of the carriageway is. Greenwood Ave south's kerbs sit 12.6 and 18.2 ft
+    off it - two lanes each exactly at target, on a road visibly not symmetrical about its
+    own centre line.
+    """
+    import numpy as np
+
+    from src.geometry.model import curb_offsets_at_stations
+
+    leg = a_leg(width_ft=30.0, length_ft=130.0)
+    leg = traced(leg, "left", [(10, 12.6), (130, 12.6)])
+    leg = traced(leg, "right", [(10, 18.2), (130, 18.2)])
+
+    out, _log = _centred(leg)
+    stations = np.linspace(40, 130, 20)
+    left = np.abs(curb_offsets_at_stations(out, "left", stations)).min()
+    right = np.abs(curb_offsets_at_stations(out, "right", stations)).min()
+    assert abs(left - right) < 0.1, f"still lopsided: {left:.1f} vs {right:.1f}"
+    assert left == pytest.approx((12.6 + 18.2) / 2, abs=0.1)
+
+
+def test_the_width_is_the_distance_between_the_two_kerbs_not_double_either_one():
+    """The bug this replaced: the width came from the NEAREST kerb, doubled. On a leg whose
+    alignment is off centre that is neither kerb-to-kerb distance - 12.6 and 18.2 ft apart
+    is a 30.8 ft street, not the 25.2 ft doubling the near one gives. Every leg at every one
+    of the four junctions was reported too narrow this way, by 1-6 ft."""
+    leg = traced(traced(a_leg(width_ft=25.2, length_ft=130.0),
+                         "left", [(10, 12.6), (130, 12.6)]),
+                  "right", [(10, 18.2), (130, 18.2)])
+    out, _log = _centred(leg)
+    assert out.curb_to_curb_ft == pytest.approx(30.8, abs=0.1)
+
+
+def test_a_leg_already_centred_is_left_alone():
+    leg = traced(traced(a_leg(width_ft=30.0), "left", [(10, 15), (130, 15)]),
+                  "right", [(10, 15), (130, 15)])
+    before = list(leg.centerline.coords)
+    out, _log = _centred(leg)
+    assert list(out.centerline.coords) == before
+
+
+def test_a_midpoint_that_wanders_is_reported_rather_than_shifted():
+    """A single constant shift describes a PARALLEL offset between the alignment and the
+    street. Where the kerbs' midpoint swings along the leg the alignment is bending relative
+    to the street instead, no one number centres it, and moving the paint on that evidence
+    would be worse than leaving it."""
+    leg = traced(traced(a_leg(width_ft=30.0, length_ft=130.0),
+                         "left", [(10, 7.2), (130, 7.2)]),
+                  "right", [(10, 28.0), (130, 60.0)])
+    before = list(leg.centerline.coords)
+    out, log = _centred(leg)
+    assert list(out.centerline.coords) == before
+    assert "wanders" in log and "left as surveyed" in log, log

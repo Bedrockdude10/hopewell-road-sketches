@@ -11,7 +11,7 @@ measured, so treat the lane/parking dimensions below as a design study rather th
 construction drawing.
 """
 from src.geometry.treatments import (
-    all_crosswalks_continental, complete_centerlines, DesignState, add_lane_narrowing, add_marked_parking, apply_osm_parking, upgrade_crosswalk_markings,
+    all_crosswalks_continental, complete_centerlines, DesignState, add_lane_narrowing, add_marked_parking, apply_osm_parking, protect_daylight_zone, upgrade_crosswalk_markings,
 )
 
 TARGET_LANE_WIDTH_FT = 11.0   # NACTO/AASHTO urban minimum travel lane - the width the road diet aims at
@@ -82,3 +82,30 @@ def build_demo_scenario(baseline: DesignState, model=None) -> DesignState:
     state = complete_centerlines(state)
     return all_crosswalks_continental(state)
 
+
+
+def build_proposal_daylight_bollards(baseline: DesignState, model=None) -> DesignState:
+    """The default proposal, with flex-post bollards standing in each daylight zone.
+
+    Identical geometry to build_demo_scenario - same lanes, same hatching, same crossings.
+    The posts change nothing that is painted; they make the statutory setback in
+    R.S. 39:4-138 self-enforcing instead of merely marked, which is the whole difference
+    between a drawing of the law and a corner that stays clear.
+
+    Every kerb here is HATCHED rather than marked for parking (no leg has a stall's worth of
+    spare width beside an 11 ft lane), so unlike Broad & Greenwood the zones to protect are
+    keyed off the narrowed sides, not off parking. That does not make them longer: a daylight
+    zone is bounded by the statute at the corner however the rest of the kerb is painted, so
+    the posts stand at the corners and nowhere else. Flex-posts are NOT a curb extension
+    under 39:4-138(e), so the 25 ft setback is unchanged.
+    """
+    if model is None:
+        return baseline
+    state = build_demo_scenario(baseline, model)
+    treated = set(state.parking_zones)
+    for leg_name in state.lane_narrowing:
+        for side in state.lane_narrowing_sides.get(leg_name, ("left", "right")):
+            treated.add((leg_name, side))
+    for leg_name, side in sorted(treated):
+        state = protect_daylight_zone(state, leg_name, side, kind="bollards")
+    return state

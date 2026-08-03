@@ -7,14 +7,16 @@ from shapely.geometry import LineString, Polygon
 
 from shapely.ops import substring
 
-from src.geometry.model import build_pavement_polygon, trimmed_curb_lines
+from src.geometry.model import (build_pavement_polygon, inset_point_at_station,
+                                trimmed_curb_lines)
 from src.geometry.paint import curbside_paint_ft
 from src.geometry.intersection import IntersectionModel, kerb_lines_with_tags_ft
 from src.geometry.treatments import DEFAULT_CENTERLINE_STYLE, DesignState
-from src.provenance import PLOT_STYLE, leg_width_provenance
-from src.render.props import build_props, signalization_conflicts
+from src.provenance import PLOT_STYLE, built_width_provenance
+from src.render.props import DRAWN_BY_PAINT, build_props, signalization_conflicts
 from src.render.coords import FT_TO_M, wgs84_to_state_plane
 from src.render.crosswalks import (CROSSWALK_DEPTH_M, STOP_BAR_PLAN_DEPTH_FT, centerline_start_ft,
+                                   crosswalk_reaches_ft,
                                    crosswalk_band_ft, crosswalk_bands_ft, stop_bar_bands_ft,
                                    resolve_crosswalk_offsets,
                                    resolve_crosswalk_skews, resolve_stop_bar_offsets,
@@ -56,8 +58,11 @@ def _draw_props(ax, model: IntersectionModel, state: DesignState, crosswalk_offs
     them. A traffic signal appearing here that you didn't intend is now a visible error
     rather than a surprise three phases later.
 
-    Bollards are skipped - the treatment layer above already draws them from
-    state.bollard_lines, and drawing them twice would just thicken the markers.
+    Bollards tagged DRAWN_BY_PAINT are skipped, because the treatment layer above already
+    drew them from state.bollard_lines. The ones that are NOT so tagged - the daylight-zone
+    posts from protect_daylight_zone - exist only as props, and skipping every bollard the
+    way this used to meant the plan view of a bollard proposal showed no bollards while the
+    3D render of the same scenario showed thirteen.
     """
     kerb_lines = kerb_lines_with_tags_ft(model.center_wgs84, model.center_ft)
     props = build_props(model, state, crosswalk_offsets, model.center_ft, traffic_control,
@@ -67,7 +72,7 @@ def _draw_props(ax, model: IntersectionModel, state: DesignState, crosswalk_offs
     signal_count = 0
     for prop in props:
         kind = prop["type"]
-        if kind == "bollard":
+        if kind == "bollard" and prop.get(DRAWN_BY_PAINT):
             continue
         x, y = prop["position_ft"]
         if kind == "traffic_signal_pole":
@@ -253,7 +258,7 @@ def plot_design_state(ax, model: IntersectionModel, state: DesignState, title: s
     # the intersection - marking a curb that isn't there and isn't in the 3D render.
     curbs_by_leg = trimmed_curb_lines(state.legs, state.corner_fillets)
     for name, leg in state.legs.items():
-        tier = leg_width_provenance(model.config["legs"][name])
+        tier = built_width_provenance(leg, model.config["legs"][name])
         style_kw = PLOT_STYLE[tier]
         color = style_kw["color"]
         for curb in curbs_by_leg[name].values():
@@ -323,11 +328,13 @@ def plot_design_state(ax, model: IntersectionModel, state: DesignState, title: s
     # itself, in parallel with export.py doing the same, and the two had already drifted on
     # where a parking buffer's taper starts and on whether taper fill is cut around a
     # crossing. Both views now show the same geometry because it IS the same geometry.
+    marked = set(model.config["intersection"].get("existing_marked_crosswalks", []))
     bands = crosswalk_bands_ft(state, crosswalk_offsets, crosswalk_skews,
-                                CROSSWALK_DEPTH_M / FT_TO_M, pavement)
+                                CROSSWALK_DEPTH_M / FT_TO_M, pavement,
+                                crosswalk_reaches_ft(state, crosswalk_offsets, crosswalk_skews,
+                                                      pavement, marked))
     paint = curbside_paint_ft(state, crosswalk_offsets, model.center_ft, bands, props,
-                               marked_crosswalks=set(model.config["intersection"].get(
-                                   "existing_marked_crosswalks", [])))
+                               marked_crosswalks=marked)
 
     STYLE = {   # kind -> (matplotlib kwargs, whether it's a filled/hatched zone)
         "lane_narrowing_fill":  dict(color="gold", alpha=0.5, hatch="//", zorder=3),
@@ -344,6 +351,8 @@ def plot_design_state(ax, model: IntersectionModel, state: DesignState, title: s
         "buffer_edge_line":     dict(color="goldenrod", linewidth=1.5, zorder=3),
         "daylight_edge_line":   dict(color="orangered", linewidth=1.5, zorder=3),
         "crossing_rim_line":    dict(color="orangered", linewidth=1.5, zorder=3),
+        # The square end of a zone with no crossing to be cut by and no room to taper.
+        "zone_end_line":        dict(color="goldenrod", linewidth=1.5, zorder=3),
         "parking_edge_line":    dict(color="steelblue", linewidth=1.5, zorder=3),
         "stall_divider":        dict(color="steelblue", linewidth=1, zorder=3),
     }
@@ -364,6 +373,7 @@ def plot_design_state(ax, model: IntersectionModel, state: DesignState, title: s
 
     if dimension_labels:
         _label_paint(ax, state, paint, crosswalk_offsets)
+        _label_parking_legality(ax, model, state)
 
     ax.scatter([model.center_ft.x], [model.center_ft.y], color="blue", zorder=6, s=40)
 
@@ -417,6 +427,74 @@ def _draw_centerlines(ax, state, crosswalk_offsets, stop_bar_offsets):
                         color="gold", lw=1.2, zorder=4)
         else:   # single_yellow_dashed
             ax.plot(*painted.xy, color="gold", lw=1.2, ls=(0, (6, 6)), zorder=4)
+
+
+# What OSM says about kerbside parking, and what that produced. Colour is the OSM statement
+# alone, so a kerb the surveyor tagged and a kerb nobody has tagged never look the same.
+PARKING_LEGALITY_COLOR = {"restricted": "#b3261e", "allowed": "#1b7f3b", "untagged": "#6b6b6b"}
+
+
+def _label_parking_legality(ax, model, state):
+    """Per side of every leg: the OSM parking tag, and what the design did with it.
+
+    Without this the drawing cannot answer the question it most often provokes - "why is that
+    kerb hatched?" - because three different situations produce identical hatching: OSM says
+    no parking, OSM says parking is fine but the road has less than one stall's width spare,
+    and nobody has tagged it at all. The first is a restriction being marked; the other two
+    are this design's own arithmetic. Only the tag distinguishes them, so the tag is drawn.
+    """
+    from src.geometry.intersection import parking_restriction_by_side, parking_is_restricted
+    from src.geometry.model import curb_point_at_station
+    from src.geometry.treatments import MIN_MARKED_PARKING_DEPTH_FT, TARGET_LANE_WIDTH_FT
+
+    osm_tags = getattr(model, "leg_osm_tags", {})
+    aligned_by_leg = getattr(model, "leg_osm_aligned", {})
+    for leg_name, leg in state.legs.items():
+        if leg.curb_to_curb_ft is None:
+            continue
+        sides = parking_restriction_by_side(osm_tags.get(leg_name, {}),
+                                             aligned_by_leg.get(leg_name, True))
+        allowance_ft = leg.curb_to_curb_ft / 2 - TARGET_LANE_WIDTH_FT
+        for side in ("left", "right"):
+            restriction = sides[side]
+            if parking_is_restricted(restriction):
+                kind, says = "restricted", restriction
+            elif restriction == "none":
+                kind, says = "allowed", "none (parking OK)"
+            else:
+                kind, says = "untagged", "untagged"
+
+            if (leg_name, side) in state.parking_zones:
+                drew = "stalls"
+            elif (leg_name in state.lane_narrowing
+                  and side in state.lane_narrowing_sides.get(leg_name, ("left", "right"))):
+                drew = ("hatched" if kind == "restricted"
+                        else f"hatched: only {allowance_ft:.1f} ft spare, "
+                             f"under a {MIN_MARKED_PARKING_DEPTH_FT:.0f} ft stall")
+            else:
+                drew = (f"nothing: {allowance_ft:.1f} ft spare beside an "
+                        f"{TARGET_LANE_WIDTH_FT:.0f} ft lane")
+
+            point = curb_point_at_station(leg, side, leg.centerline.length * 0.42)
+            if point is None:
+                continue
+            outward = 1 if side == "left" else -1
+            here = inset_point_at_station(leg, leg.centerline.length * 0.42,
+                                           outward * (abs(_offset_of(leg, point)) + 9.0))
+            ax.annotate(f"OSM parking: {says}\n-> {drew}", (here[0], here[1]),
+                        fontsize=5.2, color=PARKING_LEGALITY_COLOR[kind], ha="center",
+                        va="center", zorder=7,
+                        bbox=dict(boxstyle="round,pad=0.18", fc="white",
+                                  ec=PARKING_LEGALITY_COLOR[kind], lw=0.6, alpha=0.9))
+
+
+def _offset_of(leg, point):
+    import numpy as np
+
+    from src.geometry.model import station_offset_many
+
+    _stations, offsets = station_offset_many(leg.centerline, np.asarray([point], dtype=float))
+    return float(offsets[0])
 
 
 def _label_paint(ax, state, paint, crosswalk_offsets):
@@ -507,6 +585,12 @@ def legend_handles():
         Line2D([0], [0], color="steelblue", lw=1, ls=(0,(4,2)), label="OSM sidewalk centerline"),
         Line2D([0], [0], color="#3b6ea5", lw=0.9, ls=(0,(7,3,1,3)), label="Leg centerline (widths measured from this)"),
         Line2D([0], [0], color="gold", lw=1.2, label="Centerline paint (double yellow / dashed)"),
+        Patch(facecolor="white", edgecolor=PARKING_LEGALITY_COLOR["restricted"],
+               label="OSM: parking restricted"),
+        Patch(facecolor="white", edgecolor=PARKING_LEGALITY_COLOR["allowed"],
+               label="OSM: parking allowed"),
+        Patch(facecolor="white", edgecolor=PARKING_LEGALITY_COLOR["untagged"],
+               label="OSM: parking untagged"),
         Line2D([0], [0], color="darkviolet", lw=1, ls=":", label="OSM crossing way (as surveyed)"),
         Line2D([0], [0], color="darkorange", lw=2.5, label="Corner fillet (radius labeled)"),
         Line2D([0], [0], color="seagreen", lw=6, alpha=0.6, label="Pedestrian refuge island"),

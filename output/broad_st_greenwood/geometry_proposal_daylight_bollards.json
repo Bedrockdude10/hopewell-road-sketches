@@ -1,5 +1,5 @@
 {
-  "name": "build_demo_scenario",
+  "name": "build_proposal_daylight_bollards",
   "units": "meters",
   "notes": [
     "add_marked_parking(broad_st_east, side='left', depth_ft=8.0, stall_length_ft=22.0, curb_offset_ft=7.004350430074229)",
@@ -20,7 +20,11 @@
     "upgrade_crosswalk_markings(broad_st_east, style='continental')",
     "upgrade_crosswalk_markings(broad_st_west, style='continental')",
     "upgrade_crosswalk_markings(greenwood_ave_north, style='continental')",
-    "upgrade_crosswalk_markings(greenwood_ave_south, style='continental')"
+    "upgrade_crosswalk_markings(greenwood_ave_south, style='continental')",
+    "protect_daylight_zone(broad_st_east, left): bollards at 8 ft spacing",
+    "protect_daylight_zone(broad_st_east, right): bollards at 8 ft spacing",
+    "protect_daylight_zone(broad_st_west, left): bollards at 8 ft spacing",
+    "protect_daylight_zone(broad_st_west, right): bollards at 8 ft spacing"
   ],
   "theme": {
     "asphalt_near": {
@@ -16864,6 +16868,97 @@
       "position_m": [
         1.7265671427614988,
         12.933757311356999
+      ]
+    },
+    {
+      "type": "bollard",
+      "position_ft": [
+        419180.8461256786,
+        566813.4665160509
+      ],
+      "heading_deg": 0.0,
+      "source": "scenario-specified (protect_daylight_zone): bollards in broad_st_east's left daylight zone, 8 ft apart.",
+      "position_m": [
+        6.610924178734795,
+        8.255484260571656
+      ]
+    },
+    {
+      "type": "bollard",
+      "position_ft": [
+        419190.8440922377,
+        566819.7677188414
+      ],
+      "heading_deg": 0.0,
+      "source": "scenario-specified (protect_daylight_zone): bollards in broad_st_east's left daylight zone, 8 ft apart.",
+      "position_m": [
+        9.65830438594236,
+        10.176090871140081
+      ]
+    },
+    {
+      "type": "bollard",
+      "position_ft": [
+        419194.33046576945,
+        566793.0559020726
+      ],
+      "heading_deg": 0.0,
+      "source": "scenario-specified (protect_daylight_zone): bollards in broad_st_east's right daylight zone, 8 ft apart.",
+      "position_m": [
+        10.720951038419317,
+        2.034329119991418
+      ]
+    },
+    {
+      "type": "bollard",
+      "position_ft": [
+        419202.38575011026,
+        566798.1807755589
+      ],
+      "heading_deg": 0.0,
+      "source": "scenario-specified (protect_daylight_zone): bollards in broad_st_east's right daylight zone, 8 ft apart.",
+      "position_m": [
+        13.176201705497505,
+        3.596390558630135
+      ]
+    },
+    {
+      "type": "bollard",
+      "position_ft": [
+        419133.6210549842,
+        566753.8882639714
+      ],
+      "heading_deg": 0.0,
+      "source": "scenario-specified (protect_daylight_zone): bollards in broad_st_west's left daylight zone, 8 ft apart.",
+      "position_m": [
+        -7.783277368919319,
+        -9.903966973238905
+      ]
+    },
+    {
+      "type": "bollard",
+      "position_ft": [
+        419124.5434495167,
+        566747.6756092267
+      ],
+      "heading_deg": 0.0,
+      "source": "scenario-specified (protect_daylight_zone): bollards in broad_st_west's left daylight zone, 8 ft apart.",
+      "position_m": [
+        -10.550131515420182,
+        -11.797584139435832
+      ]
+    },
+    {
+      "type": "bollard",
+      "position_ft": [
+        419118.74717914104,
+        566773.3494175142
+      ],
+      "heading_deg": 0.0,
+      "source": "scenario-specified (protect_daylight_zone): bollards in broad_st_west's right daylight zone, 8 ft apart.",
+      "position_m": [
+        -12.316834725922533,
+        -3.972207373411954
       ]
     }
   ],

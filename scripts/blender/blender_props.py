@@ -325,10 +325,12 @@ TACTILE_PAD_HEIGHT_M = 0.015
 # base height puts it on the established surface-treatment layer instead of inventing a
 # second one that could drift from it.
 from blender_crosswalks import EXISTING_MARKING_Z_BASE as TACTILE_PAD_Z_BASE
-# Brick red. Detectable warning surfaces come in several standard colours; red is the
-# common one in this region and reads more clearly against grey concrete than the yellow
-# this used to be.
-TACTILE_PAD_RED = (0.55, 0.12, 0.08)
+# Safety yellow. Detectable warning surfaces come in several standard colours; this was
+# brick red for a while, on the argument that red is the common one in this region, but at
+# this camera height and distance the pads disappeared into the sidewalk. Yellow is the
+# other standard colour, it is in use in the borough, and it is the one you can actually
+# find in the render - which is the point of drawing them at all.
+TACTILE_PAD_YELLOW = (0.82, 0.60, 0.06)
 HYDRANT_HEIGHT_M = 0.75
 HYDRANT_RED = (0.62, 0.05, 0.05)
 
@@ -361,8 +363,8 @@ def add_pedestrian_pushbutton(name: str, position: tuple, heading_deg: float, po
 def add_tactile_paving_pad(name: str, position: tuple, heading_deg: float,
                             depth_m: float = TACTILE_PAD_FALLBACK_M[0],
                             width_m: float = TACTILE_PAD_FALLBACK_M[1]):
-    """Detectable warning surface (truncated domes) at a curb ramp - the yellow pad a
-    cane or a foot registers at the kerb edge. Modeled as a flat plate rather than
+    """Detectable warning surface (truncated domes) at a curb ramp - the pad a cane or a
+    foot registers at the kerb edge. Modeled as a flat plate rather than
     individual domes: at this render's scale the dome pattern is sub-pixel, and a plate
     reads correctly while costing four vertices instead of hundreds.
 
@@ -380,7 +382,7 @@ def add_tactile_paving_pad(name: str, position: tuple, heading_deg: float,
     # pad long in the wrong direction and pushed it further into the road.
     pad.scale = (depth_m, width_m, TACTILE_PAD_HEIGHT_M)
     pad.rotation_euler = (0, 0, math.radians(heading_deg))
-    pad.data.materials.append(make_material(f"{name}_pad_mat", TACTILE_PAD_RED, roughness=0.6))
+    pad.data.materials.append(make_material(f"{name}_pad_mat", TACTILE_PAD_YELLOW, roughness=0.6))
     return pad
 
 

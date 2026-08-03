@@ -20,6 +20,7 @@ class FakeState:
         self.legs = legs
         self.corner_fillets = corner_fillets or {}
         self.parking_zones = parking_zones or {}
+        self.daylight_devices = {}
 
 
 def a_state(length_ft=200.0, width_ft=30.0):
@@ -41,14 +42,47 @@ def test_parking_starts_25_feet_past_the_crosswalk():
     assert start == pytest.approx(30.0 + CROSSWALK_SETBACK_FT)
 
 
-def test_a_curb_extension_reduces_the_setback_to_ten_feet():
-    """39:4-138(e), second clause: a bulbout has already taken the parking lane out of the
-    sight line, so the statute lets parking resume 10 ft from the crossing."""
+def test_a_curb_extension_reduces_both_setbacks_to_ten_feet(monkeypatch):
+    """39:4-138(e), second clause. The reduction applies to the crosswalk arm AND the side
+    line arm - the clause reads "within 10 feet of the nearest crosswalk or side line ... if
+    a curb extension or bulbout has been constructed". Cutting only the crosswalk arm leaves
+    the side line binding at 25 ft, so the extension buys nothing, which is not what it says.
+
+    CURB_EXTENSION_DEVICES is empty today (planters were in it and were removed), so the
+    device that triggers the reduction has to be supplied here. Testing the clause against
+    an empty set would only prove the set is empty, and the clause is what has to keep
+    working for whenever something is actually built.
+    """
+    import src.geometry.treatments as treatments
+    from src.geometry.daylighting import SIDELINE_SETBACK_WITH_BULBOUT_FT
+
+    monkeypatch.setattr(treatments, "CURB_EXTENSION_DEVICES", frozenset({"built_bulbout"}))
     state = a_state()
-    state.curb_extensions = {("east", "left"): 6.0}
+    state.daylight_devices = {("east", "left"): {"kind": "built_bulbout", "spacing_ft": 5.0}}
     start = legal_parking_start_ft(state, "east", "left", {"east": (30.0,)})
     assert start == pytest.approx(30.0 + CROSSWALK_SETBACK_WITH_BULBOUT_FT)
     assert CROSSWALK_SETBACK_WITH_BULBOUT_FT < CROSSWALK_SETBACK_FT
+    assert SIDELINE_SETBACK_WITH_BULBOUT_FT < SIDELINE_SETBACK_FT
+
+    # A flex-post line is not a constructed curb extension.
+    state.daylight_devices = {("east", "left"): {"kind": "bollards", "spacing_ft": 8.0}}
+    assert legal_parking_start_ft(state, "east", "left", {"east": (30.0,)}) == pytest.approx(
+        30.0 + CROSSWALK_SETBACK_FT)
+
+
+def test_nothing_this_repo_places_counts_as_a_constructed_curb_extension():
+    """The complement, and the one that guards the live behaviour: with the set empty, every
+    device this repo can stand in a daylight zone leaves the 25 ft setback intact. Painting
+    or posting a setback is not constructing a bulbout, and parking at 10 ft is only lawful
+    where one has actually been built."""
+    from src.geometry.treatments import CURB_EXTENSION_DEVICES, VALID_DAYLIGHT_DEVICES
+
+    assert not CURB_EXTENSION_DEVICES
+    for kind in VALID_DAYLIGHT_DEVICES:
+        state = a_state()
+        state.daylight_devices = {("east", "left"): {"kind": kind, "spacing_ft": 8.0}}
+        assert legal_parking_start_ft(state, "east", "left", {"east": (30.0,)}) == pytest.approx(
+            30.0 + CROSSWALK_SETBACK_FT), f"{kind} must not buy back the setback"
 
 
 def test_the_side_line_governs_a_leg_with_no_marked_crossing():

@@ -57,7 +57,8 @@ PAINT_KIND_LISTS = {
     "corner_hatching_lines": ("corner_hatch_fill",),
     "parking_edge_lines": ("parking_edge_line",),
     "parking_stall_divider_lines": ("stall_divider",),
-    "parking_buffer_edge_lines": ("buffer_edge_line", "daylight_edge_line", "crossing_rim_line"),
+    "parking_buffer_edge_lines": ("buffer_edge_line", "daylight_edge_line", "crossing_rim_line",
+                                   "zone_end_line"),
     # A curve needs add_paint_polyline rather than add_paint_line - see add_paint_line's
     # docstring - so the tapers stay in their own list. Empty since daylight zones went
     # square-ended (src/geometry/paint.py): a keep-clear block has no taper. The list stays
@@ -123,12 +124,15 @@ def export_scenario(model: IntersectionModel, state: DesignState, name: str, out
         street_furniture = fetch_street_furniture(model.center_wgs84, radius_m=BUILDING_CONTEXT_RADIUS_M)
     crosswalk_offsets = resolve_crosswalk_offsets(state, crossings)
     crosswalk_skews = resolve_crosswalk_skews(state, crossings)
-    crosswalk_reaches = crosswalk_reaches_ft(state, crosswalk_offsets, crosswalk_skews, pavement)
+    marked_crosswalks = set(model.config["intersection"].get("existing_marked_crosswalks", []))
+    crosswalk_reaches = crosswalk_reaches_ft(state, crosswalk_offsets, crosswalk_skews,
+                                              pavement, marked_crosswalks)
     # Crosswalks outrank every other marking here, so the paint below is cut around them
     # geometrically rather than merely started far enough out - a skewed crossing reaches
     # further along one kerb than its centre offset implies.
     crosswalk_band_polys = crosswalk_bands_ft(state, crosswalk_offsets, crosswalk_skews,
-                                                CROSSWALK_DEPTH_M / FT_TO_M, pavement)
+                                                CROSSWALK_DEPTH_M / FT_TO_M, pavement,
+                                                crosswalk_reaches)
     # Stop bars only make sense at a signalized intersection (this site's
     # config.yaml `signals` block is what "signalized" means - see
     # src/render/props.py's _traffic_signal_props/_no_turn_on_red_props, which gate
@@ -155,8 +159,7 @@ def export_scenario(model: IntersectionModel, state: DesignState, name: str, out
     props = build_props(model, state, crosswalk_offsets, center_ft, traffic_control, street_furniture,
                          crossings, fetch_kerbs(model.center_wgs84, radius_m=KERB_RADIUS_M))
     paint = curbside_paint_ft(state, crosswalk_offsets, center_ft, crosswalk_band_polys, props,
-                           marked_crosswalks=set(model.config["intersection"].get(
-                               "existing_marked_crosswalks", [])))
+                           marked_crosswalks=marked_crosswalks)
     # Invariants, not warnings: a pad in the carriageway is a false claim about an
     # accessibility feature, and a curb drawn across the intersection is a false claim
     # about the street. Checked on the same shared band geometry the plan view checks, so

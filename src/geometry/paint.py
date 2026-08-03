@@ -167,6 +167,37 @@ def end_against_crossing(at: LegAnchors, zone_start_ft: float = 0.0) -> tuple[fl
     return max(zone_start_ft, at.crossing_ft - CROSSWALK_DEPTH_FT), at.crossing_ft
 
 
+def zone_end_line_ft(leg, side: str, start_ft: float, inner_offset_ft: float):
+    """The transverse line closing off the junction end of a hatched zone, or None.
+
+    Three ways a zone can end, and until this existed only two of them were drawn. Into a
+    crossing: the crossing cuts it and `rim` outlines the cut. Resolving back to the kerb:
+    the taper carries the outline round. Square, against nothing: the outline simply stopped
+    and the hatch strokes ended in mid-air.
+
+    That third case is not rare, it is every leg with no painted crossing - e_broad_st_east
+    among them. Such a leg has nothing to end against, and it cannot taper either, because
+    leg_anchors puts anchor_ft AT target_ft where the crossing is only nominal, leaving a
+    taper no run to happen over. So the zone gets a square end whether that reads well or
+    not, and a square end wants a line across it.
+
+    Returns None where the kerb has come inside the zone's own lane edge, which leaves
+    nothing to draw a line across.
+    """
+    import numpy as np
+
+    from src.geometry.model import _point_at, curb_offsets_at_stations
+
+    sign = 1 if side == "left" else -1
+    curb = curb_offsets_at_stations(leg, side, np.asarray([start_ft], dtype=float))
+    outer_ft = float(curb[0]) if curb is not None else sign * leg.curb_to_curb_ft / 2
+    inner_ft = sign * inner_offset_ft
+    if abs(outer_ft) - abs(inner_ft) < MIN_RIM_LENGTH_FT:
+        return None
+    return LineString([_point_at(leg.centerline, start_ft, inner_ft),
+                       _point_at(leg.centerline, start_ft, outer_ft)])
+
+
 def _station_of(leg, geometry) -> float:
     """A piece's mean station along its leg - enough to tell which side of a crossing it
     fell on after being cut."""
@@ -284,6 +315,10 @@ def curbside_paint_ft(state, crosswalk_offsets: dict, center_ft,
                     add("taper_fill", _one(lane_narrowing_taper_polygons_ft(
                         leg, fill_ft, at.anchor_ft, at.target_ft, sides=(side,))),
                         leg_name, side)
+                elif leg_name not in marked:
+                    add("zone_end_line", zone_end_line_ft(
+                        leg, side, start_ft, leg.curb_to_curb_ft / 2 - fill_ft),
+                        leg_name, side)
 
         if leg_name in state.bollard_lines:
             for point in bollard_points_ft(leg, stripe_width_ft,
@@ -334,6 +369,12 @@ def curbside_paint_ft(state, crosswalk_offsets: dict, center_ft,
                 inset_line_ft(leg, side, lane_edge_offset_ft, start_ft, zone_end_ft,
                                keep_inside_ft=LANE_EDGE_LINE_WIDTH_FT / 2),
                 leg_name, side, beyond_ft)
+            # Nothing to end against and no taper available: close the square end. See
+            # zone_end_line_ft.
+            if leg_name not in marked:
+                add("zone_end_line", zone_end_line_ft(
+                    leg, side, start_ft, leg.curb_to_curb_ft / 2 - daylight_fill_ft),
+                    leg_name, side)
 
         for start_ft, end_ft in runs:
             # ORDER ACROSS THE ROAD, and what gives when the road's width changes:

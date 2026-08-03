@@ -1,7 +1,7 @@
 """Example treatment scenarios, shared by the Phase 3 plan-view render and the
 Phase 4 3D export so both phases show the exact same design."""
 from src.geometry.treatments import (
-    all_crosswalks_continental, complete_centerlines, DesignState, add_lane_narrowing, add_marked_parking, apply_osm_parking,
+    protect_daylight_zone, all_crosswalks_continental, complete_centerlines, DesignState, add_lane_narrowing, add_marked_parking, apply_osm_parking,
 )
 
 TIGHTENED_RADIUS_FT = 10
@@ -23,6 +23,31 @@ def build_demo_scenario(baseline: DesignState, model=None) -> DesignState:
     state = apply_osm_parking(baseline, model)
     state = complete_centerlines(state)
     return all_crosswalks_continental(state)
+
+
+def _protect_every_daylight_zone(state: DesignState, kind: str) -> DesignState:
+    """Stand `kind` in every daylight zone this design created.
+
+    Only kerbs that got marked parking have a daylight zone worth protecting - a kerb hatched
+    end to end is already no-parking for its whole length, and objects along all of it would
+    be street furniture, not a corner treatment.
+    """
+    for leg_name, side in sorted(state.parking_zones):
+        state = protect_daylight_zone(state, leg_name, side, kind=kind)
+    return state
+
+
+def build_proposal_daylight_bollards(baseline: DesignState, model=None) -> DesignState:
+    """The default proposal, with flex-post bollards standing in each daylight zone.
+
+    Identical geometry to build_demo_scenario - same lanes, same stalls, same hatching. The
+    posts make the statutory setback self-enforcing instead of merely painted. They are NOT
+    a curb extension under R.S. 39:4-138(e) (a flex-post bends flat under a tyre), so the
+    25 ft setback stands and the parking is unchanged.
+    """
+    if model is None:
+        return baseline
+    return _protect_every_daylight_zone(build_demo_scenario(baseline, model), "bollards")
 
 
 PARKING_SIDES = ("left", "right")  # both Broad St legs now mark parking on BOTH sides - see

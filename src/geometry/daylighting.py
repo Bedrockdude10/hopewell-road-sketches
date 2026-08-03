@@ -46,6 +46,12 @@ CROSSWALK_SETBACK_WITH_BULBOUT_FT = 10.0
 # R.S. 39:4-138(e), the other arm - measured from the side line of the intersecting street,
 # not from its centre. This is what governs a leg with no marked crossing.
 SIDELINE_SETBACK_FT = 25.0
+# The clause reads "within 25 feet of the nearest crosswalk OR SIDE LINE ... or within 10
+# feet of the nearest crosswalk or side line ... if a curb extension or bulbout has been
+# constructed". The reduction applies to both arms, so a curb extension has to cut the side
+# line setback too - applying it to the crosswalk alone leaves the side line binding at 25 ft
+# and the extension buys nothing, which is not what the statute says.
+SIDELINE_SETBACK_WITH_BULBOUT_FT = 10.0
 # R.S. 39:4-138(h).
 STOP_SIGN_SETBACK_FT = 50.0
 # R.S. 39:4-138(i).
@@ -143,17 +149,22 @@ def no_parking_zones_ft(state, leg_name: str, side: str, crosswalk_offsets: dict
                          props: list[dict] | None = None) -> list[NoParkingZone]:
     """Every stretch of this kerb where R.S. 39:4-138 forbids parking, nearest first."""
     leg = state.legs[leg_name]
-    bulbout = (leg_name, side) in getattr(state, "curb_extensions", {})
+    from src.geometry.treatments import CURB_EXTENSION_DEVICES
+
+    device = getattr(state, "daylight_devices", {}).get((leg_name, side), {})
+    bulbout = device.get("kind") in CURB_EXTENSION_DEVICES
     crosswalk_setback = CROSSWALK_SETBACK_WITH_BULBOUT_FT if bulbout else CROSSWALK_SETBACK_FT
+    sideline_setback = SIDELINE_SETBACK_WITH_BULBOUT_FT if bulbout else SIDELINE_SETBACK_FT
     zones = []
 
     # (e) - the junction end of the leg. Both arms are measured, and the further one wins:
     # the crosswalk governs where one is marked, the side line governs where none is.
     crossing_ft = crosswalk_offsets.get(leg_name, (None,))[0]
     sideline_ft = sideline_station_ft(leg_name, side, state.legs, state.corner_fillets)
-    junction = [(sideline_ft + SIDELINE_SETBACK_FT,
-                 f"R.S. 39:4-138(e), {SIDELINE_SETBACK_FT:.0f} ft from the side line of the "
-                 f"intersecting street")]
+    junction = [(sideline_ft + sideline_setback,
+                 f"R.S. 39:4-138(e), {sideline_setback:.0f} ft from the side line of the "
+                 f"intersecting street"
+                 + (" (curb extension built)" if bulbout else ""))]
     if crossing_ft is not None:
         junction.append((crossing_ft + crosswalk_setback,
                           f"R.S. 39:4-138(e), {crosswalk_setback:.0f} ft from the crosswalk"

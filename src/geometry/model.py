@@ -89,6 +89,12 @@ class Leg:
     # The corner between two traced sides is traced too, so it is joined and smoothed
     # instead of being replaced by a fitted fillet.
     traced_sides: set = field(default_factory=set)
+    # Tier of curb_to_curb_ft AS BUILT, when that is better than what the config claimed.
+    # A width measured between two traced kerbs is osm_derived however the config describes
+    # its own estimate, and the phase summary and the plan view's curb styling both have to
+    # say which one they are showing - "ESTIMATE / PLACEHOLDER" over a line drawn from a
+    # surveyor's trace is the project's own principle stated backwards.
+    width_provenance: str | None = None
 
     def __post_init__(self):
         if self.curb_to_curb_ft is not None:
@@ -1231,6 +1237,32 @@ def _corner_pairs(legs: dict) -> list[tuple[str, str]]:
 CURB_POINT_MAX_WIDTH_RATIO = 2.6   # |offset| / half-width; corner returns flare to ~2.3x
 CURB_POINT_MIN_WIDTH_RATIO = 0.45  # below this it's a median or a driveway, not this curb
 CURB_POINT_BEHIND_TOLERANCE_FT = 3.0
+# Out along a leg, past its corner returns, a kerb that IS that leg's kerb runs along it.
+# Offset alone can't tell the difference: at W Broad & Louellen a kerb swinging from 16 ft
+# to 37 ft off Louellen's alignment over 60 ft - a driveway apron running away from the
+# street - sits inside any offset window wide enough to admit the real south kerb at 34 ft,
+# and claiming it measured the leg at 66 ft. A kerb 53 degrees off the street is not the
+# street's edge. Inside the corner zone the test is suspended, because a corner return
+# sweeps through 90 degrees by definition and is still curb.
+CURB_POINT_MAX_SKEW_DEG = 30.0
+CURB_POINT_CORNER_ZONE_FT = 40.0
+
+
+def _vertex_tangents(line: LineString) -> np.ndarray:
+    """Unit direction of a polyline at each of its own vertices.
+
+    Averages the segments either side of a vertex (one-sided at the ends), so a vertex on a
+    curve gets the curve's local heading rather than one arbitrary neighbouring segment's.
+    """
+    coords = np.asarray(line.coords, dtype=float)
+    if len(coords) < 2:
+        return np.zeros_like(coords)
+    steps = np.diff(coords, axis=0)
+    tangents = np.zeros_like(coords)
+    tangents[:-1] += steps
+    tangents[1:] += steps
+    norms = np.linalg.norm(tangents, axis=1, keepdims=True)
+    return np.divide(tangents, norms, out=np.zeros_like(tangents), where=norms > 0)
 
 
 def _line_direction(line: LineString) -> np.ndarray:
@@ -1321,7 +1353,8 @@ def station_offset_many(centerline: LineString, points: np.ndarray) -> tuple[np.
     return stations, offsets
 
 
-def assign_curb_points_to_legs(legs: dict, kerb_lines: list[LineString]) -> dict:
+def assign_curb_points_to_legs(legs: dict, kerb_lines: list[LineString],
+                                ratio_bounds: tuple[float, float] | None = None) -> dict:
     """{leg_name: {"left": [(station, offset), ...], "right": [...]}} from traced kerbs.
 
     Every vertex of every traced kerb way is considered, and goes to the single leg side
@@ -1331,10 +1364,23 @@ def assign_curb_points_to_legs(legs: dict, kerb_lines: list[LineString]) -> dict
 
     Vectorized over vertices: each leg scores every traced vertex in one pass, and the
     winning leg per vertex is an argmin over the resulting (legs x vertices) score matrix.
+
+    `ratio_bounds` widens (or narrows) the window a vertex has to fall in to be claimed at
+    all. It exists because judging a vertex against a width the caller is only about to
+    measure FROM that vertex is circular, and the circularity bites both ways at W Broad &
+    Louellen: with the window at its normal width, Louellen St's south kerb - 155 ft of it,
+    at a steady 34 ft offset - sat at 3.5x the half-width then assumed and was discarded, so
+    the leg measured 19 ft wide off its north kerb alone; and W Broad's near kerb, 6.5 ft off
+    NJDOT's badly off-centre alignment, sat at 0.43x and was discarded as a median. Opening
+    the window admits both, and the proportional scoring still hands each vertex to the leg
+    it best fits. See src/geometry/intersection.py:_fit_legs_to_traced_kerbs.
     """
     if not kerb_lines:
         return {}
     pts = np.concatenate([np.asarray(line.coords, dtype=float) for line in kerb_lines])
+    tangents = np.concatenate([_vertex_tangents(line) for line in kerb_lines])
+    low, high = ratio_bounds or (CURB_POINT_MIN_WIDTH_RATIO, CURB_POINT_MAX_WIDTH_RATIO)
+    min_cosine = np.cos(np.radians(CURB_POINT_MAX_SKEW_DEG))
 
     names, stations, offsets, ratios = [], [], [], []
     for name, leg in legs.items():
@@ -1342,10 +1388,12 @@ def assign_curb_points_to_legs(legs: dict, kerb_lines: list[LineString]) -> dict
             continue
         leg_stations, leg_offsets = station_offset_many(leg.centerline, pts)
         ratio = np.abs(leg_offsets) / (leg.curb_to_curb_ft / 2)
+        # abs: a kerb traced against the leg's outward direction is still parallel to it.
+        skewed = np.abs(tangents @ _line_direction(leg.centerline)) < min_cosine
         # np.inf marks "this leg can't claim this vertex", so it never wins the argmin.
         disqualified = ((leg_stations < -CURB_POINT_BEHIND_TOLERANCE_FT)
-                        | (ratio < CURB_POINT_MIN_WIDTH_RATIO)
-                        | (ratio > CURB_POINT_MAX_WIDTH_RATIO))
+                        | (ratio < low) | (ratio > high)
+                        | (skewed & (leg_stations > CURB_POINT_CORNER_ZONE_FT)))
         names.append(name)
         stations.append(leg_stations)
         offsets.append(leg_offsets)

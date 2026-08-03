@@ -16,7 +16,8 @@ import matplotlib.pyplot as plt
 
 from src.geometry.intersection import IntersectionModel, load_intersection_model
 from src.geometry.model import build_pavement_polygon, sidewalk_span_ft
-from src.provenance import ESTIMATED, FIELD_MEASURED, LABEL, OSM_DERIVED, leg_width_provenance
+from src.provenance import (ESTIMATED, FIELD_MEASURED, LABEL, OSM_DERIVED,
+                             built_width_provenance)
 from src.render.plan_view import legend_handles, plot_design_state, sidewalk_lines_ft
 from src.site import add_site_arg, site_output_dir
 from src.render.props import data_gaps, hydrant_position_conflicts
@@ -36,7 +37,7 @@ def print_leg_summary(model: IntersectionModel, sidewalks: list[dict]):
     impossible = []
     for name, leg in model.legs.items():
         cfg = model.config["legs"][name]
-        tier = leg_width_provenance(cfg)
+        tier = built_width_provenance(leg, cfg)
         print(f"  {cfg['street_name']:45s} width={leg.curb_to_curb_ft:>6.1f} ft   [{LABEL[tier]}]")
 
         span = sidewalk_span_ft(leg.centerline, walks)
@@ -126,7 +127,7 @@ def main():
 
     by_tier: dict[str, list[str]] = {}
     for name, cfg in model.config["legs"].items():
-        by_tier.setdefault(leg_width_provenance(cfg), []).append(name)
+        by_tier.setdefault(built_width_provenance(model.legs[name], cfg), []).append(name)
     print("\n=== Width provenance ===")
     for tier in (FIELD_MEASURED, OSM_DERIVED, ESTIMATED):
         if by_tier.get(tier):

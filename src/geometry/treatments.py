@@ -66,6 +66,11 @@ class DesignState:
                                                                    # bollards centered in that zone's curb_offset_ft
                                                                    # buffer (requires curb_offset_ft > 0) - see
                                                                    # add_parking_buffer_bollards
+    daylight_devices: dict = field(default_factory=dict)  # (leg name, "left"|"right") -> {"kind", "spacing_ft"} -
+                                                            # physical objects standing in the daylight zone. See
+                                                            # protect_daylight_zone. A kind listed in
+                                                            # CURB_EXTENSION_DEVICES would also cut the setback
+                                                            # under R.S. 39:4-138(e); none does today.
     corner_hatching: dict = field(default_factory=dict)  # corner tuple -> depth_ft (paint-only, no curb change)
     corner_aprons: dict = field(default_factory=dict)  # corner tuple -> extent_ft (mountable apron, no curb change)
     crosswalk_offset_overrides: dict = field(default_factory=dict)  # leg name -> +/- delta_ft on top of the
@@ -518,9 +523,54 @@ def _append_band(pieces: list, inner_line, outer_line) -> None:
     pieces.append(Polygon(coords))
 
 
+# Spacing by device. A flex-post line reads as a delineator at 8 ft.
+DAYLIGHT_DEVICE_SPACING_FT = {"bollards": 8.0}
+# Which devices the statute's "curb extension or bulbout has been constructed" clause can be
+# argued to cover, cutting the setback in R.S. 39:4-138(e) from 25 ft to 10 ft. Nothing this
+# repo places does: a flex-post delineator bends flat under a tyre. Planters were listed
+# here and are not any more - the argument was that a row of them occupies the corner the
+# way a built bulbout does, but they rendered badly and the legal claim was never the
+# Borough's to concede anyway. An actual constructed extension belongs in this set; until
+# something is built, the 25 ft setback governs every kerb here.
+CURB_EXTENSION_DEVICES: frozenset = frozenset()
+VALID_DAYLIGHT_DEVICES = ("bollards",)
+
+
+def protect_daylight_zone(state: DesignState, leg_name: str, side: str, kind: str = "bollards",
+                           spacing_ft: float | None = None) -> DesignState:
+    """Stand physical objects in the daylight zone so it is not merely painted.
+
+    An unmarked statutory setback gets parked in; a painted one gets parked in less. Objects
+    in it get parked in not at all, and that is the difference between a drawing of the law
+    and a street that enforces it.
+
+    `kind` can matter legally, not just visually: R.S. 39:4-138(e) cuts the 25 ft setback to
+    10 ft "if a curb extension or bulbout has been constructed", so a device that counts as
+    one buys back kerb for parking. Nothing in CURB_EXTENSION_DEVICES does today - a
+    flex-post is not a constructed extension - so every kind here leaves the setback at
+    25 ft. See src/geometry/daylighting.py for where that is applied.
+    """
+    if kind not in VALID_DAYLIGHT_DEVICES:
+        raise ValueError(f"kind must be one of {VALID_DAYLIGHT_DEVICES}, got {kind!r}")
+    spacing_ft = DAYLIGHT_DEVICE_SPACING_FT[kind] if spacing_ft is None else spacing_ft
+    new_state = state.clone()
+    new_state.daylight_devices[(leg_name, side)] = {"kind": kind, "spacing_ft": spacing_ft}
+    new_state.notes.append(
+        f"protect_daylight_zone({leg_name}, {side}): {kind} at {spacing_ft:.0f} ft spacing"
+        + (" - counts as a curb extension, so R.S. 39:4-138(e) allows parking from 10 ft "
+           "rather than 25 ft" if kind in CURB_EXTENSION_DEVICES else ""))
+    return new_state
+
+
 def apply_osm_parking(state: DesignState, model, depth_ft: float = PARKING_STALL_DEPTH_DEFAULT_FT,
-                       stripe_width_ft: float = LANE_NARROWING_DEFAULT_STRIPE_FT) -> DesignState:
+                       stripe_width_ft: float = LANE_NARROWING_DEFAULT_STRIPE_FT,
+                       legs: tuple | None = None) -> DesignState:
     """Paint each kerb according to what OSM says about parking there.
+
+    `legs` limits it to the legs named, leaving the rest of the junction bare. Not a
+    rendering convenience - a scenario that treats two legs of a crossroads and not the
+    other two is a real proposal, and Columbia Ave is one (see
+    sites/columbia_princeton/scenarios.py).
 
     Restricted (parking:*:restriction = no_parking / no_standing / no_stopping) gets crossed
     hatching - that kerb cannot hold parked cars, and a proposal that drew stalls there
@@ -539,6 +589,8 @@ def apply_osm_parking(state: DesignState, model, depth_ft: float = PARKING_STALL
 
     new_state = state
     for leg_name in sorted(state.legs):
+        if legs is not None and leg_name not in legs:
+            continue
         leg = state.legs[leg_name]
         tags = getattr(model, "leg_osm_tags", {}).get(leg_name, {})
         aligned = getattr(model, "leg_osm_aligned", {}).get(leg_name, True)

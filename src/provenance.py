@@ -67,6 +67,20 @@ def leg_width_provenance(leg_cfg: dict) -> str:
     return FIELD_MEASURED if leg_cfg.get("confirmed") else ESTIMATED
 
 
+def built_width_provenance(leg, leg_cfg: dict) -> str:
+    """The tier of the width a Leg was actually BUILT with, not the one its config declares.
+
+    They differ wherever the traced kerbs governed. Every leg at these four junctions is
+    now measured between two kerbs somebody mapped, which is osm_derived - so reporting the
+    config's own "ESTIMATE / PLACEHOLDER" alongside a curb line drawn from that trace, and
+    styling the line crimson for it, describes the wrong number. The better of the two
+    always wins, so a config that upgrades to a field measurement still shows through.
+    """
+    declared = leg_width_provenance(leg_cfg)
+    built = getattr(leg, "width_provenance", None)
+    return built if built in VALID_PROVENANCE and supersedes(built, declared) else declared
+
+
 # WHERE a width was measured, which matters as much as how well-sourced it is. A tape
 # measure is authoritative for the cross-section it was laid across, and these are old
 # streets with uneven layouts - a road can genuinely be 68 ft mid-block and narrower at

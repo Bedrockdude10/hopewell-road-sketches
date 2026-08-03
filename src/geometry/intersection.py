@@ -19,6 +19,8 @@ from src.geometry.model import (
     assign_curb_points_to_legs,
     assign_kerbs_to_corners,
     curb_line_from_points,
+    curb_offsets_at_stations,
+    curb_station_span,
     build_corner_fillets,
     build_pavement_polygon,
     corner_radii_from_kerbs,
@@ -194,7 +196,7 @@ def _kerb_lines_ft(center_wgs84: Point, center_ft: Point) -> list[LineString]:
 
 
 def _widths_from_traced_kerbs(legs: dict, kerb_lines: list, legs_cfg: dict) -> dict:
-    """Leg half-widths measured off traced OSM kerbs, where they beat what we had.
+    """First-pass leg half-widths from traced OSM kerbs: nearest approach, doubled.
 
     A corner return is TANGENT to its leg's curb line, so the closest approach of a traced
     kerb to a leg centerline is that leg's half-width. (Away from the tangent point the
@@ -206,16 +208,28 @@ def _widths_from_traced_kerbs(legs: dict, kerb_lines: list, legs_cfg: dict) -> d
     used to narrow a leg, never to widen one, and never against a field measurement -
     those win outright (src/provenance.py), though a conflict is reported.
 
-    This is what stops the render disagreeing with the mapping: previously the sidewalk
-    band and pavement edge came from estimated widths, so they sat several feet off the
-    kerb the surveyor had actually traced.
+    WHY THIS IS ONLY A FIRST PASS. Doubling one side's distance assumes the centerline sits
+    midway between the two kerbs, and NJDOT's route alignment frequently does not - it is
+    10.4 ft off centre on w_broad_st_northeast, where CR 518 turns onto Louellen and the
+    alignment cuts the corner. Doubling the NEAR kerb there gives 30.3 ft for a street the
+    two traced kerbs measure at 35.6. Every leg at every site came out too narrow this way,
+    by 1-6 ft. _resize_and_centre_from_traced_kerbs below re-measures each leg properly
+    once both kerbs are in its frame, and that measurement governs.
+
+    What this pass is still needed for: assign_curb_points_to_legs disqualifies a traced
+    vertex whose |offset| / half-width falls outside CURB_POINT_MIN/MAX_WIDTH_RATIO, so a
+    badly wrong configured width (w_broad_st_southwest's 50 ft parcel-gap estimate) throws
+    away the very kerbs the second pass needs. This gets the width close enough to collect
+    them, and nothing else depends on its result.
     """
-    from src.provenance import FIELD_MEASURED, field_measurement_governs_corner, leg_width_provenance
+    from src.provenance import field_measurement_governs_corner
 
     updates = {}
     for name, leg in legs.items():
         if leg.curb_to_curb_ft is None:
             continue
+        if field_measurement_governs_corner(legs_cfg.get(name, {})):
+            continue        # a width measured at this cross-section outranks any trace
         candidates = []
         for kerb in kerb_lines:
             distance = kerb.distance(leg.centerline)
@@ -228,32 +242,241 @@ def _widths_from_traced_kerbs(legs: dict, kerb_lines: list, legs_cfg: dict) -> d
             continue
 
         measured_half_ft = min(candidates)
-        current_half_ft = leg.curb_to_curb_ft / 2
-        if measured_half_ft >= current_half_ft - 0.5:
+        if measured_half_ft >= leg.curb_to_curb_ft / 2 - 0.5:
             continue  # traced kerb agrees, or sits outside our curb - nothing proven
+        updates[name] = measured_half_ft * 2
+    return updates
+
+
+# How far outside its assumed half-width the SEEDING assignment will still claim a traced
+# vertex. Deliberately loose: that pass is collecting the kerbs the widths will be measured
+# FROM, so it must not throw one away for disagreeing with a width nobody has measured yet.
+# At W Broad & Louellen the two real kerbs sit at 0.43x and 3.5x the seed half-width, and
+# the normal window (0.45-2.6) excluded one of them on every leg. Later rounds use the
+# normal window against a width that by then is a measurement.
+SEED_RATIO_BOUNDS = (0.2, 5.0)
+
+# A traced kerb within this of the junction is a corner RETURN, flaring out to as much as
+# 2.3x the half-width (CURB_POINT_MAX_WIDTH_RATIO). A cross-section measured across two
+# returns is the width of the corner, not of the street, so the measurement below starts
+# beyond them. Same distance UNTRACED_CORNER_THRESHOLD_FT uses for the same reason.
+TRACED_SECTION_START_FT = 35.0
+# Below this there isn't enough of a traced overlap to call it a cross-section.
+MIN_TRACED_SECTION_FT = 20.0
+TRACED_SECTION_SAMPLES = 40
+# How much the kerbs' midpoint may wander along a leg before a single constant shift stops
+# describing it. A parallel offset between NJDOT's alignment and the real carriageway is
+# constant by definition; a midpoint that swings several feet means the alignment is
+# BENDING relative to the street, and there is no one number that centres it.
+MAX_CENTRE_SPREAD_FT = 5.0
+# And a sanity bound on the shift itself. Past this the two "kerbs" are more likely to be
+# one street's kerb and a neighbouring one's than the two sides of this leg.
+MAX_CENTRE_SHIFT_FT = 15.0
+# What counts as a real change between two rounds of the fit below, as opposed to the
+# geometry jittering on the last decimal place and the loop never terminating.
+MATERIAL_WIDTH_CHANGE_FT = 0.25
+MATERIAL_SHIFT_FT = 0.1
+MAX_FIT_ITERATIONS = 6
+
+
+def _traced_cross_section(leg) -> tuple[np.ndarray, np.ndarray] | None:
+    """(width, centre-offset) sampled along the run where BOTH of a leg's kerbs are traced.
+
+    Both kerbs are read at the SAME centerline station, so the width there is left minus
+    right and the centre is their midpoint. Neither quantity needs the alignment to be
+    centred, or the street to be symmetrical, or the tracing to have started at the same
+    place on the two sides - which is what makes this a measurement rather than a guess.
+    Returns None unless both sides are traced: with one kerb there is no cross-section,
+    only a distance to one edge.
+    """
+    if not {"left", "right"} <= leg.traced_sides:
+        return None
+    spans = [curb_station_span(leg, side) for side in ("left", "right")]
+    if any(span is None for span in spans):
+        return None
+    lo = max(max(span[0] for span in spans), TRACED_SECTION_START_FT)
+    hi = min(span[1] for span in spans)
+    if hi - lo < MIN_TRACED_SECTION_FT:
+        return None
+    stations = np.linspace(lo, hi, TRACED_SECTION_SAMPLES)
+    left = curb_offsets_at_stations(leg, "left", stations)
+    right = curb_offsets_at_stations(leg, "right", stations)
+    if left is None or right is None:
+        return None
+    return left - right, (left + right) / 2
+
+
+def _resize_from_one_traced_kerb(legs: dict, name: str, legs_cfg: dict, quiet: bool) -> bool:
+    """Width for a leg with only ONE kerb traced: that kerb's distance out, doubled.
+
+    This is a guess and is labelled as one, because there is no way to make it a
+    measurement - the other edge of the street was never mapped. It assumes the alignment
+    runs down the middle, which the legs that DO have both kerbs traced show is wrong by
+    0.2-10.3 ft. No leg at any of the four junctions needs it today; all twelve sides are
+    traced. It is here for the next site, and it says so loudly in the phase output rather
+    than presenting a doubled half-width as though it were a cross-section.
+
+    Better than the nearest-approach figure it replaces only in that it uses the MEDIAN
+    offset along the street rather than the single closest vertex, which lands on the
+    tightest point of a corner return and biases every such leg narrow.
+    """
+    from src.provenance import field_measurement_governs_corner
+
+    leg = legs[name]
+    if len(leg.traced_sides) != 1 or field_measurement_governs_corner(legs_cfg.get(name, {})):
+        return False
+    side = next(iter(leg.traced_sides))
+    span = curb_station_span(leg, side)
+    if span is None:
+        return False
+    lo, hi = max(span[0], TRACED_SECTION_START_FT), span[1]
+    if hi - lo < MIN_TRACED_SECTION_FT:
+        lo, hi = span            # short trace: all of it, corner return and all
+    offsets = curb_offsets_at_stations(leg, side, np.linspace(lo, hi, TRACED_SECTION_SAMPLES))
+    if offsets is None:
+        return False
+    width_ft = 2 * float(np.median(np.abs(offsets)))
+    if not quiet:
+        print(f"  NOTE: {name} is {width_ft:.1f} ft wide, but only its {side} kerb is traced - this "
+              f"ASSUMES the street is symmetrical about NJDOT's alignment, which on the legs with both "
+              f"kerbs traced is wrong by up to 10 ft. Trace the "
+              f"{'right' if side == 'left' else 'left'} kerb to replace the assumption with a "
+              f"measurement.")
+    if abs(width_ft - leg.curb_to_curb_ft) < MATERIAL_WIDTH_CHANGE_FT:
+        return False
+    legs[name] = Leg(name=name, centerline=leg.centerline, curb_to_curb_ft=width_ft)
+    return True
+
+
+def _resize_and_centre_from_traced_kerbs(legs: dict, legs_cfg: dict, quiet: bool = False) -> bool:
+    """Take each leg's width and its working centerline from its two traced kerbs.
+
+    This is the measurement _widths_from_traced_kerbs could only approximate, and it
+    replaces two separate approximations that were both wrong in the same direction:
+
+      WIDTH. Doubling the nearer kerb's distance understates any leg whose alignment is off
+      centre, which is all of them. Measured properly: greenwood_ave_south 25.1 -> 31.2,
+      columbia_ave_west 21.8 -> 26.4, w_broad_st_northeast 30.3 -> 35.6. The last one is why
+      W Broad at Louellen rendered as a road too narrow to hold the lanes drawn on it, and
+      columbia_ave_west is why that leg looked like it had no room for a shoulder.
+
+      CENTRE. An SRI line is a linear-referencing alignment, not a surveyed carriageway
+      centre (see _snap_to_center), and every width in a proposal is an offset from it. Off
+      centre, the paint comes out symmetrical about the wrong line and the drawing looks
+      wrong even where it measures right.
+
+    The shift is a single constant per leg - a straight line parallel to the street, which
+    is what a striper would lay, not a centreline that wanders to track every wobble in the
+    tracing. Mutates `legs` in place (replacing the Leg, so its derived curb lines are
+    rebuilt) and returns whether anything moved materially; the caller re-reads the traced
+    kerbs in the new frame and comes back, until the two agree.
+    """
+    from src.provenance import (FIELD_MEASURED, OSM_DERIVED, field_measurement_governs_corner,
+                                 leg_width_provenance)
+
+    changed = False
+    for name in sorted(legs):
+        leg = legs[name]
+        section = _traced_cross_section(leg)
+        if section is None:
+            if _resize_from_one_traced_kerb(legs, name, legs_cfg, quiet):
+                changed = True
+            continue
+        widths, centres = section
+        width_ft = float(np.median(widths))
+        shift_ft = float(np.median(centres))
+        spread_ft = float(centres.max() - centres.min())
 
         cfg = legs_cfg.get(name, {})
-        tier = leg_width_provenance(cfg)
-        if field_measurement_governs_corner(cfg):
-            print(f"  CONFLICT: {name} is field-measured AT THE INTERSECTION at {leg.curb_to_curb_ft:.1f} ft, "
-                  f"but the traced OSM kerb comes within {measured_half_ft:.1f} ft of its centerline "
-                  f"({measured_half_ft * 2:.1f} ft curb-to-curb). The measurement stands - it was taken at "
-                  f"this cross-section. Check the tracing, or whether the measurement spanned a shoulder "
-                  f"beyond the kerb.")
+        keep_width = field_measurement_governs_corner(cfg)
+        if not quiet:
+            if keep_width and abs(width_ft - leg.curb_to_curb_ft) > 1.0:
+                print(f"  CONFLICT: {name} is field-measured AT THE INTERSECTION at "
+                      f"{leg.curb_to_curb_ft:.1f} ft, but its two traced kerbs are {width_ft:.1f} ft "
+                      f"apart. The measurement stands - it was taken at this cross-section. Check "
+                      f"the tracing, or whether the measurement spanned a shoulder beyond the kerb.")
+            elif not keep_width:
+                tier_note = ("Its field measurement is not recorded as taken AT the intersection "
+                             "(width_measured_at), so the kerbs traced at this corner govern here. "
+                             if leg_width_provenance(cfg) == FIELD_MEASURED else "")
+                print(f"  NOTE: {name} is {width_ft:.1f} ft curb to curb, measured between its two "
+                      f"traced OSM kerbs at the same station (osm_derived; config says "
+                      f"{cfg.get('curb_to_curb_ft', float('nan')):.1f}). {tier_note}Cross-sections "
+                      f"range {widths.min():.1f}-{widths.max():.1f} ft.")
+
+        moved_ft = 0.0
+        if abs(shift_ft) < MATERIAL_SHIFT_FT:
+            pass
+        elif spread_ft > MAX_CENTRE_SPREAD_FT or abs(shift_ft) > MAX_CENTRE_SHIFT_FT:
+            if not quiet:
+                print(f"  NOTE: {name}'s kerb midpoint is {shift_ft:+.1f} ft off the NJDOT alignment "
+                      f"and wanders {spread_ft:.1f} ft along the leg - no single shift centres that, "
+                      f"so the alignment is left as surveyed. Check whether this leg is a bend, or "
+                      f"whether one kerb's tracing strays onto a neighbouring street.")
+        else:
+            moved_ft = shift_ft
+            if not quiet:
+                print(f"  NOTE: {name}'s centerline moved {shift_ft:+.1f} ft to sit midway between its "
+                      f"two traced kerbs (the NJDOT alignment is a route reference, not a carriageway "
+                      f"centre; midpoint holds to {spread_ft:.1f} ft along the leg).")
+
+        if keep_width:
+            width_ft = leg.curb_to_curb_ft
+        if not moved_ft and abs(width_ft - leg.curb_to_curb_ft) < MATERIAL_WIDTH_CHANGE_FT:
             continue
-        if tier == FIELD_MEASURED:
-            print(f"  NOTE: {name} narrowed {leg.curb_to_curb_ft:.1f} -> {measured_half_ft * 2:.1f} ft. Its "
-                  f"field measurement is not recorded as taken AT the intersection (width_measured_at), and "
-                  f"an old street can be a different width at the corner than beside it - so the kerb traced "
-                  f"at this corner governs here. The field figure still stands for the leg away from the "
-                  f"junction; this model carries only one width per leg.")
-            updates[name] = measured_half_ft * 2
-            continue
-        updates[name] = measured_half_ft * 2
-        print(f"  NOTE: {name} narrowed {leg.curb_to_curb_ft:.1f} -> {measured_half_ft * 2:.1f} ft from the "
-              f"traced OSM kerb (osm_derived; the kerb is tangent to the curb line, so this is where the "
-              f"curb actually is).")
-    return updates
+        centerline = leg.centerline
+        if moved_ft:
+            (x0, y0), (x1, y1) = centerline.coords[0], centerline.coords[1]
+            length = np.hypot(x1 - x0, y1 - y0)
+            centerline = affinity.translate(centerline, -(y1 - y0) / length * moved_ft,
+                                             (x1 - x0) / length * moved_ft)
+        legs[name] = Leg(name=name, centerline=centerline, curb_to_curb_ft=width_ft,
+                          width_provenance=None if keep_width else OSM_DERIVED)
+        changed = True
+    return changed
+
+
+def _fit_legs_to_traced_kerbs(legs: dict, kerb_ways: list, center_ft: Point, legs_cfg: dict,
+                               working_len: float) -> None:
+    """Iterate assignment and measurement until they agree, then report the result.
+
+    These two steps each need the other's answer. A traced vertex is assigned to the leg
+    side whose half-width it best matches (assign_curb_points_to_legs), and the width is
+    measured from the vertices assigned - so a bad starting width throws away the kerbs
+    that would have corrected it, and keeps its own error. Both failure directions showed
+    up at W Broad & Louellen: seeded too narrow, Louellen St's south kerb (155 ft of it, at
+    a steady 34 ft offset) was 3.5x the assumed half-width and got discarded, leaving the
+    leg "19 ft wide"; seeded from one shared width instead, W Broad's northeast leg lost
+    its right kerb to the leg next door and came out at 56 ft.
+
+    Iterating to a fixed point removes the dependence on where it starts. The first pass
+    judges every leg against SEED_HALF_WIDTH_FT so no plausible kerb is excluded by a width
+    nobody has measured yet; after that each leg is judged against its own current width,
+    and the loop stops as soon as a round changes nothing material. It converges in 2-3
+    rounds at all four junctions - and if some junction ever fails to settle, the cap ends
+    it and the printed widths are still the ones actually used.
+    """
+    started_at = {name: leg.centerline.coords[0] for name, leg in legs.items()}
+    for iteration in range(MAX_FIT_ITERATIONS):
+        _apply_traced_curb_lines(legs, kerb_ways, center_ft, working_len, quiet=True,
+                                  ratio_bounds=SEED_RATIO_BOUNDS if iteration == 0 else None)
+        if not _resize_and_centre_from_traced_kerbs(legs, legs_cfg, quiet=True):
+            break
+    # Once more, out loud, on the geometry that survived: the notes above describe the
+    # scaffold, and a note about a width that was superseded two rounds later is worse
+    # than no note at all.
+    _apply_traced_curb_lines(legs, kerb_ways, center_ft, working_len)
+    _resize_and_centre_from_traced_kerbs(legs, legs_cfg)
+    # The per-round shifts were reported quietly and are individually meaningless; what a
+    # reader needs is how far the working centerline ended up from the alignment NJDOT
+    # published, because every dimension in the proposal is measured off it.
+    for name, leg in sorted(legs.items()):
+        (x0, y0), (x1, y1) = started_at[name], leg.centerline.coords[0]
+        moved_ft = float(np.hypot(x1 - x0, y1 - y0))
+        if moved_ft >= MATERIAL_SHIFT_FT:
+            print(f"  NOTE: {name}'s working centerline sits {moved_ft:.1f} ft off NJDOT's alignment, "
+                  f"midway between its two traced kerbs. The alignment is a linear-referencing "
+                  f"reference, not a surveyed carriageway centre; the paint is measured from here.")
 
 
 # Past this distance out from the junction, a traced kerb says nothing about the corner.
@@ -307,7 +530,9 @@ def _match_legs_to_osm_roads(legs: dict, center_wgs84: Point, center_ft: Point) 
     return out
 
 
-def _apply_traced_curb_lines(legs: dict, kerb_ways: list, center_ft: Point, working_len: float) -> None:
+def _apply_traced_curb_lines(legs: dict, kerb_ways: list, center_ft: Point, working_len: float,
+                              quiet: bool = False,
+                              ratio_bounds: tuple[float, float] | None = None) -> None:
     """Replace a leg's derived curb lines with the surveyor's traced kerbs.
 
     This is the last place NJDOT's alignment was still leaking into the geometry. Position
@@ -329,7 +554,7 @@ def _apply_traced_curb_lines(legs: dict, kerb_ways: list, center_ft: Point, work
     lines = [line for line, _tags in kerb_ways]
     if not lines:
         return
-    assigned = assign_curb_points_to_legs(legs, lines)
+    assigned = assign_curb_points_to_legs(legs, lines, ratio_bounds)
     for name, sides in assigned.items():
         leg = legs[name]
         for side, points in sides.items():
@@ -339,8 +564,9 @@ def _apply_traced_curb_lines(legs: dict, kerb_ways: list, center_ft: Point, work
             setattr(leg, f"{side}_curb", curb)
             leg.traced_sides.add(side)
             near, far = min(p[0] for p in points), max(p[0] for p in points)
-            print(f"  NOTE: {name} {side} curb is the traced OSM kerb itself, {len(points)} points "
-                  f"covering {near:.0f}-{far:.0f} ft out from the junction.")
+            if not quiet:
+                print(f"  NOTE: {name} {side} curb is the traced OSM kerb itself, {len(points)} points "
+                      f"covering {near:.0f}-{far:.0f} ft out from the junction.")
 
     # A side with nothing traced near the junction leaves its corner to be bridged across a
     # gap (or, with nothing traced at all, fitted from a radius). Both are weaker than a
@@ -355,7 +581,7 @@ def _apply_traced_curb_lines(legs: dict, kerb_ways: list, center_ft: Point, work
                 gaps.append(f"{name} {side} (nothing traced)")
             elif min(p[0] for p in points) > UNTRACED_CORNER_THRESHOLD_FT:
                 gaps.append(f"{name} {side} (traced only from {min(p[0] for p in points):.0f} ft out)")
-    if gaps:
+    if gaps and not quiet:
         print(f"  NOTE: no traced kerb within {UNTRACED_CORNER_THRESHOLD_FT:.0f} ft of the junction on: "
               f"{'; '.join(gaps)}. Those corners are bridged, not traced - tracing the kerb up to "
               f"the corner return would fix them.")
@@ -451,7 +677,12 @@ def load_intersection_model(config: dict | None = None, site: str | None = None)
         legs[name] = Leg(name=name, centerline=legs[name].centerline, curb_to_curb_ft=width_ft)
 
     kerb_ways = kerb_lines_with_tags_ft(center, center_ft)
-    _apply_traced_curb_lines(legs, kerb_ways, center_ft, working_len)
+    # Twice, deliberately. The first pass only has to be good enough to collect each leg's
+    # traced vertices; that gives _resize_and_centre_from_traced_kerbs a real cross-section
+    # to measure, and the corrected width and centre then change which vertices belong to
+    # which leg side, so the assignment is redone in the corrected frame. Silent the first
+    # time round - the coverage it reports is about the final geometry, not the scaffold.
+    _fit_legs_to_traced_kerbs(legs, kerb_ways, center_ft, legs_cfg, working_len)
     matched_roads = _match_legs_to_osm_roads(legs, center, center_ft)
     leg_osm_tags = {name: tags for name, (tags, _aligned) in matched_roads.items()}
     leg_osm_aligned = {name: aligned for name, (_tags, aligned) in matched_roads.items()}

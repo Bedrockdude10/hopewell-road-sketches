@@ -7,6 +7,7 @@ import math
 
 import numpy as np
 import shapely
+from shapely.ops import unary_union
 from shapely.geometry import LineString, Polygon
 
 from src.render.coords import FT_TO_M, wgs84_to_state_plane
@@ -401,26 +402,46 @@ def crosswalk_axes(leg, offset_ft: float, skew_deg: float = 0.0):
     return centre, (ux, uy), (nx, ny), cos_s
 
 
-def crosswalk_reaches_ft(state, offsets: dict, skews: dict, roadway=None) -> dict:
+def crosswalk_reaches_ft(state, offsets: dict, skews: dict, roadway=None,
+                          marked: set | None = None) -> dict:
     """{leg_name: (left_ft, right_ft)} - how far each crossing runs to reach its kerbs.
 
     Written into the geometry JSON so the 3D render spans the same real, asymmetric width
     the plan view draws, instead of half the nominal width either side of NJDOT's
     centerline. Blender can't import from src/, so this has to travel as numbers.
+
+    Two passes, because at a shared corner the two crossings run into EACH OTHER. Each
+    reaches for its own kerb, and near the corner those kerbs are the same kerb - Greenwood
+    north's bars and Broad east's overlapped by 2.07 sq ft of doubled paint. The second pass
+    re-measures each crossing with the others' footprints cut out of the roadway it is
+    allowed to occupy, which is the same mechanism that already keeps a crossing off the
+    footway.
     """
-    reaches = {}
-    for name, leg in state.legs.items():
-        if name not in offsets:
-            continue
+    def measure(name, leg, allowed):
         centre, u, normal, _cos = crosswalk_axes(leg, offsets[name][0], skews.get(name, 0.0))
-        reaches[name] = crosswalk_reach_to_curbs_ft(leg, centre, normal, u, CROSSWALK_DEPTH_FT,
-                                                     roadway)
+        return crosswalk_reach_to_curbs_ft(leg, centre, normal, u, CROSSWALK_DEPTH_FT, allowed)
+
+    legs = {name: leg for name, leg in state.legs.items() if name in offsets}
+    provisional = {name: measure(name, leg, roadway) for name, leg in legs.items()}
+    if roadway is None or roadway.is_empty:
+        return provisional
+
+    depth_ft = CROSSWALK_DEPTH_FT
+    bands = {name: crosswalk_band_ft(legs[name], offsets[name][0], depth_ft,
+                                      skews.get(name, 0.0), reach=provisional[name])
+             for name in legs if marked is None or name in marked}
+    reaches = {}
+    for name, leg in legs.items():
+        others = [b for other, b in bands.items()
+                  if other != name and b is not None and not b.is_empty]
+        allowed = roadway.difference(unary_union(others)) if others else roadway
+        reaches[name] = measure(name, leg, allowed)
     return reaches
 
 
 def crosswalk_band_ft(leg, offset_ft: float, depth_ft: float, skew_deg: float = 0.0,
                      span_ft: float | None = None, lateral_offset_ft: float = 0.0,
-                     roadway=None) -> Polygon:
+                     roadway=None, reach: tuple | None = None) -> Polygon:
     """The rectangle a painted crosswalk occupies: `depth_ft` along the leg, centered on
     `offset_ft`, spanning the leg's full curb-to-curb width. Built from the leg's own
     centerline and width, the same inputs blender_crosswalks.py uses (near + u*offset,
@@ -438,7 +459,9 @@ def crosswalk_band_ft(leg, offset_ft: float, depth_ft: float, skew_deg: float = 
     """
     (cx, cy), (ux, uy), (nx, ny), cos_s = crosswalk_axes(leg, offset_ft, skew_deg)
     half_d = depth_ft / 2
-    if span_ft is None:
+    if span_ft is None and reach is not None:
+        left_ft, right_ft = reach
+    elif span_ft is None:
         left_ft, right_ft = crosswalk_reach_to_curbs_ft(leg, (cx, cy), (nx, ny), (ux, uy),
                                                          depth_ft, roadway)
     else:
@@ -615,12 +638,14 @@ def crosswalk_reach_on_leg_side_ft(leg, side: str, crossings, inner_offset_ft: f
     return float(stations.max())
 
 
-def crosswalk_bands_ft(state, offsets: dict, skews: dict, depth_ft: float, roadway=None) -> dict:
+def crosswalk_bands_ft(state, offsets: dict, skews: dict, depth_ft: float, roadway=None,
+                        reaches: dict | None = None) -> dict:
     """{leg_name: band polygon} for every leg - the footprints the 2D view draws, the 3D
     render stripes, and src/checks.py validates. One definition, so a check that passes in
     one path can't be checking different geometry from the other."""
     return {name: crosswalk_band_ft(leg, offsets[name][0], depth_ft, skews.get(name, 0.0),
-                                     roadway=roadway)
+                                     roadway=roadway,
+                                     reach=(reaches or {}).get(name))
             for name, leg in state.legs.items() if name in offsets}
 
 

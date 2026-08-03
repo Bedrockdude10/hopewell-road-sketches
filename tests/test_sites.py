@@ -140,14 +140,16 @@ def test_every_leg_curb_comes_from_the_traced_kerb(site, site_models):
     """What the surveyor traced is what gets drawn.
 
     A side falling back to a centerline offset means the tracing was dropped somewhere on
-    the way in - which is how half the traced ways at two sites went missing. W Broad &
-    Louellen is the known exception: two of its sides genuinely have no tracing yet.
+    the way in - which is how half the traced ways at two sites went missing.
+
+    W Broad & Louellen carried an xfail here for "two sides not traced in OSM yet". They
+    were traced; the width fit was throwing them away, because it judged each traced vertex
+    against a half-width it had derived from the vertices it had already kept. All six
+    sides pass now. See src/geometry/intersection.py:_fit_legs_to_traced_kerbs.
     """
     model = site_models[site]
     untraced = [f"{name} {side}" for name, leg in model.legs.items()
                 for side in ("left", "right") if side not in leg.traced_sides]
-    if site == "wbroad_louellen":
-        pytest.xfail("louellen_st_west right and w_broad_st_southwest right are not traced in OSM yet")
     assert not untraced, f"curb sides not built from traced kerbs: {untraced}"
 
 
@@ -484,19 +486,34 @@ def test_osm_parking_never_narrows_a_lane_below_target(site, site_models):
     assert not violations, "\n".join(str(v) for v in violations)
 
 
-@needs_source_data
-def test_a_street_too_narrow_for_two_target_lanes_gets_no_paint(site_models):
-    """Painting a 19.3 ft street down to 11 ft lanes is impossible; marking parking there
-    anyway is what produced 1.7 ft lanes. It must decline instead."""
+def test_a_street_too_narrow_for_two_target_lanes_gets_no_paint():
+    """Painting a 19 ft street down to 11 ft lanes is impossible; marking parking there
+    anyway is what produced 1.7 ft lanes. It must decline instead.
+
+    On a built leg, not a real one: this used to run against louellen_st_west, which was
+    "19.3 ft wide" only because its south kerb had been discarded by the width fit
+    (src/geometry/intersection.py:_fit_legs_to_traced_kerbs). Measuring it properly made it
+    42 ft, the test passed vacuously, and the rule it guards went unchecked - no leg at any
+    of the four junctions is under 22 ft. A width is the input to this rule, so the test
+    supplies one.
+    """
+    from shapely.geometry import LineString
+
+    from src.geometry.model import Leg
     from src.geometry.treatments import apply_osm_parking
 
-    model = site_models["wbroad_louellen"]
-    with contextlib.redirect_stdout(io.StringIO()):
-        state = apply_osm_parking(DesignState.from_model(model), model)
+    narrow = Leg(name="narrow", centerline=LineString([(0, 0), (130, 0)]), curb_to_curb_ft=19.3)
+    state = DesignState(legs={"narrow": narrow}, corner_fillets={})
 
-    assert model.legs["louellen_st_west"].curb_to_curb_ft < 22.0, "fixture changed"
-    assert "louellen_st_west" not in state.lane_narrowing
-    assert not any(leg == "louellen_st_west" for leg, _side in state.parking_zones)
+    class NoTags:
+        leg_osm_tags: dict = {}
+        leg_osm_aligned: dict = {}
+
+    with contextlib.redirect_stdout(io.StringIO()) as out:
+        state = apply_osm_parking(state, NoTags())
+    assert "narrow" not in state.lane_narrowing
+    assert not state.parking_zones
+    assert "too narrow for two 11 ft lanes" in out.getvalue()
 
 
 @needs_source_data
@@ -507,13 +524,18 @@ def test_an_unrestricted_kerb_too_narrow_to_park_is_hatched_not_widened(site_mod
     a parking lane and the kerb already is - so it holds the lane at target without claiming
     a parking restriction OSM doesn't record.
     """
-    from src.geometry.treatments import TARGET_LANE_WIDTH_FT, apply_osm_parking
+    from src.geometry.treatments import (MIN_MARKED_PARKING_DEPTH_FT, TARGET_LANE_WIDTH_FT,
+                                          apply_osm_parking)
 
     model = site_models["ebroad_princeton"]
     with contextlib.redirect_stdout(io.StringIO()):
         state = apply_osm_parking(DesignState.from_model(model), model)
 
-    leg = "e_broad_st_west"
+    leg = "e_broad_st_east"
+    spare_ft = model.legs[leg].curb_to_curb_ft / 2 - TARGET_LANE_WIDTH_FT
+    assert 0 < spare_ft < MIN_MARKED_PARKING_DEPTH_FT, (
+        f"{leg} is {model.legs[leg].curb_to_curb_ft:.1f} ft, which leaves {spare_ft:.1f} ft spare - "
+        f"that is no longer the case this test is about. Pick a leg that is.")
     assert "left" in state.lane_narrowing_sides.get(leg, ())
     assert (leg, "left") not in state.parking_zones
     lane_ft = model.legs[leg].curb_to_curb_ft / 2 - state.lane_narrowing[leg]
@@ -630,9 +652,20 @@ def test_no_painted_marking_overlaps_a_crosswalk(site, site_models):
         skews = resolve_crosswalk_skews(state, crossings)
 
     import json
+
+    from src.render.crosswalks import crosswalk_reaches_ft
+
     exported = json.loads(out.read_text())
+    # Built exactly as export_scenario builds them - bounded by the pavement, and with the
+    # two-pass reaches that keep adjoining crossings off each other. Reconstructing them from
+    # the bare offsets gives LARGER bands than the render actually uses, so the test would be
+    # grading geometry nothing draws.
+    with contextlib.redirect_stdout(io.StringIO()):
+        pavement = build_pavement_polygon(state.corner_fillets)
+    marked = marked_crosswalks(model)
     bands = unary_union(list(crosswalk_bands_ft(
-        state, offsets, skews, CROSSWALK_DEPTH_M / FT_TO_M).values()))
+        state, offsets, skews, CROSSWALK_DEPTH_M / FT_TO_M, pavement,
+        crosswalk_reaches_ft(state, offsets, skews, pavement, marked)).values()))
 
     def to_ft(points):
         return LineString([(model.center_ft.x + x / FT_TO_M, model.center_ft.y + y / FT_TO_M)
@@ -818,3 +851,73 @@ def paint_and_bands(model, state):
     paint = curbside_paint_ft(state, offsets, model.center_ft, bands, props,
                                marked_crosswalks=marked_crosswalks(model))
     return paint, bands
+
+
+@needs_source_data
+@pytest.mark.parametrize("site", SITES)
+def test_adjoining_crossings_do_not_paint_over_each_other(site, site_models):
+    """At a shared corner two crossings reach for the same kerb.
+
+    Each was measured on its own, so Greenwood north's bars and Broad east's overlapped by
+    2.07 sq ft of doubled paint - invisible to markings_collide, which only inspects the
+    curbside paint list, and to every crossing check, which looks at one band at a time.
+    """
+    from src.render.crosswalks import crosswalk_reaches_ft
+
+    model = site_models[site]
+    marked = marked_crosswalks(model)
+    with contextlib.redirect_stdout(io.StringIO()):
+        state = run_scenario_for(site, model)
+        crossings = fetch_crossings(model.center_wgs84, radius_m=130)
+        offsets = resolve_crosswalk_offsets(state, crossings)
+        skews = resolve_crosswalk_skews(state, crossings)
+        try:
+            pavement = build_pavement_polygon(state.corner_fillets)
+        except ValueError:
+            pytest.skip(f"{site} has no closed pavement ring")
+        bands = crosswalk_bands_ft(
+            state, offsets, skews, CROSSWALK_DEPTH_M / FT_TO_M, pavement,
+            crosswalk_reaches_ft(state, offsets, skews, pavement, marked))
+
+    painted = [(name, band) for name, band in bands.items()
+               if name in marked and band is not None and not band.is_empty]
+    for i, (name_a, a) in enumerate(painted):
+        for name_b, b in painted[i + 1:]:
+            overlap = a.intersection(b).area
+            assert overlap < 0.5, (f"{site}: {name_a} and {name_b} crossings overlap by "
+                                   f"{overlap:.2f} sq ft")
+
+
+@needs_source_data
+@pytest.mark.parametrize("site", ["broad_st_greenwood", "ebroad_princeton"])
+def test_the_bollard_proposals_show_their_bollards_in_the_plan_view(site, site_models):
+    """A proposal whose whole point is the posts has to draw the posts, in BOTH views.
+
+    It didn't. The plan view skipped every prop of type "bollard" on the reasoning that the
+    treatment layer already drew them from state.bollard_lines - true for the ones standing
+    in a parking buffer, false for the daylight-zone posts, which exist only as props. So
+    the 2D picture of the bollard proposals had no bollards in it and the 3D render of the
+    same scenario had thirteen, which is precisely the disagreement between the two views
+    this project exists to prevent.
+    """
+    from src.render.props import DRAWN_BY_PAINT
+
+    model = site_models[site]
+    builder = scenario_builders(site).get("build_proposal_daylight_bollards")
+    assert builder is not None, f"{site} has no bollard proposal to check"
+    with contextlib.redirect_stdout(io.StringIO()):
+        state = builder(DesignState.from_model(model), model)
+        crossings = fetch_crossings(model.center_wgs84, radius_m=130)
+        offsets = resolve_crosswalk_offsets(state, crossings)
+        props = build_props(model, state, offsets, model.center_ft,
+                             fetch_traffic_control(model.center_wgs84, radius_m=60),
+                             fetch_street_furniture(model.center_wgs84, radius_m=130),
+                             crossings, fetch_kerbs(model.center_wgs84, radius_m=120))
+
+    bollards = [p for p in props if p["type"] == "bollard"]
+    assert bollards, "the bollard proposal produced no bollards at all"
+    drawn_in_plan = [p for p in bollards if not p.get(DRAWN_BY_PAINT)]
+    assert drawn_in_plan, (
+        "every bollard is tagged as already drawn by the paint layer, so the plan view will "
+        "skip all of them - but the daylight-zone posts are not in state.bollard_lines and "
+        "nothing else draws them")

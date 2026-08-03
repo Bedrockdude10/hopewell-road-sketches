@@ -65,20 +65,29 @@ def _parking_and_narrowing(state: DesignState) -> DesignState:
     return state
 
 
+# Only Princeton Ave is treated here. Columbia Ave measures 26.4 and 26.9 ft curb to curb
+# between its traced kerbs, which leaves 2.2-2.4 ft per side beside an 11 ft lane - a strip
+# too thin to read as anything, and hatching it drew two slivers of paint down a street that
+# does not need calming. Princeton Ave is the leg that does: 30.5 and 31.2 ft, 4.3-4.6 ft of
+# spare width per side, and it is the through movement at this junction.
+CALMED_LEGS = ("princeton_ave_north", "princeton_ave_south")
+
+
 def build_demo_scenario(baseline: DesignState, model=None) -> DesignState:
     """Default scenario for phase3/phase4 when no --scenario is given.
 
-    The named proposals were cleared for re-audit, so this is no longer a proposal: it just
-    paints each kerb the way OSM says it is used - crossed hatching where parking is
-    restricted, marked stalls where it isn't. Every mark here is derived from surveyed data,
-    so nothing in it is a design choice waiting to be reviewed.
+    Traffic calming on Princeton Ave only: its lanes narrowed to TARGET_LANE_WIDTH_FT with
+    the recovered width marked according to what OSM says about parking there - crossed
+    hatching where it is restricted, marked stalls where it isn't. Columbia Ave is left as it
+    is; see CALMED_LEGS for why. The crosswalk upgrade and the centerlines still apply to
+    every leg, because those are about the junction, not about one street's cross-section.
 
     Needs the model for the OSM tags, so it falls back to the untouched baseline when called
     with a state alone (the older single-argument convention).
     """
     if model is None:
         return baseline
-    state = apply_osm_parking(baseline, model)
+    state = apply_osm_parking(baseline, model, legs=CALMED_LEGS)
     state = complete_centerlines(state)
     return all_crosswalks_continental(state)
 

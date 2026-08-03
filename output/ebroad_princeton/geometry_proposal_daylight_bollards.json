@@ -1,5 +1,5 @@
 {
-  "name": "build_demo_scenario",
+  "name": "build_proposal_daylight_bollards",
   "units": "meters",
   "notes": [
     "add_lane_narrowing(e_broad_st_east, stripe_width_ft=7.459723870281515, line_only=False, sides=('left', 'right'))",
@@ -13,7 +13,13 @@
     "apply_osm_parking(princeton_ave_south, right): 4.1 ft hatched - OSM says 'no_parking'",
     "upgrade_crosswalk_markings(e_broad_st_east, style='continental')",
     "upgrade_crosswalk_markings(e_broad_st_west, style='continental')",
-    "upgrade_crosswalk_markings(princeton_ave_south, style='continental')"
+    "upgrade_crosswalk_markings(princeton_ave_south, style='continental')",
+    "protect_daylight_zone(e_broad_st_east, left): bollards at 8 ft spacing",
+    "protect_daylight_zone(e_broad_st_east, right): bollards at 8 ft spacing",
+    "protect_daylight_zone(e_broad_st_west, left): bollards at 8 ft spacing",
+    "protect_daylight_zone(e_broad_st_west, right): bollards at 8 ft spacing",
+    "protect_daylight_zone(princeton_ave_south, left): bollards at 8 ft spacing",
+    "protect_daylight_zone(princeton_ave_south, right): bollards at 8 ft spacing"
   ],
   "theme": {
     "asphalt_near": {
@@ -11333,6 +11339,175 @@
       "position_m": [
         9.92221655452014,
         -6.201335488391296
+      ]
+    },
+    {
+      "type": "bollard",
+      "position_ft": [
+        420235.41473602987,
+        567202.0633404489
+      ],
+      "heading_deg": 0.0,
+      "source": "scenario-specified (protect_daylight_zone): bollards in e_broad_st_east's left daylight zone, 8 ft apart.",
+      "position_m": [
+        20.360221792725334,
+        10.588478128618375
+      ]
+    },
+    {
+      "type": "bollard",
+      "position_ft": [
+        420243.3291106987,
+        567204.6723858769
+      ],
+      "heading_deg": 0.0,
+      "source": "scenario-specified (protect_daylight_zone): bollards in e_broad_st_east's left daylight zone, 8 ft apart.",
+      "position_m": [
+        22.772523191790704,
+        11.383715175070055
+      ]
+    },
+    {
+      "type": "bollard",
+      "position_ft": [
+        420251.24348536757,
+        567207.2814313049
+      ],
+      "heading_deg": 0.0,
+      "source": "scenario-specified (protect_daylight_zone): bollards in e_broad_st_east's left daylight zone, 8 ft apart.",
+      "position_m": [
+        25.18482459085607,
+        12.178952221521735
+      ]
+    },
+    {
+      "type": "bollard",
+      "position_ft": [
+        420243.07300338923,
+        567178.8324696688
+      ],
+      "heading_deg": 0.0,
+      "source": "scenario-specified (protect_daylight_zone): bollards in e_broad_st_east's right daylight zone, 8 ft apart.",
+      "position_m": [
+        22.694461683860002,
+        3.5077087148532273
+      ]
+    },
+    {
+      "type": "bollard",
+      "position_ft": [
+        420250.9873780581,
+        567181.4415150968
+      ],
+      "heading_deg": 0.0,
+      "source": "scenario-specified (protect_daylight_zone): bollards in e_broad_st_east's right daylight zone, 8 ft apart.",
+      "position_m": [
+        25.106763082925372,
+        4.302945761304907
+      ]
+    },
+    {
+      "type": "bollard",
+      "position_ft": [
+        420258.90175272693,
+        567184.0505605248
+      ],
+      "heading_deg": 0.0,
+      "source": "scenario-specified (protect_daylight_zone): bollards in e_broad_st_east's right daylight zone, 8 ft apart.",
+      "position_m": [
+        27.51906448199074,
+        5.098182807756588
+      ]
+    },
+    {
+      "type": "bollard",
+      "position_ft": [
+        420140.8722524238,
+        567144.6866985883
+      ],
+      "heading_deg": 0.0,
+      "source": "scenario-specified (protect_daylight_zone): bollards in e_broad_st_west's left daylight zone, 8 ft apart.",
+      "position_m": [
+        -8.456327210409288,
+        -6.899922310486716
+      ]
+    },
+    {
+      "type": "bollard",
+      "position_ft": [
+        420130.4307592415,
+        567141.2261754884
+      ],
+      "heading_deg": 0.0,
+      "source": "scenario-specified (protect_daylight_zone): bollards in e_broad_st_west's left daylight zone, 8 ft apart.",
+      "position_m": [
+        -11.638894332364714,
+        -7.9546897513275034
+      ]
+    },
+    {
+      "type": "bollard",
+      "position_ft": [
+        420133.73316356435,
+        567168.0896681597
+      ],
+      "heading_deg": 0.0,
+      "source": "scenario-specified (protect_daylight_zone): bollards in e_broad_st_west's right daylight zone, 8 ft apart.",
+      "position_m": [
+        -10.632321494764277,
+        0.2333028148798272
+      ]
+    },
+    {
+      "type": "bollard",
+      "position_ft": [
+        420124.403779005,
+        567164.997720465
+      ],
+      "heading_deg": 0.0,
+      "source": "scenario-specified (protect_daylight_zone): bollards in e_broad_st_west's right daylight zone, 8 ft apart.",
+      "position_m": [
+        -13.475917908456596,
+        -0.7091228424875066
+      ]
+    },
+    {
+      "type": "bollard",
+      "position_ft": [
+        420195.939962685,
+        567128.9566193948
+      ],
+      "heading_deg": 0.0,
+      "source": "scenario-specified (protect_daylight_zone): bollards in princeton_ave_south's left daylight zone, 8 ft apart.",
+      "position_m": [
+        8.32831087720748,
+        -11.694450448660367
+      ]
+    },
+    {
+      "type": "bollard",
+      "position_ft": [
+        420200.119173318,
+        567118.7814437952
+      ],
+      "heading_deg": 0.0,
+      "source": "scenario-specified (protect_daylight_zone): bollards in princeton_ave_south's left daylight zone, 8 ft apart.",
+      "position_m": [
+        9.602134278140172,
+        -14.795843971429859
+      ]
+    },
+    {
+      "type": "bollard",
+      "position_ft": [
+        420173.8198814251,
+        567118.4304167463
+      ],
+      "heading_deg": 0.0,
+      "source": "scenario-specified (protect_daylight_zone): bollards in princeton_ave_south's right daylight zone, 8 ft apart.",
+      "position_m": [
+        1.5861101091993974,
+        -14.902837015931961
       ]
     }
   ],

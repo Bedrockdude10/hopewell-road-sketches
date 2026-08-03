@@ -782,6 +782,16 @@ def _extra_props_from_state(state: DesignState, offsets_ft: dict, pavement=None)
     return props
 
 
+# Bollards the TREATMENT layer already draws for itself. The plan view builds its markings
+# from src/geometry/paint.py, which emits a bollard piece for every leg in
+# state.bollard_lines, so drawing these props on top would just thicken the same markers.
+# Tagged rather than inferred: the plan view used to skip EVERY bollard prop on that
+# reasoning, which silently dropped the daylight-zone bollards - they come only from props,
+# so the 2D view of the bollard proposals showed no bollards at all while the 3D render
+# showed thirteen. Exactly the 2D/3D disagreement this project cannot ship.
+DRAWN_BY_PAINT = "drawn_by_paint"
+
+
 def _parking_buffer_bollard_props(state: DesignState) -> list[dict]:
     """Plastic bollards centered in the striped no-parking buffer between a
     marked-parking lane and the curb (src/geometry/treatments.py:
@@ -797,10 +807,62 @@ def _parking_buffer_bollard_props(state: DesignState) -> list[dict]:
         for pos in bollard_points_ft(leg, curb_offset_ft, start_ft, spacing_ft, sides=(side,)):
             props.append({
                 "type": "bollard", "position_ft": pos, "heading_deg": 0.0,
+                DRAWN_BY_PAINT: True,
                 "source": f"scenario-specified (add_parking_buffer_bollards): flex-post delineator centered in "
                           f"{leg_name}'s {side} striped buffer between its marked-parking lane and the curb "
                           f"(curb_offset_ft={curb_offset_ft:.1f}), spaced {spacing_ft:.0f} ft apart.",
             })
+    return props
+
+
+def _daylight_device_props(state: DesignState, offsets_ft: dict, so_far: list[dict]) -> list[dict]:
+    """Bollards standing in a daylight zone (treatments.protect_daylight_zone).
+
+    Placed along the zone's LANE edge, which is the side that needs protecting - an object
+    against the kerb protects nothing. Spaced along the statutory no-parking span itself, so
+    the devices end exactly where parking is allowed to begin and the two never overlap.
+
+    `so_far` is the props already built, because the span depends on them: a hydrant or a
+    stop sign carries its own setback (R.S. 39:4-138(h),(i)) and lengthens the zone.
+    """
+    import numpy as np
+
+    from src.geometry.daylighting import merged_no_parking_spans_ft, no_parking_zones_ft
+    from src.geometry.model import _point_at, leg_clearance_ft
+    from src.geometry.paint import LANE_EDGE_LINE_WIDTH_FT
+    from src.geometry.treatments import TARGET_LANE_WIDTH_FT
+
+    MIN_DAYLIGHT_DEVICE_SPAN_FT = 3.0
+    props = []
+    for (leg_name, side), device in sorted(state.daylight_devices.items()):
+        # A zone shorter than this cannot hold even one device clear of the crossing.
+        leg = state.legs.get(leg_name)
+        if leg is None or leg_name not in offsets_ft:
+            continue
+        spacing_ft = device["spacing_ft"]
+        sign = 1 if side == "left" else -1
+        # Just outside the lane edge line, i.e. the first thing a driver would clip.
+        offset_ft = sign * (TARGET_LANE_WIDTH_FT + LANE_EDGE_LINE_WIDTH_FT * 1.5)
+        clearance_ft = leg_clearance_ft(leg_name, state.legs, state.corner_fillets)
+        spans = merged_no_parking_spans_ft(
+            no_parking_zones_ft(state, leg_name, side, offsets_ft, so_far))
+        for start_ft, end_ft in spans:
+            start_ft = max(start_ft, clearance_ft)
+            span_ft = end_ft - start_ft
+            if span_ft < MIN_DAYLIGHT_DEVICE_SPAN_FT:
+                continue
+            # Distributed across the span rather than stepped from its start, so the row
+            # ends where the zone does, and a zone shorter than one spacing still gets one
+            # device rather than none.
+            count = max(int(span_ft // spacing_ft), 1)
+            for station in np.linspace(start_ft, end_ft, count + 1)[:-1] + (span_ft / count) / 2:
+                props.append({
+                    "type": "bollard",
+                    "position_ft": tuple(_point_at(leg.centerline, float(station), offset_ft)),
+                    "heading_deg": 0.0,
+                    "source": f"scenario-specified (protect_daylight_zone): {device['kind']} "
+                              f"in {leg_name}'s {side} daylight zone, {spacing_ft:.0f} ft apart.",
+                })
     return props
 
 
@@ -855,7 +917,7 @@ def build_props(model: IntersectionModel, state: DesignState, offsets_ft: dict, 
         pavement = build_pavement_polygon(state.corner_fillets)
     except ValueError:
         pavement = None
-    return (
+    props = (
         _osm_streetlight_props(furniture_ft)
         + _osm_control_props(state, control_ft, pavement)
         + _osm_crossing_hardware_props(state, crossings or [], control_ft, kerb_ways, center_ft)
@@ -867,6 +929,9 @@ def build_props(model: IntersectionModel, state: DesignState, offsets_ft: dict, 
         + _bollard_props(state)
         + _parking_buffer_bollard_props(state)
     )
+    # Last, and passed everything above: a daylight zone's length depends on the hydrants and
+    # stop signs already placed, which carry setbacks of their own under 39:4-138(h),(i).
+    return props + _daylight_device_props(state, offsets_ft, props)
 
 
 # The pad/furniture-in-the-roadway invariant moved to src/checks.py, where it runs

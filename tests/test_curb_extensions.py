@@ -17,10 +17,11 @@ from shapely.geometry import LineString
 from src.geometry.model import (BULBOUT_TAPER_RATE, Leg, build_pavement_polygon,
                                 corner_apron_annulus, curb_extension_line,
                                 curb_offsets_at_stations, narrowest_half_width_ft)
-from src.geometry.treatments import (AASHTO_MIN_BIKE_LANE_FT, BikeLane, CornerApron,
-                                     CurbExtension, DesignState, TARGET_LANE_WIDTH_FT,
-                                     add_bike_lane, add_curb_extension, find_corner,
-                                     set_corner_radius)
+from src.geometry.targets import Corner, LegSide, LegTarget
+from src.geometry.treatments import (AASHTO_MIN_BIKE_LANE_FT, AddBikeLane, AddBikeLaneBollards,
+                                   AddCurbExtension, BikeLane, CornerApron, CurbExtension,
+                                   DesignState, LaneNarrowing, LaneNarrowingBollards,
+                                   SetCornerRadius, TARGET_LANE_WIDTH_FT, find_corner)
 from src.geometry.markings import BOLLARD, BUFFER_FILL, CROSSING_RIM_LINE
 from src.geometry.paint import LANE_EDGE_LINE_WIDTH_FT
 from src.render.scene import SceneGeometry
@@ -78,7 +79,7 @@ def test_set_corner_radius_alone_does_not_shorten_a_crossing(site_models):
         crossings = fetch_crossings(model.center_wgs84, radius_m=130)
         before = SceneGeometry.resolve(model, base, crossings)
         corner = find_corner(base, "broad_st_east", "greenwood_ave_north")
-        tightened = set_corner_radius(base, corner, 15.0)
+        tightened = base.apply(SetCornerRadius(Corner(*corner), 15.0))
         after = SceneGeometry.resolve(model, tightened, crossings)
 
     assert tightened.corner_fillets[corner]["arc"].length < base.corner_fillets[corner]["arc"].length
@@ -190,13 +191,13 @@ def test_greenwood_cannot_take_an_eight_foot_extension(site_models, leg_name):
     with contextlib.redirect_stdout(io.StringIO()):
         base = DesignState.from_model(model)
     with pytest.raises(ValueError, match="under the .* ft target"):
-        add_curb_extension(base, leg_name, "left", extension_ft=8.0, crossing_ft=30.0)
+        base.apply(AddCurbExtension(LegSide(leg_name, "left"), extension_ft=8.0, crossing_ft=30.0))
 
 
 def test_an_extension_that_would_eat_the_travel_lane_is_refused():
     state = a_state(width_ft=30.0)          # 15 ft half-width, so 4 ft to give
     with pytest.raises(ValueError, match="travel lane"):
-        add_curb_extension(state, "east", "left", extension_ft=6.0, crossing_ft=20.0)
+        state.apply(AddCurbExtension(LegSide("east", "left"), extension_ft=6.0, crossing_ft=20.0))
 
 
 def test_the_widest_extension_a_leg_can_take_leaves_exactly_the_target_lane():
@@ -204,7 +205,7 @@ def test_the_widest_extension_a_leg_can_take_leaves_exactly_the_target_lane():
     room may use all of it."""
     state = a_state(width_ft=30.0)
     spare_ft = 15.0 - TARGET_LANE_WIDTH_FT
-    built = add_curb_extension(state, "east", "left", extension_ft=spare_ft, crossing_ft=20.0)
+    built = state.apply(AddCurbExtension(LegSide("east", "left"), extension_ft=spare_ft, crossing_ft=20.0))
     offsets = curb_offsets_at_stations(built.legs["east"], "left", np.array([5.0]))
     assert abs(float(offsets[0])) == pytest.approx(TARGET_LANE_WIDTH_FT, abs=0.01)
 
@@ -216,7 +217,7 @@ def test_a_side_with_no_traced_kerb_cannot_be_extended():
     state = a_state()
     state.legs["east"].left_curb = None
     with pytest.raises(ValueError, match="no traced kerb"):
-        add_curb_extension(state, "east", "left", extension_ft=4.0, crossing_ft=20.0)
+        state.apply(AddCurbExtension(LegSide("east", "left"), extension_ft=4.0, crossing_ft=20.0))
 
 
 # --------------------------------------------------------------------------
@@ -354,7 +355,7 @@ def test_the_narrow_legs_cannot_hold_a_bike_lane(site_models, site, leg_name):
         f"{leg_name} has {spare_ft:.1f} ft spare - it could take a lane after all, so this "
         f"test and the proposal's exclusion both need revisiting")
     with pytest.raises(ValueError):
-        add_bike_lane(base, leg_name, "left", width_ft=AASHTO_MIN_BIKE_LANE_FT)
+        base.apply(AddBikeLane(LegSide(leg_name, "left"), width_ft=AASHTO_MIN_BIKE_LANE_FT))
 
 
 @needs_source_data
@@ -388,11 +389,11 @@ def test_the_parking_protected_section_does_not_fit_broad_st(site_models):
         assert protected.total_ft > leg.curb_to_curb_ft / 2, (
             f"{leg_name} now has room for the parking side - re-check the proposal")
         with pytest.raises(ValueError, match="Short by"):
-            add_bike_lane(base, leg_name, "right", width_ft=6.0, buffer_ft=3.0, parking_ft=8.0)
+            base.apply(AddBikeLane(LegSide(leg_name, "right"), width_ft=6.0, buffer_ft=3.0, parking_ft=8.0))
         # ...and the buffered section fits at the leg's NARROWEST traced point, not just nominal.
         assert buffered.total_ft <= narrowest_half_width_ft(leg, "left")
         assert buffered.total_ft <= narrowest_half_width_ft(leg, "right")
-        add_bike_lane(base, leg_name, "left", width_ft=6.0, buffer_ft=3.0)
+        base.apply(AddBikeLane(LegSide(leg_name, "left"), width_ft=6.0, buffer_ft=3.0))
 
 
 @needs_source_data
@@ -411,13 +412,13 @@ def test_a_bike_lane_is_bounded_by_the_tracing_not_the_nominal_width(site_models
     # A section that fits the nominal half but not the tracing: bike lane sized to land between.
     between_ft = (nominal_ft + narrowest_ft) / 2 - TARGET_LANE_WIDTH_FT
     with pytest.raises(ValueError, match="narrowest traced point"):
-        add_bike_lane(base, "broad_st_east", "left", width_ft=between_ft)
+        base.apply(AddBikeLane(LegSide("broad_st_east", "left"), width_ft=between_ft))
 
 
 def test_a_cross_section_wider_than_the_leg_is_refused_with_the_shortfall():
     state = a_state(width_ft=40.0)      # 20 ft half-width
     with pytest.raises(ValueError, match="Short by"):
-        add_bike_lane(state, "east", "left", width_ft=6.0, buffer_ft=3.0, parking_ft=8.0)
+        state.apply(AddBikeLane(LegSide("east", "left"), width_ft=6.0, buffer_ft=3.0, parking_ft=8.0))
 
 
 def test_the_bike_lane_boundaries_read_outward_from_the_centerline():
@@ -476,7 +477,7 @@ def test_the_taper_length_follows_the_stated_rate():
     """BULBOUT_TAPER_RATE is a design choice and says so; this pins that the choice is actually
     applied, so the number in the docstring is the number in the geometry."""
     state = a_state()
-    built = add_curb_extension(state, "east", "left", extension_ft=8.0, crossing_ft=21.0)
+    built = state.apply(AddCurbExtension(LegSide("east", "left"), extension_ft=8.0, crossing_ft=21.0))
     assert built.curb_extensions[("east", "left")].taper_ft == pytest.approx(8.0 * BULBOUT_TAPER_RATE)
 
 
@@ -492,10 +493,7 @@ def _bulb_out_broad_st(base: DesignState, scene: SceneGeometry) -> DesignState:
         for side in ("left", "right"):
             corner = next(c for c in state.corner_fillets
                           if c[0 if side == "left" else 1] == leg_name)
-            state = add_curb_extension(
-                state, leg_name, side, extension_ft=8.0,
-                crossing_ft=scene.crosswalk_offsets[leg_name].offset_ft,
-                swept_radius_ft=base.corner_fillets[corner]["radius_ft"])
+            state = state.apply(AddCurbExtension(LegSide(leg_name, side), extension_ft=8.0, crossing_ft=scene.crosswalk_offsets[leg_name].offset_ft, swept_radius_ft=base.corner_fillets[corner]["radius_ft"]))
     return state
 
 
@@ -576,11 +574,9 @@ def test_bike_lane_bollards_stand_in_the_buffer_on_the_traffic_side(site_models)
 def test_bollards_are_refused_on_a_bike_lane_with_no_buffer():
     """E Broad's case. A lane with no buffer has nowhere to put a post that is not in a travel
     lane or in the bike lane, and improvising one would draw protection that cannot be built."""
-    from src.geometry.treatments import add_bike_lane_bollards
-
-    state = add_bike_lane(a_state(width_ft=40.0), "east", "left", width_ft=6.0)
+    state = a_state(width_ft=40.0).apply(AddBikeLane(LegSide("east", "left"), width_ft=6.0))
     with pytest.raises(ValueError, match="no buffer"):
-        add_bike_lane_bollards(state, "east", "left")
+        state.apply(AddBikeLaneBollards(LegSide("east", "left")))
 
 
 def test_a_bike_lane_holds_its_width_and_hatches_the_rest_to_the_kerb():
@@ -721,11 +717,9 @@ def test_bollards_only_stand_in_the_buffer_that_is_painted():
     from the plan view, which draws them from the paint.
     """
     from src.geometry.model import station_offset_many
-    from src.geometry.treatments import add_bollards, add_lane_narrowing
     from src.render.props import _bollard_props
 
-    state = add_bollards(add_lane_narrowing(a_state(width_ft=40.0), "east", stripe_width_ft=3.0,
-                                            sides=("left",)), "east", spacing_ft=10.0)
+    state = a_state(width_ft=40.0).apply(LaneNarrowing(LegTarget("east"), stripe_width_ft=3.0, sides=("left",))).apply(LaneNarrowingBollards(LegTarget("east"), spacing_ft=10.0))
     posts = _bollard_props(state)
     assert posts, "no posts were placed at all"
     _stations, offsets = station_offset_many(

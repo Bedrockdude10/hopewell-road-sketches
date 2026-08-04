@@ -10,10 +10,10 @@ see this site config.yaml. Every width here is osm_derived or estimated, NOT fie
 measured, so treat the lane/parking dimensions below as a design study rather than a
 construction drawing.
 """
-from src.geometry.treatments import (
-    TARGET_LANE_WIDTH_FT,
-    all_crosswalks_continental, complete_centerlines, DesignState, add_lane_narrowing, add_marked_parking, apply_osm_parking, upgrade_crosswalk_markings,
-)
+from src.geometry.targets import LegSide, LegTarget
+from src.geometry.treatments import (DesignState, LaneNarrowing, MarkedParking,
+    TARGET_LANE_WIDTH_FT, UpgradeCrosswalkMarkings, all_crosswalks_continental,
+    apply_osm_parking, complete_centerlines)
 
 # TARGET_LANE_WIDTH_FT is imported from src, not redeclared here. It is a standard
 # (NACTO/AASHTO urban minimum travel lane), not a per-site choice, and four sites each
@@ -29,7 +29,7 @@ def _continental_everywhere(state: DesignState) -> DesignState:
     which is a different proposal, but src/render/export.py only paints legs listed in
     the config's existing_marked_crosswalks, so unmarked legs stay unmarked in the render."""
     for leg_name in state.legs:
-        state = upgrade_crosswalk_markings(state, leg_name, "continental")
+        state = state.apply(UpgradeCrosswalkMarkings(LegTarget(leg_name), "continental"))
     return state
 
 
@@ -53,7 +53,7 @@ def _parking_and_narrowing(state: DesignState) -> DesignState:
     for leg_name, leg in state.legs.items():
         recovered_ft = leg.curb_to_curb_ft / 2 - TARGET_LANE_WIDTH_FT
         if recovered_ft < MIN_PARKING_DEPTH_FT:
-            state = add_lane_narrowing(state, leg_name, max(recovered_ft, 0.5))
+            state = state.apply(LaneNarrowing(LegTarget(leg_name), max(recovered_ft, 0.5)))
             print(f"  NOTE: {leg_name} ({leg.curb_to_curb_ft:.0f} ft) recovers only "
                   f"{recovered_ft:.1f} ft per side at {TARGET_LANE_WIDTH_FT:.0f} ft lanes - too narrow "
                   f"for a stall, so paint-only narrowing here, no parking.")
@@ -61,8 +61,7 @@ def _parking_and_narrowing(state: DesignState) -> DesignState:
         depth_ft = min(recovered_ft, PARKING_DEPTH_FT)
         buffer_ft = max(recovered_ft - depth_ft, 0.0)
         for side in ("left", "right"):
-            state = add_marked_parking(state, leg_name, side=side, depth_ft=depth_ft,
-                                        curb_offset_ft=buffer_ft)
+            state = state.apply(MarkedParking(LegSide(leg_name, side), depth_ft=depth_ft, curb_offset_ft=buffer_ft))
         print(f"  NOTE: {leg_name} ({leg.curb_to_curb_ft:.0f} ft) -> {TARGET_LANE_WIDTH_FT:.0f} ft lanes + "
               f"{depth_ft:.1f} ft parking both sides"
               + (f" + {buffer_ft:.1f} ft striped buffer" if buffer_ft > 0.1 else "") + ".")

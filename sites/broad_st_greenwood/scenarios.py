@@ -1,11 +1,10 @@
 """Example treatment scenarios, shared by the Phase 3 plan-view render and the
 Phase 4 3D export so both phases show the exact same design."""
-from src.geometry.treatments import (
-    TARGET_LANE_WIDTH_FT,
-    add_bike_lane, add_bike_lane_bollards, add_lane_narrowing, add_marked_parking, all_crosswalks_continental,
-    apply_osm_parking, bulb_out_corner_pair, complete_centerlines, DesignState,
-    protect_daylight_zone, resolved_crossing_stations,
-)
+from src.geometry.targets import LegSide, LegTarget
+from src.geometry.treatments import (AddBikeLane, AddBikeLaneBollards, DesignState,
+    LaneNarrowing, MarkedParking, ProtectDaylightZone, TARGET_LANE_WIDTH_FT,
+    all_crosswalks_continental, apply_osm_parking, bulb_out_corner_pair, complete_centerlines,
+    resolved_crossing_stations)
 
 GREENWOOD_LEGS = ("greenwood_ave_north", "greenwood_ave_south")
 
@@ -38,7 +37,7 @@ def _protect_every_daylight_zone(state: DesignState, kind: str) -> DesignState:
     be street furniture, not a corner treatment.
     """
     for leg_name, side in sorted(state.parking_zones):
-        state = protect_daylight_zone(state, leg_name, side, kind=kind)
+        state = state.apply(ProtectDaylightZone(LegSide(leg_name, side), kind=kind))
     return state
 
 
@@ -78,7 +77,7 @@ def _add_broad_st_both_side_parking(state: DesignState, curb_offset_ft: float = 
     of an arbitrary 11 ft target)."""
     for leg_name in BROAD_ST_LEGS:
         for side in PARKING_SIDES:
-            state = add_marked_parking(state, leg_name, side=side, curb_offset_ft=curb_offset_ft)
+            state = state.apply(MarkedParking(LegSide(leg_name, side), curb_offset_ft=curb_offset_ft))
     return state
 
 
@@ -115,7 +114,7 @@ def _narrow_broad_st_to_11ft_lanes(state: DesignState, line_only: bool = False) 
     for leg_name in BROAD_ST_LEGS:
         half_width_ft = state.legs[leg_name].curb_to_curb_ft / 2
         stripe_width_ft = half_width_ft - TARGET_LANE_WIDTH_FT
-        state = add_lane_narrowing(state, leg_name, stripe_width_ft, line_only=line_only)
+        state = state.apply(LaneNarrowing(LegTarget(leg_name), stripe_width_ft, line_only=line_only))
     return state
 
 
@@ -204,7 +203,7 @@ def build_proposal_apron_bulbouts(baseline: DesignState, model=None) -> DesignSt
     # 11 ft lane is hatched rather than marked. Sized per leg from its own measured width.
     for leg_name in BROAD_ST_BULBOUT_LEGS:
         spare_ft = state.legs[leg_name].curb_to_curb_ft / 2 - TARGET_LANE_WIDTH_FT
-        state = add_lane_narrowing(state, leg_name, stripe_width_ft=spare_ft)
+        state = state.apply(LaneNarrowing(LegTarget(leg_name), stripe_width_ft=spare_ft))
     crossing_at = resolved_crossing_stations(model, baseline)
     for leg_name in BROAD_ST_BULBOUT_LEGS:
         state = bulb_out_corner_pair(state, leg_name, extension_ft=BULBOUT_EXTENSION_FT,
@@ -275,8 +274,6 @@ def build_proposal_bike_lanes(baseline: DesignState, model=None) -> DesignState:
     state = all_crosswalks_continental(state)
     for leg_name in BROAD_ST_LEGS:
         for side in ("left", "right"):
-            state = add_bike_lane(state, leg_name, side, width_ft=BIKE_LANE_WIDTH_FT,
-                                   buffer_ft=BIKE_LANE_BUFFER_FT)
-            state = add_bike_lane_bollards(state, leg_name, side,
-                                            spacing_ft=BIKE_LANE_BOLLARD_SPACING_FT)
+            state = state.apply(AddBikeLane(LegSide(leg_name, side), width_ft=BIKE_LANE_WIDTH_FT, buffer_ft=BIKE_LANE_BUFFER_FT))
+            state = state.apply(AddBikeLaneBollards(LegSide(leg_name, side), spacing_ft=BIKE_LANE_BOLLARD_SPACING_FT))
     return state

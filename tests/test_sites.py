@@ -16,7 +16,8 @@ import pytest
 from src.geometry.daylighting import no_parking_zones_ft
 from src.geometry.model import (build_pavement_polygon, narrowest_half_width_ft,
                                 station_offset_many)
-from src.geometry.treatments import DesignState
+from src.geometry.targets import LegSide
+from src.geometry.treatments import (DesignState, MarkedParking)
 from src.render.crosswalks import (CROSSWALK_DEPTH_M, STOP_BAR_CURB_CLEARANCE_M,
                                    crosswalk_bands_ft, resolve_crosswalk_offsets,
                                    resolve_crosswalk_skews, resolve_stop_bar_offsets)
@@ -498,12 +499,12 @@ def test_each_kerb_gets_the_paint_its_restriction_and_width_allow(site, site_mod
 @needs_source_data
 def test_a_side_the_scenario_already_treated_is_left_alone(site_models):
     """"Unless otherwise specified" - apply_osm_parking is a baseline, not an override."""
-    from src.geometry.treatments import add_marked_parking, apply_osm_parking
+    from src.geometry.treatments import apply_osm_parking
 
     model = site_models["columbia_princeton"]
     # princeton_ave_south left is restricted in OSM, so the rule would hatch it.
     with contextlib.redirect_stdout(io.StringIO()):
-        state = add_marked_parking(DesignState.from_model(model), "princeton_ave_south", "left")
+        state = DesignState.from_model(model).apply(MarkedParking(LegSide("princeton_ave_south", "left")))
         state = apply_osm_parking(state, model)
 
     assert ("princeton_ave_south", "left") in state.parking_zones
@@ -583,10 +584,21 @@ def test_an_unrestricted_kerb_too_narrow_to_park_is_hatched_not_widened(site_mod
 def test_completing_centerlines_only_fills_real_gaps():
     """A leg with NO centerline gets one. A leg that already has markings is left alone -
     upgrading a dashed line to a no-passing double is a sight-line judgement, not a gap."""
+    from shapely.geometry import LineString as _LineString
+
+    from src.geometry.model import Leg
     from src.geometry.treatments import complete_centerlines
 
-    state = DesignState(legs={}, corner_fillets={}, centerline_styles={
-        "unmarked": "none", "dashed": "single_yellow_dashed", "double": "double_yellow"})
+    # The legs have to exist, because the treatment's target is checked against the design now.
+    # This state used to carry centerline styles for three legs the junction did not have, which
+    # DesignState.from_model cannot produce - it seeds the styles FROM the config's legs.
+    named = ("unmarked", "dashed", "double")
+    state = DesignState(
+        legs={name: Leg(name=name, centerline=_LineString([(0, 0), (100, 0)]), curb_to_curb_ft=30.0)
+              for name in named},
+        corner_fillets={},
+        centerline_styles={"unmarked": "none", "dashed": "single_yellow_dashed",
+                            "double": "double_yellow"})
     completed = complete_centerlines(state)
     assert completed.centerline_styles["unmarked"] == "double_yellow"
     assert completed.centerline_styles["dashed"] == "single_yellow_dashed"

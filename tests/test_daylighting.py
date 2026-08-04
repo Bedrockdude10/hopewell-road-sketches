@@ -13,7 +13,8 @@ from src.geometry.daylighting import (CROSSWALK_SETBACK_FT, CROSSWALK_SETBACK_WI
                                        STOP_SIGN_SETBACK_FT, legal_parking_start_ft,
                                        no_parking_zones_ft, parkable_runs_ft)
 from src.geometry.model import Leg
-from src.geometry.treatments import DesignState
+from src.geometry.targets import LegSide
+from src.geometry.treatments import (DesignState, ProtectDaylightZone)
 
 # The real DesignState, not a stub of it. There was a hand-rolled FakeState here mirroring the
 # four fields these rules read, and it had already drifted: curb_extensions was added to
@@ -98,10 +99,8 @@ def test_claiming_a_curb_extension_setback_without_building_one_is_refused():
     what moves the kerb. Letting the declaration stand alone would mark parking 15 ft closer to
     a crossing than R.S. 39:4-138(e) allows, on the strength of a bulbout nobody drew.
     """
-    from src.geometry.treatments import protect_daylight_zone
-
     with pytest.raises(ValueError, match="no curb extension has been built"):
-        protect_daylight_zone(a_state(), "east", "left", kind="curb_extension")
+        a_state().apply(ProtectDaylightZone(LegSide("east", "left"), kind="curb_extension"))
 
 
 def test_the_side_line_governs_a_leg_with_no_marked_crossing():

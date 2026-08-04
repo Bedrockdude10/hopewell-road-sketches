@@ -9,7 +9,7 @@ from typing import ClassVar
 import numpy as np
 from shapely.geometry import Polygon
 
-from src.geometry.targets import BOTH_SIDES, Corner, LegSide, LegTarget, Side, Target
+from src.geometry.targets import BOTH_SIDES, LegSide, LegTarget, Side, Target
 from src.geometry.model import (BULBOUT_TAPER_RATE, build_pavement_polygon, curb_extension_line,
                                 fillet_curb_corner, leg_clearance_ft, narrowest_half_width_ft)
 
@@ -400,16 +400,10 @@ class SetCornerRadius(Treatment):
             raise ValueError(f"A corner radius has to be positive; got radius_ft={self.radius_ft}.")
 
     def describe(self) -> str:
-        return f"set_corner_radius({self.target.key}, radius_ft={self.radius_ft})"
+        return f"SetCornerRadius({self.target.key}, radius_ft={self.radius_ft})"
 
     def apply_to(self, state: "DesignState", model=None) -> None:
         _rebuild_corner(state, self.target.key, self.radius_ft, self.source)
-
-
-def set_corner_radius(state: DesignState, corner: tuple[str, str], radius_ft: float,
-                       source: str = "designed") -> DesignState:
-    """Scaffolding: the old call shape, over the SetCornerRadius treatment."""
-    return state.apply(SetCornerRadius(Corner(*corner), radius_ft, source))
 
 
 def _rebuild_corner(state: DesignState, corner: tuple[str, str], radius_ft: float,
@@ -454,7 +448,7 @@ class RefugeIsland(Treatment):
         # point - a better message than anything this constructor knows enough to write.
 
     def describe(self) -> str:
-        return (f"refuge_island({self.target}, offset_ft={self.offset_ft}, "
+        return (f"RefugeIsland({self.target}, offset_ft={self.offset_ft}, "
                 f"width_ft={self.width_ft})")
 
     def apply_to(self, state: "DesignState", model=None) -> None:
@@ -465,12 +459,6 @@ class RefugeIsland(Treatment):
                                          f"{self.width_ft:.0f} ft refuge island")
         island_name = self.name or f"{self.target.leg}_refuge_{int(self.offset_ft)}ft"
         state.refuge_islands[island_name] = {"polygon": polygon, "width_ft": self.width_ft}
-
-
-def refuge_island(state: DesignState, leg_name: str, offset_ft: float, width_ft: float,
-                   along_road_ft: float = 20, name: str | None = None) -> DesignState:
-    """Scaffolding: the old call shape, over the RefugeIsland treatment."""
-    return state.apply(RefugeIsland(LegTarget(leg_name), offset_ft, width_ft, along_road_ft, name))
 
 
 @dataclass(frozen=True)
@@ -485,7 +473,7 @@ class RaiseCrossing(Treatment):
             raise ValueError(f"A raised crossing needs a width; got {self.crossing_width_ft}.")
 
     def describe(self) -> str:
-        return f"raise_crossing({self.target}, crossing_width_ft={self.crossing_width_ft})"
+        return f"RaiseCrossing({self.target}, crossing_width_ft={self.crossing_width_ft})"
 
     def apply_to(self, state: "DesignState", model=None) -> None:
         leg = state.legs[self.target.leg]
@@ -500,11 +488,6 @@ class RaiseCrossing(Treatment):
         state.raised_crossings[self.target.leg] = _band_across_the_road(
             leg.centerline, start, start + self.crossing_width_ft, leg.curb_to_curb_ft / 2,
             f"{self.crossing_width_ft:.0f} ft raised crossing on {self.target.leg!r}")
-
-
-def raise_crossing(state: DesignState, leg_name: str, crossing_width_ft: float = 10) -> DesignState:
-    """Scaffolding: the old call shape, over the RaiseCrossing treatment."""
-    return state.apply(RaiseCrossing(LegTarget(leg_name), crossing_width_ft))
 
 
 VALID_CROSSWALK_STYLES = ("lines", "continental", "ladder")
@@ -525,15 +508,10 @@ class UpgradeCrosswalkMarkings(Treatment):
                               f"{VALID_CROSSWALK_STYLES}")
 
     def describe(self) -> str:
-        return f"upgrade_crosswalk_markings({self.target}, style={self.style!r})"
+        return f"UpgradeCrosswalkMarkings({self.target}, style={self.style!r})"
 
     def apply_to(self, state: "DesignState", model=None) -> None:
         state.crosswalk_styles[self.target.leg] = self.style
-
-
-def upgrade_crosswalk_markings(state: DesignState, leg_name: str, style: str) -> DesignState:
-    """Scaffolding: the old call shape, over the UpgradeCrosswalkMarkings treatment."""
-    return state.apply(UpgradeCrosswalkMarkings(LegTarget(leg_name), style))
 
 
 @dataclass(frozen=True)
@@ -553,15 +531,10 @@ class SetCenterlineStyle(Treatment):
                               f"{VALID_CENTERLINE_STYLES}")
 
     def describe(self) -> str:
-        return f"set_centerline_style({self.target}, style={self.style!r})"
+        return f"SetCenterlineStyle({self.target}, style={self.style!r})"
 
     def apply_to(self, state: "DesignState", model=None) -> None:
         state.centerline_styles[self.target.leg] = self.style
-
-
-def set_centerline_style(state: DesignState, leg_name: str, style: str) -> DesignState:
-    """Scaffolding: the old call shape, over the SetCenterlineStyle treatment."""
-    return state.apply(SetCenterlineStyle(LegTarget(leg_name), style))
 
 
 @dataclass(frozen=True)
@@ -606,7 +579,7 @@ class LaneNarrowing(Treatment):
             raise ValueError("A lane narrowing with no sides paints nothing - pass at least one.")
 
     def describe(self) -> str:
-        return (f"add_lane_narrowing({self.target}, stripe_width_ft={self.stripe_width_ft}, "
+        return (f"LaneNarrowing({self.target}, stripe_width_ft={self.stripe_width_ft}, "
                 f"line_only={self.line_only}, sides={tuple(str(s) for s in self.sides)})")
 
     def apply_to(self, state: "DesignState", model=None) -> None:
@@ -617,14 +590,6 @@ class LaneNarrowing(Treatment):
             state.lane_narrowing_line_only.add(leg_name)
         else:
             state.lane_narrowing_line_only.discard(leg_name)
-
-
-def add_lane_narrowing(state: DesignState, leg_name: str,
-                        stripe_width_ft: float = LANE_NARROWING_DEFAULT_STRIPE_FT,
-                        line_only: bool = False, sides: tuple = BOTH_SIDES) -> DesignState:
-    """Scaffolding: the old call shape, over the LaneNarrowing treatment. Being migrated out -
-    see the README's treatment catalogue for the object form."""
-    return state.apply(LaneNarrowing(LegTarget(leg_name), stripe_width_ft, line_only, sides))
 
 
 PARKING_STALL_DEPTH_DEFAULT_FT = 8.0  # AASHTO/NACTO typical parallel-parking lane depth (curb to travel-lane edge)
@@ -672,7 +637,7 @@ class MarkedParking(Treatment):
             raise ValueError(f"A kerb buffer cannot be negative; got {self.curb_offset_ft}.")
 
     def describe(self) -> str:
-        return (f"add_marked_parking({self.target.leg}, side={str(self.target.side)!r}, "
+        return (f"MarkedParking({self.target.leg}, side={str(self.target.side)!r}, "
                 f"depth_ft={self.depth_ft}, stall_length_ft={self.stall_length_ft}, "
                 f"curb_offset_ft={self.curb_offset_ft})")
 
@@ -681,15 +646,6 @@ class MarkedParking(Treatment):
             "depth_ft": self.depth_ft, "stall_length_ft": self.stall_length_ft,
             "curb_offset_ft": self.curb_offset_ft,
         }
-
-
-def add_marked_parking(state: DesignState, leg_name: str, side: str,
-                        depth_ft: float = PARKING_STALL_DEPTH_DEFAULT_FT,
-                        stall_length_ft: float = PARKING_STALL_LENGTH_DEFAULT_FT,
-                        curb_offset_ft: float = 0.0) -> DesignState:
-    """Scaffolding: the old call shape, over the MarkedParking treatment."""
-    return state.apply(MarkedParking(LegSide(leg_name, side), depth_ft, stall_length_ft,
-                                      curb_offset_ft))
 
 
 BOLLARD_DEFAULT_SPACING_FT = 10.0  # typical flex-post delineator spacing for a channelized buffer
@@ -711,7 +667,7 @@ class ParkingBufferBollards(Treatment):
             raise ValueError(f"Posts need a spacing; got spacing_ft={self.spacing_ft}.")
 
     def describe(self) -> str:
-        return (f"add_parking_buffer_bollards({self.target.leg}, "
+        return (f"ParkingBufferBollards({self.target.leg}, "
                 f"side={str(self.target.side)!r}, spacing_ft={self.spacing_ft})")
 
     def apply_to(self, state: "DesignState", model=None) -> None:
@@ -722,12 +678,6 @@ class ParkingBufferBollards(Treatment):
             raise ValueError(f"{self.target}'s marked parking has curb_offset_ft=0 - no curb "
                               f"buffer to put bollards in.")
         state.parking_buffer_bollards[self.target.key] = self.spacing_ft
-
-
-def add_parking_buffer_bollards(state: DesignState, leg_name: str, side: str,
-                                 spacing_ft: float = BOLLARD_DEFAULT_SPACING_FT) -> DesignState:
-    """Scaffolding: the old call shape, over the ParkingBufferBollards treatment."""
-    return state.apply(ParkingBufferBollards(LegSide(leg_name, side), spacing_ft))
 
 
 @dataclass(frozen=True)
@@ -746,18 +696,13 @@ class LaneNarrowingBollards(Treatment):
             raise ValueError(f"Posts need a spacing; got spacing_ft={self.spacing_ft}.")
 
     def describe(self) -> str:
-        return f"add_bollards({self.target}, spacing_ft={self.spacing_ft})"
+        return f"LaneNarrowingBollards({self.target}, spacing_ft={self.spacing_ft})"
 
     def apply_to(self, state: "DesignState", model=None) -> None:
         if self.target.leg not in state.lane_narrowing:
             raise KeyError(f"Leg {self.target.leg!r} has no lane_narrowing buffer - apply "
                             f"LaneNarrowing first.")
         state.bollard_lines[self.target.leg] = self.spacing_ft
-
-
-def add_bollards(state: DesignState, leg_name: str, spacing_ft: float = BOLLARD_DEFAULT_SPACING_FT) -> DesignState:
-    """Scaffolding: the old call shape, over the LaneNarrowingBollards treatment."""
-    return state.apply(LaneNarrowingBollards(LegTarget(leg_name), spacing_ft))
 
 
 @dataclass(frozen=True)
@@ -772,16 +717,10 @@ class CornerHatching(Treatment):
             raise ValueError(f"Corner hatching needs a depth; got depth_ft={self.depth_ft}.")
 
     def describe(self) -> str:
-        return f"add_corner_hatching({self.target.key}, depth_ft={self.depth_ft})"
+        return f"CornerHatching({self.target.key}, depth_ft={self.depth_ft})"
 
     def apply_to(self, state: "DesignState", model=None) -> None:
         state.corner_hatching[self.target.key] = self.depth_ft
-
-
-def add_corner_hatching(state: DesignState, corner: tuple[str, str],
-                         depth_ft: float = CORNER_HATCHING_DEFAULT_DEPTH_FT) -> DesignState:
-    """Scaffolding: the old call shape, over the CornerHatching treatment."""
-    return state.apply(CornerHatching(Corner(*corner), depth_ft))
 
 
 @dataclass(frozen=True)
@@ -802,17 +741,11 @@ class MountableApron(Treatment):
     extent_ft: float = CORNER_APRON_DEFAULT_EXTENT_FT
 
     def describe(self) -> str:
-        return f"add_mountable_apron({self.target.key}, extent_ft={self.extent_ft})"
+        return f"MountableApron({self.target.key}, extent_ft={self.extent_ft})"
 
     def apply_to(self, state: "DesignState", model=None) -> None:
         # CornerApron validates the depth/radius exclusivity itself.
         state.corner_aprons[self.target.key] = CornerApron(depth_ft=self.extent_ft)
-
-
-def add_mountable_apron(state: DesignState, corner: tuple[str, str],
-                         extent_ft: float = CORNER_APRON_DEFAULT_EXTENT_FT) -> DesignState:
-    """Scaffolding: the old call shape, over the MountableApron treatment."""
-    return state.apply(MountableApron(Corner(*corner), extent_ft))
 
 
 # How wide a face a tightened corner presents to a passenger car. The design figure for the
@@ -875,7 +808,7 @@ class AddCurbExtension(Treatment):
                 f"sees - an annulus between them is what the apron is (see CornerApron).")
 
     def describe(self) -> str:
-        return f"add_curb_extension({self.target.leg}, {self.target.side}): "
+        return f"AddCurbExtension({self.target.leg}, {self.target.side}): "
 
     def apply_to(self, state: "DesignState", model=None) -> str:
         # Local: src/render/crosswalks.py imports DesignState from here, and
@@ -926,15 +859,6 @@ class AddCurbExtension(Treatment):
                 + (f" with a mountable apron out to the corner's measured "
                    f"{self.swept_radius_ft:.1f} ft" if self.swept_radius_ft is not None else "")
                 + f". Leaves a {leg.curb_to_curb_ft / 2 - self.extension_ft:.1f} ft travel lane.")
-
-
-def add_curb_extension(state: DesignState, leg_name: str, side: str, extension_ft: float,
-                        crossing_ft: float, swept_radius_ft: float | None = None,
-                        face_radius_ft: float = CURB_EXTENSION_FACE_RADIUS_FT,
-                        taper_ft: float | None = None) -> DesignState:
-    """Scaffolding: the old call shape, over the AddCurbExtension treatment."""
-    return state.apply(AddCurbExtension(LegSide(leg_name, side), extension_ft, crossing_ft,
-                                         swept_radius_ft, face_radius_ft, taper_ft))
 
 
 def _corner_fed_by(state: DesignState, leg_name: str, side: str) -> tuple[str, str] | None:
@@ -1118,10 +1042,9 @@ class AddBikeLane(Treatment):
         self.lane        # raises for a lane under AASHTO's minimum, before anything is applied
 
     def describe(self) -> str:
-        # leg, side rather than str(target): the note is provenance that ships in every
-        # geometry export, and keeping the wording identical keeps the refactor's
-        # byte-for-byte comparison against the pre-refactor exports meaningful.
-        return (f"add_bike_lane({self.target.leg}, {self.target.side}): {self.width_ft:.0f} ft lane"
+        # leg, side rather than str(target): a note is meant to read as the constructor call
+        # that produced it, so someone reading a render's provenance can paste it back.
+        return (f"AddBikeLane({self.target.leg}, {self.target.side}): {self.width_ft:.0f} ft lane"
                 + (f", {self.buffer_ft:.0f} ft buffer" if self.buffer_ft else "")
                 + (f", parking-protected behind {self.parking_ft:.0f} ft of marked parking"
                    if self.parking_ft
@@ -1145,13 +1068,6 @@ class AddBikeLane(Treatment):
         spare_ft = available_ft - lane.total_ft
         return (f". Uses {lane.total_ft:.1f} of the {available_ft:.1f} ft this leg has at its "
                 f"narrowest" + (f", {spare_ft:.1f} ft spare." if spare_ft > 0.05 else "."))
-
-
-def add_bike_lane(state: DesignState, leg_name: str, side: str, width_ft: float,
-                   buffer_ft: float = 0.0, parking_ft: float = 0.0,
-                   shy_ft: float = 0.0) -> DesignState:
-    """Scaffolding: the old call shape, over the AddBikeLane treatment. Being migrated out."""
-    return state.apply(AddBikeLane(LegSide(leg_name, side), width_ft, buffer_ft, parking_ft, shy_ft))
 
 
 def resolved_crossing_stations(model, state: DesignState) -> dict:
@@ -1190,9 +1106,10 @@ def bulb_out_corner_pair(state: DesignState, leg_name: str, extension_ft: float,
     for side in sides:
         corner = _corner_fed_by(state, leg_name, side)
         swept_radius_ft = None if corner is None else state.corner_fillets[corner].get("radius_ft")
-        state = add_curb_extension(state, leg_name, side, extension_ft=extension_ft,
-                                    crossing_ft=crossing_ft, swept_radius_ft=swept_radius_ft)
-        state = protect_daylight_zone(state, leg_name, side, kind="curb_extension")
+        state = state.apply(
+            AddCurbExtension(LegSide(leg_name, side), extension_ft=extension_ft,
+                              crossing_ft=crossing_ft, swept_radius_ft=swept_radius_ft),
+            ProtectDaylightZone(LegSide(leg_name, side), kind="curb_extension"))
     return state
 
 
@@ -1223,7 +1140,7 @@ class AddBikeLaneBollards(Treatment):
             raise ValueError(f"Posts need a spacing; got spacing_ft={self.spacing_ft}.")
 
     def describe(self) -> str:
-        return f"add_bike_lane_bollards({self.target.leg}, {self.target.side}): "
+        return f"AddBikeLaneBollards({self.target.leg}, {self.target.side}): "
 
     def apply_to(self, state: "DesignState", model=None) -> str:
         lane = state.bike_lanes.get(self.target.key)
@@ -1238,12 +1155,6 @@ class AddBikeLaneBollards(Treatment):
         return (f"flex-post delineators at {self.spacing_ft:.0f} ft in the {lane.buffer_ft:.0f} ft "
                 f"buffer between the travel lane and the bike lane - the traffic side, which is "
                 f"the side that needs protecting.")
-
-
-def add_bike_lane_bollards(state: DesignState, leg_name: str, side: str,
-                            spacing_ft: float = BOLLARD_DEFAULT_SPACING_FT) -> DesignState:
-    """Scaffolding: the old call shape, over the AddBikeLaneBollards treatment."""
-    return state.apply(AddBikeLaneBollards(LegSide(leg_name, side), spacing_ft))
 
 
 @dataclass(frozen=True)
@@ -1261,16 +1172,11 @@ class ShiftCrosswalk(Treatment):
     delta_ft: float = 0.0
 
     def describe(self) -> str:
-        return f"shift_crosswalk_offset({self.target}, delta_ft={self.delta_ft})"
+        return f"ShiftCrosswalk({self.target}, delta_ft={self.delta_ft})"
 
     def apply_to(self, state: "DesignState", model=None) -> None:
         state.crosswalk_offset_overrides[self.target.leg] = (
             state.crosswalk_offset_overrides.get(self.target.leg, 0.0) + self.delta_ft)
-
-
-def shift_crosswalk_offset(state: DesignState, leg_name: str, delta_ft: float) -> DesignState:
-    """Scaffolding: the old call shape, over the ShiftCrosswalk treatment."""
-    return state.apply(ShiftCrosswalk(LegTarget(leg_name), delta_ft))
 
 
 @dataclass(frozen=True)
@@ -1301,18 +1207,12 @@ class ExtraProp(Treatment):
         object.__setattr__(self, "side", Side(self.side))
 
     def describe(self) -> str:
-        return f"add_extra_prop({self.target}, {self.prop_type!r}, offset_ft={self.offset_ft})"
+        return f"ExtraProp({self.target}, {self.prop_type!r}, offset_ft={self.offset_ft})"
 
     def apply_to(self, state: "DesignState", model=None) -> None:
         state.extra_props.append({"leg": self.target.leg, "type": self.prop_type,
                                    "offset_ft": self.offset_ft, "side": str(self.side),
                                    "note": self.note})
-
-
-def add_extra_prop(state: DesignState, leg_name: str, prop_type: str, offset_ft: float | None = None,
-                    side: str = "right", note: str = "") -> DesignState:
-    """Scaffolding: the old call shape, over the ExtraProp treatment."""
-    return state.apply(ExtraProp(LegTarget(leg_name), prop_type, offset_ft, side, note))
 
 
 def build_sidewalk_pieces(state: DesignState, sidewalk_width_ft: float = 6) -> list[Polygon]:
@@ -1410,7 +1310,7 @@ class ProtectDaylightZone(Treatment):
                 else self.spacing_ft)
 
     def describe(self) -> str:
-        return f"protect_daylight_zone({self.target.leg}, {self.target.side}): "
+        return f"ProtectDaylightZone({self.target.leg}, {self.target.side}): "
 
     def apply_to(self, state: "DesignState", model=None) -> str:
         # The one check that is about the LAW rather than about the street, and it depends on
@@ -1428,12 +1328,6 @@ class ProtectDaylightZone(Treatment):
         return (f"{self.kind} at {spacing_ft:.0f} ft spacing"
                 + (" - counts as a curb extension, so R.S. 39:4-138(e) allows parking from 10 ft "
                    "rather than 25 ft" if self.kind in CURB_EXTENSION_DEVICES else ""))
-
-
-def protect_daylight_zone(state: DesignState, leg_name: str, side: str, kind: str = "bollards",
-                           spacing_ft: float | None = None) -> DesignState:
-    """Scaffolding: the old call shape, over the ProtectDaylightZone treatment."""
-    return state.apply(ProtectDaylightZone(LegSide(leg_name, side), kind, spacing_ft))
 
 
 def apply_osm_parking(state: DesignState, model, depth_ft: float = PARKING_STALL_DEPTH_DEFAULT_FT,
@@ -1524,8 +1418,9 @@ def apply_osm_parking(state: DesignState, model, depth_ft: float = PARKING_STALL
         restricted = restricted + hatched
 
         if restricted:
-            new_state = add_lane_narrowing(new_state, leg_name, stripe_width_ft=allowance_ft,
-                                            sides=tuple(restricted))
+            new_state = new_state.apply(LaneNarrowing(LegTarget(leg_name),
+                                                       stripe_width_ft=allowance_ft,
+                                                       sides=tuple(restricted)))
             for side in restricted:
                 why = (sides[side].describe() if sides[side].prohibited_ft
                        else "too narrow for a stall")
@@ -1538,9 +1433,10 @@ def apply_osm_parking(state: DesignState, model, depth_ft: float = PARKING_STALL
             # instead produced 10-12 ft "parking spaces", which is a stall plus a strip of
             # unmarked asphalt drawn as though you could park on it.
             buffer_ft = allowance_ft - PARKING_STALL_DEPTH_DEFAULT_FT
-            new_state = add_marked_parking(new_state, leg_name, side,
-                                            depth_ft=PARKING_STALL_DEPTH_DEFAULT_FT,
-                                            curb_offset_ft=buffer_ft)
+            new_state = new_state.apply(
+                MarkedParking(LegSide(leg_name, side),
+                               depth_ft=PARKING_STALL_DEPTH_DEFAULT_FT,
+                               curb_offset_ft=buffer_ft))
             extra = (f" + {buffer_ft:.1f} ft hatched to the kerb" if buffer_ft > 0.05 else "")
             new_state.notes.append(f"apply_osm_parking({leg_name}, {side}): "
                                     f"{PARKING_STALL_DEPTH_DEFAULT_FT:.0f} ft stalls{extra} - "
@@ -1663,11 +1559,15 @@ def complete_centerlines(state: DesignState, style: str = "double_yellow") -> De
     double - is left alone: whether to upgrade a dashed line to a no-passing double is a
     traffic-engineering judgement about sight lines, not a gap to be filled in.
     """
-    new_state = state.clone()
+    new_state = state
     for leg_name, current in sorted(state.centerline_styles.items()):
         if current != "none":
             continue
-        new_state.centerline_styles[leg_name] = style
+        # Through the treatment rather than writing the dict, so the design records the change
+        # as a treatment like any other - a policy that edits state directly leaves
+        # state.treatments an incomplete account of what was applied. The explanation is the
+        # POLICY's, not the treatment's, so it is a note of its own.
+        new_state = new_state.apply(SetCenterlineStyle(LegTarget(leg_name), style))
         new_state.notes.append(
             f"complete_centerlines({leg_name}): {style} added - the leg has no centerline "
             f"paint today, so nothing marks the middle of the road")
@@ -1684,5 +1584,5 @@ def all_crosswalks_continental(state: DesignState) -> DesignState:
     """
     new_state = state
     for leg_name in sorted(state.legs):
-        new_state = upgrade_crosswalk_markings(new_state, leg_name, "continental")
+        new_state = new_state.apply(UpgradeCrosswalkMarkings(LegTarget(leg_name), "continental"))
     return new_state

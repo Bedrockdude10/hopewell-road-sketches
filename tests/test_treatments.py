@@ -12,8 +12,11 @@ import pytest
 from shapely.geometry import LineString
 
 from src.geometry.model import Leg
-from src.geometry.treatments import (DesignState, NACTO_MIN_REFUGE_ISLAND_WIDTH_FT,
-                                     raise_crossing, refuge_island)
+from src.geometry.targets import Corner, LegSide, LegTarget, Side
+from src.geometry.treatments import (AASHTO_MIN_BIKE_LANE_FT, AddBikeLane, AddBikeLaneBollards,
+                                     DesignState, LaneNarrowing,
+                                     NACTO_MIN_REFUGE_ISLAND_WIDTH_FT, RaiseCrossing,
+                                     RefugeIsland, Treatment)
 
 
 def a_state(length_ft=130.0, width_ft=30.0, corner_fillets=None):
@@ -43,23 +46,21 @@ def test_a_raised_crossing_past_the_end_of_the_leg_says_so():
         }
     })
     with pytest.raises(ValueError) as caught:
-        raise_crossing(state, "east", crossing_width_ft=10.0)
+        state.apply(RaiseCrossing(LegTarget("east"), crossing_width_ft=10.0))
     assert "raised crossing" in str(caught.value)
     assert "same point" in str(caught.value)
 
 
 def test_a_refuge_island_on_a_zero_length_span_says_so():
     with pytest.raises(ValueError) as caught:
-        refuge_island(a_state(), "east", offset_ft=60.0,
-                      width_ft=NACTO_MIN_REFUGE_ISLAND_WIDTH_FT, along_road_ft=0.0)
+        a_state().apply(RefugeIsland(LegTarget("east"), offset_ft=60.0, width_ft=NACTO_MIN_REFUGE_ISLAND_WIDTH_FT, along_road_ft=0.0))
     assert "refuge island" in str(caught.value)
     assert "no extent along the road" in str(caught.value)
 
 
 def test_a_refuge_island_below_the_nacto_minimum_is_refused():
     with pytest.raises(ValueError, match="NACTO minimum"):
-        refuge_island(a_state(), "east", offset_ft=60.0,
-                      width_ft=NACTO_MIN_REFUGE_ISLAND_WIDTH_FT - 1)
+        a_state().apply(RefugeIsland(LegTarget("east"), offset_ft=60.0, width_ft=NACTO_MIN_REFUGE_ISLAND_WIDTH_FT - 1))
 
 
 # --------------------------------------------------------------------------
@@ -67,7 +68,7 @@ def test_a_refuge_island_below_the_nacto_minimum_is_refused():
 # --------------------------------------------------------------------------
 
 def test_a_refuge_island_spans_its_stated_width_across_the_road():
-    state = refuge_island(a_state(), "east", offset_ft=60.0, width_ft=8.0, along_road_ft=20.0)
+    state = a_state().apply(RefugeIsland(LegTarget("east"), offset_ft=60.0, width_ft=8.0, along_road_ft=20.0))
     island = next(iter(state.refuge_islands.values()))
     minx, miny, maxx, maxy = island["polygon"].bounds
     assert (maxy - miny) == pytest.approx(8.0)    # across the road: the stated width
@@ -76,7 +77,7 @@ def test_a_refuge_island_spans_its_stated_width_across_the_road():
 
 
 def test_a_raised_crossing_spans_curb_to_curb():
-    state = raise_crossing(a_state(width_ft=34.0), "east", crossing_width_ft=12.0)
+    state = a_state(width_ft=34.0).apply(RaiseCrossing(LegTarget("east"), crossing_width_ft=12.0))
     minx, miny, maxx, maxy = state.raised_crossings["east"].bounds
     assert (maxy - miny) == pytest.approx(34.0)    # the full roadway
     assert (maxx - minx) == pytest.approx(12.0)
@@ -86,7 +87,7 @@ def test_a_leg_with_no_width_cannot_take_a_crossing():
     state = DesignState(legs={"east": Leg(name="east", centerline=LineString([(0, 0), (100, 0)]))},
                         corner_fillets={})
     with pytest.raises(ValueError, match="no curb lines"):
-        raise_crossing(state, "east")
+        state.apply(RaiseCrossing(LegTarget("east")))
 
 
 # --------------------------------------------------------------------------
@@ -101,8 +102,6 @@ def test_a_treatment_aimed_at_a_leg_that_does_not_exist_is_refused():
     recorded, no paint, no props, no error, and a render that looked deliberate. The target
     is now checked once, for every treatment, in DesignState.apply.
     """
-    from src.geometry.targets import LegTarget
-    from src.geometry.treatments import LaneNarrowing
 
     state = a_state()
     with pytest.raises(KeyError, match="no leg 'wsst'"):
@@ -111,8 +110,6 @@ def test_a_treatment_aimed_at_a_leg_that_does_not_exist_is_refused():
 
 def test_the_error_says_which_legs_the_junction_actually_has():
     """A refusal that names the alternatives is one round trip; one that doesn't is several."""
-    from src.geometry.targets import LegTarget
-    from src.geometry.treatments import LaneNarrowing
 
     with pytest.raises(KeyError, match=r"\['east'\]"):
         a_state().apply(LaneNarrowing(LegTarget("wsst"), stripe_width_ft=3.0))
@@ -125,8 +122,6 @@ def test_a_treatment_that_needs_the_model_and_has_none_is_refused():
     every treatment that reads the model quietly did nothing and E Broad exported with no
     treatments at all. It rendered plausibly, which is why it took a measurement to find.
     """
-    from src.geometry.targets import LegTarget
-    from src.geometry.treatments import Treatment
 
     class NeedsTheModel(Treatment):
         needs_model = True
@@ -144,19 +139,15 @@ def test_a_treatment_that_needs_the_model_and_has_none_is_refused():
 def test_applying_a_treatment_records_it_and_leaves_the_original_alone():
     """Provenance by construction. Every treatment function used to append its own note, and
     the ones that forgot were simply absent from the notes a render ships with."""
-    from src.geometry.targets import LegTarget
-    from src.geometry.treatments import LaneNarrowing
 
     state = a_state()
     after = state.apply(LaneNarrowing(LegTarget("east"), stripe_width_ft=3.0))
     assert state.notes == [] and state.treatments == [], "apply mutated the design it was given"
-    assert len(after.treatments) == 1 and after.notes[0].startswith("add_lane_narrowing")
+    assert len(after.treatments) == 1 and after.notes[0].startswith("LaneNarrowing(")
     assert after.lane_narrowing["east"] == 3.0
 
 
 def test_treatments_chain_in_one_call_or_several():
-    from src.geometry.targets import LegTarget
-    from src.geometry.treatments import LaneNarrowing
 
     state = a_state()
     one_call = state.apply(LaneNarrowing(LegTarget("east"), 3.0), LaneNarrowing(LegTarget("east"), 4.0))
@@ -168,8 +159,6 @@ def test_treatments_chain_in_one_call_or_several():
 def test_a_lane_narrowing_with_no_width_is_refused():
     """Validation this treatment never had. As a function it checked the leg existed and
     nothing else, so a zero stripe painted a buffer with no width."""
-    from src.geometry.targets import LegTarget
-    from src.geometry.treatments import LaneNarrowing
 
     with pytest.raises(ValueError, match="needs a width"):
         LaneNarrowing(LegTarget("east"), stripe_width_ft=0.0)
@@ -177,8 +166,6 @@ def test_a_lane_narrowing_with_no_width_is_refused():
 
 def test_a_treatment_is_refused_before_it_touches_the_design():
     """Constructed, therefore valid - the point of putting the checks in __post_init__."""
-    from src.geometry.targets import LegSide
-    from src.geometry.treatments import AASHTO_MIN_BIKE_LANE_FT, AddBikeLane
 
     with pytest.raises(ValueError):
         AddBikeLane(LegSide("east", "left"), width_ft=AASHTO_MIN_BIKE_LANE_FT - 1)
@@ -187,8 +174,6 @@ def test_a_treatment_is_refused_before_it_touches_the_design():
 def test_bollards_still_refuse_a_lane_with_no_buffer_through_the_funnel():
     """A precondition on another treatment rather than on the street, so it is checked when the
     treatment meets the design - see AddBikeLaneBollards."""
-    from src.geometry.targets import LegSide
-    from src.geometry.treatments import AddBikeLane, AddBikeLaneBollards
 
     state = a_state(width_ft=40.0)
     with_lane = state.apply(AddBikeLane(LegSide("east", "left"), width_ft=6.0))
@@ -203,7 +188,6 @@ def test_bollards_still_refuse_a_lane_with_no_buffer_through_the_funnel():
 def test_a_side_is_left_or_right_and_nothing_else():
     """`state.bike_lanes[("east", "north")]` was a perfectly good expression that matched
     nothing. Side is a StrEnum, so it still equals and hashes like the string it replaces."""
-    from src.geometry.targets import Side
 
     assert Side("left") is Side.LEFT and Side.LEFT == "left"
     assert {("east", Side.LEFT): 1}[("east", "left")] == 1, "must key the existing state dicts"
@@ -214,7 +198,6 @@ def test_a_side_is_left_or_right_and_nothing_else():
 def test_a_leg_side_coerces_the_string_form():
     """Scenarios say "left"; the treatment gets the enum, and a typo is refused at the target
     rather than becoming a key nothing reads."""
-    from src.geometry.targets import LegSide, Side
 
     assert LegSide("east", "right").side is Side.RIGHT
     assert LegSide("east", "right").key == ("east", "right")
@@ -225,7 +208,6 @@ def test_a_leg_side_coerces_the_string_form():
 def test_a_side_knows_its_own_sign():
     """`1 if side == "left" else -1` was written out in ten places, and an invariant that
     forgot the sign passed anything on the right-hand side of a leg."""
-    from src.geometry.targets import Side
 
     assert Side.LEFT.sign == 1.0 and Side.RIGHT.sign == -1.0
     assert Side.LEFT.other is Side.RIGHT
@@ -235,7 +217,6 @@ def test_a_side_knows_its_own_sign():
 def test_a_corner_is_ordered():
     """A corner is (leg_a's left kerb, leg_b's right kerb), so the two orderings are two
     different corners of the junction - see fillet_curb_corner."""
-    from src.geometry.targets import Corner
 
     assert Corner("a", "b") != Corner("b", "a")
     state = a_state(corner_fillets={("a", "b"): {}})

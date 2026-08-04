@@ -9,6 +9,7 @@ from shapely.ops import substring
 
 from src.geometry.model import inset_point_at_station, trimmed_curb_lines
 from src.geometry.intersection import IntersectionModel, kerb_lines_with_tags_ft
+from src.geometry.kerbs import KerbType
 from src.geometry.treatments import DesignState, RaiseCrossing, RefugeIsland
 from src.provenance import PLOT_STYLE, built_width_provenance
 from src.geometry import markings
@@ -100,6 +101,38 @@ PROP_MARKERS = {
     "bollard":                (dict(color=BOLLARD_PLAN_COLOR, marker="o", s=14,
                                     edgecolors="black", linewidths=0.4, zorder=7),),
 }
+# How each kind of traced kerb is drawn. Raised is the solid black line this view has always
+# drawn; a LOWERED kerb is where a vehicle crosses - a driveway or a yard entrance - and the
+# whole point of distinguishing them is that the kerbside markings break over one and not the
+# other, so the drawing has to show which is which or the gap in the paint looks like a mistake.
+# Every one of the 95 kerbs mapped here is tagged, so UNKNOWN is drawn only if that stops being
+# true - and drawn distinctly rather than as raised, because "nobody said" is not "raised".
+# Named linestyles, not dash tuples: these go through GeoSeries.plot to a LineCollection, and a
+# (offset, (on, off)) tuple there is read as per-element data - "inhomogeneous shape" from numpy
+# rather than a dashed line.
+KERB_STYLE = {
+    KerbType.RAISED:  dict(color="black", linewidth=2.2, zorder=6),
+    KerbType.LOWERED: dict(color="black", linewidth=1.1, linestyle="--", zorder=6),
+    KerbType.FLUSH:   dict(color="black", linewidth=1.1, linestyle=":", zorder=6),
+    KerbType.UNKNOWN: dict(color="dimgrey", linewidth=1.6, linestyle="-.", zorder=6),
+}
+
+
+def _draw_kerbs(ax, kerb_lines) -> None:
+    """The traced kerbs, grouped by what OSM says each one is.
+
+    One collection per kerb type rather than per line, the same reason _draw groups everything
+    else. Grouped by TYPE and not drawn uniformly because a dropped kerb is why a marking stops:
+    src/geometry/paint.py:kerb_opening_bands breaks the kerbside paint over exactly these, and a
+    reader looking at a gap in a bike lane needs to see the driveway that caused it.
+    """
+    by_type: dict = {}
+    for line, tags, _way_id in kerb_lines:
+        by_type.setdefault(KerbType.from_tags(tags), []).append(line)
+    for kerb, lines in sorted(by_type.items(), key=lambda kv: str(kv[0])):
+        _draw(ax, lines, **KERB_STYLE[kerb])
+
+
 # Site- or scenario-specific extras (school zone signs, RRFB relocations, ...) have no
 # dedicated marker: they are whatever a config or a proposal named.
 EXTRA_PROP_MARKER = dict(color="darkgoldenrod", marker="^", s=30, zorder=7)
@@ -167,7 +200,7 @@ def _draw_props(ax, model: IntersectionModel, state: DesignState, crosswalk_offs
     kerb_lines = kerb_lines_with_tags_ft(model.center_wgs84, model.center_ft)
     props = build_props(model, state, crosswalk_offsets, model.center_ft, traffic_control,
                          street_furniture, crossings, fetch_kerbs(model.center_wgs84, radius_m=120))
-    _draw(ax, [line for line, _tags in kerb_lines], color="black", linewidth=2.2, zorder=6)
+    _draw_kerbs(ax, kerb_lines)
 
     # Grouped, then drawn once per group. See _draw / _scatter_groups.
     marker_points: dict[tuple, list] = {}
@@ -679,6 +712,9 @@ def legend_handles():
         Line2D([0], [0], color="black", lw=2, label="Curb line - FIELD-MEASURED width"),
         Line2D([0], [0], color="darkviolet", lw=2, ls="-.", label="Curb line - OSM-derived width"),
         Line2D([0], [0], color="crimson", lw=2, ls="--", label="Curb line - estimated width"),
+        Line2D([0], [0], color="black", lw=2.2, label="Traced kerb - RAISED (OSM kerb=raised)"),
+        Line2D([0], [0], color="black", lw=1.1, ls="--",
+               label="Traced kerb - LOWERED: a vehicle crosses, so the paint opens"),
         Line2D([0], [0], color="steelblue", lw=1, ls=(0,(4,2)), label="OSM sidewalk centerline"),
         Line2D([0], [0], color="#3b6ea5", lw=0.9, ls=(0,(7,3,1,3)), label="Leg centerline (widths measured from this)"),
         Line2D([0], [0], color="gold", lw=1.2, label="Centerline paint (double yellow / dashed)"),

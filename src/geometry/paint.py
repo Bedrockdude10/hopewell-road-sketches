@@ -278,6 +278,7 @@ class PaintContext:
     marked: set = field(default_factory=set)
     straight_through: set = field(default_factory=set)
     props: list | None = None
+    openings: object = None            # dropped kerbs a vehicle crosses: paint breaks over them
     surfaces: object = None            # the mountable aprons: paint stops at them
     surface_polygons: list = field(default_factory=list)
     pieces: list = field(default_factory=list)
@@ -333,10 +334,11 @@ class PaintContext:
             geometry = geometry.difference(unary_union(self.through_painted))
             if geometry.is_empty:
                 return added
-        # Cut clear of the mountable surfaces, then of the crossings - both may fragment a
-        # piece, so each stage runs over everything the previous one left.
-        surviving = [part for whole in clip_paint_clear_of(geometry, self.surfaces)
-                     for part in clip_paint_clear_of(whole, self.keep_clear)]
+        # Cut clear of the mountable surfaces, then of the crossings, then of the kerb
+        # openings - each may fragment a piece, so every stage runs over whatever the last left.
+        surviving = [cut for whole in clip_paint_clear_of(geometry, self.surfaces)
+                     for part in clip_paint_clear_of(whole, self.keep_clear)
+                     for cut in clip_paint_clear_of(part, self.openings)]
         for part in surviving:
             if beyond_ft is not None and _station_of(self.state.legs[leg], part) < beyond_ft:
                 continue
@@ -400,6 +402,7 @@ def curbside_paint_ft(state, crosswalk_offsets: dict, center_ft,
              if band is not None and not band.is_empty and name in marked}
     keep_clear = (unary_union(list(bands.values())).buffer(PAINT_TO_CROSSWALK_GAP_FT)
                    if bands else None)
+    openings = kerb_opening_bands(state)
     # --- and now the treatments paint themselves. Each one that has markings owns them
     # (Treatment.paint), so a marking's geometry lives beside the validation and the provenance
     # of the thing that calls for it, rather than in a block of this function keyed off one of
@@ -410,7 +413,7 @@ def curbside_paint_ft(state, crosswalk_offsets: dict, center_ft,
     # a design's dicts are last-write-wins, so two MarkedParking treatments on one kerb are one
     # marked lane and not two painted on top of each other.
     ctx = PaintContext(state=state, crosswalk_offsets=crosswalk_offsets, center_ft=center_ft,
-                        keep_clear=keep_clear, marked=marked,
+                        keep_clear=keep_clear, marked=marked, openings=openings,
                         straight_through=straight_through, props=props)
     current = {}
     for treatment in getattr(state, "treatments", []):
@@ -435,6 +438,44 @@ def curbside_paint_ft(state, crosswalk_offsets: dict, center_ft,
     for treatment in ordered[len(surface_pass):]:
         treatment.paint(ctx)
     return ctx.pieces
+
+
+def kerb_opening_bands(state):
+    """The union of ground the kerbside markings must break over, or None.
+
+    WHERE A VEHICLE CROSSES THE KERB, the markings it drives over open for it. A driveway is not
+    a place to paint a bike lane's green surface, a parking stall or a hatched buffer across:
+    those markings describe how the kerbside is used, and at a driveway it is used as an
+    entrance. The spans come from the traced kerbs' own kerb=lowered / kerb=flush tags - see
+    src/geometry/kerbs.py for why a dropped kerb rather than a driveway way is the signal.
+
+    HOW DEEP. From the travel lane's edge out to the real kerb, and no further in. A driveway
+    breaks what a car drives over on its way in; it does not break the line that marks the edge
+    of the running lane, which carries straight past. TARGET_LANE_WIDTH_FT is the inner bound
+    because that is the lane every treatment here holds - TravelLanesKeepTheirWidth is the
+    invariant that makes it true, so no kerbside marking on a passing leg starts inside it.
+
+    A PLAIN GAP, deliberately. Real striping often dashes a bike lane line across a driveway
+    rather than stopping it, and that is a marking this project does not have; a gap is the
+    honest version of "the paint does not continue here" and does not draw something unbuilt.
+    """
+    from src.geometry.model import offset_band_polygon
+    from src.geometry.treatments import TARGET_LANE_WIDTH_FT
+
+    bands = []
+    for (leg_name, side), openings in getattr(state, "kerb_openings", {}).items():
+        leg = state.legs.get(leg_name)
+        if leg is None or leg.curb_to_curb_ft is None:
+            continue
+        for opening in openings:
+            # The outer bound is deliberately past the nominal half-width: offset_band_polygon
+            # clamps it to the traced kerb, so asking for more than the road has means "out to
+            # the kerb, wherever it really is" rather than to a mid-block cross-section.
+            band = offset_band_polygon(leg, side, TARGET_LANE_WIDTH_FT, leg.curb_to_curb_ft,
+                                        opening.start_ft, opening.end_ft)
+            if band is not None and not band.is_empty:
+                bands.append(band)
+    return unary_union(bands) if bands else None
 
 
 def apron_polygon(state, corner: tuple[str, str], apron, center_ft):

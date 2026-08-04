@@ -222,7 +222,7 @@ def kerb_lines_with_tags_ft(center_wgs84: Point, center_ft: Point, legs: dict | 
     the widths are settled and the extra ways can only lengthen a curb, never redefine one.
     See tests/test_leg_frame.py.
     """
-    return [(line, tags) for line, tags in _projected_kerbs(center_wgs84)
+    return [(line, tags, way_id) for line, tags, way_id in _projected_kerbs(center_wgs84)
             if (_runs_along_a_leg(line, legs) if legs
                 else line.distance(center_ft) <= KERB_NEAR_JUNCTION_FT)]
 
@@ -237,7 +237,12 @@ _PROJECTED_KERBS: dict[tuple, tuple] = {}
 
 
 def _projected_kerbs(center_wgs84: Point) -> list[tuple]:
-    """[(LineString in feet, tags)] for every traced kerb WAY near the junction.
+    """[(LineString in feet, tags, way id)] for every traced kerb WAY near the junction.
+
+    The id is carried because a marking this project BREAKS for a kerb has to be traceable to
+    the kerb that broke it - see src/geometry/kerbs.py:KerbOpening.citation. It was dropped here
+    before, and nothing read the tags either, so a caller wanting to know which way a line came
+    from had to re-fetch and re-project to find out.
 
     Lone `barrier=kerb` NODES are dropped: they carry no arc to fit and no line to draw.
     """
@@ -265,7 +270,7 @@ def _projected_kerbs(center_wgs84: Point) -> list[tuple]:
         if not coords:
             continue
         xs, ys = wgs84_to_state_plane.transform([c[0] for c in coords], [c[1] for c in coords])
-        projected.append((LineString(zip(xs, ys)), kerb.get("tags", {})))
+        projected.append((LineString(zip(xs, ys)), kerb.get("tags", {}), kerb.get("id")))
     _PROJECTED_KERBS[key] = (kerbs, projected)
     return projected
 
@@ -284,7 +289,7 @@ def _kerb_lines_ft(center_wgs84: Point, center_ft: Point) -> list[LineString]:
     first and came out as a bare RuntimeError rather than the OSMDataUnavailableError written
     to explain it.
     """
-    return [line for line, _tags in kerb_lines_with_tags_ft(center_wgs84, center_ft)]
+    return [line for line, *_ in kerb_lines_with_tags_ft(center_wgs84, center_ft)]
 
 
 def _widths_from_traced_kerbs(legs: dict, kerb_lines: list, legs_cfg: dict) -> dict:
@@ -846,7 +851,7 @@ def _apply_traced_curb_lines(legs: dict, kerb_ways: list, center_ft: Point,
     length: legs may be different lengths (see load_intersection_model's leg_lengths), and a
     global would draw every curb to the longest leg's end.
     """
-    lines = [line for line, _tags in kerb_ways]
+    lines = [line for line, *_ in kerb_ways]
     if not lines:
         return {}
     coverage: dict[tuple[str, str], tuple[float, float]] = {}

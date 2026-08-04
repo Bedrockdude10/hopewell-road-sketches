@@ -9,6 +9,7 @@ from typing import ClassVar
 import numpy as np
 from shapely.geometry import Polygon
 
+from src.geometry.kerbs import kerb_openings_from_model
 from src.geometry.targets import BOTH_SIDES, LegSide, LegTarget, Side, Target
 from src.geometry.model import (BULBOUT_TAPER_RATE, build_pavement_polygon, curb_extension_line,
                                 fillet_curb_corner, leg_clearance_ft, narrowest_half_width_ft)
@@ -248,6 +249,12 @@ class DesignState:
     # centerline_style() for the resolved answer rather than reading this, or a proposal's
     # change is invisible.
     existing_centerline_styles: dict = field(default_factory=dict)
+    # (leg name, "left"|"right") -> [KerbOpening]. Where OSM says the kerb is DROPPED for a
+    # vehicle to cross - a driveway or a yard entrance. Seeded from the traced kerbs' own
+    # kerb=lowered / kerb=flush tags in from_model, the third observed fact on this design
+    # alongside the two below, and read by src/geometry/paint.py to break the kerbside markings
+    # over it. See src/geometry/kerbs.py.
+    kerb_openings: dict = field(default_factory=dict)
     # (leg name, "left"|"right") -> [ParkingRestriction]. What OSM says about this kerb, per
     # STRETCH of it - seeded from the model in from_model. Read by src/geometry/daylighting.py,
     # which turns a prohibition into a no-parking zone like any statutory one.
@@ -293,6 +300,7 @@ class DesignState:
                 centerline_styles[name] = DEFAULT_CENTERLINE_STYLE
         return cls(legs=deepcopy(model.legs), corner_fillets=deepcopy(model.corner_fillets),
                    existing_centerline_styles=centerline_styles,
+                   kerb_openings=kerb_openings_from_model(model),
                    parking_restrictions=_parking_restrictions_from_model(model))
 
     def clone(self) -> "DesignState":

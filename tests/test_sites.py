@@ -1503,7 +1503,7 @@ def test_no_traced_kerb_vertex_is_silently_unclaimed(site, site_models):
 
     model = site_models[site]
     with contextlib.redirect_stdout(io.StringIO()):
-        ways = [line for line, _tags in kerb_lines_with_tags_ft(model.center_wgs84,
+        ways = [line for line, *_ in kerb_lines_with_tags_ft(model.center_wgs84,
                                                                  model.center_ft)]
     points = np.concatenate([np.asarray(w.coords, dtype=float) for w in ways])
     tangents = np.concatenate([_vertex_tangents(w) for w in ways])

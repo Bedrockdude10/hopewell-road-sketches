@@ -18,7 +18,8 @@ from src.render.crosswalks import (CROSSWALK_DEPTH_M, STOP_BAR_CURB_CLEARANCE_M,
                                    entering_lane_width_ft, resolve_crosswalk_style,
                                    stop_bar_band_geometry_ft, stop_bar_width_ft)
 from src.geometry.model import hatch_lines_ft
-from src.geometry.intersection import IntersectionModel
+from src.geometry.intersection import IntersectionModel, kerb_lines_with_tags_ft
+from src.geometry.kerbs import KerbType
 from src.geometry.markings import CHANNELS, KINDS, Role, kinds_in
 from src.geometry.paint import in_channel
 from src.render.mesh_utils import build_decimated_building_mesh
@@ -35,6 +36,17 @@ TRAFFIC_CONTROL_RADIUS_M = 60  # control nodes govern THIS junction; a wider net
 SIDEWALK_WIDTH_FT = 6
 NEAR_ZONE_BUFFER_FT = 10  # how far past the farthest crosswalk the "near" (4k texture) pavement zone extends
 HATCH_ANGLE_DEG = 45.0  # for a corner treatment, which belongs to no single leg's heading
+# How tall each kind of kerb is built, measured from z=0 like the pavement slab - so the REVEAL
+# above the road is this minus the pavement's own 0.05 m. A raised kerb gets a 0.15 m reveal, the
+# ordinary 6 in; a lowered one 0.02 m, which reads as a dropped kerb a car can cross rather than
+# as no kerb at all. UNKNOWN is built at the lowered height on purpose: an untagged kerb must not
+# render as a claim that a vehicle cannot cross it.
+#
+# NOTE the sidewalk band is extruded 0.03 m, i.e. BELOW the 0.05 m pavement, so a footway here
+# currently sits lower than the road it borders. That predates this and is left alone rather than
+# changed in passing - raising it is a visible change to every render and its own decision.
+KERB_HEIGHT_M = {KerbType.RAISED: 0.20, KerbType.LOWERED: 0.07,
+                 KerbType.FLUSH: 0.055, KerbType.UNKNOWN: 0.07}
 PAINT_HATCH_SPACING_FT = 8.0  # spacing between rendered diagonal hatch lines - a rendering choice, not MUTCD-specified.
                                # At the original 2.5ft spacing, each stroke (which runs the buffer's full diagonal
                                # width, edge-to-edge, per hatch_lines_ft) touched the inner lane-edge line so
@@ -374,6 +386,20 @@ def export_scenario(model: IntersectionModel, state: DesignState, name: str, out
              "coords": ring_to_local_m(raised.polygon(state).exterior.coords, center_ft),
              "height_m": 0.10}
             for raised in state.treatments_of(RaiseCrossing)
+        ],
+        # THE TRACED KERBS, with what OSM says each one is. There was no kerb in this render at
+        # all: the pavement is one slab and the "kerb" was the material boundary where the
+        # concrete band started, so a dropped kerb and a 6 in stood-up kerb looked identical and
+        # the raised/lowered tagging on all 95 mapped ways reached nothing.
+        #
+        # The SAME set the plan view draws (kerb_lines_with_tags_ft with no legs - the near set),
+        # because the two views disagreeing about which kerbs exist is the failure this project
+        # is built around.
+        "kerbs": [
+            {"coords": ring_to_local_m(line.coords, center_ft),
+             "kerb": str(KerbType.from_tags(tags)),
+             "height_m": KERB_HEIGHT_M[KerbType.from_tags(tags)]}
+            for line, tags, _way_id in kerb_lines_with_tags_ft(model.center_wgs84, center_ft)
         ],
         "corner_parcels": [
             {"name": str(row["quadrant"]), "coords": ring_to_local_m(row.geometry.exterior.coords, center_ft)}

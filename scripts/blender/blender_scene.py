@@ -116,6 +116,10 @@ def clear_scene():
 # block produces. See build_scene's framing note.
 LEG_REACH_TOLERANCE = 1.05
 
+# How wide a kerb is built. A real kerb's top face is about 6 in; this only has to read as an
+# edge at the camera distance, and the height is what carries the raised/lowered distinction.
+KERB_WIDTH_M = 0.15
+
 
 def build_scene(data: dict):
     theme = data.get("theme") or {}
@@ -129,6 +133,7 @@ def build_scene(data: dict):
     refuge_mat = make_material("Refuge", (0.22, 0.5, 0.26), roughness=0.8)
     crossing_mat = make_material("RaisedCrossing", (0.68, 0.58, 0.48), roughness=0.8)
     marking_mat = make_material("Marking", (0.9, 0.9, 0.88), roughness=0.4)
+    kerb_mat = make_material("Kerb", (0.62, 0.61, 0.58), roughness=0.8)
     # A green bike lane's surface colour. Matches plan_view.py's "mediumseagreen" closely
     # enough that the two views read as the same treatment - the plan view draws it
     # semi-transparent over grey paper, this over black asphalt, so they cannot be identical
@@ -203,6 +208,21 @@ def build_scene(data: dict):
         extrude_polygon(f"sidewalk_near_{i}", ring, 0.03, concrete_near)
     for i, ring in enumerate(data.get("sidewalks_far", [])):
         extrude_polygon(f"sidewalk_far_{i}", ring, 0.03, concrete_far)
+
+    # The traced kerbs, at the height their OSM kerb= tag calls for (src/render/export.py:
+    # KERB_HEIGHT_M). There was no kerb in this scene before - the road slab simply met the
+    # concrete band - so a 6 in stood-up kerb and a driveway's dropped kerb looked the same, and
+    # the kerbside markings that now BREAK over a dropped kerb had nothing visible to break for.
+    #
+    # add_paint_polyline, not extrude_polygon: a kerb is a band of constant width following a
+    # sampled line, which is exactly what that builder makes, and drawing the chord between the
+    # endpoints instead would cut every corner the tracing turns.
+    for i, kerb in enumerate(data.get("kerbs", [])):
+        coords = kerb.get("coords") or []
+        if len(coords) < 2:
+            continue
+        add_paint_polyline(f"kerb_{kerb.get('kerb', 'unknown')}_{i}", coords, KERB_WIDTH_M,
+                           kerb_mat, height_m=kerb.get("height_m", 0.20), z_base=0.0)
 
     # Paint-only / no-curb-change proposal treatments (src/geometry/treatments.py:
     # add_lane_narrowing / add_corner_hatching / add_mountable_apron) - sit

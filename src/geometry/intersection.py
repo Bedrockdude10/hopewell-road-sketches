@@ -9,6 +9,7 @@ import geopandas as gpd
 import numpy as np
 from shapely import affinity
 from shapely.geometry import LineString, Point
+from shapely.ops import substring
 
 from src.sources.data_loader import load_parcels_near, load_road_network
 from src.render.coords import wgs84_to_state_plane
@@ -185,22 +186,23 @@ def kerb_lines_with_tags_ft(center_wgs84: Point, center_ft: Point, legs: dict | 
     """[(LineString, tags)] for traced kerbs near the junction - geometry plus what OSM
     says about each (kerb=lowered, tactile_paving=yes, wheelchair=yes).
 
-    KNOWN LIMITATION, measured. The KERB_NEAR_JUNCTION_FT radius is the right test for
-    fitting a corner RADIUS but the wrong one for building curb LINES, which want kerb
-    anywhere along a 130 ft leg. 14 traced ways across the four junctions lie at stations
-    76-127 with plausible kerb offsets and are dropped for being >80 ft from the junction
-    CENTRE - including both sides of greenwood_ave_south from ~90 ft out. Their absence is
-    invisible in the output because curb_line_from_points extrapolates to the working length,
-    so the outer part of those legs is drawn from a bearing rather than from tracing that
-    exists.
+    Two relevance tests, because "is this kerb ours" has two different answers. With `legs`
+    omitted this returns the NEAR set: everything within KERB_NEAR_JUNCTION_FT of the junction
+    CENTRE, which is the right test for fitting a corner RADIUS and for measuring a width -
+    a return belonging to this junction is close to it, and at the 120 m fetch radius anything
+    looser drags in the neighbouring junctions' returns. Pass `legs` and the test becomes
+    _runs_along_a_leg instead: kerb anywhere along a leg, however far out, which is what a
+    curb LINE wants. 14 traced ways across the four junctions sit at stations 76-127 with
+    plausible kerb offsets and fail the near test - both sides of greenwood_ave_south from
+    ~90 ft out among them.
 
-    _runs_along_a_leg is the correct test and is implemented and tested below. It is NOT wired
-    in yet: admitting those ways shifts w_broad_st_southwest's measured width, which reshuffles
-    the vertex contest at the one junction with an acute Y and partial tracing, and
-    louellen_st_west drops from two traced kerbs to one. Net across the four sites that is a
-    loss, so it waits for the assignment to stop being winner-takes-all globally - a far way
-    belongs to exactly one leg by construction and should not compete for the junction's
-    shared vertices at all. See tests/test_leg_frame.py.
+    The wide set is deliberately NOT fed to the fit. Admitting those ways shifts
+    w_broad_st_southwest's measured width, that reshuffles the vertex contest at the one
+    junction with an acute Y and partial tracing, and louellen_st_west drops from two traced
+    kerbs to one - more data in, less data used. So the fit runs on the near set and
+    _extend_curbs_with_far_tracing rebuilds the curb lines from the wide set afterwards, once
+    the widths are settled and the extra ways can only lengthen a curb, never redefine one.
+    See tests/test_leg_frame.py.
     """
     try:
         kerbs = fetch_kerbs(center_wgs84, radius_m=KERB_CONTEXT_RADIUS_M)
@@ -318,6 +320,15 @@ SEED_RATIO_BOUNDS = (0.2, 5.0)
 # returns is the width of the corner, not of the street, so the measurement below starts
 # beyond them. Same distance UNTRACED_CORNER_THRESHOLD_FT uses for the same reason.
 TRACED_SECTION_START_FT = 35.0
+# ...and it ENDS here, which is not the same as ending where the leg does. The window used to
+# run to the traced curb line's far end, and a curb line is drawn to the leg's working length -
+# so lengthening a leg to show more of it silently re-measured its width. Carrying
+# broad_st_east from 130 to 170 ft moved it 52.0 -> 49.9 ft, because East Broad narrows as it
+# leaves the junction and the extra 40 ft of narrower street pulled the median down. A width
+# is a fact about the approach; how far we chose to DRAW the approach is a presentation
+# choice, and a presentation choice may not move a measurement. So the cross-section is always
+# taken over the same stretch of road whatever working_length_ft says.
+TRACED_SECTION_END_FT = 130.0
 # Below this there isn't enough of a traced overlap to call it a cross-section.
 MIN_TRACED_SECTION_FT = 20.0
 TRACED_SECTION_SAMPLES = 40
@@ -352,7 +363,7 @@ def _traced_cross_section(leg) -> tuple[np.ndarray, np.ndarray] | None:
     if any(span is None for span in spans):
         return None
     lo = max(max(span[0] for span in spans), TRACED_SECTION_START_FT)
-    hi = min(span[1] for span in spans)
+    hi = min(min(span[1] for span in spans), TRACED_SECTION_END_FT)
     if hi - lo < MIN_TRACED_SECTION_FT:
         return None
     stations = np.linspace(lo, hi, TRACED_SECTION_SAMPLES)
@@ -386,7 +397,7 @@ def _resize_from_one_traced_kerb(legs: dict, name: str, legs_cfg: dict, quiet: b
     span = curb_station_span(leg, side)
     if span is None:
         return False
-    lo, hi = max(span[0], TRACED_SECTION_START_FT), span[1]
+    lo, hi = max(span[0], TRACED_SECTION_START_FT), min(span[1], TRACED_SECTION_END_FT)
     if hi - lo < MIN_TRACED_SECTION_FT:
         lo, hi = span            # short trace: all of it, corner return and all
     offsets = curb_offsets_at_stations(leg, side, np.linspace(lo, hi, TRACED_SECTION_SAMPLES))
@@ -503,7 +514,7 @@ def _traced_side_count(legs: dict) -> int:
 
 
 def _extend_curbs_with_far_tracing(legs: dict, center_wgs84: Point, center_ft: Point,
-                                    working_len: float) -> None:
+                                    near_coverage: dict | None = None) -> None:
     """Rebuild the curb lines once more, this time including kerb traced further out.
 
     KERB_NEAR_JUNCTION_FT keeps the fit's input to the ways around the junction, which is
@@ -528,17 +539,34 @@ def _extend_curbs_with_far_tracing(legs: dict, center_wgs84: Point, center_ft: P
     before = _traced_side_count(legs)
     saved = {name: (leg.left_curb, leg.right_curb, set(leg.traced_sides))
              for name, leg in legs.items()}
-    _apply_traced_curb_lines(legs, wide, center_ft, working_len, quiet=True)
+    near_coverage = near_coverage or {}
+    coverage = _apply_traced_curb_lines(legs, wide, center_ft, quiet=True)
     if _traced_side_count(legs) < before:
         for name, (left, right, traced) in saved.items():
             legs[name].left_curb, legs[name].right_curb = left, right
             legs[name].traced_sides = traced
         print(f"  NOTE: kerb traced beyond {KERB_NEAR_JUNCTION_FT:.0f} ft would have built "
               f"{before - _traced_side_count(legs)} fewer leg side(s) here - not used.")
+        return
+
+    # Correct the record. The fit reported each side's coverage from the NEAR set, because that
+    # is all it was allowed to see, and those numbers are what a reader takes as "how much of
+    # this curb is real". Left uncorrected they understate it - broad_st_east's left kerb reads
+    # as traced to 76 ft when the drawing actually follows tracing to 173.7 - and a curb that
+    # looks extrapolated but isn't is the same reporting failure as one that looks traced but
+    # isn't, pointed the other way.
+    grew = [(name, side, was, now_far)
+            for (name, side), (_near, now_far) in sorted(coverage.items())
+            for was in [near_coverage.get((name, side))]
+            if was is not None and now_far > was[1] + 1.0]
+    for name, side, was, now_far in grew:
+        print(f"  NOTE: {name} {side} curb follows traced kerb out to {now_far:.0f} ft, not the "
+              f"{was[1]:.0f} ft reported above - the rest is traced beyond the "
+              f"{KERB_NEAR_JUNCTION_FT:.0f} ft junction radius the fit is restricted to.")
 
 
-def _fit_legs_to_traced_kerbs(legs: dict, kerb_ways: list, center_ft: Point, legs_cfg: dict,
-                               working_len: float) -> None:
+def _fit_legs_to_traced_kerbs(legs: dict, kerb_ways: list, center_ft: Point,
+                               legs_cfg: dict) -> None:
     """Iterate assignment and measurement until they agree, then report the result.
 
     These two steps each need the other's answer. A traced vertex is assigned to the leg
@@ -556,12 +584,21 @@ def _fit_legs_to_traced_kerbs(legs: dict, kerb_ways: list, center_ft: Point, leg
     and the loop stops as soon as a round changes nothing material. It converges in 2-3
     rounds at all four junctions - and if some junction ever fails to settle, the cap ends
     it and the printed widths are still the ones actually used.
+
+    Returns the {(leg, side): (near_ft, far_ft)} coverage it reported, so the far-tracing pass
+    that runs next can correct those figures where it extends a curb past them.
     """
     started_at = {name: leg.centerline.coords[0] for name, leg in legs.items()}
+    reported: dict[tuple[str, str], tuple[float, float]] = {}
 
     def apply_curbs(quiet=True, ratio_bounds=None):
-        _apply_traced_curb_lines(legs, kerb_ways, center_ft, working_len, quiet=quiet,
-                                  ratio_bounds=ratio_bounds)
+        coverage = _apply_traced_curb_lines(legs, kerb_ways, center_ft, quiet=quiet,
+                                             ratio_bounds=ratio_bounds)
+        # Only the loud round, because `reported` exists to be corrected against what the
+        # reader was actually shown. The quiet rounds print nothing to correct.
+        if not quiet:
+            reported.clear()
+            reported.update(coverage)
 
     def snapshot():
         return {name: (leg.curb_to_curb_ft, leg.centerline) for name, leg in legs.items()}
@@ -620,6 +657,7 @@ def _fit_legs_to_traced_kerbs(legs: dict, kerb_ways: list, center_ft: Point, leg
             print(f"  NOTE: {name}'s working centerline sits {moved_ft:.1f} ft off NJDOT's alignment, "
                   f"midway between its two traced kerbs. The alignment is a linear-referencing "
                   f"reference, not a surveyed carriageway centre; the paint is measured from here.")
+    return dict(reported)
 
 
 # Past this distance out from the junction, a traced kerb says nothing about the corner.
@@ -692,7 +730,7 @@ def _match_legs_to_osm_roads(legs: dict, center_wgs84: Point, center_ft: Point) 
     return out
 
 
-def _apply_traced_curb_lines(legs: dict, kerb_ways: list, center_ft: Point, working_len: float,
+def _apply_traced_curb_lines(legs: dict, kerb_ways: list, center_ft: Point,
                               quiet: bool = False,
                               ratio_bounds: tuple[float, float] | None = None) -> None:
     """Replace a leg's derived curb lines with the surveyor's traced kerbs.
@@ -712,10 +750,15 @@ def _apply_traced_curb_lines(legs: dict, kerb_ways: list, center_ft: Point, work
     kerb=lowered because it's a ramp - that is a statement about its height, not about
     whether it is the edge of the roadway, and filtering to kerb=raised dropped whole
     traced corners (the SW corner of Broad & Greenwood) in favour of a fitted guess.
+
+    How far to carry a curb comes from the leg's OWN centerline, not from a site-wide working
+    length: legs may be different lengths (see load_intersection_model's leg_lengths), and a
+    global would draw every curb to the longest leg's end.
     """
     lines = [line for line, _tags in kerb_ways]
     if not lines:
-        return
+        return {}
+    coverage: dict[tuple[str, str], tuple[float, float]] = {}
     assigned = assign_curb_points_to_legs(legs, lines, ratio_bounds)
     # Which kerbs have no corner return at their junction end, and so should be extended in
     # to the node rather than stopping where the tracing happens to stop.
@@ -723,13 +766,14 @@ def _apply_traced_curb_lines(legs: dict, kerb_ways: list, center_ft: Point, work
     for name, sides in assigned.items():
         leg = legs[name]
         for side, points in sides.items():
-            curb = curb_line_from_points(points, leg, working_len,
+            curb = curb_line_from_points(points, leg, leg.centerline.length,
                                           extend_to_junction=(name, side) in straight_through)
             if curb is None:
                 continue
             setattr(leg, f"{side}_curb", curb)
             leg.traced_sides.add(side)
             near, far = min(p[0] for p in points), max(p[0] for p in points)
+            coverage[(name, side)] = (near, far)
             if not quiet:
                 print(f"  NOTE: {name} {side} curb is the traced OSM kerb itself, {len(points)} points "
                       f"covering {near:.0f}-{far:.0f} ft out from the junction.")
@@ -751,6 +795,7 @@ def _apply_traced_curb_lines(legs: dict, kerb_ways: list, center_ft: Point, work
         print(f"  NOTE: no traced kerb within {UNTRACED_CORNER_THRESHOLD_FT:.0f} ft of the junction on: "
               f"{'; '.join(gaps)}. Those corners are bridged, not traced - tracing the kerb up to "
               f"the corner return would fix them.")
+    return coverage
 
 
 def _build_corners(legs: dict, radius_ft: float, corner_radii: dict, kerb_lines: list) -> dict:
@@ -813,6 +858,14 @@ def load_intersection_model(config: dict | None = None, site: str | None = None)
 
     working_len = config["intersection"]["leg_working_length_ft"]
     legs_cfg = config["legs"]
+    # How far to carry each leg, PER LEG. The site-wide value is the default; a leg may
+    # override it with legs.<name>.working_length_ft. Legs are not interchangeable in how far
+    # they can honestly be drawn - a curb is traced as far as somebody traced it, and past
+    # that curb_line_from_points extrapolates from a bearing. So the length that shows the
+    # most ground truth on an arterial is longer than the one that starts inventing kerb on
+    # the cross street. One global forces the shorter answer on both.
+    leg_lengths = {name: float(cfg.get("working_length_ft", working_len))
+                   for name, cfg in legs_cfg.items()}
     sri_to_leg_names: dict[str, list[str]] = {}
     for name, leg_cfg in legs_cfg.items():
         sri_to_leg_names.setdefault(leg_cfg["sri"], []).append(name)
@@ -829,13 +882,22 @@ def load_intersection_model(config: dict | None = None, site: str | None = None)
         # offset_curve() self-intersect (returns a MultiLineString) at typical
         # curb-to-curb widths. A few feet of simplification removes it without
         # affecting real road geometry at this scale.
-        pieces = [p.simplify(3.0) for p in split_leg_centerlines(line, center_ft, working_len)]
+        # Split to the LONGEST length wanted on this SRI - which leg a piece is cannot be
+        # known until _assign_leg_pieces has matched it by bearing, so cutting to a specific
+        # leg's length here would truncate the wrong one. Each piece is trimmed to its own
+        # leg's length below, after it has a name.
+        split_len = max(leg_lengths[n] for n in leg_names)
+        pieces = [p.simplify(3.0) for p in split_leg_centerlines(line, center_ft, split_len)]
         pieces = [_snap_to_center(p, center_ft) for p in pieces]
         snap_ft = _snap_distance_ft(line, center_ft)
         if snap_ft > SNAP_REPORT_THRESHOLD_FT:
             print(f"  NOTE: SRI {sri} centerline passes {snap_ft:.1f} ft from the resolved intersection "
                   f"node - snapped onto it (legs {', '.join(leg_names)}).")
         for name, piece in _assign_leg_pieces(pieces, leg_names, legs_cfg, center_ft).items():
+            # Trimmed from the snapped junction end outward, so a shortened leg keeps the
+            # station-0 origin every measurement in the project is taken from.
+            if piece.length > leg_lengths[name]:
+                piece = substring(piece, 0, leg_lengths[name])
             legs[name] = Leg(name=name, centerline=piece, curb_to_curb_ft=legs_cfg[name].get("curb_to_curb_ft"))
 
     kerb_lines = _kerb_lines_ft(center, center_ft)
@@ -851,8 +913,8 @@ def load_intersection_model(config: dict | None = None, site: str | None = None)
     # to measure, and the corrected width and centre then change which vertices belong to
     # which leg side, so the assignment is redone in the corrected frame. Silent the first
     # time round - the coverage it reports is about the final geometry, not the scaffold.
-    _fit_legs_to_traced_kerbs(legs, kerb_ways, center_ft, legs_cfg, working_len)
-    _extend_curbs_with_far_tracing(legs, center, center_ft, working_len)
+    near_coverage = _fit_legs_to_traced_kerbs(legs, kerb_ways, center_ft, legs_cfg)
+    _extend_curbs_with_far_tracing(legs, center, center_ft, near_coverage)
     matched_roads = _match_legs_to_osm_roads(legs, center, center_ft)
     leg_osm_tags = {name: tags for name, (tags, _aligned) in matched_roads.items()}
     leg_osm_aligned = {name: aligned for name, (_tags, aligned) in matched_roads.items()}

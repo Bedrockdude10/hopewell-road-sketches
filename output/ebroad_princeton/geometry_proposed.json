@@ -5,8 +5,8 @@
     "add_lane_narrowing(e_broad_st_east, stripe_width_ft=7.459723870281515, line_only=False, sides=('left', 'right'))",
     "apply_osm_parking(e_broad_st_east, left): 7.5 ft hatched - OSM says 'no_stopping'",
     "apply_osm_parking(e_broad_st_east, right): 7.5 ft hatched - OSM says 'no_stopping'",
-    "add_lane_narrowing(e_broad_st_west, stripe_width_ft=8.11785493175114, line_only=False, sides=('left', 'right'))",
-    "apply_osm_parking(e_broad_st_west, left): 8.1 ft hatched - OSM says 'no_parking'",
+    "add_lane_narrowing(e_broad_st_west, stripe_width_ft=8.117854931751143, line_only=False, sides=('left', 'right'))",
+    "apply_osm_parking(e_broad_st_west, left): 8.1 ft hatched - OSM says 'no_stopping'",
     "apply_osm_parking(e_broad_st_west, right): 8.1 ft hatched - OSM says 'no_stopping'",
     "add_lane_narrowing(princeton_ave_south, stripe_width_ft=4.105132911977055, line_only=False, sides=('left', 'right'))",
     "apply_osm_parking(princeton_ave_south, left): 4.1 ft hatched - OSM says 'no_parking'",
@@ -10431,13 +10431,13 @@
       ],
       "heading_deg": 18.336245878892296,
       "arm_heading_deg": 108.3362458788923,
-      "arm_length_ft": 19.11785493175114,
+      "arm_length_ft": 19.117854931751143,
       "source": "confirmed (e_broad_st_west/princeton_ave_south corner - Signalization confirmed from OSM: node 104041625 at this exact junction is tagged highway=traffic_signals, traffic_signals:direction=both, and both mapped crossings (ways 376498301 / 376498323) are crossing=traffic_signals with button_operated=yes - i.e. pedestrian signal heads with pushbuttons really do exist here. That is real surveyed third-party data, NOT a field survey and NOT a street-view review by us. What is NOT sourced: the pole hardware type above, and the per-corner pedestrian_head placement below.\n): full-width mast-arm signal, pole at the real corner-fillet arc midpoint; the arm extends at a right angle to e_broad_st_west (parallel to its crosswalk, perpendicular to its travel direction), reaching roughly to mid-roadway (arm_length_ft=19.1, half of e_broad_st_west's real curb-to-curb width) - confirmed via street-view against a real example (NW corner's arm over West Broad St), not a diagonal reach toward the intersection center. Exactly which lane the head hangs over isn't surveyed.",
       "position_m": [
         -3.1528111590825487,
         -8.999901399398503
       ],
-      "arm_length_m": 5.827122183197748
+      "arm_length_m": 5.827122183197749
     },
     {
       "type": "pedestrian_signal_head",
@@ -10495,7 +10495,7 @@
         -37.56116851461456,
         -12.618661441874877
       ],
-      "width_m": 11.654244366395496,
+      "width_m": 11.654244366395497,
       "confirmed": false,
       "crosswalk_offset_m": 6.892634554999566,
       "crosswalk_offset_source": "osm_survey",

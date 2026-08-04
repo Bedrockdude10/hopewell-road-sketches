@@ -3938,8 +3938,8 @@
         -28.818964876141216
       ],
       [
-        -28.164725141137794,
-        -29.004627566509882
+        -28.144255656095783,
+        -28.99120804618886
       ],
       [
         -43.36678090418978,
@@ -4040,12 +4040,12 @@
         -28.074685037879462
       ],
       [
-        23.25161811103765,
-        -32.35386314266697
+        23.251618110948943,
+        -32.35386314248955
       ],
       [
-        14.824324941279972,
-        -37.16124011888914
+        14.824324941191264,
+        -37.161240118711724
       ],
       [
         14.283209435688146,
@@ -10998,12 +10998,12 @@
         -30.348394534593357
       ],
       [
-        -27.16205153527195,
-        -30.534057224962023
+        -27.141582050247678,
+        -30.520637704641
       ],
       [
-        -28.164725141137794,
-        -29.004627566509882
+        -28.144255656095783,
+        -28.99120804618886
       ],
       [
         -27.881524283494755,
@@ -11892,7 +11892,7 @@
     ],
     [
       [
-        12.69628686348321,
+        12.696286863500951,
         -37.12546004610407
       ],
       [
@@ -11932,15 +11932,15 @@
         -36.216512198399755
       ],
       [
-        14.824324941279972,
-        -37.16124011888914
+        14.824324941191264,
+        -37.161240118711724
       ],
       [
-        13.237402369075037,
-        -38.07018796659345
+        13.23740236900407,
+        -38.070187966416036
       ],
       [
-        12.69628686348321,
+        12.696286863500951,
         -37.12546004610407
       ]
     ],
@@ -11966,12 +11966,12 @@
         -27.14043902078653
       ],
       [
-        24.823780259022676,
-        -31.41961712560952
+        24.82378025893397,
+        -31.41961712539662
       ],
       [
-        23.25161811103765,
-        -32.35386314266697
+        23.251618110948943,
+        -32.35386314248955
       ],
       [
         20.70874738625279,
@@ -12012,20 +12012,20 @@
     ],
     [
       [
-        21.66285741042872,
-        -33.260176885272195
+        21.66285741032227,
+        -33.26017688513026
       ],
       [
-        23.25161811103765,
-        -32.35386314266697
+        23.251618110948943,
+        -32.35386314248955
       ],
       [
-        21.679455963052625,
-        -33.288109159724414
+        21.679455962963914,
+        -33.28810915958248
       ],
       [
-        21.66285741042872,
-        -33.260176885272195
+        21.66285741032227,
+        -33.26017688513026
       ]
     ],
     [
@@ -13068,8 +13068,8 @@
         -20.09031598401759
       ],
       [
-        -41.63040619475604,
-        -21.108506248869283
+        -41.628145635138175,
+        -21.10692818293283
       ],
       [
         -42.3199596892173,
@@ -13307,32 +13307,6 @@
     {
       "type": "pedestrian_pushbutton",
       "position_ft": [
-        419196.3230386492,
-        566761.172753846
-      ],
-      "heading_deg": 297.9275900696151,
-      "source": "real (OSM button_operated=yes on broad_st_east's crossing): a pushbutton-actuated pedestrian phase really exists here, and this end of the surveyed crossing way is where the pole stands. Approximation: stepped clear of the modelled roadway if needed, and the button's height/offset from the pole are generic.",
-      "position_m": [
-        11.328287252172595,
-        -7.683654459457286
-      ]
-    },
-    {
-      "type": "pedestrian_pushbutton",
-      "position_ft": [
-        419160.36930763075,
-        566828.9985369116
-      ],
-      "heading_deg": 117.92759006961515,
-      "source": "real (OSM button_operated=yes on broad_st_east's crossing): a pushbutton-actuated pedestrian phase really exists here, and this end of the surveyed crossing way is where the pole stands. Approximation: stepped clear of the modelled roadway if needed, and the button's height/offset from the pole are generic.",
-      "position_m": [
-        0.36959003774360755,
-        12.98964421891328
-      ]
-    },
-    {
-      "type": "pedestrian_pushbutton",
-      "position_ft": [
         419125.16682873934,
         566807.6964200177
       ],
@@ -13354,6 +13328,32 @@
       "position_m": [
         0.3904844282208011,
         -14.346485587420688
+      ]
+    },
+    {
+      "type": "pedestrian_pushbutton",
+      "position_ft": [
+        419196.3230386492,
+        566761.172753846
+      ],
+      "heading_deg": 297.9275900696151,
+      "source": "real (OSM button_operated=yes on broad_st_east's crossing): a pushbutton-actuated pedestrian phase really exists here, and this end of the surveyed crossing way is where the pole stands. Approximation: stepped clear of the modelled roadway if needed, and the button's height/offset from the pole are generic.",
+      "position_m": [
+        11.328287252172595,
+        -7.683654459457286
+      ]
+    },
+    {
+      "type": "pedestrian_pushbutton",
+      "position_ft": [
+        419160.36930763075,
+        566828.9985369116
+      ],
+      "heading_deg": 117.92759006961515,
+      "source": "real (OSM button_operated=yes on broad_st_east's crossing): a pushbutton-actuated pedestrian phase really exists here, and this end of the surveyed crossing way is where the pole stands. Approximation: stepped clear of the modelled roadway if needed, and the button's height/offset from the pole are generic.",
+      "position_m": [
+        0.36959003774360755,
+        12.98964421891328
       ]
     },
     {
@@ -13390,8 +13390,8 @@
         419161.22208021313,
         566735.1193906292
       ],
-      "heading_deg": 34.38748728232145,
-      "arm_heading_deg": 124.38748728232146,
+      "heading_deg": 34.56344781627812,
+      "arm_heading_deg": 124.56344781627811,
       "arm_length_ft": 27.75,
       "source": "confirmed (broad_st_west/greenwood_ave_south corner - Corrected 2026-07-02 (Rollo): the earlier street-view photo review (2026-07-02) misread this hardware as a short davit arm - the signals are actually mast-arm held. Still a direct visual observation, not a field survey.\n): full-width mast-arm signal, pole at the real corner-fillet arc midpoint; the arm extends at a right angle to broad_st_west (parallel to its crosswalk, perpendicular to its travel direction), reaching roughly to mid-roadway (arm_length_ft=27.8, half of broad_st_west's real curb-to-curb width) - confirmed via street-view against a real example (NW corner's arm over West Broad St), not a diagonal reach toward the intersection center. Exactly which lane the head hangs over isn't surveyed.",
       "position_m": [
@@ -13422,13 +13422,13 @@
       ],
       "heading_deg": 119.70273833705579,
       "arm_heading_deg": -150.2972616629442,
-      "arm_length_ft": 15.6129334300151,
+      "arm_length_ft": 15.612933430016877,
       "source": "confirmed (greenwood_ave_south/broad_st_east corner - Corrected 2026-07-02 (Rollo): the earlier street-view photo review (2026-07-02) misread this hardware as a short davit arm - the signals are actually mast-arm held. Still a direct visual observation, not a field survey.\n): full-width mast-arm signal, pole at the real corner-fillet arc midpoint; the arm extends at a right angle to greenwood_ave_south (parallel to its crosswalk, perpendicular to its travel direction), reaching roughly to mid-roadway (arm_length_ft=15.6, half of greenwood_ave_south's real curb-to-curb width) - confirmed via street-view against a real example (NW corner's arm over West Broad St), not a diagonal reach toward the intersection center. Exactly which lane the head hangs over isn't surveyed.",
       "position_m": [
         11.376704945004127,
         -6.90994216791261
       ],
-      "arm_length_m": 4.758822109468603
+      "arm_length_m": 4.758822109469144
     },
     {
       "type": "pedestrian_signal_head",
@@ -13452,13 +13452,13 @@
       ],
       "heading_deg": -147.2830111999733,
       "arm_heading_deg": -57.28301119997327,
-      "arm_length_ft": 26.00435043007423,
+      "arm_length_ft": 26.006339238194172,
       "source": "confirmed (broad_st_east/greenwood_ave_north corner - Corrected 2026-07-02 (Rollo): the earlier street-view photo review (2026-07-02) misread this hardware as a short davit arm - the signals are actually mast-arm held. Still a direct visual observation, not a field survey.\n): full-width mast-arm signal, pole at the real corner-fillet arc midpoint; the arm extends at a right angle to broad_st_east (parallel to its crosswalk, perpendicular to its travel direction), reaching roughly to mid-roadway (arm_length_ft=26.0, half of broad_st_east's real curb-to-curb width) - confirmed via street-view against a real example (NW corner's arm over West Broad St), not a diagonal reach toward the intersection center. Exactly which lane the head hangs over isn't surveyed.",
       "position_m": [
         -2.8750004152678885,
         15.329959439985362
       ],
-      "arm_length_m": 7.926126011086626
+      "arm_length_m": 7.9267321998015845
     },
     {
       "type": "pedestrian_signal_head",
@@ -13482,13 +13482,13 @@
       ],
       "heading_deg": -60.29773481323395,
       "arm_heading_deg": 29.70226518676605,
-      "arm_length_ft": 13.261281721871967,
+      "arm_length_ft": 13.278990102243927,
       "source": "confirmed (greenwood_ave_north/broad_st_west corner - Corrected 2026-07-02 (Rollo): the earlier street-view photo review (2026-07-02) misread this hardware as a short davit arm - the signals are actually mast-arm held. Still a direct visual observation, not a field survey.\n): full-width mast-arm signal, pole at the real corner-fillet arc midpoint; the arm extends at a right angle to greenwood_ave_north (parallel to its crosswalk, perpendicular to its travel direction), reaching roughly to mid-roadway (arm_length_ft=13.3, half of greenwood_ave_north's real curb-to-curb width) - confirmed via street-view against a real example (NW corner's arm over West Broad St), not a diagonal reach toward the intersection center. Exactly which lane the head hangs over isn't surveyed.",
       "position_m": [
         -11.224055433380698,
         7.30589918994885
       ],
-      "arm_length_m": 4.042038668826576
+      "arm_length_m": 4.047436183163949
     },
     {
       "type": "pedestrian_signal_head",
@@ -13507,27 +13507,27 @@
     {
       "type": "no_turn_on_red_sign",
       "position_ft": [
-        419148.708933948,
-        566741.5808341012
+        419148.69570942625,
+        566741.5859249932
       ],
-      "heading_deg": 124.38748728197153,
+      "heading_deg": 124.56344781699877,
       "source": "confirmed (street-view photo review, site config.yaml signals.no_turn_on_red_legs) that no-turn-on-red signage exists on this approach; placement approximation: same near-corner curb-line pattern as _stop_sign_props (not a real traffic-engineering placement study).",
       "position_m": [
-        -3.184491860755021,
-        -13.65527159768846
+        -3.1885226949899925,
+        -13.653719893817325
       ]
     },
     {
       "type": "no_turn_on_red_sign",
       "position_ft": [
-        419164.8213322535,
-        566828.8151809156
+        419164.8171845756,
+        566828.8216373699
       ],
-      "heading_deg": -57.283011203920736,
+      "heading_deg": -57.283011198308834,
       "source": "confirmed (street-view photo review, site config.yaml signals.no_turn_on_red_legs) that no-turn-on-red signage exists on this approach; placement approximation: same near-corner curb-line pattern as _stop_sign_props (not a real traffic-engineering placement study).",
       "position_m": [
-        1.7265671427614988,
-        12.933757311356999
+        1.7253029305329548,
+        12.935725238622911
       ]
     }
   ],
@@ -13535,73 +13535,73 @@
     {
       "name": "broad_st_west",
       "near_m": [
-        0.027915340660745278,
-        -0.04078843254670501
+        0.0,
+        0.0
       ],
       "far_m": [
-        -32.66450125086601,
-        -22.415267889436986
+        -32.63030299113435,
+        -22.479428433726078
       ],
       "width_m": 16.9164,
       "confirmed": true,
-      "crosswalk_offset_m": 6.323315780627802,
+      "crosswalk_offset_m": 6.325257456524425,
       "crosswalk_offset_source": "osm_survey",
-      "crosswalk_skew_deg": -7.103532275115597,
-      "crosswalk_reach_left_m": 11.201400000000001,
-      "crosswalk_reach_right_m": 9.9822,
+      "crosswalk_skew_deg": -7.279492809072281,
+      "crosswalk_reach_left_m": 11.277600000000001,
+      "crosswalk_reach_right_m": 9.906,
       "crosswalk_centre_m": [
-        -5.190317923248886,
-        -3.612113685864676
+        -5.208839776477357,
+        -3.58843560262369
       ],
       "crosswalk_axis": [
-        -0.8252368606838847,
-        -0.5647867949665667
+        -0.8234984603051639,
+        -0.5673185047881166
       ],
       "stop_bar_centre_m": [
-        -9.19463222538284,
-        -6.352640616348479
+        -9.213375769110165,
+        -6.347211096707359
       ],
       "stop_bar_axis": [
-        -0.8252368606838847,
-        -0.5647867949665667
+        -0.8234984603051639,
+        -0.5673185047881166
       ],
       "crosswalk_style": "lines",
       "crosswalk_bar_count": 21,
-      "stop_bar_offset_m": 11.175636966100802,
+      "stop_bar_offset_m": 11.188091069040855,
       "stop_bar_width_m": 16.9164,
       "stop_bar_span_m": 7.958200000000001,
       "stop_bar_lateral_offset_m": 3.9791000000000003,
       "centerline_style": "double_yellow",
-      "centerline_start_m": 11.175636966100802
+      "centerline_start_m": 11.188091069040855
     },
     {
       "name": "broad_st_east",
       "near_m": [
-        0.19197165139149874,
-        -0.298831637509726
+        0.15637668800102547,
+        -0.24342292941799387
       ],
       "far_m": [
-        35.06253249265119,
-        18.383530459757242
+        46.08031814195384,
+        23.583610297387374
       ],
-      "width_m": 15.852252022173252,
+      "width_m": 15.853464399603169,
       "confirmed": true,
-      "crosswalk_offset_m": 6.488634151981937,
+      "crosswalk_offset_m": 6.488634151990502,
       "crosswalk_offset_source": "osm_survey",
       "crosswalk_skew_deg": -4.789398730411605,
-      "crosswalk_reach_left_m": 10.439400000000001,
-      "crosswalk_reach_right_m": 9.3726,
+      "crosswalk_reach_left_m": 10.3632,
+      "crosswalk_reach_right_m": 9.4488,
       "crosswalk_centre_m": [
-        5.651187616020022,
-        3.2082090252066964
+        5.615592652629549,
+        3.2636177332984286
       ],
       "crosswalk_axis": [
         0.8413505580298656,
         0.5404898135051519
       ],
       "stop_bar_centre_m": [
-        8.952883582600533,
-        5.329242903659027
+        8.9172886192278,
+        5.384651611750759
       ],
       "stop_bar_axis": [
         0.8413505580298656,
@@ -13609,12 +13609,12 @@
       ],
       "crosswalk_style": "lines",
       "crosswalk_bar_count": 20,
-      "stop_bar_offset_m": 10.412915101322712,
-      "stop_bar_width_m": 15.852252022173252,
-      "stop_bar_span_m": 7.426126011086626,
-      "stop_bar_lateral_offset_m": 3.713063005543313,
+      "stop_bar_offset_m": 10.412915101331281,
+      "stop_bar_width_m": 15.853464399603169,
+      "stop_bar_span_m": 7.4267321998015845,
+      "stop_bar_lateral_offset_m": 3.7133660999007922,
       "centerline_style": "double_yellow",
-      "centerline_start_m": 10.412915101322712
+      "centerline_start_m": 10.412915101331281
     },
     {
       "name": "greenwood_ave_south",
@@ -13626,7 +13626,7 @@
         18.929056821333944,
         -34.81968238045257
       ],
-      "width_m": 9.517644218937207,
+      "width_m": 9.517644218938289,
       "confirmed": false,
       "crosswalk_offset_m": 12.70502257770193,
       "crosswalk_offset_source": "osm_survey",
@@ -13652,40 +13652,40 @@
       "crosswalk_style": "lines",
       "crosswalk_bar_count": 10,
       "stop_bar_offset_m": 15.518380737906888,
-      "stop_bar_width_m": 9.517644218937207,
-      "stop_bar_span_m": 4.2588221094686025,
-      "stop_bar_lateral_offset_m": 2.1294110547343013,
+      "stop_bar_width_m": 9.517644218938289,
+      "stop_bar_span_m": 4.258822109469144,
+      "stop_bar_lateral_offset_m": 2.129411054734572,
       "centerline_style": "none",
       "centerline_start_m": 15.518380737906888
     },
     {
       "name": "greenwood_ave_north",
       "near_m": [
-        -0.16681874775518665,
-        -0.09516047487454489
+        -0.16576860392717646,
+        -0.09456142838643865
       ],
       "far_m": [
-        -19.800233750780112,
-        34.32271847370202
+        -19.799183606952102,
+        34.32331752019012
       ],
-      "width_m": 8.084077337653152,
+      "width_m": 8.094872366327898,
       "confirmed": false,
-      "crosswalk_offset_m": 11.110732136209359,
+      "crosswalk_offset_m": 11.110732136211272,
       "crosswalk_offset_source": "osm_survey",
       "crosswalk_skew_deg": 2.8638947228271547,
-      "crosswalk_reach_left_m": 4.7244,
+      "crosswalk_reach_left_m": 4.8006,
       "crosswalk_reach_right_m": 4.572,
       "crosswalk_centre_m": [
-        -5.672108850160847,
-        9.555753963202704
+        -5.671058706332836,
+        9.556353009690811
       ],
       "crosswalk_axis": [
         -0.4954930093636613,
         0.8686119258171296
       ],
       "stop_bar_centre_m": [
-        -7.992601922982652,
-        13.623637704710664
+        -7.9915517791546415,
+        13.624236751198769
       ],
       "stop_bar_axis": [
         -0.4954930093636613,
@@ -13693,12 +13693,12 @@
       ],
       "crosswalk_style": "lines",
       "crosswalk_bar_count": 9,
-      "stop_bar_offset_m": 15.793932562791436,
-      "stop_bar_width_m": 8.084077337653152,
-      "stop_bar_span_m": 3.5420386688265757,
-      "stop_bar_lateral_offset_m": 1.7710193344132878,
+      "stop_bar_offset_m": 15.793932562793357,
+      "stop_bar_width_m": 8.094872366327898,
+      "stop_bar_span_m": 3.547436183163949,
+      "stop_bar_lateral_offset_m": 1.7737180915819746,
       "centerline_style": "double_yellow",
-      "centerline_start_m": 15.793932562791436
+      "centerline_start_m": 15.793932562793357
     }
   ],
   "refuge_islands": [],

@@ -1437,3 +1437,62 @@ def test_every_matched_crossing_and_stop_bar_is_used(site, site_models):
     # A stop bar the matcher credited to a leg must be drawn on it, signalized or not.
     for leg_name, station_ft in bars.items():
         assert station_ft > 0, f"{site}/{leg_name}: stop bar resolved to {station_ft}"
+
+
+@needs_source_data
+def test_a_leg_can_be_carried_further_than_its_neighbours(site_models):
+    """legs.<name>.working_length_ft overrides the site default for that leg ALONE.
+
+    Broad & Greenwood needs it: Schedule I of the borough parking code bans parking for
+    100 ft east of Greenwood's curb, and Schedule III's 2 hr zone starts exactly where that
+    ends, so at the site default of 130 ft the render shows the prohibition and 16 ft of the
+    parking - under one 22 ft stall, reading as "remove all the parking". East Broad is the
+    only leg here traced far enough to carry honestly (173.8 ft left, 179.1 ft right), so it
+    goes to 170 and the rest stay at 130.
+
+    Fails against a single site-wide working length in either direction: shared 130 makes
+    every leg 130, shared 170 lengthens the three legs whose kerbs run out well before it.
+    """
+    legs = site_models["broad_st_greenwood"].legs
+    assert legs["broad_st_east"].centerline.length == pytest.approx(170.0, abs=0.5)
+    for name in ("broad_st_west", "greenwood_ave_north", "greenwood_ave_south"):
+        assert legs[name].centerline.length == pytest.approx(130.0, abs=0.5), (
+            f"{name} was carried to its neighbour's length - the override is not per-leg")
+    # ...and the lengthened leg is still drawn from tracing for its whole run, which is the
+    # only reason 170 is allowed. An extrapolated curb here would defeat the point.
+    assert legs["broad_st_east"].traced_sides == {"left", "right"}
+
+
+@needs_source_data
+def test_how_far_a_leg_is_drawn_does_not_change_how_wide_it_is_measured(site_models):
+    """A presentation choice may not move a measurement.
+
+    The cross-section window used to run to the far end of the traced curb line, and a curb
+    line is drawn to the leg's working length - so lengthening a leg to show more of it
+    silently re-measured its width. Carrying broad_st_east from 130 to 170 ft moved it
+    52.0 -> 49.9 ft, because East Broad narrows leaving the junction and the extra 40 ft of
+    narrower street pulled the median down. Every dimension in the proposal is an offset
+    from that width.
+
+    Fails without TRACED_SECTION_END_FT: the two widths below come out 2.1 ft apart.
+    """
+    import src.geometry.intersection as I
+
+    measured = {}
+    for cap in (I.TRACED_SECTION_END_FT, 1e9):
+        saved = I.TRACED_SECTION_END_FT
+        try:
+            I.TRACED_SECTION_END_FT = cap
+            with contextlib.redirect_stdout(io.StringIO()):
+                model = I.load_intersection_model(site="broad_st_greenwood")
+            measured[cap] = model.legs["broad_st_east"].curb_to_curb_ft
+        finally:
+            I.TRACED_SECTION_END_FT = saved
+
+    capped, uncapped = measured[I.TRACED_SECTION_END_FT], measured[1e9]
+    assert capped == pytest.approx(52.0, abs=0.2), (
+        f"broad_st_east measures {capped:.1f} ft over the fixed approach window; the value "
+        f"every other 130 ft leg is measured against is 52.0")
+    assert uncapped < capped - 1.0, (
+        "this test is not testing anything: with the window free to follow the 170 ft curb "
+        "line the width should drop by ~2 ft, and it did not")

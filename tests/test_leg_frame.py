@@ -316,7 +316,7 @@ def test_the_width_fit_never_ends_up_using_less_traced_kerb_than_it_found(monkey
 
     monkeypatch.setattr(intersection, "_resize_and_centre_from_traced_kerbs", resize_then_sabotage)
     with contextlib.redirect_stdout(io.StringIO()) as out:
-        intersection._fit_legs_to_traced_kerbs(legs, ways, Point(0, 0), {}, 130.0)
+        intersection._fit_legs_to_traced_kerbs(legs, ways, Point(0, 0), {})
 
     assert intersection._traced_side_count(legs) == 2, (
         f"the fit ended using {intersection._traced_side_count(legs)} of 2 traced kerb sides; "
@@ -341,6 +341,6 @@ def test_the_width_fit_measures_a_badly_configured_leg_from_its_kerbs():
              {"barrier": "kerb"})
             for sign in (1, -1)]
     with contextlib.redirect_stdout(io.StringIO()):
-        _fit_legs_to_traced_kerbs(legs, ways, Point(0, 0), {}, 130.0)
+        _fit_legs_to_traced_kerbs(legs, ways, Point(0, 0), {})
     assert _traced_side_count(legs) == 2
     assert legs["east"].curb_to_curb_ft == pytest.approx(31.0, abs=0.5)

@@ -1835,12 +1835,12 @@
         23.92942088075895
       ],
       [
-        28.657566480236873,
-        28.841137160301862
+        28.647624946273726,
+        28.83433004267849
       ],
       [
-        34.34657864890108,
-        19.818999108311814
+        34.33675667284993,
+        19.812002385193484
       ],
       [
         28.242435772399418,
@@ -4956,7 +4956,7 @@
     [
       [
         29.303497977695756,
-        13.981173509632331
+        13.981173509667814
       ],
       [
         25.330077606048295,
@@ -4987,16 +4987,16 @@
         15.470689013589453
       ],
       [
-        34.34657864890108,
-        19.818999108311814
+        34.33675667284993,
+        19.812002385193484
       ],
       [
-        35.40764085419742,
-        18.329483604354692
+        35.39781887814626,
+        18.322486881271843
       ],
       [
         29.303497977695756,
-        13.981173509632331
+        13.981173509667814
       ]
     ],
     [
@@ -5005,12 +5005,12 @@
         25.438387933387144
       ],
       [
-        27.62435407511853,
-        30.350104212930056
+        27.614412541155378,
+        30.343297095306685
       ],
       [
-        28.657566480236873,
-        28.841137160301862
+        28.647624946273726,
+        28.83433004267849
       ],
       [
         21.484193414919407,
@@ -5035,20 +5035,20 @@
     ],
     [
       [
-        29.633704869894824,
-        27.293090672040638
+        29.623763335931674,
+        27.28628355441727
       ],
       [
-        28.657566480236873,
-        28.841137160301862
+        28.647624946273726,
+        28.83433004267849
       ],
       [
-        29.690778885355222,
-        27.33217010767367
+        29.68083735139207,
+        27.325362990050298
       ],
       [
-        29.633704869894824,
-        27.293090672040638
+        29.623763335931674,
+        27.28628355441727
       ]
     ],
     [
@@ -5147,13 +5147,13 @@
       ],
       "heading_deg": 30.817249108678464,
       "arm_heading_deg": 120.81724910867847,
-      "arm_length_ft": 21.04434905115215,
+      "arm_length_ft": 21.04434905114958,
       "source": "confirmed (louellen_st_west/w_broad_st_southwest corner - Signalization confirmed from OSM: node 104043149 at this exact junction is tagged highway=traffic_signals, traffic_signals:direction=both, and the Louellen St crossing (way 376498339 / node 3674859831) is crossing=traffic_signals with button_operated=no and crossing:island=no - a signalised crossing on automatic recall, no pushbutton, no refuge island. That is real surveyed third-party data, NOT a field survey and NOT a street-view review by us. What is NOT sourced: the pole hardware type above, and the per-corner pedestrian_head placement below.\n): full-width mast-arm signal, pole at the real corner-fillet arc midpoint; the arm extends at a right angle to louellen_st_west (parallel to its crosswalk, perpendicular to its travel direction), reaching roughly to mid-roadway (arm_length_ft=21.0, half of louellen_st_west's real curb-to-curb width) - confirmed via street-view against a real example (NW corner's arm over West Broad St), not a diagonal reach toward the intersection center. Exactly which lane the head hangs over isn't surveyed.",
       "position_m": [
         -20.840718557954954,
         -5.880387238669675
       ],
-      "arm_length_m": 6.414317590791176
+      "arm_length_m": 6.414317590790392
     },
     {
       "type": "pedestrian_signal_head",
@@ -5211,7 +5211,7 @@
         -41.44935317403758,
         3.2673343112309463
       ],
-      "width_m": 12.828635181582351,
+      "width_m": 12.828635181580784,
       "confirmed": false,
       "crosswalk_offset_m": 9.606610078987407,
       "crosswalk_offset_source": "osm_survey",
@@ -5237,9 +5237,9 @@
       "crosswalk_style": "lines",
       "crosswalk_bar_count": 13,
       "stop_bar_offset_m": 16.937229028061317,
-      "stop_bar_width_m": 12.828635181582351,
-      "stop_bar_span_m": 5.914317590791176,
-      "stop_bar_lateral_offset_m": 2.957158795395588,
+      "stop_bar_width_m": 12.828635181580784,
+      "stop_bar_span_m": 5.914317590790392,
+      "stop_bar_lateral_offset_m": 2.957158795395196,
       "centerline_style": "double_yellow",
       "centerline_start_m": 16.937229028061317
     },
@@ -5295,7 +5295,7 @@
         -28.38294401638848,
         -27.854053822259793
       ],
-      "width_m": 13.396086871099007,
+      "width_m": 13.39608687110165,
       "confirmed": false,
       "crosswalk_offset_m": 20.65383587169354,
       "crosswalk_offset_source": "geometric_estimate",
@@ -5321,9 +5321,9 @@
       "crosswalk_style": "lines",
       "crosswalk_bar_count": 13,
       "stop_bar_offset_m": 20.57244779234475,
-      "stop_bar_width_m": 13.396086871099007,
-      "stop_bar_span_m": 6.198043435549503,
-      "stop_bar_lateral_offset_m": 3.0990217177747517,
+      "stop_bar_width_m": 13.39608687110165,
+      "stop_bar_span_m": 6.198043435550824,
+      "stop_bar_lateral_offset_m": 3.099021717775412,
       "centerline_style": "double_yellow",
       "centerline_start_m": 20.57244779234475
     }

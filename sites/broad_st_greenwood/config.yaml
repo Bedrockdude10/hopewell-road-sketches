@@ -98,6 +98,19 @@ legs:
     sri: "00000518__"
     bearing_deg: 57.3
     street_name: "East Broad Street (east of Greenwood Ave)"
+    working_length_ft: 170
+    # Longer than the site default of 130, and the only leg here that can be. Schedule I bans
+    # parking for 100 ft east of Greenwood's curb (~114 ft from the junction node) and
+    # Schedule III's 2 hr zone starts exactly where that ends, so a 130 ft leg shows the
+    # prohibition and 16 ft of the parking - under one 22 ft stall. The render then reads as
+    # "remove all the parking", which is the opposite of the proposal. At 170 ft the
+    # transition and two full stalls beyond it are both in frame.
+    # 170 and not further because that is where the tracing stops: the kerb traced along this
+    # leg reaches 173.8 ft on the left and 179.1 ft on the right, and past the shorter of
+    # those curb_line_from_points would be extrapolating from a bearing.
+    # broad_st_west wants the same treatment for the same reason (its 2 hr zone also starts
+    # ~114 ft out) but its SOUTH kerb is traced only to 128.9 ft, so it stays at 130 until
+    # that side is traced further.
     curb_to_curb_ft: 68  # measured pedestrian crossing distance (curb-to-curb, incl. parking/shoulder zone)
     width_provenance: field_measured  # reality - supersedes OSM and any estimate (see src/provenance.py)
     width_measured_at: near_intersection

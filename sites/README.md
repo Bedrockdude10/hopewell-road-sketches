@@ -23,7 +23,8 @@ intersection:
   resolution_method: >                # free text - document how you cross-checked the resolved point
     ...
   clip_radius_m: 150                  # how far out to load/clip the road network around the center
-  leg_working_length_ft: 130          # how far each leg's centerline extends from the intersection
+  leg_working_length_ft: 130          # DEFAULT for how far each leg's centerline extends from the
+                                       # intersection - a leg may override it with working_length_ft
   existing_marked_crosswalks: [...]   # leg names that currently have ANY marked crosswalk (checked against
                                        # real imagery/knowledge, not assumed)
 
@@ -39,6 +40,13 @@ legs:
                                        # same road (a through road produces 2, a dead-end stub produces 1) -
                                        # get this from the resolved centerline's own geometry, not a guess.
     street_name: "..."                # human-readable
+    working_length_ft: <number>       # OPTIONAL - overrides intersection.leg_working_length_ft for this
+                                       # leg alone. Legs are not equally honest at the same length: a curb
+                                       # is drawn from tracing as far as the tracing goes and extrapolated
+                                       # from a bearing past that, so how far a leg can be carried without
+                                       # inventing kerb is a per-leg fact. Set this to show more of an
+                                       # arterial than of a cross street, and keep it at or under the
+                                       # furthest traced kerb vertex on the leg's SHORTER side.
     curb_to_curb_ft: <number>         # the actual width used for curb-line construction
     width_provenance: field_measured|osm_derived|estimated   # how well-sourced that width is.
                                        # See src/provenance.py. Optional - if omitted it's inferred from

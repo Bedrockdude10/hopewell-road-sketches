@@ -1415,7 +1415,7 @@ class AddBikeLane(Treatment):
                    if self.parking_ft
                    else f", {self.shy_ft:.1f} ft shy of the kerb" if self.shy_ft else ""))
 
-    def apply_to(self, state: "DesignState", model=None) -> None:
+    def apply_to(self, state: "DesignState", model=None) -> str:
         leg = state.legs[self.target.leg]
         if leg.curb_to_curb_ft is None:
             raise ValueError(f"Leg {self.target.leg!r} has no width - nothing to fit a bike lane into.")

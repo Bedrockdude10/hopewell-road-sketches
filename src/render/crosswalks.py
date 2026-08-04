@@ -15,7 +15,7 @@ from src.render.coords import FT_TO_M, wgs84_to_state_plane
 from src.geometry.model import crosswalk_estimate_ft, leg_clearance_ft
 from src.geometry.targets import LegSide, LegTarget, Side
 from src.geometry.treatments import (AddBikeLane, DesignState, LaneNarrowing, MarkedParking,
-                                     ShiftCrosswalk)
+                                     ShiftCrosswalk, UpgradeCrosswalkMarkings)
 
 # OSM crossing:markings values -> our 3 rendered styles. "lines" (two simple
 # transverse boundary lines) is the least visible; FHWA/NACTO guidance treats
@@ -373,6 +373,23 @@ def resolve_crosswalk_offsets(state: DesignState, crossings: list[dict]) -> dict
             source += f"+scenario_shift({delta_ft:+g}ft)"
         out[leg_name] = CrosswalkOffset(offset_ft, source)
     return out
+
+
+def resolve_crosswalk_style(state: DesignState, leg_name: str) -> str:
+    """Which of the three rendered marking styles this leg's crossing is painted in.
+
+    An UpgradeCrosswalkMarkings treatment if the design has one, else "lines" - the two simple
+    transverse boundary lines, which is what every real crossing at these four junctions is
+    tagged `crossing:markings=lines` in OSM and what an unmapped one is assumed to be. That
+    fallback is the least assumption-laden guess and not a claim about the survey; a matched
+    crossing's own tag is read in _match_crossings_to_legs (OSM_MARKINGS_TO_STYLE) but has never
+    been wired through to here, which is a gap worth closing separately rather than in passing.
+
+    Here rather than in export.py so the rule has one home, the same reason
+    entering_lane_width_ft does.
+    """
+    treatment = state.treatment_for(UpgradeCrosswalkMarkings, LegTarget(leg_name))
+    return treatment.style if treatment is not None else "lines"
 
 
 def resolve_crosswalk_skews(state: DesignState, crossings: list[dict]) -> dict[str, float]:

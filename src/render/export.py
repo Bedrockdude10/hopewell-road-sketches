@@ -15,7 +15,7 @@ from src.render.coords import FT_TO_M, building_footprint_ft, pt_to_local_m, rin
 from src.render.crosswalks import (CROSSWALK_DEPTH_M, STOP_BAR_CURB_CLEARANCE_M,
                                    continental_bar_count, crosswalk_axes,
                                    centerline_start_ft,
-                                   entering_lane_width_ft,
+                                   entering_lane_width_ft, resolve_crosswalk_style,
                                    stop_bar_band_geometry_ft, stop_bar_width_ft)
 from src.geometry.model import hatch_lines_ft
 from src.geometry.intersection import IntersectionModel
@@ -26,7 +26,7 @@ from src.render.scene import SceneGeometry
 from src.sources.osm_context import (fetch_buildings, fetch_crossings, fetch_kerbs,
                                      fetch_street_furniture, fetch_traffic_control)
 from src.render.props import build_props, control_nodes_ft, osm_tree_points_ft
-from src.geometry.treatments import DEFAULT_CENTERLINE_STYLE, DesignState, build_sidewalk_pieces
+from src.geometry.treatments import DesignState, build_sidewalk_pieces
 
 BUILDING_CONTEXT_RADIUS_M = 130
 KERB_RADIUS_M = 120
@@ -313,9 +313,9 @@ def export_scenario(model: IntersectionModel, state: DesignState, name: str, out
                 # Same for the stop bar, which is a second marking at a second station and
                 # inherited the same chord.
                 **_marking_frame_m("stop_bar", leg, stop_bar_offsets.get(leg_name), center_ft),
-                # A treatment (e.g. upgrade_crosswalk_markings) can override the style;
-                # otherwise default to what OSM says exists today ("lines" if unmapped).
-                "crosswalk_style": state.crosswalk_styles.get(leg_name, "lines"),
+                # An UpgradeCrosswalkMarkings treatment if the design has one, else "lines" -
+                # see src/render/crosswalks.py:resolve_crosswalk_style.
+                "crosswalk_style": resolve_crosswalk_style(state, leg_name),
                 # How many bars a continental/ladder crossing gets across that reach. Sized
                 # in src/render/crosswalks.py:continental_bar_count so the arithmetic is
                 # testable in one place; the renderer just lays out this many.
@@ -337,9 +337,10 @@ def export_scenario(model: IntersectionModel, state: DesignState, name: str, out
                 # applied it to both, the plan view to the span only). See
                 # src/render/crosswalks.py:stop_bar_band_geometry_ft.
                 **_stop_bar_span_m(state, leg_name, leg_name in stop_bar_offsets),
-                # Real per-leg fact from config.yaml (street-view confirmed), not an OSM tag - see
-                # src/geometry/treatments.py:set_centerline_style / DEFAULT_CENTERLINE_STYLE.
-                "centerline_style": state.centerline_styles.get(leg_name, DEFAULT_CENTERLINE_STYLE),
+                # A SetCenterlineStyle treatment if the design has one, else the real per-leg
+                # fact from config.yaml (street-view confirmed) or OSM's overtaking=no - see
+                # src/geometry/treatments.py:DesignState.centerline_style.
+                "centerline_style": state.centerline_style(leg_name),
                 # Where the centerline paint starts. Resolved here, not in Blender, so the
                 # rule ("stop at the stop bar") lives with the geometry and is testable -
                 # see src/render/crosswalks.py:centerline_start_ft.

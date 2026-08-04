@@ -264,9 +264,14 @@ class DesignState:
     corner_fillets: dict
     refuge_islands: dict = field(default_factory=dict)   # name -> {"polygon": Polygon, "width_ft": float}
     raised_crossings: dict = field(default_factory=dict)  # leg name -> Polygon
-    crosswalk_styles: dict = field(default_factory=dict)  # leg name -> "lines" | "continental" | "ladder"
-    centerline_styles: dict = field(default_factory=dict)  # leg name -> one of VALID_CENTERLINE_STYLES - seeded
-                                                             # from config.yaml in from_model(), see set_centerline_style
+    # leg name -> what is painted down that leg's middle TODAY, one of VALID_CENTERLINE_STYLES.
+    # An OBSERVED FACT and not a treatment's parameter, which is why it survived the collapse
+    # alongside parking_restrictions: from_model seeds it from config.yaml (street-view
+    # confirmed) or from OSM's overtaking=no, exactly as the parking restrictions come from the
+    # OSM tags. What a PROPOSAL paints instead is a SetCenterlineStyle treatment; ask
+    # centerline_style() for the resolved answer rather than reading this, or a proposal's
+    # change is invisible.
+    existing_centerline_styles: dict = field(default_factory=dict)
     # (leg name, "left"|"right") -> [ParkingRestriction]. What OSM says about this kerb, per
     # STRETCH of it - seeded from the model in from_model. Read by src/geometry/daylighting.py,
     # which turns a prohibition into a no-parking zone like any statutory one.
@@ -317,11 +322,26 @@ class DesignState:
             else:
                 centerline_styles[name] = DEFAULT_CENTERLINE_STYLE
         return cls(legs=deepcopy(model.legs), corner_fillets=deepcopy(model.corner_fillets),
-                   centerline_styles=centerline_styles,
+                   existing_centerline_styles=centerline_styles,
                    parking_restrictions=_parking_restrictions_from_model(model))
 
     def clone(self) -> "DesignState":
         return deepcopy(self)
+
+    def centerline_style(self, leg_name: str) -> str:
+        """What this design paints down `leg_name`'s middle: a proposal's choice, else what is
+        there today.
+
+        Two sources, and the order is the design's: a SetCenterlineStyle is a decision this
+        proposal made and outranks the observed fact from_model seeded (see
+        existing_centerline_styles). Both renderers go through here so they cannot disagree
+        about which one won - the 3D render reads it into the geometry JSON and the plan view
+        draws it, and this view exists to show what that render will show.
+        """
+        treatment = self.treatment_for(SetCenterlineStyle, LegTarget(leg_name))
+        if treatment is not None:
+            return treatment.style
+        return self.existing_centerline_styles.get(leg_name, DEFAULT_CENTERLINE_STYLE)
 
     def treatment_for(self, kind, target):
         """The treatment of `kind` applied at `target`, or None if there is none.
@@ -564,9 +584,6 @@ class UpgradeCrosswalkMarkings(Treatment):
     def describe(self) -> str:
         return f"UpgradeCrosswalkMarkings({self.target}, style={self.style!r})"
 
-    def apply_to(self, state: "DesignState", model=None) -> None:
-        state.crosswalk_styles[self.target.leg] = self.style
-
 
 @dataclass(frozen=True)
 class SetCenterlineStyle(Treatment):
@@ -586,9 +603,6 @@ class SetCenterlineStyle(Treatment):
 
     def describe(self) -> str:
         return f"SetCenterlineStyle({self.target}, style={self.style!r})"
-
-    def apply_to(self, state: "DesignState", model=None) -> None:
-        state.centerline_styles[self.target.leg] = self.style
 
 
 @dataclass(frozen=True)
@@ -2022,8 +2036,8 @@ def complete_centerlines(state: DesignState, style: str = "double_yellow") -> De
     traffic-engineering judgement about sight lines, not a gap to be filled in.
     """
     new_state = state
-    for leg_name, current in sorted(state.centerline_styles.items()):
-        if current != "none":
+    for leg_name in sorted(state.legs):
+        if state.centerline_style(leg_name) != "none":
             continue
         # Through the treatment rather than writing the dict, so the design records the change
         # as a treatment like any other - a policy that edits state directly leaves

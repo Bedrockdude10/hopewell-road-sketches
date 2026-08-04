@@ -17,7 +17,8 @@ from src.geometry.daylighting import no_parking_zones_ft
 from src.geometry.model import (build_pavement_polygon, narrowest_half_width_ft,
                                 station_offset_many)
 from src.geometry.targets import LegSide, LegTarget, Side
-from src.geometry.treatments import (DesignState, LaneNarrowing, MarkedParking)
+from src.geometry.treatments import (DesignState, LaneNarrowing, MarkedParking,
+                                     UpgradeCrosswalkMarkings)
 from src.render.crosswalks import (CROSSWALK_DEPTH_M, STOP_BAR_CURB_CLEARANCE_M,
                                    crosswalk_bands_ft, resolve_crosswalk_offsets,
                                    resolve_crosswalk_skews, resolve_stop_bar_offsets)
@@ -228,9 +229,9 @@ def test_no_passing_legs_get_a_double_yellow(site, site_models):
     state = DesignState.from_model(model)
     for leg_name, tags in model.leg_osm_tags.items():
         if tags.get("overtaking") == "no" and "centerline_style" not in model.config["legs"][leg_name]:
-            assert state.centerline_styles[leg_name] == "double_yellow", (
+            assert state.centerline_style(leg_name) == "double_yellow", (
                 f"{leg_name} is tagged overtaking=no but renders "
-                f"{state.centerline_styles[leg_name]}")
+                f"{state.centerline_style(leg_name)}")
 
 
 def test_centerline_precedence_goes_by_provenance_not_by_file():
@@ -256,7 +257,7 @@ def test_centerline_precedence_goes_by_provenance_not_by_file():
         leg_osm_tags = {name: {"overtaking": "no"} for name in
                         ("retained_default", "observed_none", "observed_double", "unset")}
 
-    styles = DesignState.from_model(FakeModel()).centerline_styles
+    styles = DesignState.from_model(FakeModel()).existing_centerline_styles
     assert styles["retained_default"] == "double_yellow", "OSM must beat the retained default"
     assert styles["observed_none"] == "none", "an observed 'none' must survive an OSM tag"
     assert styles["observed_double"] == "double_yellow"
@@ -271,7 +272,7 @@ def test_a_leg_with_no_osm_tag_keeps_the_default():
         corner_fillets = {}
         leg_osm_tags = {"untagged": {"highway": "residential"}}
 
-    assert DesignState.from_model(FakeModel()).centerline_styles["untagged"] == "single_yellow_dashed"
+    assert DesignState.from_model(FakeModel()).centerline_style("untagged") == "single_yellow_dashed"
 
 
 @needs_source_data
@@ -600,12 +601,12 @@ def test_completing_centerlines_only_fills_real_gaps():
         legs={name: Leg(name=name, centerline=_LineString([(0, 0), (100, 0)]), curb_to_curb_ft=30.0)
               for name in named},
         corner_fillets={},
-        centerline_styles={"unmarked": "none", "dashed": "single_yellow_dashed",
-                            "double": "double_yellow"})
+        existing_centerline_styles={"unmarked": "none", "dashed": "single_yellow_dashed",
+                                     "double": "double_yellow"})
     completed = complete_centerlines(state)
-    assert completed.centerline_styles["unmarked"] == "double_yellow"
-    assert completed.centerline_styles["dashed"] == "single_yellow_dashed"
-    assert completed.centerline_styles["double"] == "double_yellow"
+    assert completed.centerline_style("unmarked") == "double_yellow"
+    assert completed.centerline_style("dashed") == "single_yellow_dashed"
+    assert completed.centerline_style("double") == "double_yellow"
 
 
 @needs_source_data
@@ -614,12 +615,12 @@ def test_the_proposal_adds_the_missing_greenwood_centerline(site_models):
     review - so EXISTING must show none and the proposal must add one."""
     model = site_models["broad_st_greenwood"]
     baseline = DesignState.from_model(model)
-    assert baseline.centerline_styles["greenwood_ave_south"] == "none"
+    assert baseline.centerline_style("greenwood_ave_south") == "none"
 
     with contextlib.redirect_stdout(io.StringIO()):
         proposed = run_scenario(load_site_scenarios("broad_st_greenwood").build_demo_scenario,
                                  baseline, model)
-    assert proposed.centerline_styles["greenwood_ave_south"] == "double_yellow"
+    assert proposed.centerline_style("greenwood_ave_south") == "double_yellow"
 
 
 def test_a_taper_is_refused_when_there_is_no_room_for_one():
@@ -672,10 +673,11 @@ def test_every_proposed_crosswalk_is_continental(site, site_models):
     model = site_models[site]
     with contextlib.redirect_stdout(io.StringIO()):
         state = run_scenario_for(site, model)
-    assert state.crosswalk_styles, "the proposal should set a style on every leg"
-    assert set(state.crosswalk_styles.values()) == {"continental"}
+    from src.render.crosswalks import resolve_crosswalk_style
+
+    assert state.treatments_of(UpgradeCrosswalkMarkings), "the proposal should restyle every leg"
     for leg_name in model.legs:
-        assert state.crosswalk_styles.get(leg_name) == "continental", f"{leg_name} was missed"
+        assert resolve_crosswalk_style(state, leg_name) == "continental", f"{leg_name} was missed"
 
 
 def run_scenario_for(site, model):

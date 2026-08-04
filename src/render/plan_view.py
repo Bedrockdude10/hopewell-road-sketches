@@ -9,7 +9,7 @@ from shapely.ops import substring
 
 from src.geometry.model import inset_point_at_station, trimmed_curb_lines
 from src.geometry.intersection import IntersectionModel, kerb_lines_with_tags_ft
-from src.geometry.treatments import DEFAULT_CENTERLINE_STYLE, DesignState
+from src.geometry.treatments import DesignState
 from src.provenance import PLOT_STYLE, built_width_provenance
 from src.geometry import markings
 from src.geometry.markings import require_every_kind
@@ -473,8 +473,9 @@ def _draw_centerlines(ax, scene: SceneGeometry):
     Both were missing. The datum matters because every width in this drawing - the 11 ft
     lane, the 8 ft stall, the depth of a hatched zone - is an OFFSET FROM IT, and without it
     drawn there is nothing to check those offsets against by eye. The painted centerline
-    matters because the 3D render draws one (blender_scene.py, from state.centerline_styles)
-    and this view is supposed to show what that render will show.
+    matters because the 3D render draws one (blender_scene.py, from the same
+    DesignState.centerline_style this reads) and this view is supposed to show what that
+    render will show.
 
     The paint starts where src/render/crosswalks.py:centerline_start_ft says, which is at the
     stop bar - the same rule the export uses, not a second copy of it.
@@ -486,7 +487,7 @@ def _draw_centerlines(ax, scene: SceneGeometry):
         ax.plot(*leg.centerline.xy, color="#3b6ea5", lw=0.9, ls=(0, (7, 3, 1, 3)), alpha=0.9,
                 zorder=4)
 
-        style = state.centerline_styles.get(leg_name, DEFAULT_CENTERLINE_STYLE)
+        style = state.centerline_style(leg_name)
         if style == "none" or leg_name not in scene.crosswalk_offsets:
             continue
         start_ft = centerline_start_ft(scene.crosswalk_offsets[leg_name].offset_ft,

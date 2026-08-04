@@ -19,7 +19,7 @@ from src.geometry.model import (BULBOUT_TAPER_RATE, Leg, build_pavement_polygon,
                                 curb_offsets_at_stations, narrowest_half_width_ft)
 from src.geometry.targets import Corner, LegSide, LegTarget
 from src.geometry.treatments import (AASHTO_MIN_BIKE_LANE_FT, AddBikeLane, AddBikeLaneBollards,
-                                   AddCurbExtension, BikeLane, CornerApron, CurbExtension,
+                                   AddCurbExtension, BikeLane, CornerApron,
                                    DesignState, LaneNarrowing, LaneNarrowingBollards,
                                    SetCornerRadius, TARGET_LANE_WIDTH_FT, find_corner)
 from src.geometry.markings import BOLLARD, BUFFER_FILL, CROSSING_RIM_LINE
@@ -165,8 +165,9 @@ def test_a_bulbout_fits_inside_the_ordinance_no_parking_length(site_models):
         crossings = fetch_crossings(model.center_wgs84, radius_m=130)
         state = _bulb_out_broad_st(base, SceneGeometry.resolve(model, base, crossings))
 
-    assert state.curb_extensions, "nothing was built"
-    for (leg_name, side), extension in sorted(state.curb_extensions.items()):
+    assert state.treatments_of(AddCurbExtension), "nothing was built"
+    for extension in state.treatments_of(AddCurbExtension):
+        leg_name, side = extension.target.leg, extension.target.side
         assert extension.footprint_ft <= SCHEDULE_I_NO_PARKING_FT, (
             f"{leg_name} {side}'s extension runs {extension.footprint_ft:.1f} ft, past the "
             f"{SCHEDULE_I_NO_PARKING_FT:.0f} ft Schedule I already prohibits - it would remove "
@@ -318,8 +319,9 @@ def test_every_bulbout_corner_gets_an_apron_out_to_its_own_measured_radius(site_
                     for corner, pieces in base.corner_fillets.items()}
         state = _bulb_out_broad_st(base, SceneGeometry.resolve(model, base, crossings))
 
-    assert len(state.corner_aprons) == 4, "every treated corner needs its swept path back"
-    for corner, apron in state.corner_aprons.items():
+    aprons = {t.apron_corner(state): t.apron for t in state.treatments_of(AddCurbExtension)}
+    assert len(aprons) == 4, "every treated corner needs its swept path back"
+    for corner, apron in aprons.items():
         assert apron.swept_radius_ft == pytest.approx(measured[corner]), (
             f"{'/'.join(sorted(corner))}'s apron reaches {apron.swept_radius_ft} ft, but its "
             f"kerb is traced at {measured[corner]:.1f} ft")
@@ -469,8 +471,17 @@ def test_every_bike_lane_stripe_lies_outside_the_width_it_protects():
 # --------------------------------------------------------------------------
 
 def test_the_footprint_is_the_face_plus_the_taper():
-    extension = CurbExtension(extension_ft=8.0, full_ft=34.3, taper_ft=40.0, face_radius_ft=15.0)
-    assert extension.footprint_ft == pytest.approx(74.3)
+    """And every number in it is derived from the treatment's own arguments.
+
+    full_ft is the crossing plus half a crossing's depth plus the 10 ft the extension itself
+    buys under R.S. 39:4-138(e), so this is asked of an AddCurbExtension rather than of a
+    separate record built inside apply_to - there is nowhere for the two to disagree now.
+    """
+    extension = AddCurbExtension(LegSide("east", "left"), extension_ft=8.0, crossing_ft=21.0,
+                                  taper_ft=40.0)
+    # 21 ft to the crossing, + 3 ft of half a crossing's depth, + the 10 ft of R.S. 39:4-138(e).
+    assert extension.full_ft == pytest.approx(34.0)
+    assert extension.footprint_ft == pytest.approx(74.0)
 
 
 def test_the_taper_length_follows_the_stated_rate():
@@ -478,7 +489,8 @@ def test_the_taper_length_follows_the_stated_rate():
     applied, so the number in the docstring is the number in the geometry."""
     state = a_state()
     built = state.apply(AddCurbExtension(LegSide("east", "left"), extension_ft=8.0, crossing_ft=21.0))
-    assert built.curb_extensions[("east", "left")].taper_ft == pytest.approx(8.0 * BULBOUT_TAPER_RATE)
+    assert (built.treatment_for(AddCurbExtension, LegSide("east", "left")).resolved_taper_ft
+            == pytest.approx(8.0 * BULBOUT_TAPER_RATE))
 
 
 def _bulb_out_broad_st(base: DesignState, scene: SceneGeometry) -> DesignState:

@@ -17,7 +17,7 @@ from src.geometry.daylighting import no_parking_zones_ft
 from src.geometry.model import (build_pavement_polygon, narrowest_half_width_ft,
                                 station_offset_many)
 from src.geometry.targets import LegSide, LegTarget, Side
-from src.geometry.treatments import (DesignState, LaneNarrowing, MarkedParking,
+from src.geometry.treatments import (AddCurbExtension, DesignState, LaneNarrowing, MarkedParking,
                                      UpgradeCrosswalkMarkings)
 from src.render.crosswalks import (CROSSWALK_DEPTH_M, STOP_BAR_CURB_CLEARANCE_M,
                                    crosswalk_bands_ft, resolve_crosswalk_offsets,
@@ -1671,7 +1671,8 @@ def test_the_apron_bulbout_proposal_shortens_both_broad_st_crossings(site_models
     for leg_name in ("greenwood_ave_north", "greenwood_ave_south"):
         assert sum(after.crosswalk_reaches[leg_name]) == pytest.approx(
             sum(before.crosswalk_reaches[leg_name]), abs=0.05)
-        assert not [k for k in state.curb_extensions if k[0] == leg_name]
+        assert not [t for t in state.treatments_of(AddCurbExtension)
+                    if t.target.leg == leg_name]
 
 
 @needs_source_data
@@ -1688,14 +1689,16 @@ def test_the_apron_bulbout_proposal_costs_no_parking_and_keeps_the_swept_path(si
         builder = load_site_scenarios("broad_st_greenwood").build_proposal_apron_bulbouts
         state = run_scenario(builder, DesignState.from_model(model), model)
 
-    assert len(state.curb_extensions) == 4, "both kerbs of both Broad St legs"
-    for (leg_name, side), extension in sorted(state.curb_extensions.items()):
+    extensions = state.treatments_of(AddCurbExtension)
+    assert len(extensions) == 4, "both kerbs of both Broad St legs"
+    for extension in extensions:
         assert extension.footprint_ft <= SCHEDULE_I_NO_PARKING_FT, (
-            f"{leg_name} {side} runs {extension.footprint_ft:.0f} ft, past the kerb Schedule I "
+            f"{extension.target} runs {extension.footprint_ft:.0f} ft, past the kerb Schedule I "
             f"already prohibits parking on - the proposal would be removing a space")
 
-    assert len(state.corner_aprons) == 4
-    for corner, apron in sorted(state.corner_aprons.items()):
+    aprons = {t.apron_corner(state): t.apron for t in extensions}
+    assert len(aprons) == 4
+    for corner, apron in sorted(aprons.items()):
         assert apron.swept_radius_ft == pytest.approx(measured[corner]), (
             "each apron reaches its OWN corner's traced radius, not an average of the four")
         leg_a, leg_b = corner

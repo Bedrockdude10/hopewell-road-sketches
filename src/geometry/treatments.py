@@ -127,28 +127,6 @@ def _parking_restrictions_from_model(model) -> dict:
 
 
 @dataclass(frozen=True)
-class CurbExtension:
-    """One kerb moved into the roadway, and the numbers that put it there.
-
-    Recorded per (leg, side) because that is the degree of freedom the street gives: how deep
-    an extension a leg can take is set by its own spare width, and at Broad & Greenwood the two
-    Broad legs can give 15.0 and 16.8 ft per side while the two Greenwood legs can give 2.3 and
-    4.6. A corner between one of each cannot be extended symmetrically.
-    """
-    extension_ft: float       # how far the kerb moved, measured from the NOMINAL half-width
-    full_ft: float            # station the straight face runs to
-    taper_ft: float           # length of the return to the real kerb
-    face_radius_ft: float     # the corner a passenger car sees
-    swept_radius_ft: float | None = None   # the corner a bus still gets, via the apron
-
-    @property
-    def footprint_ft(self) -> float:
-        """How much kerb the extension occupies end to end - what has to fit inside the length
-        the parking ordinance already prohibits, if it is to cost no spaces."""
-        return self.full_ft + self.taper_ft
-
-
-@dataclass(frozen=True)
 class CornerApron:
     """A flush, drivable corner surface. Two shapes, because there are two reasons for one.
 
@@ -274,12 +252,6 @@ class DesignState:
     # STRETCH of it - seeded from the model in from_model. Read by src/geometry/daylighting.py,
     # which turns a prohibition into a no-parking zone like any statutory one.
     parking_restrictions: dict = field(default_factory=dict)
-    # (leg name, "left"|"right") -> CurbExtension. The ONE treatment here that moves a kerb
-    # rather than painting on it, so the Leg's own curb line changes too and every measurement
-    # downstream follows - see add_curb_extension.
-    curb_extensions: dict = field(default_factory=dict)
-    corner_hatching: dict = field(default_factory=dict)  # corner tuple -> depth_ft (paint-only, no curb change)
-    corner_aprons: dict = field(default_factory=dict)  # corner tuple -> CornerApron (mountable, no curb change)
     # Every Treatment applied to this design, in order (see apply) - the design as a list of
     # decisions, which is what a scenario actually is, what every renderer reads its parameters
     # from (treatment_for / treatments_of / every_treatment) and what provenance is written from.
@@ -1020,9 +992,6 @@ class CornerHatching(Treatment):
     def describe(self) -> str:
         return f"CornerHatching({self.target.key}, depth_ft={self.depth_ft})"
 
-    def apply_to(self, state: "DesignState", model=None) -> None:
-        state.corner_hatching[self.target.key] = self.depth_ft
-
     def paint(self, ctx) -> None:
         from src.geometry.model import corner_overlay_polygon
         from src.geometry.markings import CORNER_HATCH_FILL
@@ -1064,17 +1033,13 @@ class MountableApron(Treatment):
     def apron_corner(self, state) -> tuple[str, str] | None:
         return self.target.key
 
-    def apply_to(self, state: "DesignState", model=None) -> None:
-        state.corner_aprons[self.target.key] = self.apron
-
     def paint(self, ctx) -> None:
         """The apron surface, laid in the SURFACE pass so every marking is cut around it.
 
-        Its own apron, from its own fields, rather than whatever is in state.corner_aprons for
-        this corner: the dict holds one entry per corner, so reading from it would let two
-        treatments that each asked for an apron there paint the same one twice. A corner with two
-        aprons specified is a design error, and painting both is what makes
-        MarkingsDoNotCollide say so.
+        Its own apron, from its own fields. There was a state.corner_aprons holding one entry per
+        corner, and reading from that would have let two treatments which each asked for an apron
+        there paint one apron between them - a corner with two aprons specified is a design error,
+        and painting both is what makes MarkingsDoNotCollide say so.
         """
         from src.geometry.markings import APRON
         from src.geometry.paint import apron_polygon
@@ -1147,6 +1112,37 @@ class AddCurbExtension(Treatment):
                 f"sees - an annulus between them is what the apron is (see CornerApron).")
 
     @property
+    def resolved_taper_ft(self) -> float:
+        """How long the return to the real kerb is: the stated rate, unless one was given."""
+        return self.extension_ft * BULBOUT_TAPER_RATE if self.taper_ft is None else self.taper_ft
+
+    @property
+    def full_ft(self) -> float:
+        """The station the straight face runs to.
+
+        Nothing about the length is chosen to look right: it is the crossing, plus half a
+        crossing's depth, plus the 10 ft R.S. 39:4-138(e) setback the extension itself buys - so
+        the face covers exactly the kerb where parking is prohibited once this is built.
+
+        Local imports for the usual cycles (src/render/crosswalks.py imports DesignState from
+        here, src/geometry/daylighting.py reads CURB_EXTENSION_DEVICES from here). Both figures
+        are single-sourced there and must not be copied, since the whole length is measured off
+        them.
+        """
+        from src.geometry.daylighting import CROSSWALK_SETBACK_WITH_BULBOUT_FT
+        from src.render.crosswalks import CROSSWALK_DEPTH_FT
+
+        return self.crossing_ft + CROSSWALK_DEPTH_FT / 2 + CROSSWALK_SETBACK_WITH_BULBOUT_FT
+
+    @property
+    def footprint_ft(self) -> float:
+        """How much kerb the extension occupies end to end - what has to fit inside the length
+        the parking ordinance already prohibits, if it is to cost no spaces. At Broad & Greenwood
+        that is 74 ft against the 100 ft Schedule I already bans, which is the whole argument
+        that this bulb-out removes no parking space; tests/test_curb_extensions.py pins it."""
+        return self.full_ft + self.resolved_taper_ft
+
+    @property
     def apron(self) -> CornerApron | None:
         """The annulus a bus keeps, or None where no swept radius was measured.
 
@@ -1171,10 +1167,9 @@ class AddCurbExtension(Treatment):
     def paint(self, ctx) -> None:
         """The swept-path apron, in the SURFACE pass so every marking is cut around it.
 
-        Its own apron rather than whatever state.corner_aprons holds for this corner: the dict has
-        one entry per corner, so reading it would let two treatments that each asked for an apron
-        there paint the same ground twice. A corner with two aprons specified is a design error,
-        and painting both is what makes MarkingsDoNotCollide say so.
+        Its own apron rather than a per-corner lookup, for the reason MountableApron.paint
+        gives: one entry per corner collapses two treatments that each asked for an apron there,
+        and a corner with two aprons specified is a design error the collision invariant reports.
         """
         from src.geometry.markings import APRON
         from src.geometry.paint import apron_polygon
@@ -1189,13 +1184,6 @@ class AddCurbExtension(Treatment):
         return f"AddCurbExtension({self.target.leg}, {self.target.side}): "
 
     def apply_to(self, state: "DesignState", model=None) -> str:
-        # Local: src/render/crosswalks.py imports DesignState from here, and
-        # src/geometry/daylighting.py reads CURB_EXTENSION_DEVICES from here - both cycles back.
-        # The statutory figure and the crossing depth are single-sourced in those modules and must
-        # not be copied, since the whole length of the face is measured off them.
-        from src.geometry.daylighting import CROSSWALK_SETBACK_WITH_BULBOUT_FT
-        from src.render.crosswalks import CROSSWALK_DEPTH_FT
-
         leg_name, side = self.target.leg, str(self.target.side)
         leg = state.legs[leg_name]
         if leg.curb_to_curb_ft is None:
@@ -1209,27 +1197,23 @@ class AddCurbExtension(Treatment):
                 f"{TARGET_LANE_WIDTH_FT:.0f} ft target. That leg is {leg.curb_to_curb_ft:.1f} ft "
                 f"curb to curb, so it has {spare_ft:.1f} ft per side to give.")
 
-        taper_ft = (self.extension_ft * BULBOUT_TAPER_RATE if self.taper_ft is None
-                    else self.taper_ft)
-        full_ft = self.crossing_ft + CROSSWALK_DEPTH_FT / 2 + CROSSWALK_SETBACK_WITH_BULBOUT_FT
+        taper_ft, full_ft = self.resolved_taper_ft, self.full_ft
         built = curb_extension_line(leg, side, self.extension_ft, full_ft, taper_ft)
         if built is None:
             raise ValueError(
                 f"{leg_name} {side} has no traced kerb to extend - a curb extension is measured "
                 f"from the kerb that is there, and nothing is mapped on that side.")
 
+        # THE one thing this treatment writes onto the design, and the reason it is the one
+        # treatment that still has a body here: it moves a kerb. Everything downstream that
+        # measures against the kerb then follows without being told.
         setattr(state.legs[leg_name], f"{side}_curb", built)
-        state.curb_extensions[self.target.key] = CurbExtension(
-            extension_ft=self.extension_ft, full_ft=full_ft, taper_ft=taper_ft,
-            face_radius_ft=self.face_radius_ft, swept_radius_ft=self.swept_radius_ft)
         # The corner this kerb feeds has to be re-cut against the line that moved, or the pavement
         # ring keeps following the kerb that is no longer there. build_corner_fillets pairs leg A's
         # LEFT curb with leg B's RIGHT, so which corner that is depends on the side.
         corner = self.apron_corner(state)
         if corner is not None:
             _rebuild_corner(state, corner, self.face_radius_ft, "curb_extension")
-            if self.apron is not None:
-                state.corner_aprons[corner] = self.apron
         return (f"kerb moved {self.extension_ft:.1f} ft into the roadway to station "
                 f"{full_ft:.0f} ft, tapering back over {taper_ft:.0f} ft; "
                 f"{self.face_radius_ft:.0f} ft face"

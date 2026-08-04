@@ -2,16 +2,16 @@
   "name": "build_proposal_bike_lanes",
   "units": "meters",
   "notes": [
-    "add_lane_narrowing(princeton_ave_south, stripe_width_ft=4.105132911977055, line_only=False, sides=('left', 'right'))",
+    "LaneNarrowing(princeton_ave_south, stripe_width_ft=4.105132911977055, line_only=False, sides=('left', 'right'))",
     "apply_osm_parking(princeton_ave_south, left): 4.1 ft hatched - OSM says 'no_parking' for the whole kerb",
     "apply_osm_parking(princeton_ave_south, right): 4.1 ft hatched - OSM says 'no_parking' for the whole kerb",
-    "upgrade_crosswalk_markings(e_broad_st_east, style='continental')",
-    "upgrade_crosswalk_markings(e_broad_st_west, style='continental')",
-    "upgrade_crosswalk_markings(princeton_ave_south, style='continental')",
-    "add_bike_lane(e_broad_st_east, left): 5 ft lane. Uses 17.6 of the 17.6 ft this leg has at its narrowest.",
-    "add_bike_lane(e_broad_st_east, right): 5 ft lane. Uses 17.6 of the 18.3 ft this leg has at its narrowest, 0.7 ft spare.",
-    "add_bike_lane(e_broad_st_west, left): 5 ft lane. Uses 17.6 of the 18.8 ft this leg has at its narrowest, 1.2 ft spare.",
-    "add_bike_lane(e_broad_st_west, right): 5 ft lane. Uses 17.6 of the 19.0 ft this leg has at its narrowest, 1.3 ft spare."
+    "UpgradeCrosswalkMarkings(e_broad_st_east, style='continental')",
+    "UpgradeCrosswalkMarkings(e_broad_st_west, style='continental')",
+    "UpgradeCrosswalkMarkings(princeton_ave_south, style='continental')",
+    "AddBikeLane(e_broad_st_east, left): 5 ft lane. Uses 17.6 of the 17.6 ft this leg has at its narrowest.",
+    "AddBikeLane(e_broad_st_east, right): 5 ft lane. Uses 17.6 of the 18.3 ft this leg has at its narrowest, 0.7 ft spare.",
+    "AddBikeLane(e_broad_st_west, left): 5 ft lane. Uses 17.6 of the 18.8 ft this leg has at its narrowest, 1.2 ft spare.",
+    "AddBikeLane(e_broad_st_west, right): 5 ft lane. Uses 17.6 of the 19.0 ft this leg has at its narrowest, 1.3 ft spare."
   ],
   "theme": {
     "asphalt_near": {

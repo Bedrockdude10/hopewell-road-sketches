@@ -2,20 +2,20 @@
   "name": "build_demo_scenario",
   "units": "meters",
   "notes": [
-    "add_marked_parking(louellen_st_west, side='left', depth_ft=8.0, stall_length_ft=22.0, curb_offset_ft=2.044349051149581)",
+    "MarkedParking(louellen_st_west, side='left', depth_ft=8.0, stall_length_ft=22.0, curb_offset_ft=2.044349051149581)",
     "apply_osm_parking(louellen_st_west, left): 8 ft stalls + 2.0 ft hatched to the kerb - no restriction tagged",
-    "add_marked_parking(louellen_st_west, side='right', depth_ft=8.0, stall_length_ft=22.0, curb_offset_ft=2.044349051149581)",
+    "MarkedParking(louellen_st_west, side='right', depth_ft=8.0, stall_length_ft=22.0, curb_offset_ft=2.044349051149581)",
     "apply_osm_parking(louellen_st_west, right): 8 ft stalls + 2.0 ft hatched to the kerb - no restriction tagged",
-    "add_lane_narrowing(w_broad_st_northeast, stripe_width_ft=6.626196338434305, line_only=False, sides=('left', 'right'))",
+    "LaneNarrowing(w_broad_st_northeast, stripe_width_ft=6.626196338434305, line_only=False, sides=('left', 'right'))",
     "apply_osm_parking(w_broad_st_northeast, left): 6.6 ft hatched - too narrow for a stall",
     "apply_osm_parking(w_broad_st_northeast, right): 6.6 ft hatched - too narrow for a stall",
-    "add_marked_parking(w_broad_st_southwest, side='left', depth_ft=8.0, stall_length_ft=22.0, curb_offset_ft=2.975208121885906)",
+    "MarkedParking(w_broad_st_southwest, side='left', depth_ft=8.0, stall_length_ft=22.0, curb_offset_ft=2.975208121885906)",
     "apply_osm_parking(w_broad_st_southwest, left): 8 ft stalls + 3.0 ft hatched to the kerb - no restriction tagged",
-    "add_marked_parking(w_broad_st_southwest, side='right', depth_ft=8.0, stall_length_ft=22.0, curb_offset_ft=2.975208121885906)",
+    "MarkedParking(w_broad_st_southwest, side='right', depth_ft=8.0, stall_length_ft=22.0, curb_offset_ft=2.975208121885906)",
     "apply_osm_parking(w_broad_st_southwest, right): 8 ft stalls + 3.0 ft hatched to the kerb - no restriction tagged",
-    "upgrade_crosswalk_markings(louellen_st_west, style='continental')",
-    "upgrade_crosswalk_markings(w_broad_st_northeast, style='continental')",
-    "upgrade_crosswalk_markings(w_broad_st_southwest, style='continental')"
+    "UpgradeCrosswalkMarkings(louellen_st_west, style='continental')",
+    "UpgradeCrosswalkMarkings(w_broad_st_northeast, style='continental')",
+    "UpgradeCrosswalkMarkings(w_broad_st_southwest, style='continental')"
   ],
   "theme": {
     "asphalt_near": {

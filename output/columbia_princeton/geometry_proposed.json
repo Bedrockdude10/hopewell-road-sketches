@@ -2,18 +2,20 @@
   "name": "build_demo_scenario",
   "units": "meters",
   "notes": [
-    "add_lane_narrowing(princeton_ave_north, stripe_width_ft=4.265788342617141, line_only=False, sides=('left', 'right'))",
+    "LaneNarrowing(princeton_ave_north, stripe_width_ft=4.265788342617141, line_only=False, sides=('left', 'right'))",
     "apply_osm_parking(princeton_ave_north, left): 4.3 ft hatched - OSM says 'no_parking' for the whole kerb",
     "apply_osm_parking(princeton_ave_north, right): 4.3 ft hatched - OSM says 'no_parking' for the whole kerb",
-    "add_lane_narrowing(princeton_ave_south, stripe_width_ft=4.6204927016862385, line_only=False, sides=('left', 'right'))",
+    "LaneNarrowing(princeton_ave_south, stripe_width_ft=4.6204927016862385, line_only=False, sides=('left', 'right'))",
     "apply_osm_parking(princeton_ave_south, left): 4.6 ft hatched - OSM says 'no_parking' for the whole kerb",
     "apply_osm_parking(princeton_ave_south, right): 4.6 ft hatched - OSM says 'no_parking' for the whole kerb",
+    "SetCenterlineStyle(columbia_ave_east, style='double_yellow')",
     "complete_centerlines(columbia_ave_east): double_yellow added - the leg has no centerline paint today, so nothing marks the middle of the road",
+    "SetCenterlineStyle(columbia_ave_west, style='double_yellow')",
     "complete_centerlines(columbia_ave_west): double_yellow added - the leg has no centerline paint today, so nothing marks the middle of the road",
-    "upgrade_crosswalk_markings(columbia_ave_east, style='continental')",
-    "upgrade_crosswalk_markings(columbia_ave_west, style='continental')",
-    "upgrade_crosswalk_markings(princeton_ave_north, style='continental')",
-    "upgrade_crosswalk_markings(princeton_ave_south, style='continental')"
+    "UpgradeCrosswalkMarkings(columbia_ave_east, style='continental')",
+    "UpgradeCrosswalkMarkings(columbia_ave_west, style='continental')",
+    "UpgradeCrosswalkMarkings(princeton_ave_north, style='continental')",
+    "UpgradeCrosswalkMarkings(princeton_ave_south, style='continental')"
   ],
   "theme": {
     "asphalt_near": {

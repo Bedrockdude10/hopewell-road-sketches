@@ -129,8 +129,10 @@ def build_demo_scenario(baseline: DesignState) -> DesignState:
     ...
 ```
 
-Compose treatments from `src/geometry/treatments.py` (`bump_out`, `refuge_island`, `raise_crossing`,
-`upgrade_crosswalk_markings`) - see `sites/broad_st_greenwood/scenarios.py` for a worked example.
+Compose treatments from `src/geometry/treatments.py` by applying them to a design:
+`state.apply(RefugeIsland(LegTarget("broad_st_east"), offset_ft=40, width_ft=6))`. Each is a frozen
+dataclass that validates itself, and `apply` checks its target exists at this junction - see
+`sites/broad_st_greenwood/scenarios.py` for a worked example.
 Nothing stops you from adding more functions to a site's `scenarios.py` for
 alternative scenarios (e.g. `build_minimal_scenario`); phase3/phase4 scripts
 only call `build_demo_scenario` by convention, not by hard requirement.

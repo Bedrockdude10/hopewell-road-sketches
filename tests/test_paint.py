@@ -589,9 +589,9 @@ def test_a_daylight_zone_is_square_ended():
     leg = traced(a_leg(width_ft=40.0, length_ft=130.0), "left", [(10, 20), (130, 20)])
     leg = traced(leg, "right", [(10, 20), (130, 20)])
     state = a_state({"east": leg})
-    # Through apply, not by poking the dict: the paint builder dispatches to the treatments a
-    # design records (Treatment.paint), so a zone written straight into state.parking_zones is a
-    # design nothing asked for and nothing paints.
+    # Through apply: the paint builder dispatches to the treatments a design records
+    # (Treatment.paint), and since the collapse there is no longer any parking-zone dict to poke
+    # instead - a marked lane exists exactly when someone applied a MarkedParking.
     state = state.apply(MarkedParking(LegSide("east", "left"), depth_ft=8.0, stall_length_ft=22.0,
                                        curb_offset_ft=1.0))
 
@@ -620,9 +620,9 @@ def test_a_fill_cut_by_a_crossing_gets_a_line_along_the_cut():
     leg = traced(a_leg(width_ft=40.0, length_ft=130.0), "left", [(10, 20), (130, 20)])
     leg = traced(leg, "right", [(10, 20), (130, 20)])
     state = a_state({"east": leg})
-    # Through apply, not by poking the dict: the paint builder dispatches to the treatments a
-    # design records (Treatment.paint), so a zone written straight into state.parking_zones is a
-    # design nothing asked for and nothing paints.
+    # Through apply: the paint builder dispatches to the treatments a design records
+    # (Treatment.paint), and since the collapse there is no longer any parking-zone dict to poke
+    # instead - a marked lane exists exactly when someone applied a MarkedParking.
     state = state.apply(MarkedParking(LegSide("east", "left"), depth_ft=8.0, stall_length_ft=22.0,
                                        curb_offset_ft=1.0))
     band = box(18, -20, 24, 20)
@@ -643,9 +643,9 @@ def test_no_rim_where_there_is_no_crossing_to_cut_against():
     leg = traced(a_leg(width_ft=40.0, length_ft=130.0), "left", [(10, 20), (130, 20)])
     leg = traced(leg, "right", [(10, 20), (130, 20)])
     state = a_state({"east": leg})
-    # Through apply, not by poking the dict: the paint builder dispatches to the treatments a
-    # design records (Treatment.paint), so a zone written straight into state.parking_zones is a
-    # design nothing asked for and nothing paints.
+    # Through apply: the paint builder dispatches to the treatments a design records
+    # (Treatment.paint), and since the collapse there is no longer any parking-zone dict to poke
+    # instead - a marked lane exists exactly when someone applied a MarkedParking.
     state = state.apply(MarkedParking(LegSide("east", "left"), depth_ft=8.0, stall_length_ft=22.0,
                                        curb_offset_ft=1.0))
     paint = curbside_paint_ft(state, crossing_at(21.0), None)

@@ -155,8 +155,9 @@ def _draw_props(ax, model: IntersectionModel, state: DesignState, crosswalk_offs
     rather than a surprise three phases later.
 
     Bollards tagged DRAWN_BY_PAINT are skipped, because the treatment layer above already
-    drew them from state.bollard_lines. The ones that are NOT so tagged - the daylight-zone
-    posts from protect_daylight_zone - exist only as props, and skipping every bollard the
+    drew them - LaneNarrowingBollards and ParkingBufferBollards each emit their own paint
+    pieces. The ones that are NOT so tagged - the daylight-zone posts from
+    ProtectDaylightZone - exist only as props, and skipping every bollard the
     way this used to meant the plan view of a bollard proposal showed no bollards while the
     3D render of the same scenario showed thirteen.
     """

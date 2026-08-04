@@ -42,7 +42,7 @@ It writes the same files the phase scripts do, runs sites in parallel (`--jobs`)
 
 This runs `.venv/bin/python -m pytest` and works whether or not the venv is active. Plain `python -m pytest` only works once you've run `source .venv/bin/activate` — without it, `python` is whatever is on your PATH, and if that interpreter happens to have pytest but not geopandas the suite fails at collection. The root `conftest.py` detects that case and prints one message telling you which interpreter you're on and what to run instead, rather than five `ModuleNotFoundError` tracebacks.
 
-371 tests, ~13 s, **no network**: they run against a committed snapshot of the OSM responses in `tests/fixtures/osm_cache/`, and `HOPEWELL_OFFLINE=1` makes any un-snapshotted fetch fail loudly rather than reach Overpass. Refresh the snapshot with `cp output/.cache/borough_*.json tests/fixtures/osm_cache/` — it does NOT update itself when you re-pull, so after editing OSM you have to do both (see "Kerbside parking varies ALONG a leg" below).
+374 tests, ~15 s, **no network**: they run against a committed snapshot of the OSM responses in `tests/fixtures/osm_cache/`, and `HOPEWELL_OFFLINE=1` makes any un-snapshotted fetch fail loudly rather than reach Overpass. Refresh the snapshot with `cp output/.cache/borough_*.json tests/fixtures/osm_cache/` — it does NOT update itself when you re-pull, so after editing OSM you have to do both (see "Kerbside parking varies ALONG a leg" below).
 
 `tests/test_checks.py` covers the scene invariants (see below), `tests/test_traced_curbs.py` covers building curb lines from traced OSM kerbs, `tests/test_curb_extensions.py` covers curb extensions and bike lanes (and pins what a corner-radius change does *not* do), and `tests/test_sites.py` asserts all four real junctions and every proposal satisfy the invariants.
 
@@ -54,9 +54,9 @@ Three things in this codebase used to be conventions spread across several modul
 |---|---|---|
 | A paint kind: a bare string keyed into `PAINT_STYLE`, `PAINT_KIND_LISTS`, `PAINT_FILL_EDGE` and `kind == "bollard"` branches | `src/geometry/markings.py` — a `PaintKind` with a role (line/fill/surface/object) and the channel it travels to the 3D render in | Declaring a marking that reaches no renderer; routing a hatched zone to a channel of lines; a plan-view style table missing an entry. All three raise on import |
 | An invariant: a function you had to remember to add to a `+` chain, with a hand-picked argument list | `src/checks.py` — a `SceneCheck` subclass, registered by being defined, reading one `SceneContext` | Writing a check that never runs; handing two checks differently-built versions of the same geometry (that shipped: 15 sq ft apart at W Broad & Louellen) |
-| A treatment: a function writing one of 23 dicts, validating whatever its author remembered | `src/geometry/treatments.py` — a `Treatment` frozen dataclass with a typed target from `src/geometry/targets.py`, applied through `DesignState.apply` | An unvalidated treatment existing at all; a treatment aimed at a leg the junction doesn't have; a treatment that needs the model being silently skipped; a missing provenance note |
+| A treatment: a function writing one of 20 dicts on `DesignState` that five other modules read back, validating whatever its author remembered | `src/geometry/treatments.py` — a `Treatment` frozen dataclass with a typed target from `src/geometry/targets.py`, applied through `DesignState.apply`, and the **only** record of what a design asked for | An unvalidated treatment existing at all; a treatment aimed at a leg the junction doesn't have; a treatment that needs the model being silently skipped; a missing provenance note; a parameter a renderer reads disagreeing with the decision that set it |
 
-`Side` is a `StrEnum`, so it still keys the existing dicts and matches OSM's `parking:left` tags, but `Side("north")` raises and the `1 if side == "left" else -1` that appeared in ten places has one home.
+`Side` is a `StrEnum`, so it matches OSM's `parking:left` tag keys and the traced kerb attributes (`leg.left_curb`) unchanged, but `Side("north")` raises and the `1 if side == "left" else -1` that appeared in ten places has one home.
 
 A treatment owns its data, its validation, its provenance **and its markings**: `Treatment.paint(ctx)` puts them down through a `PaintContext` holding what is shared (the crossing bands everything is cut around, the apron surfaces everything stops at, `add`/`rim`/`anchors`). `curbside_paint_ft` is a dispatcher over the treatments a design recorded, ordered by a class-level `paint_group`/`paint_rank`, and went from ~350 lines to 126.
 
@@ -64,9 +64,41 @@ That separation is the point. The bike lane's kerb hatching was `add(...)` where
 
 The aprons went last, and they are the one case where the order is load-bearing rather than cosmetic. An apron is built ground, so every marking is cut around it — which means the union of them has to be **complete** before anything else paints. That is `paint_group = 0` plus `PaintContext.seal_surfaces()`, and the pass is ordered by the corner the ground lands at rather than by the treatment's own target, because a curb extension is aimed at a leg-side and lays its apron at the corner that kerb feeds. Sealing after the markings instead of before is caught immediately: `markings_collide` reports the apron overlapping a lane-narrowing buffer by 1–4 sq ft at Broad & Greenwood.
 
-A treatment asks about another treatment through `state.treatment_for(kind, target)`, not about the dict that treatment happens to write — so a bollard row's precondition is "is there a buffered bike lane here", a question about a decision someone made, rather than "is there an entry under this key", which anything could have written. The dicts remain as the storage `apply_to` writes and the renderers still read; collapsing those reads is the last step, and it is the one that will move the renders.
+Each apron treatment paints its own, from its own fields. There was a `state.corner_aprons` holding one entry per corner, and reading from that would have let two treatments which each asked for an apron there paint one apron between them — a corner with two aprons specified is a design error the collision invariant should report.
 
-Each apron treatment paints its own, from its own fields, rather than reading `state.corner_aprons` — the dict holds one entry per corner, so reading it would let two treatments that each asked for an apron there paint the same ground twice, and a corner with two aprons specified is a design error the collision invariant should report.
+### The design is the list of treatments
+
+There were **twenty dicts** on `DesignState` — `lane_narrowing`, `parking_zones`, `bike_lanes`, `daylight_devices`, `corner_aprons` and the rest. Each treatment's `apply_to` wrote one and five modules outside the treatment layer read them back. That is two records of one decision, and they can only agree by convention:
+
+- a leg-name typo wrote a key nothing read, so the treatment silently did nothing (which is why a target is now a type);
+- `state.bike_lanes[("east", "north")]` was a perfectly good expression that never matched anything;
+- a dict is last-write-wins, so nothing could tell one marked parking lane from two painted on top of each other;
+- a test could poke a dict and get a design no scenario could produce.
+
+They are gone. Every parameter every renderer, invariant and policy reads now comes off `state.treatments` through three accessors, and which one you want is a statement about the treatment:
+
+| | | |
+|---|---|---|
+| `state.treatment_for(kind, target)` | the one at that target, last applied wins | "is there a buffered bike lane on this kerb" |
+| `state.treatments_of(kind)` | one per target, **sorted by target** | every marked parking lane in the design |
+| `state.every_treatment(kind)` | all of them, in application order | the two treatments that ACCUMULATE |
+
+`treatments_of` sorts because the `props` array in the exported JSON is order-sensitive and the prop builders read the treatments — application order would make that file depend on the order of `BROAD_ST_LEGS` in a site's `scenarios.py`, which is `("broad_st_west", "broad_st_east")`, west first. `every_treatment` exists for `ShiftCrosswalk` and `ExtraProp`, the two that wrote something cumulative (a `+=` and a list append) where the rest wrote a key: two 5 ft shifts move a crossing 10 ft and two RRFBs on one leg are two signs, so collapsing them per target would silently lose one of each.
+
+What is left on `DesignState` is six fields, and each is something the treatment list genuinely does not carry:
+
+| | |
+|---|---|
+| `legs`, `corner_fillets` | the modelled street — `AddCurbExtension` moves a kerb and `SetCornerRadius` re-cuts a corner, and those writes are the only bodies `apply_to` still has |
+| `existing_centerline_styles`, `parking_restrictions` | **observed facts**, seeded by `from_model`: what is painted down each leg today (`config.yaml`, street-view confirmed, or OSM's `overtaking=no`) and what OSM's `parking:*:restriction` says per stretch of each kerb. Neither is a treatment's parameter, and a proposal's own choice is read through `state.centerline_style(leg)`, which lets a `SetCenterlineStyle` outrank the observation |
+| `treatments` | the design |
+| `notes` | the provenance every export ships |
+
+`Treatment.apply_to` is therefore no longer abstract: for most treatments there is nothing to do there, because being recorded **is** the change. What is left for a subclass is to refuse something only the design can refuse — `AddBikeLane`'s cross-section against the leg's narrowest traced width, `AddBikeLaneBollards`' requirement of a buffer, `ProtectDaylightZone`'s requirement that a `curb_extension` device have an extension under it — or to move the kerb.
+
+`RefugeIsland` and `RaiseCrossing` produce derived **geometry** rather than parameters, and they build it on demand (`polygon(state)`) rather than at apply time. For the raised crossing that is a fix: its start station comes from `leg_clearance_ft`, which reads the corner fillets, and `AddCurbExtension` re-cuts them — so applied *before* an extension on the same leg it used to keep the corner it happened to be measured against while every other marking followed the kerb that moved, putting the same two decisions in the other order 8 ft apart. A design is a set of decisions, not a sequence of snapshots. Their `apply_to` still builds the band and throws it away, for the refusals: a leg with no traced kerbs, or one whose corner return consumes its whole length.
+
+The whole collapse changed **nothing** in the 13 exported scenes — verified key by key with `scripts/export_all_scenarios.py` + `scripts/diff_exports.py`, which is the cheap way to check this (it runs `export_scenario`, so it resolves the scene, builds the paint and the props and asserts every invariant, in ~3 s rather than the ~16 minutes of Blender `build_all.py --render-3d` needs to write the same files).
 
 ## Scene invariants
 
@@ -189,6 +221,8 @@ scripts/
   phase3_treatments.py    Apply demo scenario, plot before/after
   phase4_export_geometry.py  Export-only (no Blender) - useful for debugging the JSON
   phase4_render_3d.py    Full Phase 4 pipeline: fetch theme + export + shell out to Blender
+  export_all_scenarios.py  Every site's every scenario through export_scenario, into a directory
+  diff_exports.py         Diff two such directories key by key - the cheap regression check
   test.sh                 Run the suite under .venv/bin/python, activated or not
   blender/                Runs INSIDE Blender's own Python (no network, no venv) - add a new prop/marking
                            DRAWING function here (its placement lives in src/render/ above)
@@ -225,10 +259,13 @@ Four things stay functions, because they are **policies that emit several treatm
 - `AddBikeLane(LegSide(leg, side), width_ft, buffer_ft, parking_ft, shy_ft)` — an exclusive lane with its own edge lines, optionally buffered or parking-protected. `LaneNarrowing` cannot express this: it paints a *buffer*, saying nothing belongs in the strip, where a bike lane says a specific vehicle does. Every width is between paint faces and the stripes' own bodies come out of the buffer, not out of either lane. Refused below AASHTO's 5 ft minimum, and bounded by the leg's **narrowest traced** cross-section rather than its nominal half-width. The cross-section reads *travel lane → buffer → bike lane → hatching → kerb*: a lane is a standard width and the street's spare asphalt is hatched, the same accounting an 8 ft parking stall gets when its remainder becomes a kerb buffer. Drawn without that outer stripe, a 6 ft lane read as reaching the kerb and looked far wider than it is.
 - `AddBikeLaneBollards(LegSide(leg, side), spacing_ft)` — flex posts down the buffer on the **traffic** side, which is what makes a lane protected; posts in the kerb-side hatching would protect nothing. Requires a buffer, and refuses without one rather than improvising: E Broad has 17.6 ft to its nearest kerb and an 11 ft lane, a 5 ft lane and their two stripes already spend 17.6 of it, so its lanes are conventional and the proposal says so. A post is an *object*, so it has to reach the 3D render as a **prop** — paint alone draws it in the plan view and nowhere else, which is how these shipped visible in 2D and absent in 3D. Its props are read off the paint (`props.bollard_props_from_paint`) rather than recomputed, because where the row starts depends on how far the crossing reaches on that side, and `post_not_in_the_render` now fails the build if a painted post has no prop.
 - `MountableApron(Corner(leg_a, leg_b), extent_ft)` — a flush, drivable corner surface at a fixed depth. Where an apron exists to preserve a large vehicle's swept path around a *tightened* corner its depth is not free, so `AddCurbExtension` records the swept radius instead and the apron is built as the annulus between the two radii (`corner_apron_annulus`).
-- `RefugeIsland(LegTarget(leg), offset_ft, width_ft, along_road_ft)` — NACTO 6 ft minimum width enforced.
-- `RaiseCrossing(LegTarget(leg), crossing_width_ft)` — marks a crossing as a raised speed table; placed via `leg_clearance_ft()`.
+- `RefugeIsland(LegTarget(leg), offset_ft, width_ft, along_road_ft)` — NACTO 6 ft minimum width enforced. Its footprint is `island.polygon(state)`, built on demand.
+- `RaiseCrossing(LegTarget(leg), crossing_width_ft)` — marks a crossing as a raised speed table; placed via `leg_clearance_ft()`, and likewise `raised.polygon(state)` rather than a polygon frozen when it was applied — see "The design is the list of treatments" above for the 8 ft that cost.
 - `UpgradeCrosswalkMarkings(LegTarget(leg), style)` — repaints a crosswalk to a more visible style (`"lines"` → `"continental"` → `"ladder"`, FHWA/NACTO visibility ranking). A real, standalone low-cost treatment, not just cosmetic.
-- `set_centerline_style(state, leg_name, style)` — changes what's painted down a leg's middle (`"single_yellow_dashed"` / `"double_yellow"` / `"none"`). Not a visibility ranking like crosswalk style - just what's actually there today (`DesignState.from_model()` seeds it per leg from config.yaml's `centerline_style`, since there's no OSM tag for it) or what a proposal changes it to.
+- `SetCenterlineStyle(LegTarget(leg), style)` — changes what's painted down a leg's middle (`"single_yellow_dashed"` / `"double_yellow"` / `"none"`). Not a visibility ranking like crosswalk style — just this proposal's choice, over what is actually there today (`DesignState.from_model()` seeds `existing_centerline_styles` per leg from config.yaml's `centerline_style`, since there's no OSM tag for it). `state.centerline_style(leg)` resolves the pair.
+- `ShiftCrosswalk(LegTarget(leg), delta_ft)` — moves a leg's crossing further from or closer to the junction, on top of the resolved offset. The one treatment here that is not idempotent: two shifts of a leg add up, which is why it is read with `every_treatment`.
+- `ExtraProp(LegTarget(leg), prop_type, offset_ft, side, note)` — one scenario-specific prop (an RRFB, a relocated sign). Also accumulating: two on one leg are two signs.
+- `CornerHatching(Corner(leg_a, leg_b), depth_ft)` / `LaneNarrowing(LegTarget(leg), stripe_width_ft, line_only, sides)` / `MarkedParking(LegSide(leg, side), depth_ft, stall_length_ft, curb_offset_ft)` / `LaneNarrowingBollards` / `ParkingBufferBollards` / `ProtectDaylightZone(LegSide(leg, side), kind, spacing_ft)` — the paint-only kerbside and corner treatments, each painting its own markings through `Treatment.paint`.
 - `build_sidewalk_pieces(state, sidewalk_width_ft)` — reuses the *same* fillet pipeline at a wider offset to get a sidewalk band that hugs the pavement exactly (12 pieces: 4 leg strips × 2 sides + 4 corner wedges).
 
 ### A corner radius is not a curb extension
@@ -291,7 +328,7 @@ All 4 real crossings here are tagged `crossing:markings=lines` — confirmed cor
 
 ## Centerline styles: another real-vs-assumed fact, no OSM equivalent
 
-Unlike crosswalks, OSM has no tag for what's painted down the middle of a road, so this can't be resolved from real survey data at export time the way crosswalk style is - it has to be a per-leg fact recorded directly in `config.yaml` (`legs.<name>.centerline_style`, confirmed via street-view photo review, same sourcing category as the `signals` block). `DesignState.from_model()` seeds `state.centerline_styles` from it; `set_centerline_style()` lets a proposal change it. This replaced an earlier version of the pipeline that just drew a single dashed yellow line down every leg unconditionally, which happened to be wrong here: **West Broad St, East Broad St, and North Greenwood Ave all have a solid double yellow (no-passing zone) centerline; South Greenwood Ave has no centerline paint at all.** `blender_crosswalks.py:add_double_yellow_centerline` draws two continuous parallel lines (real MUTCD/AASHTO proportions - 6 in lines, 4 in gap) for `"double_yellow"`; `"none"` draws nothing.
+Unlike crosswalks, OSM has no tag for what's painted down the middle of a road, so this can't be resolved from real survey data at export time the way crosswalk style is - it has to be a per-leg fact recorded directly in `config.yaml` (`legs.<name>.centerline_style`, confirmed via street-view photo review, same sourcing category as the `signals` block). `DesignState.from_model()` seeds `state.existing_centerline_styles` from it, an observed fact about the street rather than any treatment's parameter; a `SetCenterlineStyle` treatment lets a proposal change what is drawn, and `state.centerline_style(leg)` resolves the two (the proposal wins). This replaced an earlier version of the pipeline that just drew a single dashed yellow line down every leg unconditionally, which happened to be wrong here: **West Broad St, East Broad St, and North Greenwood Ave all have a solid double yellow (no-passing zone) centerline; South Greenwood Ave has no centerline paint at all.** `blender_crosswalks.py:add_double_yellow_centerline` draws two continuous parallel lines (real MUTCD/AASHTO proportions - 6 in lines, 4 in gap) for `"double_yellow"`; `"none"` draws nothing.
 
 ## Phase 4 fidelity (textures, props, trees, mesh optimization)
 

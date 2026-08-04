@@ -336,21 +336,24 @@ class TravelLanesKeepTheirWidth(SceneCheck):
 
     def run(self, scene: SceneContext) -> list[Violation]:
         state = scene.state
-        from src.geometry.treatments import TARGET_LANE_WIDTH_FT
+        from src.geometry.targets import BOTH_SIDES, LegSide, LegTarget
+        from src.geometry.treatments import LaneNarrowing, MarkedParking, TARGET_LANE_WIDTH_FT
 
         violations = []
         for leg_name, leg in state.legs.items():
             if leg.curb_to_curb_ft is None:
                 continue
             half_ft = leg.curb_to_curb_ft / 2
-            for side in ("left", "right"):
+            narrowing = state.treatment_for(LaneNarrowing, LegTarget(leg_name))
+            for side in BOTH_SIDES:
                 painted_ft = 0.0
-                if (leg_name in state.lane_narrowing
-                        and side in state.lane_narrowing_sides.get(leg_name, ("left", "right"))):
-                    painted_ft = state.lane_narrowing[leg_name]
-                zone = state.parking_zones.get((leg_name, side))
-                if zone is not None:
-                    painted_ft = zone["depth_ft"] + zone["curb_offset_ft"]
+                if narrowing is not None and side in narrowing.sides:
+                    painted_ft = narrowing.stripe_width_ft
+                # Marked parking last, so a kerb with both keeps the deeper claim on the
+                # roadway - the stalls plus their kerb buffer - rather than the buffer alone.
+                parking = state.treatment_for(MarkedParking, LegSide(leg_name, side))
+                if parking is not None:
+                    painted_ft = parking.depth_ft + parking.curb_offset_ft
                 if painted_ft <= 0:
                     continue
                 lane_ft = half_ft - painted_ft

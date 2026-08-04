@@ -32,6 +32,21 @@ def prop(kind, x, y):
     return {"type": kind, "position_ft": (x, y)}
 
 
+def with_device(state, kind, spacing_ft=8.0):
+    """A design with this daylight device recorded, without going through apply.
+
+    DesignState.apply refuses a curb-extension-class device with no AddCurbExtension under it -
+    a real invariant, and the one
+    test_claiming_a_curb_extension_setback_without_building_one_is_refused covers. The two tests
+    below are about WHICH SETBACK the clause resolves to, so they record the device directly
+    rather than also building a kerb extension, which would make them tests of AddCurbExtension
+    as well.
+    """
+    state.treatments.append(ProtectDaylightZone(LegSide("east", "left"), kind=kind,
+                                                spacing_ft=spacing_ft))
+    return state
+
+
 # --------------------------------------------------------------------------
 # 39:4-138(e) - the daylighting distance
 # --------------------------------------------------------------------------
@@ -57,17 +72,19 @@ def test_a_curb_extension_reduces_both_setbacks_to_ten_feet(monkeypatch):
     from src.geometry.daylighting import SIDELINE_SETBACK_WITH_BULBOUT_FT
 
     monkeypatch.setattr(treatments, "CURB_EXTENSION_DEVICES", frozenset({"built_bulbout"}))
-    state = a_state()
-    state.daylight_devices = {("east", "left"): {"kind": "built_bulbout", "spacing_ft": 5.0}}
+    # The kind has to be constructible as well as recognised: a Treatment validates itself, so
+    # "built_bulbout" would be refused by ProtectDaylightZone's own constructor otherwise.
+    monkeypatch.setattr(treatments, "VALID_DAYLIGHT_DEVICES",
+                        treatments.VALID_DAYLIGHT_DEVICES + ("built_bulbout",))
+    state = with_device(a_state(), "built_bulbout", spacing_ft=5.0)
     start = legal_parking_start_ft(state, "east", "left", {"east": (30.0,)})
     assert start == pytest.approx(30.0 + CROSSWALK_SETBACK_WITH_BULBOUT_FT)
     assert CROSSWALK_SETBACK_WITH_BULBOUT_FT < CROSSWALK_SETBACK_FT
     assert SIDELINE_SETBACK_WITH_BULBOUT_FT < SIDELINE_SETBACK_FT
 
     # A flex-post line is not a constructed curb extension.
-    state.daylight_devices = {("east", "left"): {"kind": "bollards", "spacing_ft": 8.0}}
-    assert legal_parking_start_ft(state, "east", "left", {"east": (30.0,)}) == pytest.approx(
-        30.0 + CROSSWALK_SETBACK_FT)
+    assert legal_parking_start_ft(with_device(a_state(), "bollards"), "east", "left",
+                                  {"east": (30.0,)}) == pytest.approx(30.0 + CROSSWALK_SETBACK_FT)
 
 
 def test_only_a_built_curb_extension_buys_back_the_setback():
@@ -84,8 +101,7 @@ def test_only_a_built_curb_extension_buys_back_the_setback():
 
     assert CURB_EXTENSION_DEVICES == {"curb_extension"}
     for kind in VALID_DAYLIGHT_DEVICES:
-        state = a_state()
-        state.daylight_devices = {("east", "left"): {"kind": kind, "spacing_ft": 8.0}}
+        state = with_device(a_state(), kind)
         start = legal_parking_start_ft(state, "east", "left", {"east": (30.0,)})
         expected = (CROSSWALK_SETBACK_WITH_BULBOUT_FT if kind in CURB_EXTENSION_DEVICES
                     else CROSSWALK_SETBACK_FT)

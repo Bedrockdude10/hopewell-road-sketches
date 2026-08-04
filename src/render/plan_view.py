@@ -525,14 +525,19 @@ def _label_parking_legality(ax, model, state):
     src/geometry/treatments.py:RestrictionSummary.
     """
     from src.geometry.model import curb_point_at_station
-    from src.geometry.treatments import (MIN_MARKED_PARKING_DEPTH_FT, TARGET_LANE_WIDTH_FT,
+    from src.geometry.targets import BOTH_SIDES, LegSide, LegTarget
+    from src.geometry.treatments import (AddBikeLane, LaneNarrowing, MarkedParking,
+                                         MIN_MARKED_PARKING_DEPTH_FT, TARGET_LANE_WIDTH_FT,
                                          _restriction_summary)
 
     for leg_name, leg in state.legs.items():
         if leg.curb_to_curb_ft is None:
             continue
         allowance_ft = leg.curb_to_curb_ft / 2 - TARGET_LANE_WIDTH_FT
-        for side in ("left", "right"):
+        narrowing = state.treatment_for(LaneNarrowing, LegTarget(leg_name))
+        for side in BOTH_SIDES:
+            kerb = LegSide(leg_name, side)
+            bike_lane = state.treatment_for(AddBikeLane, kerb)
             at = _restriction_summary(state, leg_name, side, leg.centerline.length)
             if at.restricted_throughout:
                 kind, says = "restricted", at.worst_value
@@ -546,16 +551,14 @@ def _label_parking_legality(ax, model, state):
             else:
                 kind, says = "untagged", "untagged"
 
-            if (leg_name, side) in state.bike_lanes:
-                lane = state.bike_lanes[(leg_name, side)]
-                drew = f"bike lane, {lane.width_ft:.0f} ft"
-            elif (leg_name, side) in state.parking_zones:
+            if bike_lane is not None:
+                drew = f"bike lane, {bike_lane.width_ft:.0f} ft"
+            elif state.treatment_for(MarkedParking, kerb) is not None:
                 # Naming the carve-out matters on a partly-restricted kerb: "stalls" alone, next
                 # to a label saying no_parking over the first 80 ft, reads as a contradiction
                 # rather than as the two facts it is.
                 drew = ("stalls beyond it" if at.restricted_in_part else "stalls")
-            elif (leg_name in state.lane_narrowing
-                  and side in state.lane_narrowing_sides.get(leg_name, ("left", "right"))):
+            elif narrowing is not None and side in narrowing.sides:
                 # Three reasons a kerb ends up hatched, and the label may only claim the one
                 # that applies. It used to attribute every unrestricted hatched kerb to
                 # insufficient width, which on Broad St reads "only 15.0 ft spare, under a 8 ft
@@ -604,13 +607,16 @@ def _label_paint(ax, state, paint):
     centerline, which reads as "this road is one 11 ft lane" rather than what is there
     (a leg is not always narrowed on both sides).
     """
-    for leg_name, stripe_width_ft in state.lane_narrowing.items():
+    from src.geometry.targets import LegSide
+    from src.geometry.treatments import LaneNarrowing, MarkedParking
+
+    for narrowing in state.treatments_of(LaneNarrowing):
+        leg_name = narrowing.target.leg
         leg = state.legs[leg_name]
-        lane_ft = leg.curb_to_curb_ft / 2 - stripe_width_ft
+        lane_ft = leg.curb_to_curb_ft / 2 - narrowing.stripe_width_ft
         along_ft = min(leg.centerline.length * 0.6, leg.centerline.length - 5)
-        for side, sign in (("left", 1), ("right", -1)):
-            if side not in state.lane_narrowing_sides.get(leg_name, ("left", "right")):
-                continue
+        for side in narrowing.sides:
+            sign = side.sign
             at = leg.centerline.offset_curve(sign * lane_ft / 2).interpolate(along_ft)
             ax.annotate(f"lane {lane_ft:.1f} ft", (at.x, at.y), fontsize=6.5, color="goldenrod",
                         ha="center", bbox=dict(boxstyle="round,pad=0.15", fc="white", ec="none", alpha=0.75))
@@ -620,12 +626,12 @@ def _label_paint(ax, state, paint):
     for piece in paint:
         if piece.kind is not markings.PARKING_EDGE_LINE:
             continue
-        zone = state.parking_zones.get((piece.leg, piece.side))
-        if zone is None:
+        parking = state.treatment_for(MarkedParking, LegSide(piece.leg, piece.side))
+        if parking is None:
             continue
-        n_stalls = int(piece.geometry.length // zone["stall_length_ft"])
+        n_stalls = int(piece.geometry.length // parking.stall_length_ft)
         mid = piece.geometry.interpolate(0.5, normalized=True)
-        ax.annotate(f"parking\n{n_stalls} stalls ({zone['depth_ft']:.0f} ft)", (mid.x, mid.y),
+        ax.annotate(f"parking\n{n_stalls} stalls ({parking.depth_ft:.0f} ft)", (mid.x, mid.y),
                     fontsize=6, color="steelblue", ha="center", va="center", fontweight="bold",
                     bbox=dict(boxstyle="round,pad=0.15", fc="white", ec="none", alpha=0.75))
 

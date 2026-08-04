@@ -19,10 +19,15 @@ from src.geometry.treatments import (AASHTO_MIN_BIKE_LANE_FT, AddBikeLane, AddBi
                                      RefugeIsland, Treatment)
 
 
-def a_state(length_ft=130.0, width_ft=30.0, corner_fillets=None):
-    leg = Leg(name="east", centerline=LineString([(0, 0), (length_ft, 0)]),
-              curb_to_curb_ft=width_ft)
-    return DesignState(legs={"east": leg}, corner_fillets=corner_fillets or {})
+def a_leg(name="east", length_ft=130.0, width_ft=30.0):
+    return Leg(name=name, centerline=LineString([(0, 0), (length_ft, 0)]),
+               curb_to_curb_ft=width_ft)
+
+
+def a_state(length_ft=130.0, width_ft=30.0, corner_fillets=None, extra_legs=()):
+    legs = {"east": a_leg(length_ft=length_ft, width_ft=width_ft)}
+    legs.update({name: a_leg(name, length_ft, width_ft) for name in extra_legs})
+    return DesignState(legs=legs, corner_fillets=corner_fillets or {})
 
 
 # --------------------------------------------------------------------------
@@ -144,7 +149,7 @@ def test_applying_a_treatment_records_it_and_leaves_the_original_alone():
     after = state.apply(LaneNarrowing(LegTarget("east"), stripe_width_ft=3.0))
     assert state.notes == [] and state.treatments == [], "apply mutated the design it was given"
     assert len(after.treatments) == 1 and after.notes[0].startswith("LaneNarrowing(")
-    assert after.lane_narrowing["east"] == 3.0
+    assert after.treatment_for(LaneNarrowing, LegTarget("east")).stripe_width_ft == 3.0
 
 
 def test_treatments_chain_in_one_call_or_several():
@@ -152,8 +157,9 @@ def test_treatments_chain_in_one_call_or_several():
     state = a_state()
     one_call = state.apply(LaneNarrowing(LegTarget("east"), 3.0), LaneNarrowing(LegTarget("east"), 4.0))
     chained = state.apply(LaneNarrowing(LegTarget("east"), 3.0)).apply(LaneNarrowing(LegTarget("east"), 4.0))
-    assert one_call.lane_narrowing == chained.lane_narrowing == {"east": 4.0}
+    assert one_call.treatments == chained.treatments
     assert len(one_call.treatments) == len(chained.treatments) == 2
+    assert one_call.treatment_for(LaneNarrowing, LegTarget("east")).stripe_width_ft == 4.0
 
 
 def test_a_lane_narrowing_with_no_width_is_refused():
@@ -230,19 +236,20 @@ def test_a_treatment_asks_about_another_treatment_not_about_a_dict():
     LaneNarrowingBollards used to check `leg in state.lane_narrowing`, which is a question about
     state anything could have written - including a test poking the dict. It asks
     state.treatment_for now, so the answer is "did someone apply a lane narrowing here", and a
-    design assembled by hand rather than by applying treatments correctly refuses.
+    lane narrowing on a DIFFERENT leg no longer half-answers it.
     """
     from src.geometry.targets import LegTarget
     from src.geometry.treatments import LaneNarrowing, LaneNarrowingBollards
 
-    state = a_state()
-    # The dict says there is a buffer here; no treatment does.
-    state.lane_narrowing["east"] = 3.0
+    state = a_state(extra_legs=("west",))
+    narrowed_elsewhere = state.apply(LaneNarrowing(LegTarget("west"), stripe_width_ft=3.0))
     with pytest.raises(KeyError, match="no lane-narrowing buffer"):
-        state.apply(LaneNarrowingBollards(LegTarget("east")))
-    # Applied properly, it is accepted - and the posts take that buffer's own width.
-    narrowed = a_state().apply(LaneNarrowing(LegTarget("east"), stripe_width_ft=3.0))
-    assert narrowed.apply(LaneNarrowingBollards(LegTarget("east"))).bollard_lines == {"east": 10.0}
+        narrowed_elsewhere.apply(LaneNarrowingBollards(LegTarget("east")))
+    # Applied to this leg, it is accepted - and the posts take that buffer's own width.
+    posted = state.apply(LaneNarrowing(LegTarget("east"), stripe_width_ft=3.0),
+                          LaneNarrowingBollards(LegTarget("east")))
+    assert posted.treatment_for(LaneNarrowingBollards, LegTarget("east")).spacing_ft == 10.0
+    assert posted.treatment_for(LaneNarrowing, LegTarget("east")).stripe_width_ft == 3.0
 
 
 def test_the_last_treatment_on_a_target_is_the_one_that_counts():
@@ -259,3 +266,47 @@ def test_the_last_treatment_on_a_target_is_the_one_that_counts():
         MarkedParking(LegSide("east", "left"), depth_ft=7.0))
     assert state.treatment_for(MarkedParking, LegSide("east", "left")).depth_ft == 7.0
     assert len(state.treatments_of(MarkedParking)) == 1, "one kerb, one marked lane"
+
+
+def test_treatments_are_read_back_in_target_order_not_application_order():
+    """What a renderer sees is a property of the DESIGN, not of the scenario's loops.
+
+    The `props` array in the exported geometry JSON is order-sensitive and the prop builders
+    read the treatments, so an application-ordered read would make that file depend on the
+    order of a tuple in a site's scenarios.py - broad_st_greenwood's BROAD_ST_LEGS is
+    ("broad_st_west", "broad_st_east"), west first. Sorting by target is what makes the
+    exported order the junction's own rather than that tuple's.
+
+    every_treatment keeps application order on purpose: it exists for the treatments that
+    accumulate, where the sequence is the content.
+    """
+    state = a_state(extra_legs=("west",)).apply(LaneNarrowing(LegTarget("west"), 3.0),
+                                                 LaneNarrowing(LegTarget("east"), 4.0))
+    assert [t.target.leg for t in state.treatments_of(LaneNarrowing)] == ["east", "west"]
+    assert [t.target.leg for t in state.every_treatment(LaneNarrowing)] == ["west", "east"]
+
+
+def test_a_treatment_that_accumulates_is_read_with_every_treatment():
+    """Two of these on one target are two decisions, not a later one replacing an earlier.
+
+    ShiftCrosswalk and ExtraProp are the exceptions to last-applied-wins, and they were the two
+    that wrote something cumulative - a `+=` and a list append - where every other treatment
+    wrote a key. Read through treatments_of they would silently collapse: two 5 ft shifts would
+    move a crossing 5 ft instead of 10, and a second RRFB on one leg would stop being drawn.
+    """
+    from src.geometry.treatments import ExtraProp, ShiftCrosswalk
+    from src.render.crosswalks import resolve_crosswalk_offsets
+
+    state = a_state().apply(ShiftCrosswalk(LegTarget("east"), delta_ft=5.0),
+                             ShiftCrosswalk(LegTarget("east"), delta_ft=3.0),
+                             ExtraProp(LegTarget("east"), prop_type="rrfb"),
+                             ExtraProp(LegTarget("east"), prop_type="school_zone_sign"))
+    for kind in (ShiftCrosswalk, ExtraProp):
+        assert len(state.treatments_of(kind)) == 1, f"{kind.__name__}: collapsed per target"
+        assert len(state.every_treatment(kind)) == 2, f"{kind.__name__}: both are decisions"
+
+    # ...and the consumer adds them up rather than taking the last.
+    unshifted = a_state()
+    assert (resolve_crosswalk_offsets(state, [])["east"].offset_ft
+            == pytest.approx(resolve_crosswalk_offsets(unshifted, [])["east"].offset_ft + 8.0))
+    assert {e.prop_type for e in state.every_treatment(ExtraProp)} == {"rrfb", "school_zone_sign"}

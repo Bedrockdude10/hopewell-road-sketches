@@ -602,15 +602,23 @@ def _bollard_props(state: DesignState) -> list[dict]:
     escalation.
 
     On the sides the buffer is actually painted on, which is not always both: a leg can be
-    narrowed on one kerb only (state.lane_narrowing_sides), and taking bollard_points_ft's
+    narrowed on one kerb only (LaneNarrowing's `sides`), and taking bollard_points_ft's
     default here stood a row of posts down a buffer that does not exist on the other kerb -
     visible in the 3D render, absent from the plan view, which draws them from the paint.
+
+    The buffer's width and sides come from the LaneNarrowing this treatment requires, which is
+    the same reason LaneNarrowingBollards.paint reads them from it: a post placed off a
+    separately-looked-up number is a post standing somewhere the buffer might not be.
     """
+    from src.geometry.treatments import LaneNarrowing, LaneNarrowingBollards
+
     props = []
-    for leg_name, spacing_ft in state.bollard_lines.items():
+    for bollards in state.treatments_of(LaneNarrowingBollards):
+        leg_name, spacing_ft = bollards.target.leg, bollards.spacing_ft
         leg = state.legs[leg_name]
-        stripe_width_ft = state.lane_narrowing[leg_name]
-        sides = state.lane_narrowing_sides.get(leg_name, ("left", "right"))
+        narrowing = state.treatment_for(LaneNarrowing, bollards.target)
+        stripe_width_ft = narrowing.stripe_width_ft
+        sides = tuple(str(side) for side in narrowing.sides)
         start_ft = leg_clearance_ft(leg_name, state.legs, state.corner_fillets)
         for pos in bollard_points_ft(leg, stripe_width_ft, start_ft, spacing_ft, sides=sides):
             props.append({
@@ -800,20 +808,27 @@ def _extra_props_from_config(model: IntersectionModel, state: DesignState, offse
 
 def _extra_props_from_state(state: DesignState, offsets_ft: dict, pavement=None) -> list[dict]:
     """Scenario-specific extra signage added by a treatment
-    (src/geometry/treatments.py:add_extra_prop) - e.g. an RRFB or a relocated
+    (src/geometry/treatments.py:ExtraProp) - e.g. an RRFB or a relocated
     school-zone sign that only exists in one particular proposal, not the
     site's baseline config (see _extra_props_from_config for the site-wide
-    equivalent)."""
-    placed = (_extra_prop(state, entry, offsets_ft, pavement=pavement,
+    equivalent).
+
+    every_treatment, not treatments_of: two extras on one leg are two signs. This is one of the
+    two treatments that ACCUMULATE - it appended to a list where the rest wrote a key - so
+    collapsing per target would silently stop drawing the second RRFB.
+    """
+    from src.geometry.treatments import ExtraProp
+
+    placed = (_extra_prop(state, extra.entry, offsets_ft, pavement=pavement,
                            source="scenario-specified (treatment-level prop, not site config): "
-                                  f"{entry.get('note') or 'no note given'}")
-              for entry in state.extra_props)
+                                  f"{extra.note or 'no note given'}")
+              for extra in state.every_treatment(ExtraProp))
     return [p for p in placed if p is not None]
 
 
 # Bollards the TREATMENT layer already draws for itself. The plan view builds its markings
-# from src/geometry/paint.py, which emits a bollard piece for every leg in
-# state.bollard_lines, so drawing these props on top would just thicken the same markers.
+# from src/geometry/paint.py, which emits a bollard piece for every LaneNarrowingBollards a
+# design records, so drawing these props on top would just thicken the same markers.
 # Tagged rather than inferred: the plan view used to skip EVERY bollard prop on that
 # reasoning, which silently dropped the daylight-zone bollards - they come only from props,
 # so the 2D view of the bollard proposals showed no bollards at all while the 3D render
@@ -828,10 +843,14 @@ def _parking_buffer_bollard_props(state: DesignState) -> list[dict]:
     uses (just on the curb side of a parking lane instead of the travel-lane
     side of a lane-narrowing buffer), so both render identically in 3D via
     the one add_bollard() builder."""
+    from src.geometry.treatments import MarkedParking, ParkingBufferBollards
+
     props = []
-    for (leg_name, side), spacing_ft in state.parking_buffer_bollards.items():
+    for bollards in state.treatments_of(ParkingBufferBollards):
+        leg_name, side = bollards.target.leg, str(bollards.target.side)
+        spacing_ft = bollards.spacing_ft
         leg = state.legs[leg_name]
-        curb_offset_ft = state.parking_zones[(leg_name, side)]["curb_offset_ft"]
+        curb_offset_ft = state.treatment_for(MarkedParking, bollards.target).curb_offset_ft
         start_ft = leg_clearance_ft(leg_name, state.legs, state.corner_fillets)
         for pos in bollard_points_ft(leg, curb_offset_ft, start_ft, spacing_ft, sides=(side,)):
             props.append({
@@ -861,14 +880,19 @@ def bollard_props_from_paint(state: DesignState, paint: list) -> list[dict]:
     and the last time this module recomputed something paint.py also knew, the 2D and the 3D
     disagreed about where thirteen posts stood.
     """
+    from src.geometry.targets import LegSide
+    from src.geometry.treatments import AddBikeLane, AddBikeLaneBollards
+
     posts = []
     for piece in paint:
-        if not piece.kind.is_object:
+        if not piece.kind.is_object or piece.side is None:
             continue
-        spacing_ft = state.bike_lane_bollards.get((piece.leg, piece.side))
-        if spacing_ft is None:
+        kerb = LegSide(piece.leg, piece.side)
+        bollards = state.treatment_for(AddBikeLaneBollards, kerb)
+        if bollards is None:
             continue        # a lane-narrowing or parking-buffer post - already a prop above
-        lane = state.bike_lanes[(piece.leg, piece.side)]
+        spacing_ft = bollards.spacing_ft
+        lane = state.treatment_for(AddBikeLane, kerb).lane
         point = piece.geometry.centroid
         posts.append({
             "type": "bollard", "position_ft": (point.x, point.y), "heading_deg": 0.0,
@@ -899,18 +923,20 @@ def _daylight_device_props(state: DesignState, offsets_ft: dict, so_far: list[di
     from src.geometry.daylighting import merged_no_parking_spans_ft, no_parking_zones_ft
     from src.geometry.model import _point_at
     from src.geometry.paint import LANE_EDGE_LINE_WIDTH_FT
-    from src.geometry.treatments import DAYLIGHT_DEVICES_AS_POSTS, TARGET_LANE_WIDTH_FT
+    from src.geometry.treatments import (DAYLIGHT_DEVICES_AS_POSTS, ProtectDaylightZone,
+                                         TARGET_LANE_WIDTH_FT)
 
     MIN_DAYLIGHT_DEVICE_SPAN_FT = 3.0
     props = []
-    for (leg_name, side), device in sorted(state.daylight_devices.items()):
-        if device["kind"] not in DAYLIGHT_DEVICES_AS_POSTS:
+    for device in state.treatments_of(ProtectDaylightZone):
+        if device.kind not in DAYLIGHT_DEVICES_AS_POSTS:
             continue
+        leg_name, side = device.target.leg, str(device.target.side)
         # A zone shorter than this cannot hold even one device clear of the crossing.
         leg = state.legs.get(leg_name)
         if leg is None or leg_name not in offsets_ft:
             continue
-        spacing_ft = device["spacing_ft"]
+        spacing_ft = device.resolved_spacing_ft
         sign = 1 if side == "left" else -1
         # Just outside the lane edge line, i.e. the first thing a driver would clip.
         offset_ft = sign * (TARGET_LANE_WIDTH_FT + LANE_EDGE_LINE_WIDTH_FT * 1.5)
@@ -931,7 +957,7 @@ def _daylight_device_props(state: DesignState, offsets_ft: dict, so_far: list[di
                     "type": "bollard",
                     "position_ft": tuple(_point_at(leg.centerline, float(station), offset_ft)),
                     "heading_deg": 0.0,
-                    "source": f"scenario-specified (protect_daylight_zone): {device['kind']} "
+                    "source": f"scenario-specified (protect_daylight_zone): {device.kind} "
                               f"in {leg_name}'s {side} daylight zone, {spacing_ft:.0f} ft apart.",
                 })
     return props

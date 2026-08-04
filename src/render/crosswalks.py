@@ -13,7 +13,9 @@ from shapely.geometry import LineString, Polygon
 
 from src.render.coords import FT_TO_M, wgs84_to_state_plane
 from src.geometry.model import crosswalk_estimate_ft, leg_clearance_ft
-from src.geometry.treatments import DesignState
+from src.geometry.targets import LegSide, LegTarget, Side
+from src.geometry.treatments import (AddBikeLane, DesignState, LaneNarrowing, MarkedParking,
+                                     ShiftCrosswalk)
 
 # OSM crossing:markings values -> our 3 rendered styles. "lines" (two simple
 # transverse boundary lines) is the least visible; FHWA/NACTO guidance treats
@@ -109,20 +111,35 @@ def entering_lane_width_ft(state: DesignState, leg_name: str) -> float | None:
 
     The LEFT side, because that is the entering driver's own side under right-hand traffic -
     the same swap src/render/props.py:APPROACHING_DRIVER_RIGHT documents.
+
+    THE ORDER IS A DECISION, and it is load-bearing. Three treatments can each narrow this
+    kerb, and asked of the design rather than of three dicts it has to be stated rather than
+    implied by which lookup came first:
+
+      1. a BIKE LANE, which answers with the travel lane's own edge. Everything outside that
+         edge - the buffer, the lane, the kerb hatching - is width a stopping car has no
+         business in, and the bar used to run straight across all of it because this rule knew
+         about narrowing and parking and not about bike lanes. That was a user-visible bug, and
+         tests/test_curb_extensions.py pins the fix.
+      2. a LANE NARROWING on this side, whose buffer is spare asphalt the bar stops at;
+      3. MARKED PARKING, whose stalls plus kerb buffer the bar stops at.
+
+    The bike lane wins because it is the most specific claim about the same ground: it names
+    the travel lane's edge directly, where the other two name what lies outside it. Nothing in
+    the four sites applies two of these to one kerb, so this ordering is a statement about what
+    should happen if one ever does, not a description of current output.
     """
+    kerb = LegSide(leg_name, Side.LEFT)
     half_ft = state.legs[leg_name].curb_to_curb_ft / 2
-    # A bike lane is checked first and answers with the travel lane's own edge. Everything
-    # outside that edge - buffer, bike lane, kerb hatching - is width a stopping car has no
-    # business in, and the bar was running straight across all of it because this rule knew
-    # about narrowing and parking but not about bike lanes.
-    lane = state.bike_lanes.get((leg_name, "left"))
-    if lane is not None:
-        return lane.offsets_from_centerline_ft()["travel_lane_edge_ft"]
-    if leg_name in state.lane_narrowing and "left" in state.lane_narrowing_sides.get(leg_name, ("left", "right")):
-        return half_ft - state.lane_narrowing[leg_name]
-    parking_zone = state.parking_zones.get((leg_name, "left"))
-    if parking_zone is not None:
-        return half_ft - parking_zone["curb_offset_ft"] - parking_zone["depth_ft"]
+    bike_lane = state.treatment_for(AddBikeLane, kerb)
+    if bike_lane is not None:
+        return bike_lane.lane.offsets_from_centerline_ft()["travel_lane_edge_ft"]
+    narrowing = state.treatment_for(LaneNarrowing, kerb.leg_target)
+    if narrowing is not None and Side.LEFT in narrowing.sides:
+        return half_ft - narrowing.stripe_width_ft
+    parking = state.treatment_for(MarkedParking, kerb)
+    if parking is not None:
+        return half_ft - parking.curb_offset_ft - parking.depth_ft
     return None
 
 
@@ -345,7 +362,12 @@ def resolve_crosswalk_offsets(state: DesignState, crossings: list[dict]) -> dict
         else:
             offset_ft = crosswalk_estimate_ft(leg_name, state.legs)
             source = "geometric_estimate"
-        delta_ft = state.crosswalk_offset_overrides.get(leg_name)
+        # Every ShiftCrosswalk on this leg, summed. This one ACCUMULATES rather than being
+        # last-applied-wins, which is why it asks for all of them and not treatment_for: two
+        # shifts of the same leg are two decisions to move the crossing, and the dict this
+        # replaced added them up for the same reason.
+        delta_ft = sum(shift.delta_ft for shift in
+                       state.every_treatment(ShiftCrosswalk, LegTarget(leg_name)))
         if delta_ft:
             offset_ft += delta_ft
             source += f"+scenario_shift({delta_ft:+g}ft)"

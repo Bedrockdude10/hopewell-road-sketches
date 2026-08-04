@@ -36,8 +36,8 @@ def _protect_every_daylight_zone(state: DesignState, kind: str) -> DesignState:
     end to end is already no-parking for its whole length, and objects along all of it would
     be street furniture, not a corner treatment.
     """
-    for leg_name, side in sorted(state.parking_zones):
-        state = state.apply(ProtectDaylightZone(LegSide(leg_name, side), kind=kind))
+    for parking in state.treatments_of(MarkedParking):
+        state = state.apply(ProtectDaylightZone(parking.target, kind=kind))
     return state
 
 

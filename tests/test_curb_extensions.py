@@ -521,9 +521,10 @@ def test_a_stop_bar_stops_where_the_bike_lane_starts(site_models):
 
     checked = 0
     for leg_name, band in sorted(scene.stop_bar_bands.items()):
-        lane = state.bike_lanes.get((leg_name, "left"))
-        if lane is None or band is None or band.is_empty:
+        treatment = state.treatment_for(AddBikeLane, LegSide(leg_name, "left"))
+        if treatment is None or band is None or band.is_empty:
             continue
+        lane = treatment.lane
         checked += 1
         assert entering_lane_width_ft(state, leg_name) == pytest.approx(TARGET_LANE_WIDTH_FT), (
             f"{leg_name}'s bar is being sized against something other than the travel lane")
@@ -556,11 +557,11 @@ def test_bike_lane_bollards_stand_in_the_buffer_on_the_traffic_side(site_models)
         scene = resolved_scene(model, state)
         paint = scene.build_paint(scene_props(model, state, scene))
 
-    assert state.bike_lane_bollards, "the proposal is supposed to protect its lanes"
+    assert state.treatments_of(AddBikeLaneBollards), "the proposal is supposed to protect its lanes"
     posts = [p for p in paint if p.kind is BOLLARD]
     assert posts, "no delineators were drawn"
     for piece in posts:
-        lane = state.bike_lanes[(piece.leg, piece.side)]
+        lane = state.treatment_for(AddBikeLane, LegSide(piece.leg, piece.side)).lane
         bounds = lane.offsets_from_centerline_ft()
         _stations, offsets = station_offset_many(
             state.legs[piece.leg].centerline,
@@ -608,7 +609,8 @@ def test_the_kerb_hatching_beside_a_bike_lane_is_actually_drawn(site_models):
         scene = resolved_scene(model, state)
         paint = scene.build_paint(scene_props(model, state, scene))
 
-    for (leg_name, side), lane in sorted(state.bike_lanes.items()):
+    for treatment in state.treatments_of(AddBikeLane):
+        leg_name, side, lane = treatment.target.leg, str(treatment.target.side), treatment.lane
         fills = [p for p in paint if p.leg == leg_name and p.side == side
                  and p.kind is BUFFER_FILL]
         assert fills, f"{leg_name} {side} has no hatching between its bike lane and the kerb"
@@ -691,7 +693,8 @@ def test_the_kerb_hatching_beside_a_bike_lane_is_trimmed_where_the_crossing_cuts
         scene = resolved_scene(model, state)
         paint, _props = scene.build_paint_and_posts(scene_props(model, state, scene))
 
-    for (leg_name, side), lane in sorted(state.bike_lanes.items()):
+    for treatment in state.treatments_of(AddBikeLane):
+        leg_name, side, lane = treatment.target.leg, str(treatment.target.side), treatment.lane
         hatching = [p for p in paint if p.leg == leg_name and p.side == side
                     and p.kind is BUFFER_FILL]
         assert hatching, f"{leg_name} {side} has no kerb hatching to trim"

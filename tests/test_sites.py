@@ -16,8 +16,8 @@ import pytest
 from src.geometry.daylighting import no_parking_zones_ft
 from src.geometry.model import (build_pavement_polygon, narrowest_half_width_ft,
                                 station_offset_many)
-from src.geometry.targets import LegSide
-from src.geometry.treatments import (DesignState, MarkedParking)
+from src.geometry.targets import LegSide, LegTarget, Side
+from src.geometry.treatments import (DesignState, LaneNarrowing, MarkedParking)
 from src.render.crosswalks import (CROSSWALK_DEPTH_M, STOP_BAR_CURB_CLEARANCE_M,
                                    crosswalk_bands_ft, resolve_crosswalk_offsets,
                                    resolve_crosswalk_skews, resolve_stop_bar_offsets)
@@ -457,15 +457,16 @@ def test_each_kerb_gets_the_paint_its_restriction_and_width_allow(site, site_mod
 
     for leg_name, leg in model.legs.items():
         allowance_ft = leg.curb_to_curb_ft / 2 - TARGET_LANE_WIDTH_FT
+        narrowing = state.treatment_for(LaneNarrowing, LegTarget(leg_name))
         for side in ("left", "right"):
             # Per STRETCH of kerb, not one value for the leg. Reading the whole-leg tag here
             # asked a question the street does not answer: broad_st_east's dominant way says
             # "none" while its first 79.5 ft are tagged no_parking, so this test used to agree
             # that stalls belonged on a kerb OSM forbids them on.
             at = _restriction_summary(state, leg_name, side, leg.centerline.length)
-            hatched = (leg_name in state.lane_narrowing
-                       and side in state.lane_narrowing_sides.get(leg_name, ("left", "right")))
-            stalls = (leg_name, side) in state.parking_zones
+            hatched = narrowing is not None and side in narrowing.sides
+            parking = state.treatment_for(MarkedParking, LegSide(leg_name, side))
+            stalls = parking is not None
 
             if allowance_ft <= 0:
                 assert not hatched and not stalls, (
@@ -484,11 +485,10 @@ def test_each_kerb_gets_the_paint_its_restriction_and_width_allow(site, site_mod
                 assert zones, "the restricted stretch must become a no-parking zone"
             elif allowance_ft >= MIN_MARKED_PARKING_DEPTH_FT:
                 assert stalls and not hatched, f"{leg_name} {side} is parkable but got hatching"
-                zone = state.parking_zones[(leg_name, side)]
-                assert zone["depth_ft"] == pytest.approx(PARKING_STALL_DEPTH_DEFAULT_FT), (
+                assert parking.depth_ft == pytest.approx(PARKING_STALL_DEPTH_DEFAULT_FT), (
                     "a stall is a standard width - the leftover goes to the kerb buffer, it "
                     "does not make the stall wider")
-                assert zone["curb_offset_ft"] == pytest.approx(
+                assert parking.curb_offset_ft == pytest.approx(
                     allowance_ft - PARKING_STALL_DEPTH_DEFAULT_FT, abs=0.01)
             else:
                 assert hatched and not stalls, (
@@ -507,8 +507,10 @@ def test_a_side_the_scenario_already_treated_is_left_alone(site_models):
         state = DesignState.from_model(model).apply(MarkedParking(LegSide("princeton_ave_south", "left")))
         state = apply_osm_parking(state, model)
 
-    assert ("princeton_ave_south", "left") in state.parking_zones
-    assert "left" not in state.lane_narrowing_sides.get("princeton_ave_south", ())
+    kerb = LegSide("princeton_ave_south", "left")
+    assert state.treatment_for(MarkedParking, kerb) is not None
+    narrowing = state.treatment_for(LaneNarrowing, kerb.leg_target)
+    assert narrowing is None or Side.LEFT not in narrowing.sides
 
 
 @needs_source_data
@@ -550,8 +552,8 @@ def test_a_street_too_narrow_for_two_target_lanes_gets_no_paint():
 
     with contextlib.redirect_stdout(io.StringIO()) as out:
         state = apply_osm_parking(state, NoTags())
-    assert "narrow" not in state.lane_narrowing
-    assert not state.parking_zones
+    assert not state.treatments_of(LaneNarrowing)
+    assert not state.treatments_of(MarkedParking)
     assert "too narrow for two 11 ft lanes" in out.getvalue()
 
 
@@ -575,9 +577,10 @@ def test_an_unrestricted_kerb_too_narrow_to_park_is_hatched_not_widened(site_mod
     assert 0 < spare_ft < MIN_MARKED_PARKING_DEPTH_FT, (
         f"{leg} is {model.legs[leg].curb_to_curb_ft:.1f} ft, which leaves {spare_ft:.1f} ft spare - "
         f"that is no longer the case this test is about. Pick a leg that is.")
-    assert "left" in state.lane_narrowing_sides.get(leg, ())
-    assert (leg, "left") not in state.parking_zones
-    lane_ft = model.legs[leg].curb_to_curb_ft / 2 - state.lane_narrowing[leg]
+    narrowing = state.treatment_for(LaneNarrowing, LegTarget(leg))
+    assert narrowing is not None and Side.LEFT in narrowing.sides
+    assert state.treatment_for(MarkedParking, LegSide(leg, "left")) is None
+    lane_ft = model.legs[leg].curb_to_curb_ft / 2 - narrowing.stripe_width_ft
     assert lane_ft == pytest.approx(TARGET_LANE_WIDTH_FT, abs=0.05)
 
 
@@ -655,7 +658,8 @@ def test_lane_narrowing_starts_clear_of_the_crosswalk(site, site_models):
         state = run_scenario_for(site, model)
         offsets = resolve_crosswalk_offsets(state, fetch_crossings(model.center_wgs84, radius_m=130))
 
-    for leg_name in state.lane_narrowing:
+    for narrowing in state.treatments_of(LaneNarrowing):
+        leg_name = narrowing.target.leg
         target_ft = offsets[leg_name][0] + CROSSWALK_CLEARANCE_FT
         anchor_ft = max(leg_clearance_ft(leg_name, state.legs, state.corner_fillets), target_ft)
         assert anchor_ft >= target_ft - 1e-9, (
@@ -1708,7 +1712,8 @@ def test_the_apron_bulbout_proposal_claims_the_statutory_setback_it_earned(site_
     four kerbs that got one, and nowhere else - the reduction is for an extension that exists."""
     from src.geometry.daylighting import (CROSSWALK_SETBACK_FT, CROSSWALK_SETBACK_WITH_BULBOUT_FT,
                                           no_parking_zones_ft)
-    from src.geometry.treatments import CURB_EXTENSION_DEVICES
+    from src.geometry.treatments import (AddCurbExtension, CURB_EXTENSION_DEVICES,
+                                         ProtectDaylightZone)
 
     model = site_models["broad_st_greenwood"]
     with contextlib.redirect_stdout(io.StringIO()):
@@ -1716,17 +1721,18 @@ def test_the_apron_bulbout_proposal_claims_the_statutory_setback_it_earned(site_
         state = run_scenario(builder, DesignState.from_model(model), model)
         scene = resolved_scene(model, state)
 
-    extended = set(state.curb_extensions)
-    assert extended == {k for k, d in state.daylight_devices.items()
-                        if d["kind"] in CURB_EXTENSION_DEVICES}
+    extended = {t.target for t in state.treatments_of(AddCurbExtension)}
+    assert extended == {t.target for t in state.treatments_of(ProtectDaylightZone)
+                        if t.kind in CURB_EXTENSION_DEVICES}
 
     # The same geometry with the declaration dropped, so what is measured is the CLAUSE's effect
     # and not the shape of the corner. Both arms of 39:4-138(e) fall from 25 ft to 10 ft, so the
     # zone should shorten by exactly that difference whichever arm is binding.
     unclaimed = state.clone()
-    unclaimed.daylight_devices = {}
+    unclaimed.treatments = [t for t in unclaimed.treatments
+                            if not isinstance(t, ProtectDaylightZone)]
     expected_gain_ft = CROSSWALK_SETBACK_FT - CROSSWALK_SETBACK_WITH_BULBOUT_FT
-    for leg_name, side in sorted(extended):
+    for leg_name, side in sorted((t.leg, str(t.side)) for t in extended):
         with_ext = no_parking_zones_ft(state, leg_name, side, scene.crosswalk_offsets)[0]
         without = no_parking_zones_ft(unclaimed, leg_name, side, scene.crosswalk_offsets)[0]
         assert without.end_ft - with_ext.end_ft == pytest.approx(expected_gain_ft), (
@@ -1741,8 +1747,9 @@ def test_the_apron_bulbout_proposal_claims_the_statutory_setback_it_earned(site_
     # than the crossing at 21 ft. So the statute's own "crosswalk OR side line, whichever is
     # further" picks the side line, and the extension's benefit arrives through that arm. The
     # zone is therefore longer than the statute strictly requires, which is the safe direction.
-    binding = {no_parking_zones_ft(state, leg, side, scene.crosswalk_offsets)[0].reason
-               for leg, side in sorted(extended)}
+    binding = {no_parking_zones_ft(state, kerb.leg, str(kerb.side),
+                                   scene.crosswalk_offsets)[0].reason
+               for kerb in sorted(extended)}
     assert all("side line" in reason for reason in binding), (
         "the crosswalk arm now binds - the proposal's docstring says the side line does")
 
@@ -1762,7 +1769,7 @@ def test_the_bike_lane_proposal_treats_only_the_legs_wide_enough(site_models, si
     render while failing the standard it is meant to meet, which is the sort of thing that gets
     waved through because the picture looks plausible.
     """
-    from src.geometry.treatments import AASHTO_MIN_BIKE_LANE_FT
+    from src.geometry.treatments import AASHTO_MIN_BIKE_LANE_FT, AddBikeLane
 
     model = site_models[site]
     with contextlib.redirect_stdout(io.StringIO()):
@@ -1771,13 +1778,14 @@ def test_the_bike_lane_proposal_treats_only_the_legs_wide_enough(site_models, si
 
     for leg_name in treated:
         for side in ("left", "right"):
-            lane = state.bike_lanes.get((leg_name, side))
-            assert lane is not None, f"{leg_name} {side} has the width but got no lane"
+            treatment = state.treatment_for(AddBikeLane, LegSide(leg_name, side))
+            assert treatment is not None, f"{leg_name} {side} has the width but got no lane"
+            lane = treatment.lane
             assert lane.width_ft >= AASHTO_MIN_BIKE_LANE_FT
             assert lane.total_ft <= narrowest_half_width_ft(state.legs[leg_name], side) + 0.05, (
                 f"{leg_name} {side}'s section does not fit where the leg is narrowest")
     for leg_name in untreated:
-        assert not [k for k in state.bike_lanes if k[0] == leg_name], (
+        assert not [t for t in state.treatments_of(AddBikeLane) if t.target.leg == leg_name], (
             f"{leg_name} was given a bike lane it has no room for")
 
 
@@ -1804,13 +1812,14 @@ def test_the_apron_bulbout_proposal_marks_no_parking_where_schedule_i_forbids_it
         paint, _bands = paint_and_bands(model, state)
 
     broad = ("broad_st_east", "broad_st_west")
-    assert not [k for k in state.parking_zones if k[0] in broad], (
+    assert not [t for t in state.treatments_of(MarkedParking) if t.target.leg in broad], (
         "Broad St kerbs are marked for parking inside the 100 ft Schedule I prohibits")
     stalls = [p for p in paint if p.kind in (STALL_DIVIDER, PARKING_EDGE_LINE)
               and p.leg in broad]
     assert not stalls, f"{len(stalls)} parking markings drawn on a Schedule I kerb"
     # ...and the width is still accounted for rather than left blank: it is hatched.
-    assert all(leg_name in state.lane_narrowing for leg_name in broad)
+    assert all(state.treatment_for(LaneNarrowing, LegTarget(leg_name)) is not None
+               for leg_name in broad)
 
 
 # --------------------------------------------------------------------------
@@ -1898,16 +1907,31 @@ def test_a_restriction_over_part_of_a_kerb_reaches_the_paint(site_models):
 def test_replaying_a_designs_treatments_rebuilds_it(site, site_models):
     """state.treatments is a complete account of what a scenario did.
 
-    This is the property the remaining refactor rests on. Every treatment currently writes one
-    of DesignState's dicts and the paint builder reads those dicts, so the treatment objects
-    could in principle be a partial record - a policy that edited the state directly rather
-    than applying a treatment would leave the list short, and nothing would say so.
+    This is the property the dict collapse rested on. Every treatment used to write one of
+    DesignState's twenty dicts and every renderer read those dicts, so the treatment objects
+    could in principle have been a partial record - a policy that edited the state directly
+    rather than applying a treatment would leave the list short, and nothing would say so.
     complete_centerlines did exactly that until it was migrated.
 
     So: take the design a real scenario produces, apply its recorded treatments to a fresh
-    baseline in order, and require the result to be the same design. If that holds, the list
-    IS the design, and paint can be moved onto the treatments without a second source of truth
-    for what a scenario asked for.
+    baseline in order, and require the result to be the same design.
+
+    WHAT "THE SAME DESIGN" MEANS is narrower after the collapse, and that narrowing is the
+    result rather than a weakening. The dicts this used to compare are gone, so the parameters a
+    renderer reads ARE the treatment list - there is no second store left to disagree with it,
+    and the failure this test was written to catch is now unconstructible rather than merely
+    unobserved. Comparing the paint would be tautological for the same reason: paint is a pure
+    function of the treatments, the modelled street and the OSM facts from_model seeds.
+
+    What is left is the MODELLED STREET, which is the one thing a treatment still writes:
+    AddCurbExtension moves a kerb line and re-cuts the corner that kerb feeds, and
+    SetCornerRadius re-cuts a corner. A policy that moved a kerb itself instead of applying one
+    of those would leave a design replay cannot rebuild, and that is what this fails on.
+
+    state.notes is deliberately NOT compared. A policy that emits several treatments explains
+    itself in a note of its own - apply_osm_parking says which OSM tag produced each kerb's
+    markings - and that sentence belongs to the policy, not to any one treatment, so replaying
+    the treatments alone legitimately loses it.
     """
     import contextlib as _contextlib
 
@@ -1918,17 +1942,21 @@ def test_replaying_a_designs_treatments_rebuilds_it(site, site_models):
             replayed = DesignState.from_model(model).apply(*built.treatments, model=model)
 
         assert built.treatments, f"{site}/{name} recorded no treatments at all"
-        for field_name in ("lane_narrowing", "lane_narrowing_sides", "lane_narrowing_line_only",
-                            "bollard_lines", "parking_zones", "parking_buffer_bollards",
-                            "daylight_devices", "curb_extensions", "bike_lanes",
-                            "bike_lane_bollards", "corner_hatching", "corner_aprons",
-                            "crosswalk_styles", "centerline_styles", "raised_crossings",
-                            "crosswalk_offset_overrides", "extra_props"):
-            replayed_value, built_value = getattr(replayed, field_name), getattr(built, field_name)
-            if field_name == "raised_crossings":     # polygons, so compare by footprint
-                replayed_value = {k: round(v.area, 6) for k, v in replayed_value.items()}
-                built_value = {k: round(v.area, 6) for k, v in built_value.items()}
-            assert replayed_value == built_value, (
-                f"{site}/{name}: replaying the recorded treatments produced a different "
-                f"{field_name} - so something changed this design without being recorded as a "
-                f"treatment, and state.treatments is not the whole story")
+        assert _street_signature(replayed) == _street_signature(built), (
+            f"{site}/{name}: replaying the recorded treatments produced a different modelled "
+            f"street - so something moved a kerb or a corner without being recorded as a "
+            f"treatment, and state.treatments is not the whole story")
+
+
+def _street_signature(state) -> dict:
+    """The modelled street a design ended up with: every kerb line and every corner fillet."""
+    signature = {}
+    for leg_name, leg in sorted(state.legs.items()):
+        for side in ("left", "right"):
+            curb = getattr(leg, f"{side}_curb")
+            signature[f"{leg_name}.{side}_curb"] = None if curb is None else curb.wkt
+    for corner, pieces in sorted(state.corner_fillets.items()):
+        signature[f"{corner}"] = {key: round(value.length, 6)
+                                  for key, value in sorted(pieces.items())
+                                  if hasattr(value, "length")}
+    return signature

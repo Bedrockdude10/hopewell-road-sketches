@@ -279,16 +279,21 @@ def test_violation_str_is_readable_without_coordinates():
 # --------------------------------------------------------------------------
 
 def a_state_with_paint(width_ft, hatch_ft=None, parking_ft=None):
-    from src.geometry.treatments import DesignState
+    """A design with kerbside paint on it, applied rather than written in.
 
-    leg = a_leg(width_ft=width_ft)
-    state = DesignState(legs={"east": leg}, corner_fillets={})
+    It used to write state.lane_narrowing and state.parking_zones directly. Those dicts are
+    gone: the check reads the treatments now, so the fixture has to apply them, which also
+    means it can no longer describe a design no scenario could produce.
+    """
+    from src.geometry.targets import LegSide, LegTarget, Side
+    from src.geometry.treatments import DesignState, LaneNarrowing, MarkedParking
+
+    state = DesignState(legs={"east": a_leg(width_ft=width_ft)}, corner_fillets={})
     if hatch_ft is not None:
-        state.lane_narrowing["east"] = hatch_ft
-        state.lane_narrowing_sides["east"] = ("left",)
+        state = state.apply(LaneNarrowing(LegTarget("east"), stripe_width_ft=hatch_ft,
+                                           sides=(Side.LEFT,)))
     if parking_ft is not None:
-        state.parking_zones[("east", "right")] = {"depth_ft": parking_ft, "stall_length_ft": 22,
-                                                   "curb_offset_ft": 0.0}
+        state = state.apply(MarkedParking(LegSide("east", Side.RIGHT), depth_ft=parking_ft))
     return state
 
 

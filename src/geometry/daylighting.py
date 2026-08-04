@@ -149,10 +149,13 @@ def no_parking_zones_ft(state, leg_name: str, side: str, crosswalk_offsets: dict
                          props: list[dict] | None = None) -> list[NoParkingZone]:
     """Every stretch of this kerb where R.S. 39:4-138 forbids parking, nearest first."""
     leg = state.legs[leg_name]
-    from src.geometry.treatments import CURB_EXTENSION_DEVICES
+    # Local, for the usual cycle: src/geometry/treatments.py reads this module's statutory
+    # figures. This module deliberately depends on nothing in src/render.
+    from src.geometry.targets import LegSide
+    from src.geometry.treatments import CURB_EXTENSION_DEVICES, ProtectDaylightZone
 
-    device = getattr(state, "daylight_devices", {}).get((leg_name, side), {})
-    bulbout = device.get("kind") in CURB_EXTENSION_DEVICES
+    device = state.treatment_for(ProtectDaylightZone, LegSide(leg_name, side))
+    bulbout = device is not None and device.kind in CURB_EXTENSION_DEVICES
     crosswalk_setback = CROSSWALK_SETBACK_WITH_BULBOUT_FT if bulbout else CROSSWALK_SETBACK_FT
     sideline_setback = SIDELINE_SETBACK_WITH_BULBOUT_FT if bulbout else SIDELINE_SETBACK_FT
     zones = []

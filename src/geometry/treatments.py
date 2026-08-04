@@ -227,12 +227,32 @@ class Treatment(ABC):
         crosswalk restyle is drawn by the crossing renderer, not from the paint list.
         """
 
-    @abstractmethod
     def apply_to(self, state: "DesignState", model=None) -> str | None:
-        """Make the change. May return a suffix for the note, for a treatment whose
-        provenance includes something only measurable against the design - a bike lane records
-        how much of the width the leg actually has it used."""
-        ...
+        """Check this treatment against the design, and change the MODELLED STREET if it moves it.
+
+        Nothing by default, and that default is now the common case. Every treatment used to
+        write a dict here and every renderer read those dicts back; now a treatment IS the
+        record, so being applied is the whole of the change for most of them - a marked parking
+        lane's depth is a fact about the MarkedParking in state.treatments, not about an entry
+        under a key that anything could have written.
+
+        What is left for a subclass to do here is one of two things, and both are about the
+        design rather than about storage:
+
+          * REFUSE. A precondition that needs the design rather than just the arguments -
+            AddBikeLane's cross-section against the leg's narrowest traced width,
+            AddBikeLaneBollards' requirement of a buffered lane, ProtectDaylightZone's
+            requirement that a `curb_extension` device have an extension under it. A
+            constructor cannot check any of those, which is why this receives the state.
+          * MOVE THE KERB. AddCurbExtension and SetCornerRadius change `legs` and
+            `corner_fillets` - the modelled street itself - and that is not a parameter a
+            renderer could read off the treatment instead.
+
+        May return a suffix for the note, for a treatment whose provenance includes something
+        only measurable against the design: a bike lane records how much of the width the leg
+        actually has it used.
+        """
+        return None
 
 
 @dataclass
@@ -247,31 +267,6 @@ class DesignState:
     crosswalk_styles: dict = field(default_factory=dict)  # leg name -> "lines" | "continental" | "ladder"
     centerline_styles: dict = field(default_factory=dict)  # leg name -> one of VALID_CENTERLINE_STYLES - seeded
                                                              # from config.yaml in from_model(), see set_centerline_style
-    lane_narrowing: dict = field(default_factory=dict)  # leg name -> stripe_width_ft (paint-only, no curb change)
-    lane_narrowing_line_only: set = field(default_factory=set)  # leg names (subset of lane_narrowing) that get
-                                                                  # ONLY the solid edge/taper line delineating the
-                                                                  # lane, no diagonal chevron fill - see add_lane_narrowing's
-                                                                  # line_only param
-    lane_narrowing_sides: dict = field(default_factory=dict)  # leg name -> ("left",) | ("right",) | ("left","right") -
-                                                                 # which side(s) of the leg add_lane_narrowing actually
-                                                                 # narrowed (defaults to both if a leg is absent here -
-                                                                 # see add_lane_narrowing's sides param). Only ever a
-                                                                 # strict subset when something else (e.g. add_marked_parking)
-                                                                 # already owns the other side's edge.
-    bollard_lines: dict = field(default_factory=dict)  # leg name -> spacing_ft (see add_bollards - requires
-                                                         # lane_narrowing on the same leg, sits inside that buffer)
-    parking_zones: dict = field(default_factory=dict)  # (leg name, "left"|"right") -> {"depth_ft", "stall_length_ft",
-                                                         # "curb_offset_ft"} - marked curbside parking (paint-only,
-                                                         # no curb change) - see add_marked_parking
-    parking_buffer_bollards: dict = field(default_factory=dict)  # (leg name, "left"|"right") -> spacing_ft - flex-post
-                                                                   # bollards centered in that zone's curb_offset_ft
-                                                                   # buffer (requires curb_offset_ft > 0) - see
-                                                                   # add_parking_buffer_bollards
-    daylight_devices: dict = field(default_factory=dict)  # (leg name, "left"|"right") -> {"kind", "spacing_ft"} -
-                                                            # physical objects standing in the daylight zone. See
-                                                            # protect_daylight_zone. A kind listed in
-                                                            # CURB_EXTENSION_DEVICES also cuts the setback under
-                                                            # R.S. 39:4-138(e) from 25 ft to 10 ft.
     # (leg name, "left"|"right") -> [ParkingRestriction]. What OSM says about this kerb, per
     # STRETCH of it - seeded from the model in from_model. Read by src/geometry/daylighting.py,
     # which turns a prohibition into a no-parking zone like any statutory one.
@@ -280,20 +275,11 @@ class DesignState:
     # rather than painting on it, so the Leg's own curb line changes too and every measurement
     # downstream follows - see add_curb_extension.
     curb_extensions: dict = field(default_factory=dict)
-    # (leg name, "left"|"right") -> BikeLane. Paint-only: an exclusive lane with its own edge
-    # line, a buffer, and optionally a parking lane outside it - see add_bike_lane.
-    bike_lanes: dict = field(default_factory=dict)
-    # (leg name, "left"|"right") -> spacing_ft. Flex posts in the buffer on the TRAFFIC side of
-    # a bike lane, which is what makes it protected - see add_bike_lane_bollards.
-    bike_lane_bollards: dict = field(default_factory=dict)
     corner_hatching: dict = field(default_factory=dict)  # corner tuple -> depth_ft (paint-only, no curb change)
     corner_aprons: dict = field(default_factory=dict)  # corner tuple -> CornerApron (mountable, no curb change)
-    crosswalk_offset_overrides: dict = field(default_factory=dict)  # leg name -> +/- delta_ft on top of the
-                                                                     # normally-resolved offset (see shift_crosswalk)
-    extra_props: list = field(default_factory=list)  # [{"leg","type","offset_ft","side","note"}] - see add_extra_prop
-    # Every Treatment applied to this design, in order (see apply). The dicts above are what the
-    # paint and prop builders read today; this is the design as a list of decisions, which is
-    # what a scenario actually is and what provenance is written from.
+    # Every Treatment applied to this design, in order (see apply) - the design as a list of
+    # decisions, which is what a scenario actually is, what every renderer reads its parameters
+    # from (treatment_for / treatments_of / every_treatment) and what provenance is written from.
     treatments: list = field(default_factory=list)
     notes: list = field(default_factory=list)
 
@@ -356,12 +342,39 @@ class DesignState:
         return found
 
     def treatments_of(self, kind) -> list:
-        """Every treatment of `kind`, one per target, in the order they were first applied."""
+        """Every treatment of `kind`, ONE PER TARGET (the last applied), sorted by target.
+
+        Last-applied-wins per target, for the same reason treatment_for is: a design is a
+        sequence of decisions and the later one is the decision. Two MarkedParking treatments
+        on one kerb are one marked lane, not two painted on top of each other - and painting
+        both is what makes MarkingsDoNotCollide fire.
+
+        SORTED BY TARGET rather than in application order, so what a consumer sees is a
+        property of the design and not of the order the scenario builder's loops happened to
+        run in. The props array is order-sensitive in the exported JSON, and BROAD_ST_LEGS is
+        ("broad_st_west", "broad_st_east") - west first - so an application-ordered read makes
+        the file depend on a tuple in a site's scenarios.py.
+
+        Where a treatment ACCUMULATES rather than replacing - ShiftCrosswalk, ExtraProp - this
+        is the wrong question and every_treatment is the right one.
+        """
         by_target = {}
         for treatment in self.treatments:
             if isinstance(treatment, kind):
                 by_target[treatment.target] = treatment
-        return list(by_target.values())
+        return [by_target[target] for target in sorted(by_target, key=str)]
+
+    def every_treatment(self, kind, target=None) -> list:
+        """Every treatment of `kind`, in application order, WITHOUT collapsing per target.
+
+        For the two treatments that add up instead of replacing: ShiftCrosswalk shifts a
+        crossing by a delta, and ExtraProp puts one more sign on a leg. Both wrote something
+        cumulative - a `+=` and a list append - where every other treatment wrote a key, so
+        asking treatments_of for them would silently drop all but the last, which for a second
+        RRFB on one leg is a prop that quietly stops being drawn.
+        """
+        return [t for t in self.treatments
+                if isinstance(t, kind) and (target is None or t.target == target)]
 
     def apply(self, *treatments: Treatment, model=None) -> "DesignState":
         """Apply treatments to a COPY of this design and return it.
@@ -627,16 +640,6 @@ class LaneNarrowing(Treatment):
         return (f"LaneNarrowing({self.target}, stripe_width_ft={self.stripe_width_ft}, "
                 f"line_only={self.line_only}, sides={tuple(str(s) for s in self.sides)})")
 
-    def apply_to(self, state: "DesignState", model=None) -> None:
-        leg_name = self.target.leg
-        state.lane_narrowing[leg_name] = self.stripe_width_ft
-        state.lane_narrowing_sides[leg_name] = tuple(str(side) for side in self.sides)
-        if self.line_only:
-            state.lane_narrowing_line_only.add(leg_name)
-        else:
-            state.lane_narrowing_line_only.discard(leg_name)
-
-
     def paint(self, ctx) -> None:
         """An edge line, a hatched buffer, and a taper back to the kerb. line_only legs get the
         boundary lines without the fill."""
@@ -750,13 +753,6 @@ class MarkedParking(Treatment):
         return (f"MarkedParking({self.target.leg}, side={str(self.target.side)!r}, "
                 f"depth_ft={self.depth_ft}, stall_length_ft={self.stall_length_ft}, "
                 f"curb_offset_ft={self.curb_offset_ft})")
-
-    def apply_to(self, state: "DesignState", model=None) -> None:
-        state.parking_zones[self.target.key] = {
-            "depth_ft": self.depth_ft, "stall_length_ft": self.stall_length_ft,
-            "curb_offset_ft": self.curb_offset_ft,
-        }
-
 
     def paint(self, ctx) -> None:
         """The stalls, the hatched buffer between them and the kerb, and the daylight zones
@@ -894,8 +890,6 @@ class ParkingBufferBollards(Treatment):
         if not parking.curb_offset_ft:
             raise ValueError(f"{self.target}'s marked parking has curb_offset_ft=0 - no curb "
                               f"buffer to put bollards in.")
-        state.parking_buffer_bollards[self.target.key] = self.spacing_ft
-
 
     def paint(self, ctx) -> None:
         """Down the buffer between the stalls and the kerb, over the runs where stalls are marked.
@@ -943,8 +937,6 @@ class LaneNarrowingBollards(Treatment):
             raise KeyError(f"{self.target} has no lane-narrowing buffer - apply LaneNarrowing "
                             f"first. A row of posts is placed inside a buffer, so its lateral "
                             f"position comes from that buffer's own width.")
-        state.bollard_lines[self.target.leg] = self.spacing_ft
-
 
     def paint(self, ctx) -> None:
         """Down the centre of the buffer LaneNarrowing paints, on both sides it narrowed.
@@ -1410,7 +1402,6 @@ class AddBikeLane(Treatment):
                 f"({TARGET_LANE_WIDTH_FT:.0f} travel + {self.buffer_ft:.1f} buffer + "
                 f"{self.width_ft:.1f} bike + {self.parking_ft:.1f} parking + {self.shy_ft:.1f} "
                 f"shy). Short by {lane.total_ft - available_ft:.2f} ft.")
-        state.bike_lanes[self.target.key] = lane
         spare_ft = available_ft - lane.total_ft
         return (f". Uses {lane.total_ft:.1f} of the {available_ft:.1f} ft this leg has at its "
                 f"narrowest" + (f", {spare_ft:.1f} ft spare." if spare_ft > 0.05 else "."))
@@ -1581,7 +1572,6 @@ class AddBikeLaneBollards(Treatment):
                 f"{self.target}'s bike lane has no buffer, so there is nowhere to stand a "
                 f"delineator that is not in a travel lane or in the bike lane itself. A protected "
                 f"lane needs a buffer; give it one, or leave the lane conventional and say so.")
-        state.bike_lane_bollards[self.target.key] = self.spacing_ft
         return (f"flex-post delineators at {self.spacing_ft:.0f} ft in the {lane.buffer_ft:.0f} ft "
                 f"buffer between the travel lane and the bike lane - the traffic side, which is "
                 f"the side that needs protecting.")
@@ -1640,10 +1630,6 @@ class ShiftCrosswalk(Treatment):
     def describe(self) -> str:
         return f"ShiftCrosswalk({self.target}, delta_ft={self.delta_ft})"
 
-    def apply_to(self, state: "DesignState", model=None) -> None:
-        state.crosswalk_offset_overrides[self.target.leg] = (
-            state.crosswalk_offset_overrides.get(self.target.leg, 0.0) + self.delta_ft)
-
 
 @dataclass(frozen=True)
 class ExtraProp(Treatment):
@@ -1675,10 +1661,13 @@ class ExtraProp(Treatment):
     def describe(self) -> str:
         return f"ExtraProp({self.target}, {self.prop_type!r}, offset_ft={self.offset_ft})"
 
-    def apply_to(self, state: "DesignState", model=None) -> None:
-        state.extra_props.append({"leg": self.target.leg, "type": self.prop_type,
-                                   "offset_ft": self.offset_ft, "side": str(self.side),
-                                   "note": self.note})
+    @property
+    def entry(self) -> dict:
+        """This prop in the shape src/render/props.py:_extra_prop places, which is also the
+        shape a site config's `props.extra` list uses - the two go through one placer, so a
+        scenario-level prop and a site-level one cannot end up positioned by different rules."""
+        return {"leg": self.target.leg, "type": self.prop_type, "offset_ft": self.offset_ft,
+                "side": str(self.side), "note": self.note}
 
 
 def build_sidewalk_pieces(state: DesignState, sidewalk_width_ft: float = 6) -> list[Polygon]:
@@ -1791,7 +1780,6 @@ class ProtectDaylightZone(Treatment):
                 f"extension that EXISTS, and claiming it without one would let a proposal mark "
                 f"parking 15 ft closer to a crossing than the law allows.")
         spacing_ft = self.resolved_spacing_ft
-        state.daylight_devices[self.target.key] = {"kind": self.kind, "spacing_ft": spacing_ft}
         return (f"{self.kind} at {spacing_ft:.0f} ft spacing"
                 + (" - counts as a curb extension, so R.S. 39:4-138(e) allows parking from 10 ft "
                    "rather than 25 ft" if self.kind in CURB_EXTENSION_DEVICES else ""))

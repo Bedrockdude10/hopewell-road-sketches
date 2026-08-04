@@ -105,12 +105,11 @@ def build_proposal_daylight_bollards(baseline: DesignState, model=None) -> Desig
     if model is None:
         return baseline
     state = build_demo_scenario(baseline, model)
-    treated = set(state.parking_zones)
-    for leg_name in state.lane_narrowing:
-        for side in state.lane_narrowing_sides.get(leg_name, ("left", "right")):
-            treated.add((leg_name, side))
-    for leg_name, side in sorted(treated):
-        state = state.apply(ProtectDaylightZone(LegSide(leg_name, side), kind="bollards"))
+    treated = {parking.target for parking in state.treatments_of(MarkedParking)}
+    for narrowing in state.treatments_of(LaneNarrowing):
+        treated.update(LegSide(narrowing.target.leg, side) for side in narrowing.sides)
+    for kerb in sorted(treated):
+        state = state.apply(ProtectDaylightZone(kerb, kind="bollards"))
     return state
 
 

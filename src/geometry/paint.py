@@ -17,7 +17,7 @@ feet, and each renderer converts.
 It is also what src/checks.py inspects. A check that rebuilds the paint itself would just be
 a third copy free to drift from the other two; checking THIS list is checking what is drawn.
 """
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 import numpy as np
 from shapely.geometry import LineString, Polygon
@@ -33,7 +33,7 @@ from src.geometry.model import (_point_at, bollard_points_ft, clip_paint_clear_o
                                 points_at_offset_ft,
                                 station_offset_many, through_street_sides)
 from src.geometry.markings import (APRON, BIKE_BUFFER_FILL, BIKE_LANE_EDGE_LINE, BOLLARD,
-                                   BUFFER_EDGE_LINE, BUFFER_FILL, CORNER_HATCH_FILL,
+                                   BUFFER_EDGE_LINE, BUFFER_FILL,
                                    CROSSING_RIM_LINE, DAYLIGHT_EDGE_LINE, DAYLIGHT_FILL,
                                    LANE_EDGE_LINE, LANE_NARROWING_FILL, PARKING_EDGE_LINE,
                                    PaintKind, STALL_DIVIDER, TAPER_FILL, TAPER_LINE,
@@ -264,6 +264,91 @@ def parking_runs(state, leg_name: str, side: str, crosswalk_offsets: dict,
         state, leg_name, side, crosswalk_offsets, props,
         physical_clearance_ft=leg_clearance_ft(leg_name, state.legs, state.corner_fillets),
         min_run_ft=MIN_PARKING_RUN_FT)
+
+
+@dataclass
+class PaintContext:
+    """The machinery every treatment paints through, and the pieces it has painted so far.
+
+    curbside_paint_ft used to be one function holding this as local state and a closure per
+    helper, with a block per treatment reading DesignState's dicts. That is why forgetting one
+    line was invisible: the bike lane's kerb hatching was `add(...)` where every other hatched
+    zone was `rim(add(...))`, so in the 3D render its strokes stopped in mid-air at the crossing
+    while the plan view - which outlines a fill polygon for free - looked finished.
+
+    With the machinery in an object, a treatment can own its own markings (Treatment.paint), and
+    what is shared stays shared: the crossing bands everything is cut around, the apron surfaces
+    everything stops at, and the running list of pieces.
+    """
+    state: object
+    crosswalk_offsets: dict
+    center_ft: object
+    keep_clear: object = None          # union of the painted crossings, buffered by the gap
+    marked: set = field(default_factory=set)
+    straight_through: set = field(default_factory=set)
+    props: list | None = None
+    surfaces: object = None            # the mountable aprons: paint stops at them
+    pieces: list = field(default_factory=list)
+    # Zones already placed on a kerb that runs straight through - see add(shares_a_kerb=True).
+    through_painted: list = field(default_factory=list)
+
+    def emit(self, piece: PaintPiece) -> PaintPiece:
+        """Keep a piece as-is, without clipping. For the things that are not paint: an apron is
+        a surface the paint stops at, and a bollard is a point standing in the road."""
+        self.pieces.append(piece)
+        return piece
+
+    def add(self, kind, geometry, leg=None, side=None, beyond_ft=None, shares_a_kerb=False):
+        """Clip `geometry` clear of the crossings, keep what survives, return those pieces.
+
+        beyond_ft drops any surviving piece that fell on the JUNCTION side of the crossing.
+        A zone drawn deliberately through a crossing (so the crossing cuts its end into a
+        clean diagonal) leaves an offcut back at the corner, and that offcut is not paint.
+
+        shares_a_kerb dedupes against the other zones on the same through-running kerb.
+        """
+        added = []
+        if geometry is None or geometry.is_empty:
+            return added
+        if shares_a_kerb and self.through_painted:
+            geometry = geometry.difference(unary_union(self.through_painted))
+            if geometry.is_empty:
+                return added
+        # Cut clear of the mountable surfaces, then of the crossings - both may fragment a
+        # piece, so each stage runs over everything the previous one left.
+        surviving = [part for whole in clip_paint_clear_of(geometry, self.surfaces)
+                     for part in clip_paint_clear_of(whole, self.keep_clear)]
+        for part in surviving:
+            if beyond_ft is not None and _station_of(self.state.legs[leg], part) < beyond_ft:
+                continue
+            piece = PaintPiece(kind, part, leg, side)
+            self.pieces.append(piece)
+            added.append(piece)
+        if shares_a_kerb:
+            self.through_painted.extend(p.geometry for p in added)
+        return added
+
+    def rim(self, fills) -> None:
+        """The line along a fill's cut end, where it meets the crossing.
+
+        A hatched zone is outlined, and that outline carries on around the end where the
+        crossing cuts it - which is the diagonal you see finishing the zone off against the
+        crossing on a real street. The lane edge already gets a line of its own; without this
+        one the zone just stopped, with hatch strokes ending in mid-air.
+        """
+        if self.keep_clear is None:
+            return
+        for piece in fills:
+            edge = piece.geometry.exterior.intersection(self.keep_clear.buffer(RIM_SNAP_FT))
+            for part in getattr(edge, "geoms", [edge]):
+                if part.geom_type == "LineString" and part.length >= MIN_RIM_LENGTH_FT:
+                    self.pieces.append(PaintPiece(CROSSING_RIM_LINE, part, piece.leg, piece.side))
+
+    def anchors(self, leg_name: str, side: str, inner_offset_ft: float = 0.0):
+        """This leg-side's measuring stations, with the shared crossing geometry filled in."""
+        return leg_anchors(self.state, leg_name, side, self.crosswalk_offsets, self.keep_clear,
+                            inner_offset_ft=inner_offset_ft,
+                            crosswalk_is_marked=leg_name in self.marked)
 
 
 def curbside_paint_ft(state, crosswalk_offsets: dict, center_ft,
@@ -618,12 +703,18 @@ def curbside_paint_ft(state, crosswalk_offsets: dict, center_ft,
                     spacing_ft=state.bike_lane_bollards[(leg_name, side)]):
                 pieces.append(PaintPiece(BOLLARD, _dot(point), leg_name, side))
 
-    # --- corner treatments. No leg/side: they span the corner between two legs.
-    for corner, depth_ft in sorted(state.corner_hatching.items()):
-        if "error" in state.corner_fillets[corner]:
-            continue
-        add(CORNER_HATCH_FILL, corner_overlay_polygon(state.corner_fillets[corner], center_ft, depth_ft))
-    return pieces      # the aprons were built first - see `surfaces` above
+    # --- and whatever the treatments paint for themselves. Each one that owns its markings
+    # (Treatment.paint) is dispatched here in painting order, so its geometry lives with its
+    # validation and its provenance instead of in a block of this function keyed off a dict.
+    # The blocks above are the ones not yet moved; see the README.
+    ctx = PaintContext(state=state, crosswalk_offsets=crosswalk_offsets, center_ft=center_ft,
+                        keep_clear=keep_clear, marked=marked,
+                        straight_through=straight_through, props=props, surfaces=surfaces,
+                        pieces=pieces, through_painted=through_painted)
+    for treatment in sorted(getattr(state, "treatments", []),
+                             key=lambda t: (t.paint_group, str(t.target), t.paint_rank)):
+        treatment.paint(ctx)
+    return ctx.pieces      # the aprons were built first - see `surfaces` above
 
 
 def _apron_polygon(state, corner: tuple[str, str], apron, center_ft):

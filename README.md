@@ -42,7 +42,7 @@ It writes the same files the phase scripts do, runs sites in parallel (`--jobs`)
 
 This runs `.venv/bin/python -m pytest` and works whether or not the venv is active. Plain `python -m pytest` only works once you've run `source .venv/bin/activate` — without it, `python` is whatever is on your PATH, and if that interpreter happens to have pytest but not geopandas the suite fails at collection. The root `conftest.py` detects that case and prints one message telling you which interpreter you're on and what to run instead, rather than five `ModuleNotFoundError` tracebacks.
 
-365 tests, ~17 s, **no network**: they run against a committed snapshot of the OSM responses in `tests/fixtures/osm_cache/`, and `HOPEWELL_OFFLINE=1` makes any un-snapshotted fetch fail loudly rather than reach Overpass. Refresh the snapshot with `cp output/.cache/borough_*.json tests/fixtures/osm_cache/` — it does NOT update itself when you re-pull, so after editing OSM you have to do both (see "Kerbside parking varies ALONG a leg" below).
+369 tests, ~13 s, **no network**: they run against a committed snapshot of the OSM responses in `tests/fixtures/osm_cache/`, and `HOPEWELL_OFFLINE=1` makes any un-snapshotted fetch fail loudly rather than reach Overpass. Refresh the snapshot with `cp output/.cache/borough_*.json tests/fixtures/osm_cache/` — it does NOT update itself when you re-pull, so after editing OSM you have to do both (see "Kerbside parking varies ALONG a leg" below).
 
 `tests/test_checks.py` covers the scene invariants (see below), `tests/test_traced_curbs.py` covers building curb lines from traced OSM kerbs, `tests/test_curb_extensions.py` covers curb extensions and bike lanes (and pins what a corner-radius change does *not* do), and `tests/test_sites.py` asserts all four real junctions and every proposal satisfy the invariants.
 
@@ -57,6 +57,8 @@ Three things in this codebase used to be conventions spread across several modul
 | A treatment: a function writing one of 23 dicts, validating whatever its author remembered | `src/geometry/treatments.py` — a `Treatment` frozen dataclass with a typed target from `src/geometry/targets.py`, applied through `DesignState.apply` | An unvalidated treatment existing at all; a treatment aimed at a leg the junction doesn't have; a treatment that needs the model being silently skipped; a missing provenance note |
 
 `Side` is a `StrEnum`, so it still keys the existing dicts and matches OSM's `parking:left` tags, but `Side("north")` raises and the `1 if side == "left" else -1` that appeared in ten places has one home.
+
+**Still in progress.** A treatment now owns its data, its validation and its provenance, but most of them do *not* yet own their markings: `src/geometry/paint.py` still has a block per treatment reading `DesignState`'s dicts. `Treatment.paint(ctx)` and `PaintContext` are the seam, and `CornerHatching` goes through it; the lane-narrowing, parking and bike-lane families are next. Two things make finishing it safe: every export is compared byte-for-byte against a captured baseline, and `test_replaying_a_designs_treatments_rebuilds_it` proves the treatment list is already a complete account of every scenario at all four sites — so the dicts can go without losing what a scenario asked for.
 
 ## Scene invariants
 

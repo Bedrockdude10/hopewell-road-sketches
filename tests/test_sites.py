@@ -853,21 +853,28 @@ def test_a_marking_the_plan_view_has_no_style_for_is_refused():
 def test_every_declared_marking_is_something_paint_can_build():
     """The other direction: a declaration nothing emits renders nothing and hides a typo.
 
-    Read off paint.py's source rather than off a scenario, because several markings are real
-    but conditional - a taper is only built where a zone tapers, and no current proposal has
-    one at these four junctions.
+    Read off the source rather than off a scenario, because several markings are real but
+    conditional - a taper is only built where a zone tapers, and no current proposal has one at
+    these four junctions.
+
+    Both modules, because markings are moving out of paint.py's per-treatment blocks and onto the
+    treatments themselves (Treatment.paint). This test caught that move the first time a marking
+    left: CORNER_HATCH_FILL is emitted by CornerHatching now, and searching paint.py alone called
+    it stale.
     """
     import inspect
 
     from src.geometry import paint as paint_module
+    from src.geometry import treatments as treatments_module
     from src.geometry.markings import KINDS
 
-    source = inspect.getsource(paint_module)
+    source = inspect.getsource(paint_module) + inspect.getsource(treatments_module)
     for name, kind in KINDS.items():
         constant = name.upper()
         assert constant in source, (
-            f"src/geometry/markings.py declares {name!r} but src/geometry/paint.py never "
-            f"emits {constant} - a marking nothing builds is a stale declaration")
+            f"src/geometry/markings.py declares {name!r} but nothing in src/geometry/paint.py or "
+            f"src/geometry/treatments.py emits {constant} - a marking nothing builds is a stale "
+            f"declaration")
 
 
 @needs_source_data
@@ -1884,3 +1891,44 @@ def test_a_restriction_over_part_of_a_kerb_reaches_the_paint(site_models):
                                                       scene.crosswalk_offsets)}
     assert any("OSM parking restriction" in r for r in reasons), reasons
     assert any("39:4-138" in r for r in reasons), reasons
+
+
+@needs_source_data
+@pytest.mark.parametrize("site", SITES)
+def test_replaying_a_designs_treatments_rebuilds_it(site, site_models):
+    """state.treatments is a complete account of what a scenario did.
+
+    This is the property the remaining refactor rests on. Every treatment currently writes one
+    of DesignState's dicts and the paint builder reads those dicts, so the treatment objects
+    could in principle be a partial record - a policy that edited the state directly rather
+    than applying a treatment would leave the list short, and nothing would say so.
+    complete_centerlines did exactly that until it was migrated.
+
+    So: take the design a real scenario produces, apply its recorded treatments to a fresh
+    baseline in order, and require the result to be the same design. If that holds, the list
+    IS the design, and paint can be moved onto the treatments without a second source of truth
+    for what a scenario asked for.
+    """
+    import contextlib as _contextlib
+
+    model = site_models[site]
+    for name, builder in sorted(scenario_builders(site).items()):
+        with _contextlib.redirect_stdout(io.StringIO()):
+            built = run_scenario(builder, DesignState.from_model(model), model)
+            replayed = DesignState.from_model(model).apply(*built.treatments, model=model)
+
+        assert built.treatments, f"{site}/{name} recorded no treatments at all"
+        for field_name in ("lane_narrowing", "lane_narrowing_sides", "lane_narrowing_line_only",
+                            "bollard_lines", "parking_zones", "parking_buffer_bollards",
+                            "daylight_devices", "curb_extensions", "bike_lanes",
+                            "bike_lane_bollards", "corner_hatching", "corner_aprons",
+                            "crosswalk_styles", "centerline_styles", "raised_crossings",
+                            "crosswalk_offset_overrides", "extra_props"):
+            replayed_value, built_value = getattr(replayed, field_name), getattr(built, field_name)
+            if field_name == "raised_crossings":     # polygons, so compare by footprint
+                replayed_value = {k: round(v.area, 6) for k, v in replayed_value.items()}
+                built_value = {k: round(v.area, 6) for k, v in built_value.items()}
+            assert replayed_value == built_value, (
+                f"{site}/{name}: replaying the recorded treatments produced a different "
+                f"{field_name} - so something changed this design without being recorded as a "
+                f"treatment, and state.treatments is not the whole story")

@@ -212,6 +212,21 @@ class Treatment(ABC):
     def describe(self) -> str:
         ...
 
+    #: Where this treatment's markings fall in the painting order. Groups run in ascending
+    #: order and are painted target by target within a group; rank breaks a tie between two
+    #: treatments on the same target (a bollard row is painted after the buffer it stands in).
+    #: See src/geometry/paint.py:curbside_paint_ft.
+    paint_group: ClassVar[int] = 50
+    paint_rank: ClassVar[int] = 0
+
+    def paint(self, ctx) -> None:
+        """Put this treatment's markings on the roadway, through ctx (paint.PaintContext).
+
+        Nothing by default: several treatments change geometry rather than markings - a curb
+        extension moves the kerb and everything downstream re-measures against it - and a
+        crosswalk restyle is drawn by the crossing renderer, not from the paint list.
+        """
+
     @abstractmethod
     def apply_to(self, state: "DesignState", model=None) -> str | None:
         """Make the change. May return a suffix for the note, for a treatment whose
@@ -710,6 +725,8 @@ class CornerHatching(Treatment):
     """Paint-only diagonal hatching in a corner's gutter zone: a visual
     narrowing cue with zero curb/fillet geometry change - the paint-only
     alternative to a real curb extension at the same corner."""
+    # Last: a corner treatment is cut around every kerbside zone that reaches the corner.
+    paint_group: ClassVar[int] = 90
     depth_ft: float = CORNER_HATCHING_DEFAULT_DEPTH_FT
 
     def __post_init__(self):
@@ -721,6 +738,17 @@ class CornerHatching(Treatment):
 
     def apply_to(self, state: "DesignState", model=None) -> None:
         state.corner_hatching[self.target.key] = self.depth_ft
+
+    def paint(self, ctx) -> None:
+        from src.geometry.model import corner_overlay_polygon
+        from src.geometry.markings import CORNER_HATCH_FILL
+
+        fillet = ctx.state.corner_fillets[self.target.key]
+        if "error" in fillet:
+            return          # a corner whose fillet failed has no gutter zone to hatch
+        # No leg or side: a corner treatment spans the corner between two legs and belongs to
+        # neither, which is why the kerb checks skip a piece with no side rather than guessing.
+        ctx.add(CORNER_HATCH_FILL, corner_overlay_polygon(fillet, ctx.center_ft, self.depth_ft))
 
 
 @dataclass(frozen=True)

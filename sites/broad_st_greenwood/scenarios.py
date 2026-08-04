@@ -1,10 +1,10 @@
 """Example treatment scenarios, shared by the Phase 3 plan-view render and the
 Phase 4 3D export so both phases show the exact same design."""
 from src.geometry.targets import LegSide, LegTarget
-from src.geometry.treatments import (AddBikeLane, AddBikeLaneBollards, DesignState,
-    LaneNarrowing, MarkedParking, ProtectDaylightZone, TARGET_LANE_WIDTH_FT,
-    all_crosswalks_continental, apply_osm_parking, bulb_out_corner_pair, complete_centerlines,
-    resolved_crossing_stations)
+from src.geometry.treatments import (BIKE_LANE_BUFFER_FT, BIKE_LANE_WIDTH_FT,
+    TARGET_LANE_WIDTH_FT, AddBikeLane, AddBikeLaneBollards, DesignState, LaneNarrowing,
+    MarkedParking, ProtectDaylightZone, all_crosswalks_continental, apply_osm_parking,
+    bulb_out_corner_pair, complete_centerlines, resolved_crossing_stations)
 
 GREENWOOD_LEGS = ("greenwood_ave_north", "greenwood_ave_south")
 
@@ -231,8 +231,12 @@ def build_proposal_apron_bulbouts(baseline: DesignState, model=None) -> DesignSt
 # for 100 ft from the junction and Schedule III's 2-hour parking on the south side only starts
 # about 114 ft out, so there is almost no legal parking inside the area these renders cover to
 # protect a lane with.
-BIKE_LANE_WIDTH_FT = 6.0     # AASHTO's 5 ft minimum plus a foot; Broad St can afford it
-BIKE_LANE_BUFFER_FT = 3.0    # painted separation from an 11 ft travel lane on an arterial
+# The section comes from src (BIKE_LANE_WIDTH_FT, BIKE_LANE_BUFFER_FT): a 5 ft lane with a 2 ft
+# buffer. This site asked for 6 ft + 3 ft on the reasoning that Broad St can afford it, and it
+# can - all four kerbs here have 21.3-26.6 ft to the alignment against the 18.8 the standard
+# section needs. It is standardised anyway, because a lane width is a standard and not a thing to
+# spend spare width on: what the spare width buys here is hatching, which is what says the road
+# is narrower than it looks.
 BIKE_LANE_BOLLARD_SPACING_FT = 8.0  # same flex-post pitch a daylight zone uses - reads as a
                                      # continuous delineator rather than a row of dots
 
@@ -241,7 +245,7 @@ def build_proposal_bike_lanes(baseline: DesignState, model=None) -> DesignState:
     """Buffered bike lanes both sides of both Broad St legs. Greenwood Ave gets none.
 
     Per side, outward from the centerline: 11 ft travel lane, 3 ft painted buffer with flex-post
-    delineators down it, 6 ft bike lane, then the leftover asphalt HATCHED to the kerb. That last
+    delineators down it, 5 ft bike lane, then the leftover asphalt HATCHED to the kerb. That last
     part matters: a bike lane is a standard width and the street's spare width is not part of it,
     the same accounting an 8 ft parking stall gets when the remainder becomes a hatched kerb
     buffer. Without the outer stripe and that hatching the lane read as running all the way to
@@ -249,11 +253,12 @@ def build_proposal_bike_lanes(baseline: DesignState, model=None) -> DesignState:
 
     PROTECTED, not just painted. The delineators stand in the buffer on the TRAFFIC side of the
     lane, which is the side a rider needs protecting from - posts in the kerb-side hatching would
-    protect nothing. The 3 ft buffer is what makes that possible, and it is why E Broad's lanes
+    protect nothing. The 2 ft buffer is what makes that possible, and it is why E Broad's east leg's
+    lanes
     (see that site's scenarios.py) cannot be protected: 17.6 ft to its nearest kerb is fully spent
     on an 11 ft lane, a 5 ft lane and their two stripes.
 
-    The cross-section takes 20.8 ft of the 21.3 ft broad_st_east has where its kerbs come closest
+    The cross-section takes 18.8 ft of the 21.3 ft broad_st_east has where its kerbs come closest
     to the alignment, and of the 25.9 ft broad_st_west has - so it holds for the whole traced
     length of both legs rather than only where they are widest. broad_st_east is the binding case,
     and its kerb hatching pinches from about 5 ft down to half a foot at that narrow point.

@@ -1249,6 +1249,19 @@ def _corner_fed_by(state: DesignState, leg_name: str, side: str) -> tuple[str, s
 # that fails its own standard. It is what rules Greenwood Ave (2.3 and 4.6 ft spare per side)
 # and Princeton Ave (4.1) out of a bike lane entirely - see build_proposal_bike_lanes.
 AASHTO_MIN_BIKE_LANE_FT = 5.0
+# THE BIKE LANE THIS PROJECT PROPOSES: a 5 ft lane with a 2 ft painted buffer. In src rather
+# than in each site's scenarios.py for the reason TARGET_LANE_WIDTH_FT gives - it is a standard
+# section, not a per-site choice, and two sites each holding their own copy is how one leg gets
+# narrowed to one number and checked against another. Broad & Greenwood was 6 ft + 3 ft and
+# E Broad derived its buffer from whatever the kerb could spare; both are this now.
+#
+# The lane width IS AASHTO's minimum, which is worth saying out loud rather than leaving to be
+# noticed: this proposes the narrowest lane the standard permits, and the buffer is where the
+# rest of the protection comes from. A 5 ft lane plus a 2 ft buffer beats a 6 ft lane with no
+# buffer for the same asphalt, because the buffer is what a flex post stands in.
+BIKE_LANE_WIDTH_FT = AASHTO_MIN_BIKE_LANE_FT
+BIKE_LANE_BUFFER_FT = 2.0
+
 # A bike lane hard against the kerb loses its outer foot or so to the gutter pan and to riders
 # keeping clear of the kerb. Holding the lane off the kerb by a shy distance instead buys back
 # usable width without claiming a wider lane than exists. Used on E Broad, a truck route, where

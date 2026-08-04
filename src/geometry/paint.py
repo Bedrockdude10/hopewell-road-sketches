@@ -26,7 +26,7 @@ from shapely.ops import unary_union
 from src.geometry.model import (_point_at, clip_paint_clear_of, corner_apron_annulus,
                                 corner_overlay_polygon, curb_offsets_at_stations,
                                 leg_clearance_ft, station_offset_many, through_street_sides)
-from src.geometry.markings import APRON, CROSSING_RIM_LINE, PaintKind
+from src.geometry.markings import CROSSING_RIM_LINE, PaintKind
 from src.geometry.daylighting import parkable_runs_ft
 from src.render.coords import FT_TO_M
 from src.render.crosswalks import (CROSSWALK_CLEARANCE_FT, CROSSWALK_DEPTH_FT,
@@ -141,6 +141,10 @@ MAX_TAPER_DEPTH_PER_RUN = 1.0
 # hatching is meant to run right up to it and be cut by it, which is what gives the zone its
 # clean diagonal end. This is the striper's gap, not a design setback.
 PAINT_TO_CROSSWALK_GAP_FT = 1.0
+
+# The painting order reserved for built ground - an apron. Everything else is cut around it, so
+# it has to be laid before anything else is painted; see PaintContext.seal_surfaces.
+SURFACE_PAINT_GROUP = 0
 
 # How close a piece of a fill's boundary has to lie to the crossing to BE the cut edge. The
 # clip puts it exactly on the buffered band, so this only absorbs float noise.
@@ -275,9 +279,37 @@ class PaintContext:
     straight_through: set = field(default_factory=set)
     props: list | None = None
     surfaces: object = None            # the mountable aprons: paint stops at them
+    surface_polygons: list = field(default_factory=list)
     pieces: list = field(default_factory=list)
     # Zones already placed on a kerb that runs straight through - see add(shares_a_kerb=True).
     through_painted: list = field(default_factory=list)
+
+    def add_surface(self, kind, polygon) -> None:
+        """Ground that is BUILT rather than painted, which every marking then stops at.
+
+        An apron is flush pavers or textured concrete - part of the corner rather than part of
+        the carriageway - so the ground it occupies is not roadway to be hatched. Left
+        unsubtracted, a curb extension's daylight zone and its own swept-path apron overlapped by
+        2-4 sq ft at three of the four corners at Broad & Greenwood, which MarkingsDoNotCollide
+        reported as the same ground painted twice. It is the same layering the crossings already
+        get, one rung further up: a surface outranks a marking the way a marking outranks a
+        buffer.
+
+        Collected rather than unioned here, because the union has to be complete before any
+        marking is cut against it - see seal_surfaces.
+        """
+        if polygon is None or polygon.is_empty:
+            return
+        self.surface_polygons.append(polygon)
+        self.pieces.append(PaintPiece(kind, polygon))
+
+    def seal_surfaces(self) -> None:
+        """Close the surface pass: from here on, every marking is cut around all of them.
+
+        No gap buffer, unlike a crossing: paint runs up to an apron's edge and stops there. The
+        striper's gap around a crossing (PAINT_TO_CROSSWALK_GAP_FT) exists because both are paint.
+        """
+        self.surfaces = unary_union(self.surface_polygons) if self.surface_polygons else None
 
     def emit(self, piece: PaintPiece) -> PaintPiece:
         """Keep a piece as-is, without clipping. For the things that are not paint: an apron is
@@ -368,83 +400,6 @@ def curbside_paint_ft(state, crosswalk_offsets: dict, center_ft,
              if band is not None and not band.is_empty and name in marked}
     keep_clear = (unary_union(list(bands.values())).buffer(PAINT_TO_CROSSWALK_GAP_FT)
                    if bands else None)
-    pieces: list[PaintPiece] = []
-
-    # The mountable aprons, built FIRST because paint has to stop at them. An apron is a
-    # SURFACE - flush pavers or textured concrete, part of the corner rather than part of the
-    # carriageway - so the ground it occupies is not roadway to be hatched. Left unsubtracted,
-    # a curb extension's daylight zone and its own swept-path apron overlapped by 2-4 sq ft at
-    # three of the four corners at Broad & Greenwood, which markings_collide reported as the
-    # same ground painted twice. It is the same layering the crossings already get, one rung
-    # further up: a surface outranks a marking the way a marking outranks a buffer.
-    #
-    # No gap buffer, unlike a crossing: paint runs up to an apron's edge and stops there. The
-    # striper's gap around a crossing (PAINT_TO_CROSSWALK_GAP_FT) exists because both are paint.
-    aprons = []
-    for corner, apron in sorted(state.corner_aprons.items()):
-        if "error" in state.corner_fillets[corner]:
-            continue
-        polygon = _apron_polygon(state, corner, apron, center_ft)
-        if polygon is not None:
-            aprons.append(polygon)
-            pieces.append(PaintPiece(APRON, polygon))
-    surfaces = unary_union(aprons) if aprons else None
-
-    # Zones already placed on a kerb that runs straight through. The two legs sharing such a
-    # kerb both paint up to the junction node, and where they meet at an angle their strips
-    # overlap in the wedge between the two frames - 5.6 sq ft at W Broad & Louellen, whose
-    # legs are 17.3 deg off collinear. The same ground painted twice is a markings_collide
-    # violation and, on asphalt, doubled ink. Whichever zone is built first keeps the wedge
-    # and the second takes the remainder, so they butt instead of overlapping and no gap
-    # opens between them.
-    through_painted: list = []
-
-    def add(kind, geometry, leg=None, side=None, beyond_ft=None, shares_a_kerb=False):
-        """Clip `geometry` clear of the crossings, keep what survives, return those pieces.
-
-        beyond_ft drops any surviving piece that fell on the JUNCTION side of the crossing.
-        A zone drawn deliberately through a crossing (so the crossing cuts its end into a
-        clean diagonal) leaves an offcut back at the corner, and that offcut is not paint.
-
-        shares_a_kerb dedupes against the other zones on the same through-running kerb.
-        """
-        added = []
-        if geometry is None or geometry.is_empty:
-            return added
-        if shares_a_kerb and through_painted:
-            geometry = geometry.difference(unary_union(through_painted))
-            if geometry.is_empty:
-                return added
-        # Cut clear of the mountable surfaces, then of the crossings - both may fragment a
-        # piece, so each stage runs over everything the previous one left.
-        surviving = [part for whole in clip_paint_clear_of(geometry, surfaces)
-                     for part in clip_paint_clear_of(whole, keep_clear)]
-        for part in surviving:
-            if beyond_ft is not None and _station_of(state.legs[leg], part) < beyond_ft:
-                continue
-            piece = PaintPiece(kind, part, leg, side)
-            pieces.append(piece)
-            added.append(piece)
-        if shares_a_kerb:
-            through_painted.extend(p.geometry for p in added)
-        return added
-
-    def rim(fills):
-        """The line along a fill's cut end, where it meets the crossing.
-
-        A hatched zone is outlined, and that outline carries on around the end where the
-        crossing cuts it - which is the diagonal you see finishing the zone off against the
-        crossing on a real street. The lane edge already gets a line of its own; without this
-        one the zone just stopped, with hatch strokes ending in mid-air.
-        """
-        if keep_clear is None:
-            return
-        for piece in fills:
-            edge = piece.geometry.exterior.intersection(keep_clear.buffer(RIM_SNAP_FT))
-            for part in getattr(edge, "geoms", [edge]):
-                if part.geom_type == "LineString" and part.length >= MIN_RIM_LENGTH_FT:
-                    pieces.append(PaintPiece(CROSSING_RIM_LINE, part, piece.leg, piece.side))
-
     # --- and now the treatments paint themselves. Each one that has markings owns them
     # (Treatment.paint), so a marking's geometry lives beside the validation and the provenance
     # of the thing that calls for it, rather than in a block of this function keyed off one of
@@ -456,18 +411,33 @@ def curbside_paint_ft(state, crosswalk_offsets: dict, center_ft,
     # marked lane and not two painted on top of each other.
     ctx = PaintContext(state=state, crosswalk_offsets=crosswalk_offsets, center_ft=center_ft,
                         keep_clear=keep_clear, marked=marked,
-                        straight_through=straight_through, props=props, surfaces=surfaces,
-                        pieces=pieces, through_painted=through_painted)
+                        straight_through=straight_through, props=props)
     current = {}
     for treatment in getattr(state, "treatments", []):
         current[(type(treatment), str(treatment.target))] = treatment
-    for treatment in sorted(current.values(),
-                             key=lambda t: (t.paint_group, str(t.target), t.paint_rank)):
+    def order_of(treatment):
+        # In the surface pass, by the CORNER the ground lands at: a curb extension is aimed at a
+        # leg-side and lays its apron at the corner that kerb feeds, so ordering those by target
+        # would interleave two corners' aprons. Everywhere else, by the target itself.
+        if treatment.paint_group == SURFACE_PAINT_GROUP:
+            corner = treatment.apron_corner(state)
+            return (treatment.paint_group, str(corner), treatment.paint_rank)
+        return (treatment.paint_group, str(treatment.target), treatment.paint_rank)
+
+    ordered = sorted(current.values(), key=order_of)
+    # The SURFACE pass runs first and is then sealed, because paint stops at built ground and
+    # every marking after this is cut around all of it - a surface added later would be a surface
+    # the earlier markings were never cut against. See PaintContext.add_surface.
+    surface_pass = [t for t in ordered if t.paint_group == SURFACE_PAINT_GROUP]
+    for treatment in surface_pass:
         treatment.paint(ctx)
-    return ctx.pieces      # the aprons were built first - see `surfaces` above
+    ctx.seal_surfaces()
+    for treatment in ordered[len(surface_pass):]:
+        treatment.paint(ctx)
+    return ctx.pieces
 
 
-def _apron_polygon(state, corner: tuple[str, str], apron, center_ft):
+def apron_polygon(state, corner: tuple[str, str], apron, center_ft):
     """The ground one CornerApron covers - a fixed-depth kite, or the swept-path annulus.
 
     Two shapes because there are two reasons for an apron; see

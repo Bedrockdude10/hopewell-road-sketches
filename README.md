@@ -62,7 +62,9 @@ A treatment owns its data, its validation, its provenance **and its markings**: 
 
 That separation is the point. The bike lane's kerb hatching was `add(...)` where every other hatched zone was `rim(add(...))` — one missing call in a 350-line function, invisible in the plan view because matplotlib outlines a fill for free, and visible in the render as hatch strokes ending in mid-air. A marking now sits beside the treatment that calls for it.
 
-**One piece left.** `MountableApron` and `AddCurbExtension` both write `state.corner_aprons`, and the aprons are painted first, in sorted-corner order, because every other marking clips against them. Moving those onto the treatments means the surfaces union has to be complete before any other treatment paints — solvable with a `paint_group` of 0, but it is the one step where the byte comparison is expected to move, so it wants its own change.
+The aprons went last, and they are the one case where the order is load-bearing rather than cosmetic. An apron is built ground, so every marking is cut around it — which means the union of them has to be **complete** before anything else paints. That is `paint_group = 0` plus `PaintContext.seal_surfaces()`, and the pass is ordered by the corner the ground lands at rather than by the treatment's own target, because a curb extension is aimed at a leg-side and lays its apron at the corner that kerb feeds. Sealing after the markings instead of before is caught immediately: `markings_collide` reports the apron overlapping a lane-narrowing buffer by 1–4 sq ft at Broad & Greenwood.
+
+Each apron treatment paints its own, from its own fields, rather than reading `state.corner_aprons` — the dict holds one entry per corner, so reading it would let two treatments that each asked for an apron there paint the same ground twice, and a corner with two aprons specified is a design error the collision invariant should report.
 
 ## Scene invariants
 

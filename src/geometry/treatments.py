@@ -987,14 +987,39 @@ class MountableApron(Treatment):
     radius that vehicle needs - so AddCurbExtension records CornerApron(swept_radius_ft=...)
     instead and the annulus is built from the two radii. See CornerApron.
     """
+    paint_group: ClassVar[int] = 0
     extent_ft: float = CORNER_APRON_DEFAULT_EXTENT_FT
 
     def describe(self) -> str:
         return f"MountableApron({self.target.key}, extent_ft={self.extent_ft})"
 
+    @property
+    def apron(self) -> CornerApron:
+        """CornerApron validates the depth/radius exclusivity itself."""
+        return CornerApron(depth_ft=self.extent_ft)
+
+    def apron_corner(self, state) -> tuple[str, str] | None:
+        return self.target.key
+
     def apply_to(self, state: "DesignState", model=None) -> None:
-        # CornerApron validates the depth/radius exclusivity itself.
-        state.corner_aprons[self.target.key] = CornerApron(depth_ft=self.extent_ft)
+        state.corner_aprons[self.target.key] = self.apron
+
+    def paint(self, ctx) -> None:
+        """The apron surface, laid in the SURFACE pass so every marking is cut around it.
+
+        Its own apron, from its own fields, rather than whatever is in state.corner_aprons for
+        this corner: the dict holds one entry per corner, so reading from it would let two
+        treatments that each asked for an apron there paint the same one twice. A corner with two
+        aprons specified is a design error, and painting both is what makes
+        MarkingsDoNotCollide say so.
+        """
+        from src.geometry.markings import APRON
+        from src.geometry.paint import apron_polygon
+
+        corner = self.apron_corner(ctx.state)
+        if corner is None or "error" in ctx.state.corner_fillets[corner]:
+            return
+        ctx.add_surface(APRON, apron_polygon(ctx.state, corner, self.apron, ctx.center_ft))
 
 
 # How wide a face a tightened corner presents to a passenger car. The design figure for the
@@ -1038,6 +1063,8 @@ class AddCurbExtension(Treatment):
     apron over the annulus between that and `face_radius_ft` so a bus keeps the path it has
     today. On CR 518, a rural arterial carrying buses and trucks, that is not optional.
     """
+    # Laid in the surface pass: built ground, and every marking is cut around it.
+    paint_group: ClassVar[int] = 0
     extension_ft: float = 0.0
     crossing_ft: float = 0.0
     swept_radius_ft: float | None = None
@@ -1055,6 +1082,45 @@ class AddCurbExtension(Treatment):
                 f"The swept radius ({self.swept_radius_ft} ft) is the corner a bus keeps via the "
                 f"apron, so it has to be LARGER than the {self.face_radius_ft} ft face a car "
                 f"sees - an annulus between them is what the apron is (see CornerApron).")
+
+    @property
+    def apron(self) -> CornerApron | None:
+        """The annulus a bus keeps, or None where no swept radius was measured.
+
+        A fixed depth cannot support the claim this apron exists to make - that the swept path
+        survives the tightened corner - because nothing ties a depth to the radius a vehicle
+        needs. See CornerApron.
+        """
+        if self.swept_radius_ft is None:
+            return None
+        return CornerApron(swept_radius_ft=self.swept_radius_ft,
+                            face_radius_ft=self.face_radius_ft)
+
+    def apron_corner(self, state) -> tuple[str, str] | None:
+        """The corner this moved kerb feeds - not this treatment's own target.
+
+        build_corner_fillets pairs leg A's LEFT curb with leg B's RIGHT, so which corner a kerb
+        belongs to depends on the side. This is why the apron pass is ordered by corner rather
+        than by target: a curb extension is aimed at a leg-side and lays ground at a corner.
+        """
+        return _corner_fed_by(state, self.target.leg, str(self.target.side))
+
+    def paint(self, ctx) -> None:
+        """The swept-path apron, in the SURFACE pass so every marking is cut around it.
+
+        Its own apron rather than whatever state.corner_aprons holds for this corner: the dict has
+        one entry per corner, so reading it would let two treatments that each asked for an apron
+        there paint the same ground twice. A corner with two aprons specified is a design error,
+        and painting both is what makes MarkingsDoNotCollide say so.
+        """
+        from src.geometry.markings import APRON
+        from src.geometry.paint import apron_polygon
+
+        apron = self.apron
+        corner = self.apron_corner(ctx.state)
+        if apron is None or corner is None or "error" in ctx.state.corner_fillets[corner]:
+            return
+        ctx.add_surface(APRON, apron_polygon(ctx.state, corner, apron, ctx.center_ft))
 
     def describe(self) -> str:
         return f"AddCurbExtension({self.target.leg}, {self.target.side}): "
@@ -1096,12 +1162,11 @@ class AddCurbExtension(Treatment):
         # The corner this kerb feeds has to be re-cut against the line that moved, or the pavement
         # ring keeps following the kerb that is no longer there. build_corner_fillets pairs leg A's
         # LEFT curb with leg B's RIGHT, so which corner that is depends on the side.
-        corner = _corner_fed_by(state, leg_name, side)
+        corner = self.apron_corner(state)
         if corner is not None:
             _rebuild_corner(state, corner, self.face_radius_ft, "curb_extension")
-            if self.swept_radius_ft is not None:
-                state.corner_aprons[corner] = CornerApron(swept_radius_ft=self.swept_radius_ft,
-                                                           face_radius_ft=self.face_radius_ft)
+            if self.apron is not None:
+                state.corner_aprons[corner] = self.apron
         return (f"kerb moved {self.extension_ft:.1f} ft into the roadway to station "
                 f"{full_ft:.0f} ft, tapering back over {taper_ft:.0f} ft; "
                 f"{self.face_radius_ft:.0f} ft face"

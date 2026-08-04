@@ -337,6 +337,32 @@ class DesignState:
     def clone(self) -> "DesignState":
         return deepcopy(self)
 
+    def treatment_for(self, kind, target):
+        """The treatment of `kind` applied at `target`, or None if there is none.
+
+        The last one applied wins, because a design is a sequence of decisions and the later one
+        is the decision: two MarkedParking treatments on one kerb are one marked lane.
+
+        This is how a treatment asks about ANOTHER treatment, and it replaces asking about the
+        dict that treatment happens to write. A bollard row's precondition is "is there a
+        buffered bike lane here", not "is there an entry under this key" - and the difference
+        showed: a dict lookup answers about state that anything could have written, including a
+        test poking it directly, while this answers about a decision someone actually made.
+        """
+        found = None
+        for treatment in self.treatments:
+            if isinstance(treatment, kind) and treatment.target == target:
+                found = treatment
+        return found
+
+    def treatments_of(self, kind) -> list:
+        """Every treatment of `kind`, one per target, in the order they were first applied."""
+        by_target = {}
+        for treatment in self.treatments:
+            if isinstance(treatment, kind):
+                by_target[treatment.target] = treatment
+        return list(by_target.values())
+
     def apply(self, *treatments: Treatment, model=None) -> "DesignState":
         """Apply treatments to a COPY of this design and return it.
 
@@ -862,10 +888,10 @@ class ParkingBufferBollards(Treatment):
                 f"side={str(self.target.side)!r}, spacing_ft={self.spacing_ft})")
 
     def apply_to(self, state: "DesignState", model=None) -> None:
-        zone = state.parking_zones.get(self.target.key)
-        if zone is None:
+        parking = state.treatment_for(MarkedParking, self.target)
+        if parking is None:
             raise KeyError(f"{self.target} has no marked parking - apply MarkedParking first.")
-        if not zone["curb_offset_ft"]:
+        if not parking.curb_offset_ft:
             raise ValueError(f"{self.target}'s marked parking has curb_offset_ft=0 - no curb "
                               f"buffer to put bollards in.")
         state.parking_buffer_bollards[self.target.key] = self.spacing_ft
@@ -883,7 +909,7 @@ class ParkingBufferBollards(Treatment):
         from src.geometry.paint import PaintPiece, _dot, parking_runs
 
         leg_name, side = self.target.leg, str(self.target.side)
-        curb_offset_ft = ctx.state.parking_zones[self.target.key]["curb_offset_ft"]
+        curb_offset_ft = ctx.state.treatment_for(MarkedParking, self.target).curb_offset_ft
         leg = ctx.state.legs[leg_name]
         for start_ft, _end_ft in parking_runs(ctx.state, leg_name, side, ctx.crosswalk_offsets,
                                                ctx.props):
@@ -913,9 +939,10 @@ class LaneNarrowingBollards(Treatment):
         return f"LaneNarrowingBollards({self.target}, spacing_ft={self.spacing_ft})"
 
     def apply_to(self, state: "DesignState", model=None) -> None:
-        if self.target.leg not in state.lane_narrowing:
-            raise KeyError(f"Leg {self.target.leg!r} has no lane_narrowing buffer - apply "
-                            f"LaneNarrowing first.")
+        if state.treatment_for(LaneNarrowing, self.target) is None:
+            raise KeyError(f"{self.target} has no lane-narrowing buffer - apply LaneNarrowing "
+                            f"first. A row of posts is placed inside a buffer, so its lateral "
+                            f"position comes from that buffer's own width.")
         state.bollard_lines[self.target.leg] = self.spacing_ft
 
 
@@ -932,8 +959,9 @@ class LaneNarrowingBollards(Treatment):
 
         leg_name = self.target.leg
         leg = ctx.state.legs[leg_name]
-        stripe_width_ft = ctx.state.lane_narrowing[leg_name]
-        sides = ctx.state.lane_narrowing_sides.get(leg_name, ("left", "right"))
+        narrowing = ctx.state.treatment_for(LaneNarrowing, self.target)
+        stripe_width_ft = narrowing.stripe_width_ft
+        sides = tuple(str(s) for s in narrowing.sides)
         for point in bollard_points_ft(
                 leg, stripe_width_ft,
                 leg_clearance_ft(leg_name, ctx.state.legs, ctx.state.corner_fillets),
@@ -1544,9 +1572,10 @@ class AddBikeLaneBollards(Treatment):
         return f"AddBikeLaneBollards({self.target.leg}, {self.target.side}): "
 
     def apply_to(self, state: "DesignState", model=None) -> str:
-        lane = state.bike_lanes.get(self.target.key)
-        if lane is None:
+        bike_lane = state.treatment_for(AddBikeLane, self.target)
+        if bike_lane is None:
             raise KeyError(f"{self.target} has no bike lane - apply AddBikeLane first.")
+        lane = bike_lane.lane
         if not lane.buffer_ft:
             raise ValueError(
                 f"{self.target}'s bike lane has no buffer, so there is nowhere to stand a "
@@ -1578,7 +1607,7 @@ class AddBikeLaneBollards(Treatment):
 
         leg_name, side = self.target.leg, str(self.target.side)
         leg = ctx.state.legs[leg_name]
-        lane = ctx.state.bike_lanes[self.target.key]
+        lane = ctx.state.treatment_for(AddBikeLane, self.target).lane
         bounds = lane.offsets_from_centerline_ft()
         at = ctx.anchors(leg_name, side, inner_offset_ft=(
             leg.curb_to_curb_ft / 2 - lane.total_ft + TARGET_LANE_WIDTH_FT))
@@ -1753,7 +1782,8 @@ class ProtectDaylightZone(Treatment):
         # The one check that is about the LAW rather than about the street, and it depends on
         # another treatment having been applied - so it belongs here, where the design is
         # visible, not in the constructor.
-        if self.kind in CURB_EXTENSION_DEVICES and self.target.key not in state.curb_extensions:
+        if (self.kind in CURB_EXTENSION_DEVICES
+                and state.treatment_for(AddCurbExtension, self.target) is None):
             raise ValueError(
                 f"{self.target} is declared as a {self.kind!r} daylight device, which cuts the "
                 f"R.S. 39:4-138(e) setback from 25 ft to 10 ft - but no curb extension has been "
@@ -1814,9 +1844,16 @@ def apply_osm_parking(state: DesignState, model, depth_ft: float = PARKING_STALL
                  for side in ("left", "right")}
 
         def already_treated(side):
-            return ((leg_name, side) in new_state.parking_zones
-                    or (leg_name in new_state.lane_narrowing
-                        and side in new_state.lane_narrowing_sides.get(leg_name, ("left", "right"))))
+            """Has a scenario already decided what happens on this kerb?
+
+            Asked of the treatments rather than of the dicts they write, so it is a question
+            about decisions someone made: this policy fills in what OSM says about kerbs a
+            proposal has not spoken for, and it must not paint over one that it has.
+            """
+            if new_state.treatment_for(MarkedParking, LegSide(leg_name, side)) is not None:
+                return True
+            narrowing = new_state.treatment_for(LaneNarrowing, LegTarget(leg_name))
+            return narrowing is not None and Side(side) in narrowing.sides
 
         untouched = [s for s in ("left", "right") if not already_treated(s)]
 

@@ -222,3 +222,40 @@ def test_a_corner_is_ordered():
     state = a_state(corner_fillets={("a", "b"): {}})
     assert Corner("a", "b").missing_from(state) is None
     assert "the order matters" in Corner("b", "a").missing_from(state)
+
+
+def test_a_treatment_asks_about_another_treatment_not_about_a_dict():
+    """A precondition on another treatment is a question about a DECISION.
+
+    LaneNarrowingBollards used to check `leg in state.lane_narrowing`, which is a question about
+    state anything could have written - including a test poking the dict. It asks
+    state.treatment_for now, so the answer is "did someone apply a lane narrowing here", and a
+    design assembled by hand rather than by applying treatments correctly refuses.
+    """
+    from src.geometry.targets import LegTarget
+    from src.geometry.treatments import LaneNarrowing, LaneNarrowingBollards
+
+    state = a_state()
+    # The dict says there is a buffer here; no treatment does.
+    state.lane_narrowing["east"] = 3.0
+    with pytest.raises(KeyError, match="no lane-narrowing buffer"):
+        state.apply(LaneNarrowingBollards(LegTarget("east")))
+    # Applied properly, it is accepted - and the posts take that buffer's own width.
+    narrowed = a_state().apply(LaneNarrowing(LegTarget("east"), stripe_width_ft=3.0))
+    assert narrowed.apply(LaneNarrowingBollards(LegTarget("east"))).bollard_lines == {"east": 10.0}
+
+
+def test_the_last_treatment_on_a_target_is_the_one_that_counts():
+    """A design is a sequence of decisions and the later one is the decision.
+
+    It matters for painting: two MarkedParking treatments on one kerb are one marked lane, not
+    two painted on top of each other, which markings_collide would report.
+    """
+    from src.geometry.targets import LegSide
+    from src.geometry.treatments import MarkedParking
+
+    state = a_state(width_ft=40.0).apply(
+        MarkedParking(LegSide("east", "left"), depth_ft=8.0),
+        MarkedParking(LegSide("east", "left"), depth_ft=7.0))
+    assert state.treatment_for(MarkedParking, LegSide("east", "left")).depth_ft == 7.0
+    assert len(state.treatments_of(MarkedParking)) == 1, "one kerb, one marked lane"

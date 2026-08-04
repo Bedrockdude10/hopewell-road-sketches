@@ -17,11 +17,12 @@ feet, and each renderer converts.
 It is also what src/checks.py inspects. A check that rebuilds the paint itself would just be
 a third copy free to drift from the other two; checking THIS list is checking what is drawn.
 """
+import math
 from dataclasses import dataclass, field
 
 import numpy as np
 from shapely.geometry import LineString, Polygon
-from shapely.ops import unary_union
+from shapely.ops import substring, unary_union
 
 from src.geometry.model import (_point_at, clip_paint_clear_of, corner_apron_annulus,
                                 corner_overlay_polygon, curb_offsets_at_stations,
@@ -149,6 +150,27 @@ PAINT_TO_CROSSWALK_GAP_FT = 1.0
 # here, and every foot of trim is a foot of bike lane or hatched buffer given up. Not a swept-path
 # figure - see kerb_opening_bands.
 OPENING_TRIM_FT = 1.5
+
+# How far back from the opening a HATCHED zone gives up, at the travel lane's edge, tapering to
+# the trim above by the time it reaches the kerb. A no-travel zone that simply stops reads as a
+# rectangle cut out of it; at a crossing the same zone ends on the crossing's own clean diagonal,
+# and that is what a striper paints - the buffer closing off gradually rather than being punched
+# through. Rounded rather than chamfered, so it matches the trim's own arcs.
+#
+# 4 ft because of what is tapering: the zone nearest the lane edge is a bike lane's 2 ft buffer,
+# and 2 ft of depth over a 4 ft run is 0.5 - half of MAX_TAPER_DEPTH_PER_RUN, comfortably inside
+# what still reads as a transition. It costs HATCHING rather than lane: the lane's own lines carry
+# a dotted extension straight across (see PaintContext.dashes_through_openings) and its green
+# stops at the trim, so the only paint this gives up is the paint whose message is "nothing
+# belongs here" - which is true of a driveway mouth too.
+OPENING_TAPER_FT = 4.0
+
+# The dotted extension a lane line becomes where it crosses an opening. MUTCD's dotted lane
+# extension is a 2 ft segment with a 2-6 ft gap; the tight end of that range is used because a
+# driveway mouth is short - E Broad's openings run 4-37 ft, and a 2+6 pattern would put a single
+# dash in a 10 ft one, which reads as a stray mark rather than as a line continuing.
+DOTTED_MARK_FT = 2.0
+DOTTED_GAP_FT = 2.0
 
 # The painting order reserved for built ground - an apron. Everything else is cut around it, so
 # it has to be laid before anything else is painted; see PaintContext.seal_surfaces.
@@ -354,9 +376,13 @@ class PaintContext:
                 return added
         # Cut clear of the mountable surfaces, then of the crossings, then of the kerb
         # openings - each may fragment a piece, so every stage runs over whatever the last left.
+        # A hatched zone is cut against the openings' rounded RUN-OUT and everything else against
+        # the entrance itself, which is what makes a no-travel zone taper off where a lane line
+        # simply stops - see KerbOpenings.
+        opening = self.openings.against(kind) if self.openings else None
         surviving = [cut for whole in clip_paint_clear_of(geometry, self.surfaces)
                      for part in clip_paint_clear_of(whole, self.keep_clear)
-                     for cut in clip_paint_clear_of(part, self.openings)]
+                     for cut in clip_paint_clear_of(part, opening)]
         for part in surviving:
             if beyond_ft is not None and _station_of(self.state.legs[leg], part) < beyond_ft:
                 continue
@@ -365,6 +391,34 @@ class PaintContext:
             added.append(piece)
         if shares_a_kerb:
             self.through_painted.extend(p.geometry for p in added)
+        return added
+
+    def dashes_through_openings(self, kind, geometry, leg=None, side=None):
+        """A dotted extension of `geometry` across each opening it crosses.
+
+        A LANE LINE DOES NOT STOP AT A DRIVEWAY, it goes dotted. That is what a striper paints and
+        what a rider needs to see: the lane still runs here, and here is where it is crossed. This
+        module used to argue the opposite - that a plain gap was the honest version of "the paint
+        does not continue" - which was really an argument that the marking had not been built yet.
+        A gap says the lane ends and starts again, which is not what a driveway does to it.
+
+        Called with the SAME geometry that was passed to `add`, so the dashes land exactly in the
+        gap that clip left, and cut clear of the surfaces and crossings like any other paint - an
+        opening that overlaps a crossing band gets no dashes across the crossing.
+        """
+        driven = self.openings.driven if self.openings else None
+        if geometry is None or geometry.is_empty or driven is None:
+            return []
+        added = []
+        inside = geometry.intersection(driven)
+        for part in getattr(inside, "geoms", [inside]):
+            if part.geom_type != "LineString" or part.length < DOTTED_MARK_FT:
+                continue
+            for dash in _dashes_along(part):
+                for clear in clip_paint_clear_of(dash, self.surfaces):
+                    for piece in clip_paint_clear_of(clear, self.keep_clear):
+                        added.append(PaintPiece(kind, piece, leg, side))
+        self.pieces.extend(added)
         return added
 
     def rim(self, fills) -> None:
@@ -458,21 +512,121 @@ def curbside_paint_ft(state, crosswalk_offsets: dict, center_ft,
     return ctx.pieces
 
 
+def _dashes_along(line):
+    """`line` cut into MUTCD dotted-extension segments, centred on it.
+
+    Centred rather than started at one end so the pattern reads as deliberate: an opening is only
+    a few dashes long, and one clipped to a stub at the far end looks like a striping error. The
+    count comes out of the length, so a wide entrance gets more dashes rather than longer ones.
+    """
+    period = DOTTED_MARK_FT + DOTTED_GAP_FT
+    n = max(1, int(round((line.length + DOTTED_GAP_FT) / period)))
+    span = n * DOTTED_MARK_FT + (n - 1) * DOTTED_GAP_FT
+    while n > 1 and span > line.length:
+        n -= 1
+        span = n * DOTTED_MARK_FT + (n - 1) * DOTTED_GAP_FT
+    start = max((line.length - span) / 2, 0.0)
+    out = []
+    for i in range(n):
+        at = start + i * period
+        dash = substring(line, at, min(at + DOTTED_MARK_FT, line.length))
+        if dash.geom_type == "LineString" and dash.length > 0:
+            out.append(dash)
+    return out
+
+
+@dataclass(frozen=True)
+class KerbOpenings:
+    """Where the kerbside markings open for a vehicle - in the TWO shapes that needs.
+
+    A marking does not stop at a driveway the same way whatever it is. The ground a car drives
+    over is one shape, and how each kind of paint ends against it is a different question:
+
+      * `driven` is that ground itself: the dropped kerb's own extent, trimmed back and rounded.
+        A line stops here (and a lane line then carries a dotted extension across it, see
+        PaintContext.dashes_through_openings), the green stops here, a post is dropped if it
+        stands here, and this is the entrance's real width.
+      * `tapered` is the same thing with a rounded run-out at the travel lane's edge, and it is
+        what a HATCHED zone ends against. A no-travel zone that stops square reads as a rectangle
+        punched through the hatching; the same zone at a crossing ends on the crossing's own
+        diagonal, which is what makes it look painted rather than deleted.
+
+    One shape for everything is what produced the blunt ends: the two questions had the same
+    answer because nothing had asked them separately.
+    """
+    driven: object = None
+    tapered: object = None
+
+    def against(self, kind) -> object:
+        """The shape `kind` is cut against - the run-out for a hatched zone, the entrance itself
+        for everything else."""
+        return self.tapered if kind.is_fill else self.driven
+
+    def __bool__(self) -> bool:
+        return self.driven is not None and not self.driven.is_empty
+
+
 def stands_in_an_opening(openings, geometry) -> bool:
     """Whether an OBJECT belongs to ground a vehicle drives over, so it must not be placed.
 
     Shared by PaintContext.emit and the prop builders in src/render/props.py, which compute their
     own post positions and would otherwise disagree with the paint about where a post stands -
-    the 2D/3D split this project keeps finding. Takes the union rather than the state so a caller
-    that already has it does not rebuild it per post.
+    the 2D/3D split this project keeps finding. Takes the openings rather than the state so a
+    caller that already has them does not rebuild them per post.
+
+    Measured against `driven`, not against the taper: a post beside a driveway is in the way only
+    if it stands in the entrance. The extra few feet the hatching gives up is paint ending
+    gracefully, not roadway a car uses.
     """
     if openings is None or geometry is None:
         return False
-    return openings.intersects(geometry)
+    driven = openings.driven if isinstance(openings, KerbOpenings) else openings
+    return driven is not None and driven.intersects(geometry)
 
 
-def kerb_opening_bands(state):
-    """The union of ground the kerbside markings must break over, or None.
+TAPER_PROFILE_STEPS = 8
+
+
+def _opening_run_out(leg, side, inner_ft, outer_ft, start_ft, end_ft, run_ft):
+    """The rounded run-out on the TRAVEL LANE side of an opening, both ends of it.
+
+    Built as nested sub-bands whose station extent decays from `run_ft` at `inner_ft` to nothing
+    at `outer_ft`, on a circular profile - so the removed ground is deepest along the lane edge
+    and reaches the kerb at the opening's own width. Which is the way round a turning vehicle
+    actually needs: it swings wide out in the roadway, while at the kerb the entrance is exactly
+    as wide as the surveyed dropped kerb says.
+
+    Nested bands rather than a polygon assembled in the leg's frame, because offset_band_polygon
+    already clamps to the traced kerb on the same station grid every other marking is built on -
+    the run-out therefore cannot disagree with the band it grows out of about where the kerb is.
+    The staircase between steps is smaller than OPENING_TRIM_FT, which is buffered on afterwards
+    with round joins and takes it out.
+
+    `outer_ft` HAS TO BE THE REAL KERB, measured off the band, not the nominal width the band was
+    asked for. The band is deliberately requested wider than the road so offset_band_polygon
+    clamps it to the traced kerb - and profiling a 4 ft run-out across the 25.9 ft that WAS asked
+    for on a strip only 7.6 ft deep put every sub-band within 3% of the full run, i.e. a
+    square-ended gap 4 ft wider at both ends and no taper at all.
+    """
+    from src.geometry.model import offset_band_polygon
+
+    depth_ft = outer_ft - inner_ft
+    if depth_ft <= 0 or run_ft <= 0:
+        return []
+    out = []
+    for step in range(TAPER_PROFILE_STEPS):
+        t = step / TAPER_PROFILE_STEPS               # 0 at the lane edge, 1 at the kerb
+        run = run_ft * math.sqrt(max(0.0, 1.0 - t * t))
+        piece = offset_band_polygon(leg, side, inner_ft + t * depth_ft,
+                                    inner_ft + (step + 1) / TAPER_PROFILE_STEPS * depth_ft,
+                                    max(start_ft - run, 0.0), end_ft + run)
+        if piece is not None and not piece.is_empty:
+            out.append(piece)
+    return out
+
+
+def kerb_opening_bands(state) -> KerbOpenings:
+    """Where the kerbside markings open for a vehicle, in the two shapes KerbOpenings holds.
 
     WHERE A VEHICLE CROSSES THE KERB, the markings it drives over open for it. A driveway is not
     a place to paint a bike lane's green surface, a parking stall or a hatched buffer across:
@@ -486,20 +640,22 @@ def kerb_opening_bands(state):
     because that is the lane every treatment here holds - TravelLanesKeepTheirWidth is the
     invariant that makes it true, so no kerbside marking on a passing leg starts inside it.
 
-    A PLAIN GAP, deliberately. Real striping often dashes a bike lane line across a driveway
-    rather than stopping it, and that is a marking this project does not have; a gap is the
-    honest version of "the paint does not continue here" and does not draw something unbuilt.
-
     THE ENDS ARE TRIMMED BACK AND ROUNDED by OPENING_TRIM_FT, so a vehicle turning in or out has
     a little room and the gap reads as an entrance rather than as a rectangle punched through the
     markings. Deliberately small: this is cohesion, not a swept-path design, and every foot of it
     is a foot of bike lane or hatching given up. The trim is clipped back inside the kerbside
     strip so it can never reach into the travel lane, whose edge line runs straight past.
+
+    AND A HATCHED ZONE GETS MORE THAN A TRIM. The trim alone is a foot and a half at 2D scale -
+    correct for an entrance, but it left every no-travel zone ending on a blunt transverse edge,
+    which is not how one ends anywhere else in this project: at a crossing it ends on the
+    crossing's own diagonal. So the fills are cut against `tapered`, the same band plus
+    _opening_run_out, and the lines and the green against `driven`.
     """
     from src.geometry.model import offset_band_polygon
     from src.geometry.treatments import TARGET_LANE_WIDTH_FT
 
-    bands = []
+    driven, tapered = [], []
     for (leg_name, side), openings in getattr(state, "kerb_openings", {}).items():
         leg = state.legs.get(leg_name)
         if leg is None or leg.curb_to_curb_ft is None:
@@ -515,14 +671,25 @@ def kerb_opening_bands(state):
                                         opening.start_ft, opening.end_ft)
             if band is None or band.is_empty:
                 continue
-            # JOIN_STYLE 1 is round: the corners where the gap meets the travel lane edge and the
-            # kerb come off as arcs rather than right angles, which is the whole visual point.
-            trimmed = band.buffer(OPENING_TRIM_FT, join_style=1, cap_style=1)
-            if kerbside is not None and not kerbside.is_empty:
-                trimmed = trimmed.intersection(kerbside)
-            if not trimmed.is_empty:
-                bands.append(trimmed)
-    return unary_union(bands) if bands else None
+            # The kerb as traced HERE, off the band the clamping already produced - see
+            # _opening_run_out for the flat 4 ft gap that using the requested width gave instead.
+            _stations, offsets = station_offset_many(
+                leg.centerline, np.asarray(band.exterior.coords, dtype=float))
+            run_out = _opening_run_out(leg, side, TARGET_LANE_WIDTH_FT,
+                                       float(np.abs(offsets).max()),
+                                       opening.start_ft, opening.end_ft, OPENING_TAPER_FT)
+            for shape, target in ((band, driven),
+                                  (unary_union([band, *run_out]), tapered)):
+                # JOIN_STYLE 1 is round: the corners where the gap meets the travel lane edge and
+                # the kerb come off as arcs rather than right angles, which is the whole visual
+                # point, and it smooths the run-out's own steps at the same time.
+                trimmed = shape.buffer(OPENING_TRIM_FT, join_style=1, cap_style=1)
+                if kerbside is not None and not kerbside.is_empty:
+                    trimmed = trimmed.intersection(kerbside)
+                if not trimmed.is_empty:
+                    target.append(trimmed)
+    return KerbOpenings(driven=unary_union(driven) if driven else None,
+                        tapered=unary_union(tapered) if tapered else None)
 
 
 def apron_polygon(state, corner: tuple[str, str], apron, center_ft):

@@ -188,6 +188,11 @@ PAINT_STYLE = require_every_kind({
     # is the one treatment here that says a vehicle BELONGS in the strip, where the gold
     # hatching says nothing does.
     markings.BIKE_LANE_EDGE_LINE: dict(color="seagreen", linewidth=1.6, zorder=3),
+    # Drawn identically to the continuous line, because it IS that line: the breaks are in the
+    # geometry rather than in a dash pattern, so what the plan view draws here is a row of short
+    # stripes - the same row the render extrudes. Styling it differently would say the paint is a
+    # different colour across a driveway, which it is not.
+    markings.BIKE_LANE_DOTTED_EXTENSION: dict(color="seagreen", linewidth=1.6, zorder=3),
     markings.BIKE_BUFFER_FILL:    dict(color="mediumseagreen", alpha=0.35, hatch="\\\\", zorder=3),
 }, "plan_view.PAINT_STYLE")
 # Outline colour for each filled zone's own fill colour.
@@ -760,7 +765,10 @@ def legend_handles():
         Patch(facecolor="orangered", alpha=0.40, hatch="xx", edgecolor="orangered",
                label="Daylighting - no parking (R.S. 39:4-138)"),
         Patch(facecolor="peru", alpha=0.6, edgecolor="saddlebrown", label="Mountable apron"),
-        Line2D([0], [0], color="seagreen", lw=1.6, label="Bike lane - edge lines"),
+        # One row for both kinds: the dotted extension is the same paint, and the dashes are in
+        # the geometry rather than in the line style, so a second swatch would look identical.
+        Line2D([0], [0], color="seagreen", lw=1.6,
+               label="Bike lane - edge lines (dotted across a driveway)"),
         Patch(facecolor="mediumseagreen", alpha=0.45, edgecolor="seagreen",
                label="Bike lane - green surface"),
         Patch(facecolor="mediumseagreen", alpha=0.35, hatch="\\\\", edgecolor="seagreen",

@@ -1487,8 +1487,9 @@ class AddBikeLane(Treatment):
         """An edge line each side of the lane, so it reads as a lane rather than as the spare
         asphalt a lane-narrowing buffer marks; the buffer beside it, and the parking outside it,
         hatched and ticked with the machinery already here."""
-        from src.geometry.markings import (BIKE_BUFFER_FILL, BIKE_LANE_EDGE_LINE,
-                                           BIKE_LANE_SURFACE, BUFFER_FILL, STALL_DIVIDER)
+        from src.geometry.markings import (BIKE_BUFFER_FILL, BIKE_LANE_DOTTED_EXTENSION,
+                                           BIKE_LANE_EDGE_LINE, BIKE_LANE_SURFACE, BUFFER_FILL,
+                                           STALL_DIVIDER)
         from src.geometry.model import (curbside_strip_polygon, inset_line_ft,
                                         lane_narrowing_polygons_ft, offset_band_polygon,
                                         parking_stall_lines_ft)
@@ -1519,10 +1520,14 @@ class AddBikeLane(Treatment):
         for key in ("inner_line_ft", "buffer_outer_line_ft", "outer_line_ft"):
             if bounds[key] is None:
                 continue
-            ctx.add(BIKE_LANE_EDGE_LINE,
-                     inset_line_ft(leg, side, bounds[key], start_ft,
-                                    keep_inside_ft=LANE_EDGE_LINE_WIDTH_FT / 2),
-                     leg_name, side, beyond_ft)
+            line = inset_line_ft(leg, side, bounds[key], start_ft,
+                                  keep_inside_ft=LANE_EDGE_LINE_WIDTH_FT / 2)
+            ctx.add(BIKE_LANE_EDGE_LINE, line, leg_name, side, beyond_ft)
+            # AND ACROSS EACH DRIVEWAY IT MEETS, dotted. The lane is not interrupted by an
+            # entrance - it is crossed there, and the dotted extension is what says so. Only the
+            # lane's own lines get this: a parking stall divider lies ACROSS the kerbside strip
+            # rather than along it, so it has nothing to continue into.
+            ctx.dashes_through_openings(BIKE_LANE_DOTTED_EXTENSION, line, leg_name, side)
         # THE LANE'S OWN ASPHALT, PAINTED GREEN - between the two edge stripes, i.e. exactly the
         # width a rider gets. Bounded by the stripes' faces rather than their centres, so the
         # green stops where the white starts instead of running under it; MarkingsDoNotCollide

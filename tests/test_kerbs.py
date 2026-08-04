@@ -220,13 +220,125 @@ def test_no_flex_post_stands_in_a_driveway(site, site_models):
         scene = resolved_scene(model, state)
         paint, props = scene.build_paint_and_posts(scene_props(model, state, scene))
 
-    bands = kerb_opening_bands(state)
-    if bands is None:
+    openings = kerb_opening_bands(state)
+    if not openings:
         pytest.skip(f"{site} has no dropped kerbs along its legs")
+    # Against the ENTRANCE (KerbOpenings.driven), not the hatching's run-out: a post is in the way
+    # if it stands where a car crosses, and the extra few feet the hatching gives up to taper off
+    # is paint ending gracefully rather than roadway anything drives on.
     posted = [p for p in paint if p.kind is BOLLARD]
     assert posted, "the proposal draws no posts at all, so this proves nothing"
-    standing = [p for p in posted if bands.intersects(p.geometry)]
+    standing = [p for p in posted if openings.driven.intersects(p.geometry)]
     assert not standing, f"{len(standing)} painted post(s) stand inside a driveway opening"
     prop_posts = [p for p in props if p.get("type") == "bollard"]
-    in_a_drive = [p for p in prop_posts if bands.intersects(Point(p["position_ft"]))]
+    in_a_drive = [p for p in prop_posts if openings.driven.intersects(Point(p["position_ft"]))]
     assert not in_a_drive, f"{len(in_a_drive)} post prop(s) stand inside a driveway opening"
+
+
+@needs_source_data
+def test_a_lane_line_goes_dotted_across_a_driveway_rather_than_stopping(site_models):
+    """A driveway does not end a bike lane, so its lines do not end at one either.
+
+    The gap on its own said the lane stops here and starts again 37 ft later, which is not what a
+    driveway does to a lane - and it was defended in the code as "the honest version of the paint
+    not continuing", which was really an admission that the dotted extension had not been built.
+    MUTCD's dotted lane extension is what a striper paints through a conflict area.
+
+    Pinned per dash rather than in aggregate: the dashes have to lie ON the line they extend (a row
+    of marks a foot off the lane edge is worse than a gap), inside the entrance, and be the stated
+    length - not one long stripe straight across, which is the failure mode that would look right
+    at 2D scale and paint over the driveway in 3D.
+    """
+    from src.geometry.markings import BIKE_LANE_DOTTED_EXTENSION, BIKE_LANE_EDGE_LINE
+    from src.geometry.paint import DOTTED_MARK_FT, kerb_opening_bands
+
+    model = site_models["ebroad_princeton"]
+    with contextlib.redirect_stdout(io.StringIO()):
+        state = run_scenario(load_site_scenarios("ebroad_princeton").build_proposal_bike_lanes,
+                             DesignState.from_model(model), model)
+        scene = resolved_scene(model, state)
+        paint = scene.build_paint(scene_props(model, state, scene))
+
+    openings = kerb_opening_bands(state)
+    dashes = [p for p in paint if p.kind is BIKE_LANE_DOTTED_EXTENSION]
+    assert dashes, ("no dotted extension anywhere, so every bike lane still just stops at its "
+                    "driveways")
+
+    def offset_ft(piece):
+        """How far off its leg's centerline a piece lies, which is what says it is ON a lane line.
+        Not distance to the surviving stripe: a dash is centred in the gap, so it is legitimately
+        several feet from the nearest piece of the line it continues."""
+        _stations, offsets = station_offset_many(
+            state.legs[piece.leg].centerline,
+            np.asarray(piece.geometry.coords, dtype=float))
+        return float(np.abs(offsets).mean())
+
+    lane_lines = {}
+    for piece in paint:
+        if piece.kind is BIKE_LANE_EDGE_LINE:
+            lane_lines.setdefault((piece.leg, piece.side), set()).add(round(offset_ft(piece), 2))
+    for dash in dashes:
+        assert dash.geometry.length == pytest.approx(DOTTED_MARK_FT, abs=0.05), (
+            f"a dash is {dash.geometry.length:.2f} ft, not the {DOTTED_MARK_FT} ft MUTCD's dotted "
+            f"extension asks for")
+        assert openings.driven.covers(dash.geometry), (
+            "a dash lies outside the opening it is supposed to be crossing")
+        on_this_side = lane_lines.get((dash.leg, dash.side), set())
+        assert on_this_side, f"a dash on {dash.leg} {dash.side} where no lane line was painted"
+        assert min(abs(offset_ft(dash) - o) for o in on_this_side) < 0.25, (
+            f"a dash sits {offset_ft(dash):.2f} ft off the centerline where this side's lane lines "
+            f"run at {sorted(on_this_side)} - it has to continue one of them, not run beside it")
+
+
+@needs_source_data
+def test_a_hatched_zone_tapers_off_at_an_opening_where_a_lane_line_stops_dead(site_models):
+    """The two ways paint ends at a driveway, and they are not the same way.
+
+    A no-travel zone that stops square reads as a rectangle punched out of the hatching; the same
+    zone at a crossing ends on the crossing's own clean diagonal, which is what a striper paints.
+    So a FILL is cut against the openings' rounded run-out and everything else against the
+    entrance itself - measured here at the E Broad opening, where the removed ground has to be
+    wider at the travel lane's edge than at the kerb and the entrance itself must NOT be.
+
+    The run-out is what a first version got wrong invisibly: profiled across the nominal width the
+    band was requested at (25.9 ft) rather than the kerb it was clamped to (7.6 ft), every step
+    came out within 3% of the full run - a gap 4 ft wider at each end, with no taper in it.
+    """
+    from shapely.geometry import Point
+
+    from src.geometry.kerbs import OpeningSource
+    from src.geometry.model import inset_point_at_station
+    from src.geometry.paint import OPENING_TAPER_FT, kerb_opening_bands
+    from src.geometry.treatments import TARGET_LANE_WIDTH_FT
+
+    model = site_models["ebroad_princeton"]
+    with contextlib.redirect_stdout(io.StringIO()):
+        state = run_scenario(load_site_scenarios("ebroad_princeton").build_proposal_bike_lanes,
+                             DesignState.from_model(model), model)
+    openings = kerb_opening_bands(state)
+    leg = state.legs["e_broad_st_east"]
+    opening = next(o for o in state.kerb_openings[("e_broad_st_east", "left")]
+                   if o.source is OpeningSource.DROPPED_KERB)
+
+    def gap_ft(shape, offset_ft):
+        """How much station `shape` removes at one offset from the centerline, by probing it."""
+        inside = [s / 8 for s in range(int(8 * (opening.start_ft - 3 * OPENING_TAPER_FT)),
+                                       int(8 * (opening.end_ft + 3 * OPENING_TAPER_FT)))
+                  if shape.contains(Point(inset_point_at_station(leg, s / 8, offset_ft)))]
+        return max(inside) - min(inside) if inside else 0.0
+
+    at_the_lane = TARGET_LANE_WIDTH_FT + 0.4
+    near_the_kerb = 17.0
+    entrance = (gap_ft(openings.driven, at_the_lane), gap_ft(openings.driven, near_the_kerb))
+    hatching = (gap_ft(openings.tapered, at_the_lane), gap_ft(openings.tapered, near_the_kerb))
+
+    assert entrance[0] == pytest.approx(entrance[1], abs=0.3), (
+        f"the entrance is {entrance[0]:.2f} ft at the lane edge and {entrance[1]:.2f} ft at the "
+        f"kerb - it is the surveyed dropped kerb and must not taper; only the hatching does")
+    assert hatching[0] > entrance[0] + OPENING_TAPER_FT, (
+        f"the hatching gives up {hatching[0]:.2f} ft against the entrance's {entrance[0]:.2f} ft "
+        f"at the lane edge, so it is not tapering off - it stops dead like the lines do")
+    assert hatching[0] - hatching[1] > 1.0, (
+        f"the run-out removes {hatching[0]:.2f} ft at the lane edge and {hatching[1]:.2f} ft near "
+        f"the kerb, which is the same square end 4 ft further back rather than a taper")
+    assert hatching[1] >= entrance[1], "the run-out is inside the entrance near the kerb"

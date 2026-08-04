@@ -394,6 +394,18 @@ So the test is positive ("the mapper said this is not a pedestrian crossing poin
 
 What opens is what a vehicle drives over: the band runs from the travel lane's edge out to the real kerb, so the green surface, the outer lines, the hatching and the stalls break while the travel-lane edge line runs straight past. The ends are trimmed back and rounded by 1.5 ft so a turning vehicle has a little room and the gap reads as an entrance — kept small on purpose and pinned by a test, since every foot is a foot of bike lane given up.
 
+**Paint does not all end the same way, so the openings are two shapes** (`paint.KerbOpenings`). One shape for what a car drives over and one termination per marking was the whole reason a driveway looked punched out rather than painted:
+
+| At an opening | ends how | cut against |
+|---|---|---|
+| a bike lane's edge lines | **dotted extension straight across** — 2 ft marks, 2 ft gaps, MUTCD's dotted lane extension | `driven`, then the dashes are put back |
+| a hatched no-travel zone | **tapers off, rounded** — 4 ft of run-out at the travel lane's edge, closing to the 1.5 ft trim at the kerb | `tapered` |
+| the green surface, the stalls, a flex post | stop at the entrance | `driven` |
+
+The dotted extension is the correction of an argument this file used to make — that a plain gap was "the honest version of the paint not continuing", since the marking did not exist. It was an admission, not a principle: a driveway does not end a bike lane, it crosses one, and a gap says the lane stops and restarts 37 ft later. The dashes live in the **geometry**, not in a line style, so the plan view draws short stripes and the render extrudes the same ones; they travel in the bike lane's existing channel, which is why the 3D side needed no new code at all.
+
+The run-out is what makes a zone end the way it already ends at a crossing — on a sweep rather than on a blunt transverse cut. It costs hatching rather than lane, which is the paint whose message ("nothing belongs here") is least missed at an entrance. Its first version was silently wrong in an instructive way: profiled across the nominal width the band is *requested* at (25.9 ft) instead of the traced kerb it gets *clamped* to (7.6 ft), every step of the profile came out within 3% of the full run — a gap 4 ft wider at each end with no taper anywhere in it, which no invariant could have caught and which measuring the profile at five offsets found immediately.
+
 **The posts gap too.** `PaintContext.emit` skips clipping deliberately (a post is a point, not a stripe), so the paint broke over each driveway while the flex posts marched across it — 7 of E Broad's 26. That is worse than not breaking the paint: it draws a protected lane whose protection you are expected to drive through.
 
 Two openings overlap their leg's crossing band and are **reported rather than filtered** (`describe_kerb_openings` names the way behind every one). Overriding a surveyed tag with a geometric guess about what belongs near a corner is what this repo's core principle rules out.

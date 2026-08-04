@@ -197,6 +197,13 @@ CROSSING_RIM_LINE = _kind("crossing_rim_line", Role.LINE, PARKING_BUFFER_EDGE_LI
 ZONE_END_LINE = _kind("zone_end_line", Role.LINE, PARKING_BUFFER_EDGE_LINES)
 # An exclusive bike lane: its own edge lines, and the hatched buffer beside it.
 BIKE_LANE_EDGE_LINE = _kind("bike_lane_edge_line", Role.LINE, BIKE_LANE_EDGE_LINES)
+# The same line carried across a driveway as a dotted extension - the lane does not end at an
+# entrance, it is crossed there. Its own kind rather than more BIKE_LANE_EDGE_LINE pieces so a
+# check or a reader can tell a continuous stripe from a broken one, and because a dotted line is a
+# different instruction; it travels in the same channel, since a dash is a short stripe and both
+# renderers already draw one. The dashes are in the GEOMETRY (see paint.py:_dashes_along), not in a
+# line style, so the plan view and the 3D render cannot disagree about where the gaps fall.
+BIKE_LANE_DOTTED_EXTENSION = _kind("bike_lane_dotted_extension", Role.LINE, BIKE_LANE_EDGE_LINES)
 BIKE_BUFFER_FILL = _kind("bike_buffer_fill", Role.FILL, BIKE_LANE_HATCH_LINES)
 # The green a bike lane's asphalt is painted, between its two edge stripes - the lane itself
 # rather than anything beside it.

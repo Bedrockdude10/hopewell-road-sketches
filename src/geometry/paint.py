@@ -23,24 +23,11 @@ import numpy as np
 from shapely.geometry import LineString, Polygon
 from shapely.ops import unary_union
 
-from src.geometry.model import (_point_at, bollard_points_ft, clip_paint_clear_of,
-                                corner_apron_annulus, corner_overlay_polygon,
-                                curb_offsets_at_stations, curbside_strip_polygon,
-                                inset_line_ft, lane_narrowing_edge_lines_ft,
-                                lane_narrowing_polygons_ft, lane_narrowing_taper_ft,
-                                lane_narrowing_taper_polygons_ft, leg_clearance_ft,
-                                parking_lane_edge_line_ft, parking_stall_lines_ft,
-                                points_at_offset_ft,
-                                station_offset_many, through_street_sides)
-from src.geometry.markings import (APRON, BIKE_BUFFER_FILL, BIKE_LANE_EDGE_LINE, BOLLARD,
-                                   BUFFER_EDGE_LINE, BUFFER_FILL,
-                                   CROSSING_RIM_LINE, DAYLIGHT_EDGE_LINE, DAYLIGHT_FILL,
-                                   LANE_EDGE_LINE, LANE_NARROWING_FILL, PARKING_EDGE_LINE,
-                                   PaintKind, STALL_DIVIDER, TAPER_FILL, TAPER_LINE,
-                                   ZONE_END_LINE)
-from src.geometry.treatments import PARKING_STALL_LENGTH_DEFAULT_FT, TARGET_LANE_WIDTH_FT
-from src.geometry.daylighting import (merged_no_parking_spans_ft, no_parking_zones_ft,
-                                      parkable_runs_ft)
+from src.geometry.model import (_point_at, clip_paint_clear_of, corner_apron_annulus,
+                                corner_overlay_polygon, curb_offsets_at_stations,
+                                leg_clearance_ft, station_offset_many, through_street_sides)
+from src.geometry.markings import APRON, CROSSING_RIM_LINE, PaintKind
+from src.geometry.daylighting import parkable_runs_ft
 from src.render.coords import FT_TO_M
 from src.render.crosswalks import (CROSSWALK_CLEARANCE_FT, CROSSWALK_DEPTH_FT,
                                    crosswalk_reach_on_leg_side_ft)
@@ -458,260 +445,23 @@ def curbside_paint_ft(state, crosswalk_offsets: dict, center_ft,
                 if part.geom_type == "LineString" and part.length >= MIN_RIM_LENGTH_FT:
                     pieces.append(PaintPiece(CROSSING_RIM_LINE, part, piece.leg, piece.side))
 
-    # --- paint-only lane narrowing: an edge line, a hatched buffer, and a taper back to
-    # the curb. line_only legs get the boundary lines without the fill.
-    for leg_name, stripe_width_ft in sorted(state.lane_narrowing.items()):
-        leg = state.legs[leg_name]
-        sides = state.lane_narrowing_sides.get(leg_name, ("left", "right"))
-        fill = leg_name not in state.lane_narrowing_line_only
-
-        for side in sides:
-            at = leg_anchors(state, leg_name, side, crosswalk_offsets, keep_clear,
-                              inner_offset_ft=leg.curb_to_curb_ft / 2 - stripe_width_ft,
-                              crosswalk_is_marked=leg_name in marked)
-            # A crossing is something to end against: run into it and let it cut the end.
-            # Only where there is none does the paint have to resolve itself back to the
-            # kerb, and only then is a taper the right way to do it.
-            if (leg_name, side) in straight_through:
-                # One unbroken kerb under one restriction, with no corner return at either
-                # end of it: run from the junction NODE and let any crossing cut it, keeping
-                # both halves. Tested before the marked/unmarked split because it applies to
-                # both - the two E Broad legs' north kerbs are one kerb, and the zones on
-                # them have to meet at the node rather than each stopping a few feet short of
-                # it. Discarding the junction-side half left ~20 ft of a no-stopping kerb
-                # bare between the crossing and the node, with no corner there to justify it.
-                start_ft, beyond_ft, curved = 0.0, None, False
-            elif leg_name in marked:
-                start_ft, beyond_ft = end_against_crossing(at)
-                curved = False
-            else:
-                curved = tapers_cleanly(stripe_width_ft, at)
-                start_ft, beyond_ft = (at.anchor_ft if curved else at.target_ft), None
-            line_ft, fill_ft = lane_edge_stripes(stripe_width_ft)
-            add(LANE_EDGE_LINE, _one(lane_narrowing_edge_lines_ft(
-                leg, line_ft, start_left_ft=start_ft, start_right_ft=start_ft, sides=(side,),
-                keep_inside_ft=LANE_EDGE_LINE_WIDTH_FT / 2)), leg_name, side, beyond_ft)
-            if curved:
-                add(TAPER_LINE, _one(lane_narrowing_taper_ft(
-                    leg, line_ft, at.anchor_ft, at.target_ft, sides=(side,))), leg_name, side)
-            if fill:
-                rim(add(LANE_NARROWING_FILL, _one(lane_narrowing_polygons_ft(
-                    leg, fill_ft, start_left_ft=start_ft, start_right_ft=start_ft,
-                    sides=(side,))), leg_name, side, beyond_ft,
-                    shares_a_kerb=(leg_name, side) in straight_through))
-                if curved:
-                    add(TAPER_FILL, _one(lane_narrowing_taper_polygons_ft(
-                        leg, fill_ft, at.anchor_ft, at.target_ft, sides=(side,))),
-                        leg_name, side)
-                elif leg_name not in marked and (leg_name, side) not in straight_through:
-                    # Not on a kerb that runs straight through: the zone does not END at the
-                    # junction node, it continues into the adjoining leg's zone on the same
-                    # unbroken kerb. Closing it off drew a line across the hatching in the
-                    # middle of the intersection.
-                    add(ZONE_END_LINE, zone_end_line_ft(
-                        leg, side, start_ft, leg.curb_to_curb_ft / 2 - fill_ft),
-                        leg_name, side)
-
-        if leg_name in state.bollard_lines:
-            for point in bollard_points_ft(leg, stripe_width_ft,
-                                            leg_clearance_ft(leg_name, state.legs, state.corner_fillets),
-                                            state.bollard_lines[leg_name], sides=sides):
-                pieces.append(PaintPiece(BOLLARD, _dot(point), leg_name, None))
-
-    # --- marked curbside parking: stalls, plus the hatched buffer between them and the curb
-    for (leg_name, side), zone in sorted(state.parking_zones.items()):
-        leg = state.legs[leg_name]
-        depth_ft, stall_length_ft = zone["depth_ft"], zone["stall_length_ft"]
-        curb_offset_ft = zone["curb_offset_ft"]
-        at = leg_anchors(state, leg_name, side, crosswalk_offsets, keep_clear,
-                          inner_offset_ft=leg.curb_to_curb_ft / 2 - depth_ft - curb_offset_ft,
-                          crosswalk_is_marked=leg_name in marked)
-        runs = parking_runs(state, leg_name, side, crosswalk_offsets, props)
-
-        # DAYLIGHTING. Every stretch where R.S. 39:4-138 forbids parking is hatched across
-        # the FULL depth of the parking lane, not just the buffer strip beside it. Those
-        # stretches were already no-parking in law - the treatment is MARKING them, because
-        # an unmarked setback is one people park in, and an unmarked setback next to a
-        # marked stall reads as more stall. This is the part of the proposal that actually
-        # daylights the crossing. Zones are clipped to the leg and to the point where the
-        # corner return leaves room to paint at all.
-        #
-        # The zone runs INTO the crossing and the crossing cuts its end, leaving it rimmed
-        # along the crossing's own edge - a diagonal where the crossing is skewed, meeting
-        # the straight lane-edge line at a right angle. It used to end in the same curved
-        # taper a lane-narrowing buffer gets, and on a wide leg that curve is a hairpin: at
-        # Broad St it had to swing the full 13-17 ft depth of the parking lane across 0-5.6 ft
-        # of station. Where a leg has no marked crossing there is nothing to end against, so
-        # it falls back to a taper if a gentle one exists and a square cut otherwise.
-        daylight_line_ft, daylight_fill_ft = lane_edge_stripes(depth_ft + curb_offset_ft)
-        lane_edge_offset_ft = leg.curb_to_curb_ft / 2 - daylight_line_ft
-        for zone_start_ft, zone_end_ft in merged_no_parking_spans_ft(
-                no_parking_zones_ft(state, leg_name, side, crosswalk_offsets, props)):
-            if leg_name in marked and (leg_name, side) in straight_through:
-                start_ft, beyond_ft = zone_start_ft, None
-            elif leg_name in marked:
-                start_ft, beyond_ft = end_against_crossing(at, zone_start_ft)
-            else:
-                start_ft, beyond_ft = max(zone_start_ft, at.target_ft), None
-            rim(add(DAYLIGHT_FILL, _one(lane_narrowing_polygons_ft(
-                leg, daylight_fill_ft, start_left_ft=start_ft, start_right_ft=start_ft,
-                sides=(side,), end_ft=zone_end_ft)), leg_name, side, beyond_ft,
-                shares_a_kerb=(leg_name, side) in straight_through))
-            # A solid line wherever hatching meets the travel lane, so the lane reads as a
-            # lane. The buffer beside the stalls already has one; the daylight zone runs the
-            # full depth of the parking lane, so ITS inner edge is the lane edge, and without
-            # this the hatching just faded into the carriageway.
-            add(DAYLIGHT_EDGE_LINE,
-                inset_line_ft(leg, side, lane_edge_offset_ft, start_ft, zone_end_ft,
-                               keep_inside_ft=LANE_EDGE_LINE_WIDTH_FT / 2),
-                leg_name, side, beyond_ft)
-            # Nothing to end against and no taper available: close the square end. See
-            # zone_end_line_ft. Not where the kerb runs straight through - the zone carries
-            # on into the next leg there.
-            if leg_name not in marked and (leg_name, side) not in straight_through:
-                add(ZONE_END_LINE, zone_end_line_ft(
-                    leg, side, start_ft, leg.curb_to_curb_ft / 2 - daylight_fill_ft),
-                    leg_name, side)
-
-        for start_ft, end_ft in runs:
-            # ORDER ACROSS THE ROAD, and what gives when the road's width changes:
-            #
-            #   travel lane   0 -> TARGET             fixed
-            #   lane edge line                        its own width, out of the treatment
-            #   parking       -> TARGET + depth_ft    fixed, held against the LANE
-            #   HATCHING      -> the traced kerb      absorbs ALL of the variation
-            #
-            # Everything is measured from the centerline, so the only thing that touches the
-            # traced kerb is the hatching - which is just paint filling whatever asphalt is
-            # left over. The lane holds its width, which is the entire point of the markings:
-            # a lane that widens is a lane people speed in. The stall holds its width too, so
-            # the leftover cannot end up inside it.
-            #
-            # (Anchoring the stalls to the KERB instead was tried and is wrong here: it makes
-            # the parking position depend on the noisiest input in the model, and puts the
-            # variable-width hatching between the travel lane and the parked cars.)
-            edge = parking_lane_edge_line_ft(
-                leg, side, depth_ft, start_ft, end_ft,
-                curb_offset_ft=curb_offset_ft - LANE_EDGE_LINE_WIDTH_FT / 2)
-            if edge is None:
-                continue  # the corner return consumes the whole leg - see plan_view's note
-            add(PARKING_EDGE_LINE, edge, leg_name, side)
-            for divider in parking_stall_lines_ft(
-                    leg, side, depth_ft, stall_length_ft, start_ft, end_ft,
-                    curb_offset_ft=curb_offset_ft - LANE_EDGE_LINE_WIDTH_FT):
-                add(STALL_DIVIDER, divider, leg_name, side)
-
-            if not curb_offset_ft:
-                continue
-            buffer_ft = max(curb_offset_ft - LANE_EDGE_LINE_WIDTH_FT, 0.0)
-            add(BUFFER_EDGE_LINE, inset_line_ft(
-                leg, side, leg.curb_to_curb_ft / 2 - buffer_ft, start_ft, end_ft,
-                keep_inside_ft=LANE_EDGE_LINE_WIDTH_FT / 2), leg_name, side)
-            add(BUFFER_FILL, _one(lane_narrowing_polygons_ft(
-                leg, buffer_ft, start_left_ft=start_ft, start_right_ft=start_ft,
-                sides=(side,), end_ft=end_ft)), leg_name, side)
-            if (leg_name, side) in state.parking_buffer_bollards:
-                for point in bollard_points_ft(leg, curb_offset_ft, start_ft,
-                                                state.parking_buffer_bollards[(leg_name, side)],
-                                                sides=(side,)):
-                    pieces.append(PaintPiece(BOLLARD, _dot(point), leg_name, side))
-
-    # --- exclusive bike lanes. An edge line each side of the lane, so it reads as a lane
-    # rather than as the spare asphalt a lane-narrowing buffer marks; the buffer beside it, and
-    # the parking outside it, are hatched and ticked with the machinery already here.
-    for (leg_name, side), lane in sorted(state.bike_lanes.items()):
-        leg = state.legs[leg_name]
-        at = leg_anchors(state, leg_name, side, crosswalk_offsets, keep_clear,
-                          inner_offset_ft=leg.curb_to_curb_ft / 2 - lane.total_ft + TARGET_LANE_WIDTH_FT,
-                          crosswalk_is_marked=leg_name in marked)
-        # A bike lane RUNS INTO its crossing and is cut by it, like every other kerbside zone
-        # here - a real one carries on to the crossing and often across it. Stopping it at the
-        # corner clearance instead left the buffer 5.5 ft short of the crossing, which
-        # test_curbside_paint_ends_against_its_crossing reads as hatching that gave up early.
-        if (leg_name, side) in straight_through:
-            start_ft, beyond_ft = 0.0, None
-        elif leg_name in marked:
-            start_ft, beyond_ft = end_against_crossing(at)
-        else:
-            start_ft, beyond_ft = at.target_ft, None
-        bounds = lane.offsets_from_centerline_ft()
-        # Every stripe at its own CENTRE, which BikeLane has already offset half a stripe out
-        # from the face it marks - so the travel lane keeps its 11 ft and the bike lane keeps
-        # its own width, and the paint comes out of the buffer between them. Getting this wrong
-        # is not subtle: an edge line centred on the mark leaves a 10.59 ft lane, which
-        # check_paint_clear_of_the_travel_lane reports on every vertex.
-        for key in ("inner_line_ft", "buffer_outer_line_ft", "outer_line_ft"):
-            if bounds[key] is None:
-                continue
-            add(BIKE_LANE_EDGE_LINE,
-                inset_line_ft(leg, side, bounds[key], start_ft,
-                               keep_inside_ft=LANE_EDGE_LINE_WIDTH_FT / 2),
-                leg_name, side, beyond_ft)
-        if lane.buffer_ft:
-            # The hatched buffer, between the two lines that bound it rather than under them.
-            # lane_narrowing_polygons_ft measures its stripe inward from the kerb-to-kerb half,
-            # so the depth is the distance from the kerb to the buffer's inner FACE, and the
-            # zone is then cut back to the buffer's outer face.
-            inner_face_ft = bounds["travel_lane_edge_ft"] + LANE_EDGE_LINE_WIDTH_FT
-            fill = _one(lane_narrowing_polygons_ft(
-                leg, leg.curb_to_curb_ft / 2 - inner_face_ft,
-                start_left_ft=start_ft, start_right_ft=start_ft, sides=(side,)))
-            outer_face_ft = bounds["bike_inner_ft"] - LANE_EDGE_LINE_WIDTH_FT
-            beyond = curbside_strip_polygon(leg, side, outer_face_ft, start_ft)
-            if fill is not None and beyond is not None:
-                fill = fill.difference(beyond)
-            rim(add(BIKE_BUFFER_FILL, fill, leg_name, side, beyond_ft))
-        if lane.parking_ft:
-            # Parking-protected: the stalls sit OUTSIDE the bike lane, between it and the kerb,
-            # which is what shields the lane. Ticked at the standard stall length over the runs
-            # where parking is legal, exactly as a kerbside parking lane would be.
-            for run_start_ft, run_end_ft in parking_runs(state, leg_name, side,
-                                                          crosswalk_offsets, props):
-                for divider in parking_stall_lines_ft(
-                        leg, side, lane.parking_ft, PARKING_STALL_LENGTH_DEFAULT_FT,
-                        max(run_start_ft, start_ft), run_end_ft,
-                        curb_offset_ft=lane.shy_ft):
-                    add(STALL_DIVIDER, divider, leg_name, side)
-        else:
-            # The leftover between the lane's outer stripe and the kerb, hatched. A bike lane is
-            # a standard width and the street's spare asphalt is not part of it - the same
-            # accounting an 8 ft parking stall gets, where the remainder becomes the kerb buffer
-            # rather than a wider stall. Without this the lane read as reaching the kerb, which
-            # is what made the drawn lanes look far wider than they are.
-            #
-            # Rimmed, like every other hatched zone here. The plan view outlines a fill polygon
-            # for free, so this zone read as finished in 2D while the 3D render - which gets
-            # only the hatch strokes and the lines actually painted - had its strokes stopping
-            # in mid-air where the crossing cut them. See rim().
-            rim(add(BUFFER_FILL, _one(lane_narrowing_polygons_ft(
-                leg, leg.curb_to_curb_ft / 2 - bounds["outer_ft"],
-                start_left_ft=start_ft, start_right_ft=start_ft, sides=(side,))),
-                leg_name, side, beyond_ft))
-        if (leg_name, side) in state.bike_lane_bollards:
-            # Down the middle of the buffer, on the TRAFFIC side of the lane - the side a rider
-            # needs protecting from. add_bike_lane_bollards refuses a lane with no buffer, so
-            # there is always a strip to centre them in here.
-            #
-            # Started at target_ft, not at the zone's own start_ft. A marked leg's paint
-            # deliberately begins INSIDE the crossing so the crossing cuts its end
-            # (end_against_crossing), and a post is not paint: it cannot be trimmed by a
-            # crossing, it would simply be standing in one. target_ft is the first station clear
-            # of where the crossing actually reaches on this side.
-            centre_ft = (bounds["travel_lane_edge_ft"] + bounds["bike_inner_ft"]) / 2
-            for point in points_at_offset_ft(
-                    leg, side, centre_ft, max(start_ft, at.target_ft),
-                    spacing_ft=state.bike_lane_bollards[(leg_name, side)]):
-                pieces.append(PaintPiece(BOLLARD, _dot(point), leg_name, side))
-
-    # --- and whatever the treatments paint for themselves. Each one that owns its markings
-    # (Treatment.paint) is dispatched here in painting order, so its geometry lives with its
-    # validation and its provenance instead of in a block of this function keyed off a dict.
-    # The blocks above are the ones not yet moved; see the README.
+    # --- and now the treatments paint themselves. Each one that has markings owns them
+    # (Treatment.paint), so a marking's geometry lives beside the validation and the provenance
+    # of the thing that calls for it, rather than in a block of this function keyed off one of
+    # DesignState's dicts. That separation is what let the bike lane's kerb hatching be added
+    # without the rim() every other hatched zone got.
+    #
+    # Dispatched in painting order, and deduplicated by (type, target) keeping the LAST applied:
+    # a design's dicts are last-write-wins, so two MarkedParking treatments on one kerb are one
+    # marked lane and not two painted on top of each other.
     ctx = PaintContext(state=state, crosswalk_offsets=crosswalk_offsets, center_ft=center_ft,
                         keep_clear=keep_clear, marked=marked,
                         straight_through=straight_through, props=props, surfaces=surfaces,
                         pieces=pieces, through_painted=through_painted)
-    for treatment in sorted(getattr(state, "treatments", []),
+    current = {}
+    for treatment in getattr(state, "treatments", []):
+        current[(type(treatment), str(treatment.target))] = treatment
+    for treatment in sorted(current.values(),
                              key=lambda t: (t.paint_group, str(t.target), t.paint_rank)):
         treatment.paint(ctx)
     return ctx.pieces      # the aprons were built first - see `surfaces` above

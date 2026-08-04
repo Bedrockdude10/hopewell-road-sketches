@@ -58,7 +58,11 @@ Three things in this codebase used to be conventions spread across several modul
 
 `Side` is a `StrEnum`, so it still keys the existing dicts and matches OSM's `parking:left` tags, but `Side("north")` raises and the `1 if side == "left" else -1` that appeared in ten places has one home.
 
-**Still in progress.** A treatment now owns its data, its validation and its provenance, but most of them do *not* yet own their markings: `src/geometry/paint.py` still has a block per treatment reading `DesignState`'s dicts. `Treatment.paint(ctx)` and `PaintContext` are the seam, and `CornerHatching` goes through it; the lane-narrowing, parking and bike-lane families are next. Two things make finishing it safe: every export is compared byte-for-byte against a captured baseline, and `test_replaying_a_designs_treatments_rebuilds_it` proves the treatment list is already a complete account of every scenario at all four sites — so the dicts can go without losing what a scenario asked for.
+A treatment owns its data, its validation, its provenance **and its markings**: `Treatment.paint(ctx)` puts them down through a `PaintContext` holding what is shared (the crossing bands everything is cut around, the apron surfaces everything stops at, `add`/`rim`/`anchors`). `curbside_paint_ft` is a dispatcher over the treatments a design recorded, ordered by a class-level `paint_group`/`paint_rank`, and went from ~350 lines to 126.
+
+That separation is the point. The bike lane's kerb hatching was `add(...)` where every other hatched zone was `rim(add(...))` — one missing call in a 350-line function, invisible in the plan view because matplotlib outlines a fill for free, and visible in the render as hatch strokes ending in mid-air. A marking now sits beside the treatment that calls for it.
+
+**One piece left.** `MountableApron` and `AddCurbExtension` both write `state.corner_aprons`, and the aprons are painted first, in sorted-corner order, because every other marking clips against them. Moving those onto the treatments means the surfaces union has to be complete before any other treatment paints — solvable with a `paint_group` of 0, but it is the one step where the byte comparison is expected to move, so it wants its own change.
 
 ## Scene invariants
 

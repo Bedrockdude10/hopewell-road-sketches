@@ -21,6 +21,8 @@ from src.geometry.model import (curb_offsets_at_stations, curb_station_span,
                                 curbside_strip_polygon, inset_line_ft,
                                 lane_narrowing_polygons_ft, parking_stall_lines_ft,
                                 station_offset_many)
+from src.geometry.targets import LegSide
+from src.geometry.treatments import MarkedParking
 from src.geometry.markings import (BUFFER_EDGE_LINE, BUFFER_FILL, CORNER_HATCH_FILL,
                                    CROSSING_RIM_LINE, DAYLIGHT_EDGE_LINE, DAYLIGHT_FILL,
                                    LANE_EDGE_LINE, LANE_NARROWING_FILL, PARKING_EDGE_LINE,
@@ -587,8 +589,11 @@ def test_a_daylight_zone_is_square_ended():
     leg = traced(a_leg(width_ft=40.0, length_ft=130.0), "left", [(10, 20), (130, 20)])
     leg = traced(leg, "right", [(10, 20), (130, 20)])
     state = a_state({"east": leg})
-    state.parking_zones = {("east", "left"): {"depth_ft": 8.0, "stall_length_ft": 22.0,
-                                                "curb_offset_ft": 1.0}}
+    # Through apply, not by poking the dict: the paint builder dispatches to the treatments a
+    # design records (Treatment.paint), so a zone written straight into state.parking_zones is a
+    # design nothing asked for and nothing paints.
+    state = state.apply(MarkedParking(LegSide("east", "left"), depth_ft=8.0, stall_length_ft=22.0,
+                                       curb_offset_ft=1.0))
 
     paint = curbside_paint_ft(state, crossing_at(20.0), None)
     fills = [p for p in paint if p.kind is DAYLIGHT_FILL]
@@ -615,8 +620,11 @@ def test_a_fill_cut_by_a_crossing_gets_a_line_along_the_cut():
     leg = traced(a_leg(width_ft=40.0, length_ft=130.0), "left", [(10, 20), (130, 20)])
     leg = traced(leg, "right", [(10, 20), (130, 20)])
     state = a_state({"east": leg})
-    state.parking_zones = {("east", "left"): {"depth_ft": 8.0, "stall_length_ft": 22.0,
-                                                "curb_offset_ft": 1.0}}
+    # Through apply, not by poking the dict: the paint builder dispatches to the treatments a
+    # design records (Treatment.paint), so a zone written straight into state.parking_zones is a
+    # design nothing asked for and nothing paints.
+    state = state.apply(MarkedParking(LegSide("east", "left"), depth_ft=8.0, stall_length_ft=22.0,
+                                       curb_offset_ft=1.0))
     band = box(18, -20, 24, 20)
 
     paint = curbside_paint_ft(state, crossing_at(21.0), None, {"east": band},
@@ -635,8 +643,11 @@ def test_no_rim_where_there_is_no_crossing_to_cut_against():
     leg = traced(a_leg(width_ft=40.0, length_ft=130.0), "left", [(10, 20), (130, 20)])
     leg = traced(leg, "right", [(10, 20), (130, 20)])
     state = a_state({"east": leg})
-    state.parking_zones = {("east", "left"): {"depth_ft": 8.0, "stall_length_ft": 22.0,
-                                                "curb_offset_ft": 1.0}}
+    # Through apply, not by poking the dict: the paint builder dispatches to the treatments a
+    # design records (Treatment.paint), so a zone written straight into state.parking_zones is a
+    # design nothing asked for and nothing paints.
+    state = state.apply(MarkedParking(LegSide("east", "left"), depth_ft=8.0, stall_length_ft=22.0,
+                                       curb_offset_ft=1.0))
     paint = curbside_paint_ft(state, crossing_at(21.0), None)
     assert not [p for p in paint if p.kind is CROSSING_RIM_LINE]
 

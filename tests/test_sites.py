@@ -1375,6 +1375,47 @@ def test_the_plan_view_draws_without_raising(site, site_models):
     assert legend_handles(), "the legend is empty"
 
 
+def test_every_marking_the_plan_view_draws_is_in_its_legend():
+    """A marking drawn with nothing to say what it is, is one the reader has to guess at.
+
+    PAINT_STYLE is already guarded: require_every_kind raises on import for a declared marking
+    with no style. The LEGEND was not, and it is the same class of omission one step further
+    along - adding the green bike lane surface drew it in every plan view of a bike lane
+    proposal and explained it nowhere, which is how this test came to exist.
+
+    Checked by APPEARANCE rather than per marking, because the legend groups deliberately and
+    should: one "Lane narrowing / corner hatching" swatch covers three gold hatched kinds, and
+    splitting it into three identical rows would be worse for the reader. So the rule is that
+    every way a marking can LOOK has an entry, not that every marking has its own.
+    """
+    from matplotlib.colors import to_rgba
+    from matplotlib.patches import Patch
+
+    from src.render.plan_view import PAINT_STYLE, legend_handles
+
+    handles = legend_handles()
+    areas = {(to_rgba(h.get_facecolor())[:3], h.get_hatch())
+             for h in handles if isinstance(h, Patch)}
+    # A line's colour may be explained by a swatch's OUTLINE rather than by a line of its own,
+    # and for two of them it is: the orangered daylight edge and the crossing rim are the
+    # outline of the daylighting patch, which is what PAINT_FILL_EDGE pairs them with. That is
+    # the legend reading correctly, not a gap, so an edgecolor counts.
+    lines = ({to_rgba(h.get_color())[:3] for h in handles if not isinstance(h, Patch)}
+             | {to_rgba(h.get_edgecolor())[:3] for h in handles if isinstance(h, Patch)})
+    for kind, style in sorted(PAINT_STYLE.items(), key=lambda kv: str(kv[0])):
+        rgb, hatch = to_rgba(style["color"])[:3], style.get("hatch")
+        if kind.covers_area:
+            assert (rgb, hatch) in areas, (
+                f"{kind} is drawn as a {style['color']} area"
+                + (f" hatched {hatch!r}" if hatch else " with no hatch")
+                + " and no legend swatch looks like that, so the plan view draws it with "
+                  "nothing to say what it is. Add a Patch to legend_handles().")
+        else:
+            assert rgb in lines, (
+                f"{kind} is drawn as a {style['color']} line and no legend entry uses that "
+                f"colour. Add a Line2D to legend_handles().")
+
+
 @needs_source_data
 @pytest.mark.parametrize("site", SITES)
 def test_each_leg_reads_its_tags_off_a_carriageway(site, site_models):

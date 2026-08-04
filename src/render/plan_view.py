@@ -701,6 +701,8 @@ def legend_handles():
                label="Daylighting - no parking (R.S. 39:4-138)"),
         Patch(facecolor="peru", alpha=0.6, edgecolor="saddlebrown", label="Mountable apron"),
         Line2D([0], [0], color="seagreen", lw=1.6, label="Bike lane - edge lines"),
+        Patch(facecolor="mediumseagreen", alpha=0.45, edgecolor="seagreen",
+               label="Bike lane - green surface"),
         Patch(facecolor="mediumseagreen", alpha=0.35, hatch="\\\\", edgecolor="seagreen",
                label="Bike lane buffer"),
         Line2D([0], [0], marker="o", color=BOLLARD_PLAN_COLOR, lw=0, label="Bollard"),

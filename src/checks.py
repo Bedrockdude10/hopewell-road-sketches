@@ -349,8 +349,10 @@ class TravelLanesKeepTheirWidth(SceneCheck):
                 painted_ft = 0.0
                 if narrowing is not None and side in narrowing.sides:
                     painted_ft = narrowing.stripe_width_ft
-                # Marked parking last, so a kerb with both keeps the deeper claim on the
-                # roadway - the stalls plus their kerb buffer - rather than the buffer alone.
+                # Marked parking is asked second and REPLACES rather than maxes, which is what
+                # the two dicts did in this order and is left as it was: a kerb with both
+                # treatments is measured by the stalls plus their kerb buffer. Nothing in the
+                # four sites applies both to one kerb, so this has never had to arbitrate.
                 parking = state.treatment_for(MarkedParking, LegSide(leg_name, side))
                 if parking is not None:
                     painted_ft = parking.depth_ft + parking.curb_offset_ft

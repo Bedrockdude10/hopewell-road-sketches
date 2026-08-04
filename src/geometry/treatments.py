@@ -1,12 +1,15 @@
 """Parametric pedestrian-safety treatments: composable geometry transforms over a
 DesignState. Each treatment returns a new DesignState so scenarios can be stacked
 without mutating the baseline (existing-conditions) model."""
+from abc import ABC, abstractmethod
 from copy import deepcopy
 from dataclasses import dataclass, field
+from typing import ClassVar
 
 import numpy as np
 from shapely.geometry import Polygon
 
+from src.geometry.targets import BOTH_SIDES, LegSide, LegTarget, Side, Target
 from src.geometry.model import (BULBOUT_TAPER_RATE, build_pavement_polygon, curb_extension_line,
                                 fillet_curb_corner, leg_clearance_ft, narrowest_half_width_ft)
 
@@ -173,6 +176,50 @@ class CornerApron:
             raise ValueError("An annulus apron needs the face_radius_ft it is measured from.")
 
 
+@dataclass(frozen=True)
+class Treatment(ABC):
+    """One change a proposal makes to a design.
+
+    Every treatment is a frozen dataclass validating itself in `__post_init__`, and that is the
+    point of the base class. Before it, a treatment was a function that wrote a dict, and
+    validation was a convention: `add_bike_lane` refused a lane under AASHTO's 5 ft minimum and
+    `add_bike_lane_bollards` refused a lane with no buffer, while `add_lane_narrowing` and
+    `add_corner_hatching` checked nothing at all. A convention is exactly what this codebase
+    kept discovering it had not followed. An object cannot exist unvalidated.
+
+    Three things every treatment declares:
+
+      * `target` - a src/geometry/targets.py:Target, checked to exist in the design by
+        DesignState.apply before anything is written. A treatment aimed at a leg the junction
+        does not have used to write a key nothing ever read.
+      * `describe()` - one line for state.notes, so provenance is recorded by applying a
+        treatment rather than by each function remembering to append to a list. Several did not.
+      * `apply_to(state, model)` - the change itself, on an already-cloned state.
+
+    Subclasses that need the IntersectionModel (a kerb rebuild reads the traced kerbs) declare
+    `needs_model = True` and receive it; asking for one that was not supplied is an error rather
+    than a silently skipped treatment, which is a bug that shipped here - phase4 dropped the
+    model argument and produced a proposal with no treatments in it that rendered fine.
+    """
+    #: Set by a subclass that cannot be applied without the model's traced geometry.
+    needs_model: ClassVar[bool] = False
+
+    #: Where this treatment goes. First field of every treatment, so the constructor reads
+    #: `LaneNarrowing(LegTarget("broad_st_east"), ...)` - the thing being changed, then how.
+    target: Target
+
+    @abstractmethod
+    def describe(self) -> str:
+        ...
+
+    @abstractmethod
+    def apply_to(self, state: "DesignState", model=None) -> str | None:
+        """Make the change. May return a suffix for the note, for a treatment whose
+        provenance includes something only measurable against the design - a bike lane records
+        how much of the width the leg actually has it used."""
+        ...
+
+
 @dataclass
 class DesignState:
     """A mutable-by-copy snapshot of intersection geometry. Treatments clone the
@@ -229,6 +276,10 @@ class DesignState:
     crosswalk_offset_overrides: dict = field(default_factory=dict)  # leg name -> +/- delta_ft on top of the
                                                                      # normally-resolved offset (see shift_crosswalk)
     extra_props: list = field(default_factory=list)  # [{"leg","type","offset_ft","side","note"}] - see add_extra_prop
+    # Every Treatment applied to this design, in order (see apply). The dicts above are what the
+    # paint and prop builders read today; this is the design as a list of decisions, which is
+    # what a scenario actually is and what provenance is written from.
+    treatments: list = field(default_factory=list)
     notes: list = field(default_factory=list)
 
     @classmethod
@@ -270,6 +321,40 @@ class DesignState:
 
     def clone(self) -> "DesignState":
         return deepcopy(self)
+
+    def apply(self, *treatments: Treatment, model=None) -> "DesignState":
+        """Apply treatments to a COPY of this design and return it.
+
+        The single way one treatment enters a design, and the reason it exists is that everything
+        every treatment needs checked can be checked here, once:
+
+          * the target exists at this junction - a leg name typo used to write a dict key that
+            nothing read, so the treatment silently did nothing;
+          * a treatment that needs the model got one - the alternative is the bug that shipped,
+            where a dropped argument produced a scenario with no treatments that rendered
+            plausibly;
+          * the design records what was applied, in state.notes, without each treatment having to
+            remember to append to it. Several did not, so the provenance printed with a render was
+            missing the treatments that forgot.
+
+        Chains, so a scenario reads `state.apply(a).apply(b)` or `state.apply(a, b)`. That also
+        removes a real failure mode of the `state = add_x(state, ...)` form: dropping the
+        assignment left the treatment applied to a discarded copy, and the render looked fine.
+        """
+        new_state = self.clone()
+        for treatment in treatments:
+            missing = treatment.target.missing_from(new_state)
+            if missing:
+                raise KeyError(f"{type(treatment).__name__} cannot be applied: {missing}")
+            if treatment.needs_model and model is None:
+                raise ValueError(
+                    f"{type(treatment).__name__} needs the IntersectionModel - it reads geometry "
+                    f"that the design does not carry. Pass model= (see src/site.py:run_scenario, "
+                    f"which hands every scenario builder the model for exactly this).")
+            measured = treatment.apply_to(new_state, model)
+            new_state.treatments.append(treatment)
+            new_state.notes.append(treatment.describe() + (measured or ""))
+        return new_state
 
 
 def find_corner(state: DesignState, leg_a: str, leg_b: str) -> tuple[str, str]:
@@ -417,12 +502,11 @@ def set_centerline_style(state: DesignState, leg_name: str, style: str) -> Desig
     return new_state
 
 
-def add_lane_narrowing(state: DesignState, leg_name: str,
-                        stripe_width_ft: float = LANE_NARROWING_DEFAULT_STRIPE_FT,
-                        line_only: bool = False, sides: tuple = ("left", "right")) -> DesignState:
+@dataclass(frozen=True)
+class LaneNarrowing(Treatment):
     """Paint-only visual lane narrowing: a striped buffer/shoulder painted along
     one or both curbs of a leg (sides - see below). Zero curb/pavement
-    geometry change - the lowest-cost alternative to bump_out()'s real curb
+    geometry change - the lowest-cost alternative to a real curb
     extension, achieving the same 'narrower-looking travel way' cue with
     paint instead of concrete.
 
@@ -436,23 +520,49 @@ def add_lane_narrowing(state: DesignState, leg_name: str,
 
     sides restricts which side(s) of the leg get narrowed - defaults to both
     (the usual case: a real two-lane road narrowed symmetrically). Pass a
-    single side (e.g. ("left",)) when the OTHER side's edge is already owned
-    by a different treatment - e.g. a marked-parking lane (add_marked_parking)
+    single side (e.g. (Side.LEFT,)) when the OTHER side's edge is already owned
+    by a different treatment - e.g. a marked-parking lane (MarkedParking)
     already delineates its own side; this just adds the matching plain
     delineating line on the opposite (entering-traffic) side, matching real
-    curb-to-curb width there but with no buffer painted for it."""
-    if leg_name not in state.legs:
-        raise KeyError(f"Leg {leg_name!r} not present in this state.")
-    new_state = state.clone()
-    new_state.lane_narrowing[leg_name] = stripe_width_ft
-    new_state.lane_narrowing_sides[leg_name] = sides
-    if line_only:
-        new_state.lane_narrowing_line_only.add(leg_name)
-    else:
-        new_state.lane_narrowing_line_only.discard(leg_name)
-    new_state.notes.append(
-        f"add_lane_narrowing({leg_name}, stripe_width_ft={stripe_width_ft}, line_only={line_only}, sides={sides})")
-    return new_state
+    curb-to-curb width there but with no buffer painted for it.
+
+    The width bounds are the first validation this treatment has ever had. As a function it
+    checked only that the leg existed, so a zero or negative stripe was a buffer with no
+    width - it produced a degenerate polygon that the paint builder then had to guard against
+    (see src/geometry/model.py:lane_narrowing_polygons_ft's 0.5 ft floor).
+    """
+    stripe_width_ft: float = LANE_NARROWING_DEFAULT_STRIPE_FT
+    line_only: bool = False
+    sides: tuple = BOTH_SIDES
+
+    def __post_init__(self):
+        if self.stripe_width_ft <= 0:
+            raise ValueError(f"A lane-narrowing buffer needs a width; got "
+                             f"stripe_width_ft={self.stripe_width_ft}.")
+        object.__setattr__(self, "sides", tuple(Side(side) for side in self.sides))
+        if not self.sides:
+            raise ValueError("A lane narrowing with no sides paints nothing - pass at least one.")
+
+    def describe(self) -> str:
+        return (f"add_lane_narrowing({self.target}, stripe_width_ft={self.stripe_width_ft}, "
+                f"line_only={self.line_only}, sides={tuple(str(s) for s in self.sides)})")
+
+    def apply_to(self, state: "DesignState", model=None) -> None:
+        leg_name = self.target.leg
+        state.lane_narrowing[leg_name] = self.stripe_width_ft
+        state.lane_narrowing_sides[leg_name] = tuple(str(side) for side in self.sides)
+        if self.line_only:
+            state.lane_narrowing_line_only.add(leg_name)
+        else:
+            state.lane_narrowing_line_only.discard(leg_name)
+
+
+def add_lane_narrowing(state: DesignState, leg_name: str,
+                        stripe_width_ft: float = LANE_NARROWING_DEFAULT_STRIPE_FT,
+                        line_only: bool = False, sides: tuple = BOTH_SIDES) -> DesignState:
+    """Scaffolding: the old call shape, over the LaneNarrowing treatment. Being migrated out -
+    see the README's treatment catalogue for the object form."""
+    return state.apply(LaneNarrowing(LegTarget(leg_name), stripe_width_ft, line_only, sides))
 
 
 PARKING_STALL_DEPTH_DEFAULT_FT = 8.0  # AASHTO/NACTO typical parallel-parking lane depth (curb to travel-lane edge)
@@ -816,12 +926,11 @@ def bike_lane_spare_ft(state: DesignState, leg_name: str, side: str, width_ft: f
     return narrowest_half_width_ft(state.legs[leg_name], side) - lane.total_ft
 
 
-def add_bike_lane(state: DesignState, leg_name: str, side: str, width_ft: float,
-                   buffer_ft: float = 0.0, parking_ft: float = 0.0,
-                   shy_ft: float = 0.0) -> DesignState:
+@dataclass(frozen=True)
+class AddBikeLane(Treatment):
     """Mark an exclusive bike lane along one side of a leg. Paint only - no kerb moves.
 
-    add_lane_narrowing cannot express this. It paints a BUFFER: a hatched strip of spare
+    LaneNarrowing cannot express this. It paints a BUFFER: a hatched strip of spare
     asphalt between the travel lane and the kerb, saying "nothing belongs here". A bike lane
     says the opposite about the same ground - that a specific vehicle belongs in it - so it
     needs its own edge line on both sides and its own reserved width, and where it is
@@ -838,37 +947,61 @@ def add_bike_lane(state: DesignState, leg_name: str, side: str, width_ft: float,
     somewhere along the traced run; a cross-section sized off the nominal number would be drawn
     over the kerb there. This is what turns "verify before promising it corridor-wide" from a
     caveat into a refusal.
+
+    The cross-section itself (BikeLane) validates its own widths, and this validates the fit
+    against the street - which needs the design, so it happens in apply_to rather than in
+    __post_init__. Both refusals are ValueErrors carrying the measurement that caused them.
     """
-    if leg_name not in state.legs:
-        raise KeyError(f"Leg {leg_name!r} not present in this state.")
-    if side not in ("left", "right"):
-        raise ValueError(f"side must be 'left' or 'right', got {side!r}")
-    leg = state.legs[leg_name]
-    if leg.curb_to_curb_ft is None:
-        raise ValueError(f"Leg {leg_name!r} has no width - nothing to fit a bike lane into.")
+    width_ft: float = 0.0
+    buffer_ft: float = 0.0
+    parking_ft: float = 0.0
+    shy_ft: float = 0.0
 
-    lane = BikeLane(width_ft=width_ft, buffer_ft=buffer_ft, parking_ft=parking_ft, shy_ft=shy_ft)
-    available_ft = narrowest_half_width_ft(leg, side)
-    if lane.total_ft > available_ft + LANE_WIDTH_SLACK_FT:
-        raise ValueError(
-            f"{leg_name} {side} comes within {available_ft:.2f} ft of the centerline at its "
-            f"narrowest traced point ({leg.curb_to_curb_ft / 2:.2f} ft nominal), and this "
-            f"cross-section needs {lane.total_ft:.2f} ft ({TARGET_LANE_WIDTH_FT:.0f} travel + "
-            f"{buffer_ft:.1f} buffer + {width_ft:.1f} bike + {parking_ft:.1f} parking + "
-            f"{shy_ft:.1f} shy). Short by {lane.total_ft - available_ft:.2f} ft.")
+    @property
+    def lane(self) -> BikeLane:
+        """The cross-section this treatment marks - validated on construction, and askable
+        without a design, which is how every width in it is tested."""
+        return BikeLane(width_ft=self.width_ft, buffer_ft=self.buffer_ft,
+                         parking_ft=self.parking_ft, shy_ft=self.shy_ft)
 
-    new_state = state.clone()
-    new_state.bike_lanes[(leg_name, side)] = lane
-    spare_ft = available_ft - lane.total_ft
-    new_state.notes.append(
-        f"add_bike_lane({leg_name}, {side}): {width_ft:.0f} ft lane"
-        + (f", {buffer_ft:.0f} ft buffer" if buffer_ft else "")
-        + (f", parking-protected behind {parking_ft:.0f} ft of marked parking" if parking_ft
-           else f", {shy_ft:.1f} ft shy of the kerb" if shy_ft else "")
-        + f". Uses {lane.total_ft:.1f} of the {available_ft:.1f} ft this leg has at its "
-          f"narrowest" + (f", {spare_ft:.1f} ft spare." if spare_ft > 0.05 else ".")
-    )
-    return new_state
+    def __post_init__(self):
+        self.lane        # raises for a lane under AASHTO's minimum, before anything is applied
+
+    def describe(self) -> str:
+        # leg, side rather than str(target): the note is provenance that ships in every
+        # geometry export, and keeping the wording identical keeps the refactor's
+        # byte-for-byte comparison against the pre-refactor exports meaningful.
+        return (f"add_bike_lane({self.target.leg}, {self.target.side}): {self.width_ft:.0f} ft lane"
+                + (f", {self.buffer_ft:.0f} ft buffer" if self.buffer_ft else "")
+                + (f", parking-protected behind {self.parking_ft:.0f} ft of marked parking"
+                   if self.parking_ft
+                   else f", {self.shy_ft:.1f} ft shy of the kerb" if self.shy_ft else ""))
+
+    def apply_to(self, state: "DesignState", model=None) -> None:
+        leg = state.legs[self.target.leg]
+        if leg.curb_to_curb_ft is None:
+            raise ValueError(f"Leg {self.target.leg!r} has no width - nothing to fit a bike lane into.")
+        lane = self.lane
+        available_ft = narrowest_half_width_ft(leg, str(self.target.side))
+        if lane.total_ft > available_ft + LANE_WIDTH_SLACK_FT:
+            raise ValueError(
+                f"{self.target.leg} {self.target.side} comes within {available_ft:.2f} ft of the "
+                f"centerline at its narrowest traced point ({leg.curb_to_curb_ft / 2:.2f} ft "
+                f"nominal), and this cross-section needs {lane.total_ft:.2f} ft "
+                f"({TARGET_LANE_WIDTH_FT:.0f} travel + {self.buffer_ft:.1f} buffer + "
+                f"{self.width_ft:.1f} bike + {self.parking_ft:.1f} parking + {self.shy_ft:.1f} "
+                f"shy). Short by {lane.total_ft - available_ft:.2f} ft.")
+        state.bike_lanes[self.target.key] = lane
+        spare_ft = available_ft - lane.total_ft
+        return (f". Uses {lane.total_ft:.1f} of the {available_ft:.1f} ft this leg has at its "
+                f"narrowest" + (f", {spare_ft:.1f} ft spare." if spare_ft > 0.05 else "."))
+
+
+def add_bike_lane(state: DesignState, leg_name: str, side: str, width_ft: float,
+                   buffer_ft: float = 0.0, parking_ft: float = 0.0,
+                   shy_ft: float = 0.0) -> DesignState:
+    """Scaffolding: the old call shape, over the AddBikeLane treatment. Being migrated out."""
+    return state.apply(AddBikeLane(LegSide(leg_name, side), width_ft, buffer_ft, parking_ft, shy_ft))
 
 
 def resolved_crossing_stations(model, state: DesignState) -> dict:
@@ -913,8 +1046,8 @@ def bulb_out_corner_pair(state: DesignState, leg_name: str, extension_ft: float,
     return state
 
 
-def add_bike_lane_bollards(state: DesignState, leg_name: str, side: str,
-                            spacing_ft: float = BOLLARD_DEFAULT_SPACING_FT) -> DesignState:
+@dataclass(frozen=True)
+class AddBikeLaneBollards(Treatment):
     """Flex-post delineators down the buffer between a bike lane and the travel lane.
 
     This is what turns a painted bike lane into a protected one, and the position is the whole
@@ -926,22 +1059,41 @@ def add_bike_lane_bollards(state: DesignState, leg_name: str, side: str,
     bike lane. That is a real constraint and not a formality: E Broad St has 17.6 ft from the
     alignment to its nearest kerb, and an 11 ft lane plus a 5 ft lane plus their two edge stripes
     already account for 17.6 of it.
+
+    The precondition is on another TREATMENT rather than on the street, which is why it is
+    checked in apply_to: nothing about a spacing is wrong on its own, and what makes this
+    unbuildable is the absence of a buffered lane under it. A treatment that depends on another
+    is the case a self-validating constructor cannot cover by itself, and the reason apply_to
+    gets the design.
     """
-    lane = state.bike_lanes.get((leg_name, side))
-    if lane is None:
-        raise KeyError(f"({leg_name!r}, {side!r}) has no bike lane - call add_bike_lane first.")
-    if not lane.buffer_ft:
-        raise ValueError(
-            f"({leg_name!r}, {side!r})'s bike lane has no buffer, so there is nowhere to stand a "
-            f"delineator that is not in a travel lane or in the bike lane itself. A protected "
-            f"lane needs a buffer; give it one, or leave the lane conventional and say so.")
-    new_state = state.clone()
-    new_state.bike_lane_bollards[(leg_name, side)] = spacing_ft
-    new_state.notes.append(
-        f"add_bike_lane_bollards({leg_name}, {side}): flex-post delineators at {spacing_ft:.0f} ft "
-        f"in the {lane.buffer_ft:.0f} ft buffer between the travel lane and the bike lane - the "
-        f"traffic side, which is the side that needs protecting.")
-    return new_state
+    spacing_ft: float = BOLLARD_DEFAULT_SPACING_FT
+
+    def __post_init__(self):
+        if self.spacing_ft <= 0:
+            raise ValueError(f"Posts need a spacing; got spacing_ft={self.spacing_ft}.")
+
+    def describe(self) -> str:
+        return f"add_bike_lane_bollards({self.target.leg}, {self.target.side}): "
+
+    def apply_to(self, state: "DesignState", model=None) -> str:
+        lane = state.bike_lanes.get(self.target.key)
+        if lane is None:
+            raise KeyError(f"{self.target} has no bike lane - apply AddBikeLane first.")
+        if not lane.buffer_ft:
+            raise ValueError(
+                f"{self.target}'s bike lane has no buffer, so there is nowhere to stand a "
+                f"delineator that is not in a travel lane or in the bike lane itself. A protected "
+                f"lane needs a buffer; give it one, or leave the lane conventional and say so.")
+        state.bike_lane_bollards[self.target.key] = self.spacing_ft
+        return (f"flex-post delineators at {self.spacing_ft:.0f} ft in the {lane.buffer_ft:.0f} ft "
+                f"buffer between the travel lane and the bike lane - the traffic side, which is "
+                f"the side that needs protecting.")
+
+
+def add_bike_lane_bollards(state: DesignState, leg_name: str, side: str,
+                            spacing_ft: float = BOLLARD_DEFAULT_SPACING_FT) -> DesignState:
+    """Scaffolding: the old call shape, over the AddBikeLaneBollards treatment."""
+    return state.apply(AddBikeLaneBollards(LegSide(leg_name, side), spacing_ft))
 
 
 def shift_crosswalk_offset(state: DesignState, leg_name: str, delta_ft: float) -> DesignState:

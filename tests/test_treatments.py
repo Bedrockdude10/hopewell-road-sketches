@@ -87,3 +87,157 @@ def test_a_leg_with_no_width_cannot_take_a_crossing():
                         corner_fillets={})
     with pytest.raises(ValueError, match="no curb lines"):
         raise_crossing(state, "east")
+
+
+# --------------------------------------------------------------------------
+# The funnel: everything that used to be each treatment function's own business
+# --------------------------------------------------------------------------
+
+def test_a_treatment_aimed_at_a_leg_that_does_not_exist_is_refused():
+    """This used to write a dict key nothing ever read.
+
+    A treatment function checked `if leg_name not in state.legs` if whoever wrote it thought
+    of it - several did not - so a mistyped leg name produced a design with the treatment
+    recorded, no paint, no props, no error, and a render that looked deliberate. The target
+    is now checked once, for every treatment, in DesignState.apply.
+    """
+    from src.geometry.targets import LegTarget
+    from src.geometry.treatments import LaneNarrowing
+
+    state = a_state()
+    with pytest.raises(KeyError, match="no leg 'wsst'"):
+        state.apply(LaneNarrowing(LegTarget("wsst"), stripe_width_ft=3.0))
+
+
+def test_the_error_says_which_legs_the_junction_actually_has():
+    """A refusal that names the alternatives is one round trip; one that doesn't is several."""
+    from src.geometry.targets import LegTarget
+    from src.geometry.treatments import LaneNarrowing
+
+    with pytest.raises(KeyError, match=r"\['east'\]"):
+        a_state().apply(LaneNarrowing(LegTarget("wsst"), stripe_width_ft=3.0))
+
+
+def test_a_treatment_that_needs_the_model_and_has_none_is_refused():
+    """The phase4 bug, made impossible.
+
+    phase4_export_geometry dropped the model argument it was passing to a scenario builder, so
+    every treatment that reads the model quietly did nothing and E Broad exported with no
+    treatments at all. It rendered plausibly, which is why it took a measurement to find.
+    """
+    from src.geometry.targets import LegTarget
+    from src.geometry.treatments import Treatment
+
+    class NeedsTheModel(Treatment):
+        needs_model = True
+
+        def describe(self):
+            return "needs the model"
+
+        def apply_to(self, state, model=None):
+            state.notes.append(f"read {model}")
+
+    with pytest.raises(ValueError, match="needs the IntersectionModel"):
+        a_state().apply(NeedsTheModel(LegTarget("east")))
+
+
+def test_applying_a_treatment_records_it_and_leaves_the_original_alone():
+    """Provenance by construction. Every treatment function used to append its own note, and
+    the ones that forgot were simply absent from the notes a render ships with."""
+    from src.geometry.targets import LegTarget
+    from src.geometry.treatments import LaneNarrowing
+
+    state = a_state()
+    after = state.apply(LaneNarrowing(LegTarget("east"), stripe_width_ft=3.0))
+    assert state.notes == [] and state.treatments == [], "apply mutated the design it was given"
+    assert len(after.treatments) == 1 and after.notes[0].startswith("add_lane_narrowing")
+    assert after.lane_narrowing["east"] == 3.0
+
+
+def test_treatments_chain_in_one_call_or_several():
+    from src.geometry.targets import LegTarget
+    from src.geometry.treatments import LaneNarrowing
+
+    state = a_state()
+    one_call = state.apply(LaneNarrowing(LegTarget("east"), 3.0), LaneNarrowing(LegTarget("east"), 4.0))
+    chained = state.apply(LaneNarrowing(LegTarget("east"), 3.0)).apply(LaneNarrowing(LegTarget("east"), 4.0))
+    assert one_call.lane_narrowing == chained.lane_narrowing == {"east": 4.0}
+    assert len(one_call.treatments) == len(chained.treatments) == 2
+
+
+def test_a_lane_narrowing_with_no_width_is_refused():
+    """Validation this treatment never had. As a function it checked the leg existed and
+    nothing else, so a zero stripe painted a buffer with no width."""
+    from src.geometry.targets import LegTarget
+    from src.geometry.treatments import LaneNarrowing
+
+    with pytest.raises(ValueError, match="needs a width"):
+        LaneNarrowing(LegTarget("east"), stripe_width_ft=0.0)
+
+
+def test_a_treatment_is_refused_before_it_touches_the_design():
+    """Constructed, therefore valid - the point of putting the checks in __post_init__."""
+    from src.geometry.targets import LegSide
+    from src.geometry.treatments import AASHTO_MIN_BIKE_LANE_FT, AddBikeLane
+
+    with pytest.raises(ValueError):
+        AddBikeLane(LegSide("east", "left"), width_ft=AASHTO_MIN_BIKE_LANE_FT - 1)
+
+
+def test_bollards_still_refuse_a_lane_with_no_buffer_through_the_funnel():
+    """A precondition on another treatment rather than on the street, so it is checked when the
+    treatment meets the design - see AddBikeLaneBollards."""
+    from src.geometry.targets import LegSide
+    from src.geometry.treatments import AddBikeLane, AddBikeLaneBollards
+
+    state = a_state(width_ft=40.0)
+    with_lane = state.apply(AddBikeLane(LegSide("east", "left"), width_ft=6.0))
+    with pytest.raises(ValueError, match="no buffer"):
+        with_lane.apply(AddBikeLaneBollards(LegSide("east", "left")))
+
+
+# --------------------------------------------------------------------------
+# Targets
+# --------------------------------------------------------------------------
+
+def test_a_side_is_left_or_right_and_nothing_else():
+    """`state.bike_lanes[("east", "north")]` was a perfectly good expression that matched
+    nothing. Side is a StrEnum, so it still equals and hashes like the string it replaces."""
+    from src.geometry.targets import Side
+
+    assert Side("left") is Side.LEFT and Side.LEFT == "left"
+    assert {("east", Side.LEFT): 1}[("east", "left")] == 1, "must key the existing state dicts"
+    with pytest.raises(ValueError):
+        Side("north")
+
+
+def test_a_leg_side_coerces_the_string_form():
+    """Scenarios say "left"; the treatment gets the enum, and a typo is refused at the target
+    rather than becoming a key nothing reads."""
+    from src.geometry.targets import LegSide, Side
+
+    assert LegSide("east", "right").side is Side.RIGHT
+    assert LegSide("east", "right").key == ("east", "right")
+    with pytest.raises(ValueError):
+        LegSide("east", "middle")
+
+
+def test_a_side_knows_its_own_sign():
+    """`1 if side == "left" else -1` was written out in ten places, and an invariant that
+    forgot the sign passed anything on the right-hand side of a leg."""
+    from src.geometry.targets import Side
+
+    assert Side.LEFT.sign == 1.0 and Side.RIGHT.sign == -1.0
+    assert Side.LEFT.other is Side.RIGHT
+    assert Side.RIGHT.curb_attr == "right_curb"
+
+
+def test_a_corner_is_ordered():
+    """A corner is (leg_a's left kerb, leg_b's right kerb), so the two orderings are two
+    different corners of the junction - see fillet_curb_corner."""
+    from src.geometry.targets import Corner
+
+    assert Corner("a", "b") != Corner("b", "a")
+    state = a_state(corner_fillets={("a", "b"): {}})
+    assert Corner("a", "b").missing_from(state) is None
+    assert "the order matters" in Corner("b", "a").missing_from(state)

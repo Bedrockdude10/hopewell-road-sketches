@@ -15449,6 +15449,7 @@
   "parking_buffer_taper_lines": [],
   "bike_lane_edge_lines": [],
   "bike_lane_hatch_lines": [],
+  "bike_lane_surface_polygons": [],
   "corner_apron_polygons": [],
   "props": [
     {

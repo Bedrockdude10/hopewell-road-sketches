@@ -359,6 +359,29 @@ def fetch_sidewalks(center_wgs84: Point, radius_m: float) -> list[dict]:
     return _layer("sidewalks", center_wgs84, radius_m, build)
 
 
+def fetch_driveways(center_wgs84: Point, radius_m: float) -> list[dict]:
+    """OSM-mapped driveways (highway=service + service=driveway).
+
+    The vehicle access these junctions' kerb openings exist FOR, drawn so the gap in the
+    markings has something visible on the other side of it - a break in a bike lane with nothing
+    leading away from it reads as a striping error rather than as an entrance.
+
+    NOT the signal for where the markings open: that is the dropped kerb itself, which is on the
+    kerb and therefore already in the leg frame, and which is tagged in places a driveway way is
+    not drawn (see src/geometry/kerbs.py). Only one of the 43 driveways mapped in this borough
+    reaches a kerb any of these four junctions models. So this layer is for DRAWING, and the two
+    are deliberately independent - a driveway drawn with no dropped kerb tagged at its mouth is a
+    survey gap worth seeing, not something to paper over by inferring one from the other.
+    """
+    def build():
+        return [{"coords_wgs84": coords, "tags": way.get("tags", {}), "id": way["id"]}
+                for way, coords in _ways_near(center_wgs84, radius_m,
+                                               lambda t: t.get("highway") == "service"
+                                               and t.get("service") == "driveway")
+                if len(coords) >= 2]
+    return _layer("driveways", center_wgs84, radius_m, build)
+
+
 def fetch_traffic_control(center_wgs84: Point, radius_m: float) -> list[dict]:
     """OSM traffic control nodes: highway=traffic_signals / stop / give_way / crossing.
     Returns [{"lon": float, "lat": float, "tags": {...}}, ...].

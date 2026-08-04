@@ -24,8 +24,8 @@ from src.geometry.markings import CHANNELS, KINDS, Role, kinds_in
 from src.geometry.paint import in_channel
 from src.render.mesh_utils import build_decimated_building_mesh
 from src.render.scene import SceneGeometry
-from src.sources.osm_context import (fetch_buildings, fetch_crossings, fetch_kerbs,
-                                     fetch_street_furniture, fetch_traffic_control)
+from src.sources.osm_context import (fetch_buildings, fetch_crossings, fetch_driveways,
+                                     fetch_kerbs, fetch_street_furniture, fetch_traffic_control)
 from src.render.props import build_props, control_nodes_ft, osm_tree_points_ft
 from src.geometry.treatments import (DesignState, RaiseCrossing, RefugeIsland,
                                       build_sidewalk_pieces)
@@ -400,6 +400,14 @@ def export_scenario(model: IntersectionModel, state: DesignState, name: str, out
              "kerb": str(KerbType.from_tags(tags)),
              "height_m": KERB_HEIGHT_M[KerbType.from_tags(tags)]}
             for line, tags, _way_id in kerb_lines_with_tags_ft(model.center_wgs84, center_ft)
+        ],
+        # The driveways the kerb openings exist for. Drawn as a narrow strip of the same asphalt
+        # rather than as a marking: it is a minor carriageway, and its job in the render is to
+        # explain why the kerbside markings stop where they do.
+        "driveways": [
+            {"coords": wgs84_ring_to_local_m(drive["coords_wgs84"], center_ft)}
+            for drive in fetch_driveways(model.center_wgs84, radius_m=BUILDING_CONTEXT_RADIUS_M)
+            if len(drive.get("coords_wgs84") or []) >= 2
         ],
         "corner_parcels": [
             {"name": str(row["quadrant"]), "coords": ring_to_local_m(row.geometry.exterior.coords, center_ft)}

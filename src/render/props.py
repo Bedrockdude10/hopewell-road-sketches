@@ -610,8 +610,13 @@ def _bollard_props(state: DesignState) -> list[dict]:
     the same reason LaneNarrowingBollards.paint reads them from it: a post placed off a
     separately-looked-up number is a post standing somewhere the buffer might not be.
     """
+    from src.geometry.paint import kerb_opening_bands, stands_in_an_opening
     from src.geometry.treatments import LaneNarrowing, LaneNarrowingBollards
 
+    # A post inside a driveway opening is a post in the entrance. The paint breaks there
+    # (src/geometry/paint.py:kerb_opening_bands) and these props have to break with it, or the
+    # plan view and the render disagree about whether a driveway is passable.
+    openings = kerb_opening_bands(state)
     props = []
     for bollards in state.treatments_of(LaneNarrowingBollards):
         leg_name, spacing_ft = bollards.target.leg, bollards.spacing_ft
@@ -621,6 +626,8 @@ def _bollard_props(state: DesignState) -> list[dict]:
         sides = tuple(str(side) for side in narrowing.sides)
         start_ft = leg_clearance_ft(leg_name, state.legs, state.corner_fillets)
         for pos in bollard_points_ft(leg, stripe_width_ft, start_ft, spacing_ft, sides=sides):
+            if stands_in_an_opening(openings, Point(pos)):
+                continue
             props.append({
                 "type": "bollard", "position_ft": pos, "heading_deg": 0.0,
                 "source": f"scenario-specified (add_bollards): flex-post delineator centered in {leg_name}'s "
@@ -843,8 +850,10 @@ def _parking_buffer_bollard_props(state: DesignState) -> list[dict]:
     uses (just on the curb side of a parking lane instead of the travel-lane
     side of a lane-narrowing buffer), so both render identically in 3D via
     the one add_bollard() builder."""
+    from src.geometry.paint import kerb_opening_bands, stands_in_an_opening
     from src.geometry.treatments import MarkedParking, ParkingBufferBollards
 
+    openings = kerb_opening_bands(state)   # see _bollard_props
     props = []
     for bollards in state.treatments_of(ParkingBufferBollards):
         leg_name, side = bollards.target.leg, str(bollards.target.side)
@@ -853,6 +862,8 @@ def _parking_buffer_bollard_props(state: DesignState) -> list[dict]:
         curb_offset_ft = state.treatment_for(MarkedParking, bollards.target).curb_offset_ft
         start_ft = leg_clearance_ft(leg_name, state.legs, state.corner_fillets)
         for pos in bollard_points_ft(leg, curb_offset_ft, start_ft, spacing_ft, sides=(side,)):
+            if stands_in_an_opening(openings, Point(pos)):
+                continue
             props.append({
                 "type": "bollard", "position_ft": pos, "heading_deg": 0.0,
                 DRAWN_BY_PAINT: True,
@@ -922,11 +933,13 @@ def _daylight_device_props(state: DesignState, offsets_ft: dict, so_far: list[di
     """
     from src.geometry.daylighting import merged_no_parking_spans_ft, no_parking_zones_ft
     from src.geometry.model import _point_at
-    from src.geometry.paint import LANE_EDGE_LINE_WIDTH_FT
+    from src.geometry.paint import (LANE_EDGE_LINE_WIDTH_FT, kerb_opening_bands,
+                                    stands_in_an_opening)
     from src.geometry.treatments import (DAYLIGHT_DEVICES_AS_POSTS, ProtectDaylightZone,
                                          TARGET_LANE_WIDTH_FT)
 
     MIN_DAYLIGHT_DEVICE_SPAN_FT = 3.0
+    openings = kerb_opening_bands(state)   # see _bollard_props
     props = []
     for device in state.treatments_of(ProtectDaylightZone):
         if device.kind not in DAYLIGHT_DEVICES_AS_POSTS:
@@ -953,9 +966,12 @@ def _daylight_device_props(state: DesignState, offsets_ft: dict, so_far: list[di
             # device rather than none.
             count = max(int(span_ft // spacing_ft), 1)
             for station in np.linspace(start_ft, end_ft, count + 1)[:-1] + (span_ft / count) / 2:
+                at = _point_at(leg.centerline, float(station), offset_ft)
+                if stands_in_an_opening(openings, Point(at)):
+                    continue
                 props.append({
                     "type": "bollard",
-                    "position_ft": tuple(_point_at(leg.centerline, float(station), offset_ft)),
+                    "position_ft": tuple(at),
                     "heading_deg": 0.0,
                     "source": f"scenario-specified (protect_daylight_zone): {device.kind} "
                               f"in {leg_name}'s {side} daylight zone, {spacing_ft:.0f} ft apart.",

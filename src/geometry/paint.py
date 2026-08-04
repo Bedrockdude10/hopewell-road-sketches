@@ -142,6 +142,14 @@ MAX_TAPER_DEPTH_PER_RUN = 1.0
 # clean diagonal end. This is the striper's gap, not a design setback.
 PAINT_TO_CROSSWALK_GAP_FT = 1.0
 
+# How far an opening's ends are trimmed back, with a rounded corner, past the dropped kerb's own
+# extent. A driveway apron flares at the kerb in reality and a car turning in cuts the corner, so
+# a square-ended gap the exact width of the kerb tag both looks punched-out and gives a turning
+# vehicle nothing. Kept to a foot and a half on purpose: pedestrians and cyclists have priority
+# here, and every foot of trim is a foot of bike lane or hatched buffer given up. Not a swept-path
+# figure - see kerb_opening_bands.
+OPENING_TRIM_FT = 1.5
+
 # The painting order reserved for built ground - an apron. Everything else is cut around it, so
 # it has to be laid before anything else is painted; see PaintContext.seal_surfaces.
 SURFACE_PAINT_GROUP = 0
@@ -314,7 +322,17 @@ class PaintContext:
 
     def emit(self, piece: PaintPiece) -> PaintPiece:
         """Keep a piece as-is, without clipping. For the things that are not paint: an apron is
-        a surface the paint stops at, and a bollard is a point standing in the road."""
+        a surface the paint stops at, and a bollard is a point standing in the road.
+
+        WITH ONE CLIP, because a kerb opening is not paint either. A flex post cannot be trimmed
+        by a driveway the way a stripe can - it is either standing in the entrance or it is not -
+        so a post that lands inside an opening is dropped rather than shortened. Without this the
+        paint broke over a driveway and the bollards marched straight across it, which is worse
+        than not breaking the paint at all: it reads as a protected lane whose protection you are
+        expected to drive through.
+        """
+        if piece.kind.is_object and stands_in_an_opening(self.openings, piece.geometry):
+            return piece
         self.pieces.append(piece)
         return piece
 
@@ -440,6 +458,19 @@ def curbside_paint_ft(state, crosswalk_offsets: dict, center_ft,
     return ctx.pieces
 
 
+def stands_in_an_opening(openings, geometry) -> bool:
+    """Whether an OBJECT belongs to ground a vehicle drives over, so it must not be placed.
+
+    Shared by PaintContext.emit and the prop builders in src/render/props.py, which compute their
+    own post positions and would otherwise disagree with the paint about where a post stands -
+    the 2D/3D split this project keeps finding. Takes the union rather than the state so a caller
+    that already has it does not rebuild it per post.
+    """
+    if openings is None or geometry is None:
+        return False
+    return openings.intersects(geometry)
+
+
 def kerb_opening_bands(state):
     """The union of ground the kerbside markings must break over, or None.
 
@@ -458,6 +489,12 @@ def kerb_opening_bands(state):
     A PLAIN GAP, deliberately. Real striping often dashes a bike lane line across a driveway
     rather than stopping it, and that is a marking this project does not have; a gap is the
     honest version of "the paint does not continue here" and does not draw something unbuilt.
+
+    THE ENDS ARE TRIMMED BACK AND ROUNDED by OPENING_TRIM_FT, so a vehicle turning in or out has
+    a little room and the gap reads as an entrance rather than as a rectangle punched through the
+    markings. Deliberately small: this is cohesion, not a swept-path design, and every foot of it
+    is a foot of bike lane or hatching given up. The trim is clipped back inside the kerbside
+    strip so it can never reach into the travel lane, whose edge line runs straight past.
     """
     from src.geometry.model import offset_band_polygon
     from src.geometry.treatments import TARGET_LANE_WIDTH_FT
@@ -467,14 +504,24 @@ def kerb_opening_bands(state):
         leg = state.legs.get(leg_name)
         if leg is None or leg.curb_to_curb_ft is None:
             continue
+        # The whole kerbside strip on this side, as the bound the trim is clipped to. The outer
+        # offset is deliberately past the nominal half-width: offset_band_polygon clamps it to
+        # the traced kerb, so asking for more than the road has means "out to the kerb, wherever
+        # it really is" rather than to a mid-block cross-section.
+        kerbside = offset_band_polygon(leg, side, TARGET_LANE_WIDTH_FT, leg.curb_to_curb_ft,
+                                        0.0, None)
         for opening in openings:
-            # The outer bound is deliberately past the nominal half-width: offset_band_polygon
-            # clamps it to the traced kerb, so asking for more than the road has means "out to
-            # the kerb, wherever it really is" rather than to a mid-block cross-section.
             band = offset_band_polygon(leg, side, TARGET_LANE_WIDTH_FT, leg.curb_to_curb_ft,
                                         opening.start_ft, opening.end_ft)
-            if band is not None and not band.is_empty:
-                bands.append(band)
+            if band is None or band.is_empty:
+                continue
+            # JOIN_STYLE 1 is round: the corners where the gap meets the travel lane edge and the
+            # kerb come off as arcs rather than right angles, which is the whole visual point.
+            trimmed = band.buffer(OPENING_TRIM_FT, join_style=1, cap_style=1)
+            if kerbside is not None and not kerbside.is_empty:
+                trimmed = trimmed.intersection(kerbside)
+            if not trimmed.is_empty:
+                bands.append(trimmed)
     return unary_union(bands) if bands else None
 
 

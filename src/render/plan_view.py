@@ -19,8 +19,9 @@ from src.render.props import (DRAWN_BY_PAINT, TACTILE_PAD_DEPTH_FT, TACTILE_PAD_
 from src.render.coords import FT_TO_M, wgs84_to_state_plane
 from src.render.crosswalks import centerline_start_ft
 from src.render.scene import SceneGeometry
-from src.sources.osm_context import (fetch_crossings, fetch_kerbs, fetch_sidewalks,
-                                     fetch_street_furniture, fetch_traffic_control)
+from src.sources.osm_context import (fetch_crossings, fetch_driveways, fetch_kerbs,
+                                     fetch_sidewalks, fetch_street_furniture,
+                                     fetch_traffic_control)
 
 # Matches TACTILE_PAD_RED in scripts/blender/blender_props.py - the plan view and the 3D
 # render must not disagree about what a detectable warning surface looks like.
@@ -118,6 +119,25 @@ KERB_STYLE = {
 }
 
 
+# A driveway is vehicle access, so it is drawn like the minor carriageway it is rather than as
+# another kerbside marking - a thin brown-grey centreline, under everything else, and unlabelled.
+# It exists in the drawing to explain the gap in the markings at its mouth: a break in a bike
+# lane with nothing leading away from it reads as a striping error.
+DRIVEWAY_STYLE = dict(color="#6f5b4b", linewidth=1.3, linestyle=(0, (5, 2)), zorder=2)
+
+
+def _draw_driveways(ax, driveways) -> None:
+    """OSM-mapped driveways, projected into state-plane feet."""
+    lines = []
+    for drive in driveways or []:
+        coords = drive.get("coords_wgs84") or []
+        if len(coords) < 2:
+            continue
+        xs, ys = wgs84_to_state_plane.transform([c[0] for c in coords], [c[1] for c in coords])
+        lines.append(LineString(zip(xs, ys)))
+    _draw(ax, lines, **DRIVEWAY_STYLE)
+
+
 def _draw_kerbs(ax, kerb_lines) -> None:
     """The traced kerbs, grouped by what OSM says each one is.
 
@@ -200,6 +220,7 @@ def _draw_props(ax, model: IntersectionModel, state: DesignState, crosswalk_offs
     kerb_lines = kerb_lines_with_tags_ft(model.center_wgs84, model.center_ft)
     props = build_props(model, state, crosswalk_offsets, model.center_ft, traffic_control,
                          street_furniture, crossings, fetch_kerbs(model.center_wgs84, radius_m=120))
+    _draw_driveways(ax, fetch_driveways(model.center_wgs84, radius_m=BUILDING_CONTEXT_RADIUS_M))
     _draw_kerbs(ax, kerb_lines)
 
     # Grouped, then drawn once per group. See _draw / _scatter_groups.
@@ -715,6 +736,8 @@ def legend_handles():
         Line2D([0], [0], color="black", lw=2.2, label="Traced kerb - RAISED (OSM kerb=raised)"),
         Line2D([0], [0], color="black", lw=1.1, ls="--",
                label="Traced kerb - LOWERED: a vehicle crosses, so the paint opens"),
+        Line2D([0], [0], color="#6f5b4b", lw=1.3, ls=(0,(5,2)),
+               label="Driveway (OSM service=driveway) - what an opening is for"),
         Line2D([0], [0], color="steelblue", lw=1, ls=(0,(4,2)), label="OSM sidewalk centerline"),
         Line2D([0], [0], color="#3b6ea5", lw=0.9, ls=(0,(7,3,1,3)), label="Leg centerline (widths measured from this)"),
         Line2D([0], [0], color="gold", lw=1.2, label="Centerline paint (double yellow / dashed)"),

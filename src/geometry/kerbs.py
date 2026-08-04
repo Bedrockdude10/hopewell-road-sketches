@@ -24,17 +24,30 @@ because it is already fetched:
 
 A PEDESTRIAN RAMP IS ALSO A LOWERED KERB, and it must not open the paint - a crosswalk's kerb
 ramp is dropped for a wheelchair, not for a car, and the markings there are cut by the crossing
-band instead. `tactile_paving=yes` separates the two, and at these four junctions it separates
-them cleanly: of the nine lowered kerbs along E Broad's legs, three are tagged
-`tactile_paving=yes` and sit exactly on a crossing, and the one at the driveway is tagged
-`tactile_paving=no`.
+band instead. The surveyor's convention here separates them EXPLICITLY, and this module reads
+that convention rather than inferring one: a driveway is tagged `wheelchair=no` AND
+`tactile_paving=no`, a ramp `wheelchair=yes` and `tactile_paving=yes`. Borough-wide that is
+12 dropped kerbs against 14 ramps, with no overlap:
 
-That leaves a residue this module deliberately does NOT guess about: four lowered kerbs at
-E Broad are 9-59 ft from the nearest crossing and nowhere near a driveway. They open the paint,
-because the tags say the kerb is dropped and not a pedestrian ramp and that is the best
-available reading - but `describe_kerb_openings` lists every opening with the way that produced
-it, so a gap in a marking is reviewable against the survey rather than being a gap nobody can
-account for.
+    kerb=lowered  tactile_paving=no   wheelchair=no    12   driveways
+    kerb=lowered  tactile_paving=yes  wheelchair=yes   14   pedestrian ramps
+    kerb=lowered  (neither tag)                         1   unspecified - does NOT open
+    kerb=lowered  tactile_paving=yes  wheelchair=no     1   contradictory - does NOT open
+    kerb=raised   tactile_paving=no   wheelchair=no    67   not an opening at all
+
+`wheelchair=no` is the load-bearing half, and it is why the rule is a POSITIVE test rather than
+"lowered and not tagged as a ramp". Two things follow that the looser rule got wrong. A bare
+`kerb=lowered` with neither tag is a kerb somebody recorded as dropped without saying what for,
+and breaking a bike lane over it would be inventing a driveway; it now stays closed. And the
+contradictory case - tactile paving present but wheelchair=no - keeps its paint, because tactile
+paving means a pedestrian facility whatever else is on the way, and the safe reading of a
+disagreement between two tags is the one that does not put a gap in a marking.
+
+Note `wheelchair=no` alone is NOT the signal: all 67 raised kerbs carry it too. It only means
+"not a pedestrian crossing point" once the kerb is already known to be dropped.
+
+`describe_kerb_openings` still lists every opening with the way that produced it, so a gap in a
+marking is reviewable against the survey rather than being a gap nobody can account for.
 """
 from dataclasses import dataclass
 from enum import StrEnum
@@ -74,12 +87,22 @@ class KerbType(StrEnum):
 def opens_the_kerb(tags: dict) -> bool:
     """Whether this kerb way is a VEHICLE opening, so the kerbside markings break over it.
 
-    Dropped or flush, and not a pedestrian ramp. See the module docstring for why
-    tactile_paving is the discriminator and what it leaves unresolved.
+    Three things must all hold, and the last two are the surveyor's own convention read back
+    rather than a rule this project invented - see the module docstring:
+
+      * the kerb is DROPPED (lowered or flush), so a vehicle can cross it at all;
+      * the mapper has said it is NOT a pedestrian crossing point (`wheelchair=no`), which is
+        what distinguishes a driveway from the kerb ramp at a crosswalk;
+      * no tactile paving, because a detectable warning surface means a pedestrian facility
+        whatever else the way says, and a disagreement between two tags should not put a gap in
+        a marking.
     """
+    tags = tags or {}
     if not KerbType.from_tags(tags).is_crossable_by_a_vehicle:
         return False
-    return (tags or {}).get("tactile_paving") != "yes"
+    if tags.get("tactile_paving") == "yes":
+        return False
+    return tags.get("wheelchair") == "no"
 
 
 @dataclass(frozen=True)

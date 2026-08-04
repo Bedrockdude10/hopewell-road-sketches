@@ -120,6 +120,10 @@ LEG_REACH_TOLERANCE = 1.05
 # edge at the camera distance, and the height is what carries the raised/lowered distinction.
 KERB_WIDTH_M = 0.15
 
+# How wide a driveway is drawn. OSM maps one as a centreline with no width, and a residential
+# driveway runs about 3 m; this is for context at the mouth rather than a measurement.
+DRIVEWAY_WIDTH_M = 3.0
+
 
 def build_scene(data: dict):
     theme = data.get("theme") or {}
@@ -208,6 +212,16 @@ def build_scene(data: dict):
         extrude_polygon(f"sidewalk_near_{i}", ring, 0.03, concrete_near)
     for i, ring in enumerate(data.get("sidewalks_far", [])):
         extrude_polygon(f"sidewalk_far_{i}", ring, 0.03, concrete_far)
+
+    # The driveways each kerb opening exists for. A thin strip of the same asphalt, laid just
+    # under the pavement's own top so it reads as connected to the road rather than floating over
+    # the grass - it runs from the kerb back onto private ground, which this project does not
+    # model, so only the part near the road is meaningful.
+    for i, drive in enumerate(data.get("driveways", [])):
+        coords = drive.get("coords") or []
+        if len(coords) >= 2:
+            add_paint_polyline(f"driveway_{i}", coords, DRIVEWAY_WIDTH_M, asphalt_far,
+                               height_m=PAVEMENT_HEIGHT_M, z_base=0.0)
 
     # The traced kerbs, at the height their OSM kerb= tag calls for (src/render/export.py:
     # KERB_HEIGHT_M). There was no kerb in this scene before - the road slab simply met the

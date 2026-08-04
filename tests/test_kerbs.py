@@ -10,7 +10,6 @@ import contextlib
 import io
 
 import numpy as np
-import pytest
 
 from src.geometry.kerbs import KerbType, opens_the_kerb
 from src.geometry.markings import BIKE_LANE_SURFACE

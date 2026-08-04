@@ -757,7 +757,6 @@ def legend_handles():
         Line2D([0], [0], marker="P", color="gold", markeredgecolor="black", lw=0,
                 label="Pedestrian pushbutton (OSM)"),
         Patch(facecolor=TACTILE_PAD_COLOR, edgecolor="black", label="Tactile paving / curb ramp (OSM)"),
-        Line2D([0], [0], color="black", lw=2.2, label="Traced kerb (OSM barrier=kerb)"),
         Line2D([0], [0], marker="D", color="gold", markeredgecolor="black", lw=0, label="RRFB beacon (OSM)"),
         Line2D([0], [0], marker="P", color="firebrick", lw=0, label="Fire hydrant (OSM)"),
         Line2D([0], [0], color="saddlebrown", lw=1.5, label="Corner parcel"),

@@ -120,8 +120,10 @@ LEG_REACH_TOLERANCE = 1.05
 # edge at the camera distance, and the height is what carries the raised/lowered distinction.
 KERB_WIDTH_M = 0.15
 
-# How wide a driveway is drawn. OSM maps one as a centreline with no width, and a residential
-# driveway runs about 3 m; this is for context at the mouth rather than a measurement.
+# Fallback width for a driveway strip. The real figure comes from the geometry JSON
+# ("driveway_width_m"), single-sourced against the assumed mouth width the kerb openings use
+# (src/geometry/kerbs.py:DRIVEWAY_WIDTH_FT) so the strip and the gap it explains match. This only
+# applies to a geometry file written before that key existed.
 DRIVEWAY_WIDTH_M = 3.0
 
 
@@ -217,10 +219,11 @@ def build_scene(data: dict):
     # under the pavement's own top so it reads as connected to the road rather than floating over
     # the grass - it runs from the kerb back onto private ground, which this project does not
     # model, so only the part near the road is meaningful.
+    driveway_width_m = data.get("driveway_width_m", DRIVEWAY_WIDTH_M)
     for i, drive in enumerate(data.get("driveways", [])):
         coords = drive.get("coords") or []
         if len(coords) >= 2:
-            add_paint_polyline(f"driveway_{i}", coords, DRIVEWAY_WIDTH_M, asphalt_far,
+            add_paint_polyline(f"driveway_{i}", coords, driveway_width_m, asphalt_far,
                                height_m=PAVEMENT_HEIGHT_M, z_base=0.0)
 
     # The traced kerbs, at the height their OSM kerb= tag calls for (src/render/export.py:

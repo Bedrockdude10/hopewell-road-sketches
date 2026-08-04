@@ -1259,6 +1259,18 @@ AASHTO_MIN_BIKE_LANE_FT = 5.0
 # noticed: this proposes the narrowest lane the standard permits, and the buffer is where the
 # rest of the protection comes from. A 5 ft lane plus a 2 ft buffer beats a 6 ft lane with no
 # buffer for the same asphalt, because the buffer is what a flex post stands in.
+#
+# AT 2 FT THE BUFFER IS ESSENTIALLY ITS OWN TWO STRIPES, and that is a real consequence of this
+# figure rather than a drawing artifact. Every width here is between paint FACES and the stripes
+# come out of the buffer (see BikeLane), and a stripe here is 0.82 ft - 10 in, chosen in
+# src/geometry/paint.py to read at the render's scale, against MUTCD's 4-6 in for a lane line. Two
+# of them leave 0.36 ft of asphalt showing, against 1.36 ft at the 3 ft buffer this replaced, so
+# the buffer's diagonal hatching disappears from the 3D render: there is no longer a strip wide
+# enough to draw a stroke across. A post still fits, which is what the buffer is for.
+#
+# Three ways out if that reads too thin, none of them taken here because 5 + 2 is what was asked
+# for: widen the buffer, narrow LANE_EDGE_LINE_WIDTH_FT toward the real 6 in, or accept that a
+# 2 ft buffer is two lines and stop hatching it.
 BIKE_LANE_WIDTH_FT = AASHTO_MIN_BIKE_LANE_FT
 BIKE_LANE_BUFFER_FT = 2.0
 

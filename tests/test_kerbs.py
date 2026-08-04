@@ -76,9 +76,15 @@ def test_the_markings_break_over_a_dropped_kerb(site_models):
         scene = resolved_scene(model, state)
         paint = scene.build_paint(scene_props(model, state, scene))
 
+    from src.geometry.kerbs import OpeningSource
+
     openings = state.kerb_openings[("e_broad_st_east", "left")]
     assert openings, "the dropped kerb on this leg was not seeded onto the design"
-    opening = openings[0]
+    # By SOURCE, not by index: this leg's mouth is now found by both signals - the tagged kerb and
+    # the driveway way that runs up to it - and this test is about the surveyed one.
+    kerbs = [o for o in openings if o.source is OpeningSource.DROPPED_KERB]
+    assert kerbs, "the tagged dropped kerb produced no opening"
+    opening = kerbs[0]
     assert opening.kerb is KerbType.LOWERED
     assert opening.way_id is not None, "an opening has to name the kerb way that caused it"
 
@@ -100,13 +106,18 @@ def test_the_markings_break_over_a_dropped_kerb(site_models):
 
 
 @needs_source_data
-def test_every_opening_names_the_kerb_that_caused_it(site_models):
+def test_every_opening_names_the_osm_object_that_caused_it(site_models):
     """A gap in a marking is a claim about the street, so it has to be auditable against OSM.
 
     Same reasoning as ParkingRestriction.citation: "the paint stops at 59 ft" is unreviewable,
     "OSM kerb=lowered on way 1546804848" can be checked by someone who is not reading this code.
+
+    Both sources have to say which they are, because they are not equally good evidence: a dropped
+    kerb's extent is surveyed, a driveway's mouth is assumed. An opening that cited neither, or
+    that cited a driveway as though its width were measured, would be the sort of quiet
+    over-claiming this project's provenance strings exist to prevent.
     """
-    from src.geometry.kerbs import describe_kerb_openings
+    from src.geometry.kerbs import OpeningSource, describe_kerb_openings
 
     found = 0
     for site, model in site_models.items():
@@ -118,10 +129,18 @@ def test_every_opening_names_the_kerb_that_caused_it(site_models):
             for opening in openings:
                 found += 1
                 assert opening.end_ft > opening.start_ft
-                assert "kerb=" in opening.citation and str(opening.way_id) in opening.citation
+                assert str(opening.way_id) in opening.citation
+                if opening.source is OpeningSource.DROPPED_KERB:
+                    assert "kerb=" in opening.citation
+                    assert opening.is_surveyed_width
+                else:
+                    assert "service=driveway" in opening.citation
+                    assert not opening.is_surveyed_width, (
+                        "a driveway centreline carries no width, so its mouth must not be "
+                        "reported as surveyed")
         for line in describe_kerb_openings(state):
-            assert "OSM kerb=" in line, f"{site}: an opening reported without its source"
-    assert found, "no dropped kerbs found at any site - the tags are not being read"
+            assert "OSM " in line, f"{site}: an opening reported without its source"
+    assert found, "no openings found at any site - neither signal is being read"
 
 
 @needs_source_data
@@ -148,8 +167,11 @@ def test_the_opening_is_trimmed_back_and_rounded(site_models):
         f"edge for cohesion and starts being a design decision about vehicle turning radii, "
         f"which is not what it was asked to be")
 
+    from src.geometry.kerbs import OpeningSource
+
     leg = state.legs["e_broad_st_east"]
-    opening = state.kerb_openings[("e_broad_st_east", "left")][0]
+    opening = next(o for o in state.kerb_openings[("e_broad_st_east", "left")]
+                   if o.source is OpeningSource.DROPPED_KERB)
     green = sorted((p for p in paint if p.kind is BIKE_LANE_SURFACE
                     and p.leg == "e_broad_st_east" and p.side == "left"),
                    key=lambda p: p.geometry.centroid.distance(

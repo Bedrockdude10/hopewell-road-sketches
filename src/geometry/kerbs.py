@@ -9,18 +9,25 @@ the kerbside paint ran unbroken along the whole leg. So a surveyor's careful rai
 distinction reached the geometry and stopped there, which is this project's signature failure -
 ground truth present, never reaching the render.
 
-WHY A LOWERED KERB IS THE OPENING. A driveway is mapped two ways at once: as a
-`highway=service` + `service=driveway` way running up to the road, and as the stretch of kerb it
-crosses being tagged `kerb=lowered`. The second is the better signal for paint, and not just
-because it is already fetched:
+TWO SIGNALS, BOTH READ. A driveway is mapped twice over: as a `highway=service` +
+`service=driveway` way running up to the road, and as the stretch of kerb it crosses being tagged
+`kerb=lowered`. An earlier version of this module read only the kerb, on the reasoning that it is
+the better signal - it is on the kerb, so it already carries the station span the paint needs,
+where a driveway way only asserts that a driveway exists near here; and it is tagged in places no
+driveway way is drawn, since only ONE of the 43 driveways mapped in the borough reaches a kerb
+this project models.
 
-  * it is ON the kerb, so it already has the geometry and the station span the paint needs,
-    where a driveway way only asserts that a driveway exists somewhere near here;
-  * it is what is physically true - the kerb is dropped, which is why a car can cross it;
-  * it is present where the driveway way is not. Only ONE of the 43 driveways mapped in the
-    borough reaches a kerb this project models (way 772378207, on e_broad_st_east's left kerb at
-    station 88); the rest are further down the block, outside a 130 ft leg. The lowered kerb at
-    that driveway is tagged, and so are lowered stretches with no driveway way drawn to them.
+All true, and none of it a reason to read one source and discard the other. A driveway drawn
+without its kerb tagged then produced no opening at all and the markings ran straight across it -
+which is this repo's own failure mode, committed deliberately while arguing that keeping the two
+independent would make the mismatch visible. It would not have: nothing was comparing them.
+
+So both open the markings, and each opening records WHICH source put it there
+(`KerbOpening.source`). A driveway way is the weaker of the two for one specific reason, stated
+where it matters rather than used to dismiss it: a centreline carries no width, so the mouth has
+to be assumed (DRIVEWAY_WIDTH_FT), where a dropped kerb's own extent is surveyed.
+`describe_kerb_openings` says which is which, and flags a driveway with no dropped kerb tagged at
+its mouth as the survey gap it is.
 
 A PEDESTRIAN RAMP IS ALSO A LOWERED KERB, and it must not open the paint - a crosswalk's kerb
 ramp is dropped for a wheelchair, not for a car, and the markings there are cut by the crossing
@@ -53,6 +60,7 @@ from dataclasses import dataclass
 from enum import StrEnum
 
 import numpy as np
+from shapely.geometry import LineString
 
 from src.geometry.model import station_offset_many
 
@@ -105,12 +113,24 @@ def opens_the_kerb(tags: dict) -> bool:
     return tags.get("wheelchair") == "no"
 
 
+class OpeningSource(StrEnum):
+    """Which OSM object said a vehicle crosses the kerb here.
+
+    Recorded per opening rather than collapsed, because the two are not equally good evidence and
+    the difference belongs in the citation: a dropped kerb's extent is SURVEYED, while a driveway
+    is a centreline with no width, so its mouth is assumed. A reader auditing a gap in a marking
+    needs to know which of those they are looking at.
+    """
+    DROPPED_KERB = "dropped_kerb"
+    DRIVEWAY = "driveway"
+
+
 @dataclass(frozen=True)
 class KerbOpening:
-    """A stretch of ONE KERB of one leg that is dropped for vehicles to cross.
+    """A stretch of ONE KERB of one leg that vehicles cross.
 
     A span and not a point, for the same reason ParkingRestriction is one: a driveway mouth is
-    12-30 ft of kerb, and the paint has to break over its width rather than at a station.
+    10-30 ft of kerb, and the paint has to break over its width rather than at a station.
 
     `citation` names the way it came from, so a gap in the markings on a drawing can be traced
     back to the OSM object that put it there - the same accounting ParkingRestriction.citation
@@ -118,7 +138,8 @@ class KerbOpening:
     """
     start_ft: float
     end_ft: float
-    kerb: KerbType
+    source: OpeningSource
+    kerb: KerbType | None = None
     way_id: int | None = None
 
     @property
@@ -126,9 +147,18 @@ class KerbOpening:
         return max(self.end_ft - self.start_ft, 0.0)
 
     @property
+    def is_surveyed_width(self) -> bool:
+        """Whether the SPAN is surveyed or assumed. A dropped kerb's own extent is the width of
+        the opening; a driveway centreline has none, so DRIVEWAY_WIDTH_FT stands in for it."""
+        return self.source is OpeningSource.DROPPED_KERB
+
+    @property
     def citation(self) -> str:
-        return (f"OSM kerb={self.kerb.value}"
-                + (f" on way {self.way_id}" if self.way_id is not None else ""))
+        where = f" on way {self.way_id}" if self.way_id is not None else ""
+        if self.source is OpeningSource.DRIVEWAY:
+            return (f"OSM service=driveway{where} (mouth assumed {DRIVEWAY_WIDTH_FT:.0f} ft - a "
+                    f"centreline carries no width)")
+        return f"OSM kerb={self.kerb.value if self.kerb else 'lowered'}{where}"
 
 
 # How far outside a leg's nominal half-width a kerb vertex may sit and still be that leg's kerb.
@@ -138,6 +168,21 @@ OPENING_OFFSET_TOLERANCE_FT = 8.0
 # A dropped kerb shorter than this is not a driveway mouth - it is the last vertex of a ramp or
 # a tracing artifact, and breaking the paint for it would put a nick in a marking.
 MIN_OPENING_LENGTH_FT = 4.0
+
+# How wide a driveway mouth is taken to be. AN ASSUMPTION, and the reason a dropped kerb is the
+# better of the two signals: OSM maps a driveway as a centreline with no width at all, so this
+# stands in for a survey. About a residential driveway, and single-sourced here - the 3D render
+# draws the driveway strip at this width too (src/render/export.py writes it into the JSON), so
+# the strip and the gap it explains cannot end up different sizes.
+DRIVEWAY_WIDTH_FT = 10.0
+# How close a driveway way has to come to a modelled kerb to be treated as meeting it. The one
+# driveway that reaches a kerb here touches it at 0.0 ft; the next nearest are 21.7 and 29.8 ft
+# away and belong to kerbs further down the block than these legs reach, so this sits well clear
+# of both and cannot drag in a neighbour's driveway.
+DRIVEWAY_REACH_FT = 5.0
+# Matches src/render/plan_view.py and src/render/export.py's own driveway fetch, so an opening is
+# derived from the same set of driveways both views draw.
+DRIVEWAY_CONTEXT_RADIUS_M = 130
 
 
 def kerb_openings_from_model(model) -> dict:
@@ -168,11 +213,62 @@ def kerb_openings_from_model(model) -> dict:
         if end_ft - start_ft < MIN_OPENING_LENGTH_FT:
             continue
         openings.setdefault((leg_name, side), []).append(
-            KerbOpening(start_ft=start_ft, end_ft=end_ft, kerb=KerbType.from_tags(tags),
-                        way_id=way_id))
+            KerbOpening(start_ft=start_ft, end_ft=end_ft, source=OpeningSource.DROPPED_KERB,
+                        kerb=KerbType.from_tags(tags), way_id=way_id))
+    for leg_name, side, station_ft, way_id in _driveway_meetings(model):
+        openings.setdefault((leg_name, side), []).append(
+            KerbOpening(start_ft=max(station_ft - DRIVEWAY_WIDTH_FT / 2, 0.0),
+                        end_ft=station_ft + DRIVEWAY_WIDTH_FT / 2,
+                        source=OpeningSource.DRIVEWAY, way_id=way_id))
     for key in openings:
         openings[key].sort(key=lambda o: o.start_ft)
     return openings
+
+
+def _driveway_meetings(model) -> list[tuple[str, str, float, int | None]]:
+    """(leg, side, station, way id) wherever a mapped driveway reaches a modelled kerb.
+
+    The SECOND signal, read for the reason the module docstring gives: a driveway drawn without
+    its kerb tagged is still a driveway, and reading only the kerb left the markings running
+    straight across it.
+
+    Which kerb it meets is decided by distance to the kerb LINE rather than by the driveway's own
+    direction, because a driveway is drawn from the property to the road and its last segment is
+    not reliably square to anything. The station is where it lands on the leg's centreline, taken
+    from the point on the KERB nearest the driveway - not the driveway's own endpoint, which a
+    mapper may have stopped short of or run past the kerb.
+    """
+    from shapely.ops import nearest_points
+
+    from src.render.coords import wgs84_to_state_plane
+    from src.sources.osm_context import fetch_driveways
+
+    meetings = []
+    for drive in fetch_driveways(model.center_wgs84, radius_m=DRIVEWAY_CONTEXT_RADIUS_M):
+        coords = drive.get("coords_wgs84") or []
+        if len(coords) < 2:
+            continue
+        xs, ys = wgs84_to_state_plane.transform([c[0] for c in coords], [c[1] for c in coords])
+        line = LineString(zip(xs, ys))
+        best = None
+        for leg_name, leg in model.legs.items():
+            for side in ("left", "right"):
+                curb = getattr(leg, f"{side}_curb", None)
+                if curb is None or curb.is_empty:
+                    continue
+                gap_ft = line.distance(curb)
+                if gap_ft > DRIVEWAY_REACH_FT:
+                    continue
+                _on_drive, on_curb = nearest_points(line, curb)
+                station_ft = leg.centerline.project(on_curb)
+                if not 0 <= station_ft <= leg.centerline.length:
+                    continue
+                if best is None or gap_ft < best[0]:
+                    best = (gap_ft, leg_name, side, station_ft)
+        if best is not None:
+            _gap, leg_name, side, station_ft = best
+            meetings.append((leg_name, side, station_ft, drive.get("id")))
+    return meetings
 
 
 def _place_on_a_leg_side(line, legs: dict):
@@ -220,16 +316,34 @@ def _place_on_a_leg_side(line, legs: dict):
 def describe_kerb_openings(state) -> list[str]:
     """One line per opening this design will break its markings for, for the phase output.
 
-    Provenance, not diagnostics: a driveway gap in a drawing is a claim about the street, and the
-    reviewer needs to be able to check it against OSM. Every line names the kerb way, so an
-    opening in the wrong place is traceable to a tag rather than to this code. Follows
-    src/render/props.py:data_gaps in shape - a list of sentences the phase script prints.
+    Provenance, not diagnostics: a gap in a drawing's markings is a claim about the street, and
+    the reviewer needs to check it against OSM. Every line names the way, and says whether the
+    span is surveyed (a dropped kerb's own extent) or assumed (a driveway centreline has no
+    width). Follows src/render/props.py:data_gaps in shape - sentences a phase script prints.
+
+    Where the two sources CORROBORATE each other the line says so, and where a driveway stands
+    alone it is called out as a survey gap: the driveway is drawn and believed, but a dropped kerb
+    at its mouth would replace an assumed 10 ft width with a surveyed one.
     """
     lines = []
     for (leg_name, side), openings in sorted(state.kerb_openings.items()):
+        kerbs = [o for o in openings if o.source is OpeningSource.DROPPED_KERB]
         for opening in openings:
+            overlapping = [o for o in kerbs
+                           if o is not opening
+                           and o.start_ft < opening.end_ft and opening.start_ft < o.end_ft]
+            if opening.source is OpeningSource.DRIVEWAY and overlapping:
+                agreement = (" Corroborated by the dropped kerb tagged over "
+                             f"{overlapping[0].start_ft:.0f}-{overlapping[0].end_ft:.0f} ft, whose "
+                             f"surveyed extent is the one that governs the gap.")
+            elif opening.source is OpeningSource.DRIVEWAY:
+                agreement = (" NO dropped kerb is tagged at this mouth, so the width is assumed "
+                             "rather than surveyed - tagging the kerb here would settle it.")
+            else:
+                agreement = ""
             lines.append(
                 f"{leg_name} {side}: kerbside markings break over {opening.start_ft:.0f}-"
-                f"{opening.end_ft:.0f} ft ({opening.length_ft:.0f} ft of dropped kerb) - "
-                f"{opening.citation}. A vehicle crosses here, so the paint opens for it.")
+                f"{opening.end_ft:.0f} ft ({opening.length_ft:.0f} ft, "
+                f"{'surveyed' if opening.is_surveyed_width else 'assumed'}) - "
+                f"{opening.citation}.{agreement}")
     return lines

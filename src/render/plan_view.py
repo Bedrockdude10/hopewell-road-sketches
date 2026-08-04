@@ -18,6 +18,7 @@ from src.render.props import (DRAWN_BY_PAINT, TACTILE_PAD_DEPTH_FT, TACTILE_PAD_
                                build_props, pad_polygon, signalization_conflicts)
 from src.render.coords import FT_TO_M, wgs84_to_state_plane
 from src.render.crosswalks import centerline_start_ft
+from src.render.frame import junction_frame
 from src.render.scene import SceneGeometry
 from src.sources.osm_context import (fetch_crossings, fetch_kerbs, fetch_sidewalks,
                                      fetch_street_furniture, fetch_traffic_control)
@@ -514,9 +515,12 @@ def plot_design_state(ax, model: IntersectionModel, state: DesignState, title: s
 
     ax.set_title(title, fontsize=11)
     ax.set_aspect("equal")
-    zoom_ft = 110
-    ax.set_xlim(model.center_ft.x - zoom_ft, model.center_ft.x + zoom_ft)
-    ax.set_ylim(model.center_ft.y - zoom_ft, model.center_ft.y + zoom_ft)
+    # The frame the 3D render is pointed at as well - see src/render/frame.py for the 1.15-1.57x
+    # the two views used to disagree by, and why it is measured from the model rather than from
+    # this DesignState (a before/after pair has to share one frame).
+    xmin, xmax, ymin, ymax = junction_frame(model).bounds_ft()
+    ax.set_xlim(xmin, xmax)
+    ax.set_ylim(ymin, ymax)
     ax.set_xlabel("Feet (EPSG:3424)")
     return violations
 

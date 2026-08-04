@@ -128,6 +128,12 @@ Checking both paths is necessary but not sufficient: the two paths also have to 
 
 None of the three was visible from any one call site — each looked locally reasonable, and they only disagreed side by side. That is the argument for resolving once rather than agreeing to follow a convention in four places.
 
+### Both views frame the same ground (`src/render/frame.py`)
+
+The same failure one level up, in the most literal form available: the plan view framed a hardcoded 110 ft square on the junction node, and the 3D camera framed the pavement's own extent clipped to the modelled legs. Measured on the four sites the 3D frame was **1.15x–1.57x** the 2D frame and centred **6.5–12.5 ft** away from it, so the plan view cropped a third of Broad St's modelled legs — and with them the far ends of the bike lanes the proposal paints — while the render showed all of it. Nobody had chosen that; one number was computed from the geometry and the other was a constant, so the disagreement varied per site.
+
+`junction_frame(model)` now resolves it once: the modelled pavement's extent, clipped at the legs' reach, plus a 20% margin. The plan view sets its axes from it, `export_scenario` writes it into the JSON as `frame`, and `blender_scene.py` points its camera at that rather than recomputing an extent of its own. Two deliberate details: it is measured from the **model** rather than from a `DesignState`, because a curb extension moves the kerb and a before/after pair whose two panels frame differently is exactly what makes two pictures incomparable; and vertices past a leg's far end are dropped, because a traced kerb runs on down the block (425 ft off a 130 ft leg at E Broad) and that is street, not junction. `tests/test_frame.py` compares the plan view's own axis limits against the exported frame, per site.
+
 If you edit `sites/<site>/config.yaml` (widths, corner radius, crosswalks, treatments, props), rerun from Phase 2 onward — Phase 1 doesn't depend on it.
 
 Phase 4 shells out to Blender (not the project venv — `blender_scene.py` runs under Blender's own bundled Python, with no network access and none of this project's packages). Needs Blender on `PATH`, or set `BLENDER_BIN` — defaults to `/Applications/Blender.app/Contents/MacOS/Blender` on Mac if nothing else is found.

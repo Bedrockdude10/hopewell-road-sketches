@@ -152,6 +152,14 @@ def build_scene(data: dict):
     all_pavement = data.get("pavement_near", []) + data.get("pavement_far", [])
     pavement_x = [x for ring in all_pavement for x, y in ring]
     pavement_y = [y for ring in all_pavement for x, y in ring]
+    # WHERE THE CAMERA POINTS IS RESOLVED IN src/render/frame.py AND CARRIED IN THE JSON, so this
+    # render and the plan view frame the same ground. Computing it here as well is what let the
+    # two views drift: the plan view framed a hardcoded 110 ft square on the junction node while
+    # this framed the pavement's own extent, and on the four sites the two disagreed by 1.15-1.57x
+    # and by 6.5-12.5 ft of centre. The block below is the fallback for a geometry file written
+    # before `frame` existed, and it is also the definition src/render/frame.py implements - the
+    # same pair of numbers, computed once on the side that can be tested.
+    #
     # Frame the camera on the intersection itself (the actual subject), not the
     # full building-context radius - buildings are background dressing and are
     # fine to crop at the frame edges.
@@ -177,6 +185,10 @@ def build_scene(data: dict):
     cx, cy = (min(framed_x) + max(framed_x)) / 2, (min(framed_y) + max(framed_y)) / 2
     pavement_radius = max(max(framed_x) - min(framed_x), max(framed_y) - min(framed_y)) / 2
     scene_radius = pavement_radius * 1.2  # tight enough to actually read paint markings/signage detail
+    frame = data.get("frame")
+    if frame:
+        cx, cy = frame["center_m"]
+        scene_radius = frame["radius_m"]
 
     # The GROUND still covers everything, framed or not: a plane that stopped at the framed
     # extent would leave the far end of an over-long kerb standing over blank space.

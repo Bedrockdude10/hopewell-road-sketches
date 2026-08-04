@@ -22,6 +22,7 @@ from src.geometry.intersection import IntersectionModel, kerb_lines_with_tags_ft
 from src.geometry.kerbs import KerbType
 from src.geometry.markings import CHANNELS, KINDS, Role, kinds_in
 from src.geometry.paint import in_channel
+from src.render.frame import junction_frame
 from src.render.mesh_utils import build_decimated_building_mesh
 from src.render.scene import SceneGeometry
 from src.sources.osm_context import (fetch_buildings, fetch_crossings, fetch_kerbs,
@@ -271,6 +272,11 @@ def export_scenario(model: IntersectionModel, state: DesignState, name: str, out
         # Likewise shared, so the 2D stop bar and the rendered one are the same bar.
         "stop_bar_curb_clearance_m": STOP_BAR_CURB_CLEARANCE_M,
         "existing_marked_crosswalks": model.config["intersection"].get("existing_marked_crosswalks", []),
+        # Where the camera points and how much it takes in, resolved by src/render/frame.py so
+        # this render and the plan view frame the same ground. Blender used to compute an extent
+        # of its own from the pavement below, which is how the two views came to disagree by up
+        # to 1.57x on the same junction.
+        "frame": junction_frame(model).as_local_m(center_ft),
         "pavement_near": [ring_to_local_m(p.exterior.coords, center_ft) for p in pavement_near],
         "pavement_far": [ring_to_local_m(p.exterior.coords, center_ft) for p in pavement_far],
         "sidewalks_near": [ring_to_local_m(p.exterior.coords, center_ft) for p in sidewalks_near],

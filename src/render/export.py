@@ -19,7 +19,8 @@ from src.render.crosswalks import (CROSSWALK_DEPTH_M, STOP_BAR_CURB_CLEARANCE_M,
                                    stop_bar_band_geometry_ft, stop_bar_width_ft)
 from src.geometry.model import hatch_lines_ft
 from src.geometry.intersection import IntersectionModel
-from src.geometry.paint import of_kind
+from src.geometry.markings import CHANNELS, KINDS, Role, kinds_in
+from src.geometry.paint import in_channel
 from src.render.mesh_utils import build_decimated_building_mesh
 from src.render.scene import SceneGeometry
 from src.sources.osm_context import (fetch_buildings, fetch_crossings, fetch_kerbs,
@@ -40,37 +41,20 @@ PAINT_HATCH_SPACING_FT = 8.0  # spacing between rendered diagonal hatch lines - 
                                # yellow, drowning out the solid edge line and making the 11ft lane unreadable in
                                # the render even though the underlying geometry was already correct (verified via
                                # plan_view.py's top-down plot and by projecting each hatch line's real endpoints).
-# Which src/geometry/paint.py piece kinds go into which list blender_paint.py reads.
+# Which paint kinds go into which JSON list blender_scene.py reads is no longer written here.
+# It was, in a table beside the one every marking is declared in, and keeping the two in step
+# was manual: renaming a kind in paint.py and forgetting this table dropped a whole treatment
+# from the 3D render with nothing to say so, which happened when the parking buffer's taper
+# became the daylight zone's and again when daylighting was added.
 #
-# Declared as data, not buried in the calls below, so tests/test_paint.py can assert that
-# every kind the builder produces is actually rendered. Renaming a kind in paint.py and
-# forgetting this table means the 3D render silently loses a whole treatment - which is
-# exactly what happened when the parking buffer's taper became the daylight zone's, and
-# again when daylighting was added: both built correctly, both drawn in the plan view,
-# neither in the render, no error anywhere.
-PAINT_KIND_LISTS = {
-    "lane_narrowing_edge_lines": ("lane_edge_line",),
-    "lane_narrowing_taper_lines": ("taper_line",),
-    "lane_narrowing_hatch_lines": ("lane_narrowing_fill", "taper_fill"),
-    "corner_hatching_lines": ("corner_hatch_fill",),
-    "parking_edge_lines": ("parking_edge_line",),
-    "parking_stall_divider_lines": ("stall_divider",),
-    "parking_buffer_edge_lines": ("buffer_edge_line", "daylight_edge_line", "crossing_rim_line",
-                                   "zone_end_line"),
-    # A curve needs add_paint_polyline rather than add_paint_line - see add_paint_line's
-    # docstring - so the tapers stay in their own list. Empty since daylight zones went
-    # square-ended (src/geometry/paint.py): a keep-clear block has no taper. The list stays
-    # because blender_scene.py reads the key, and because a lane-narrowing buffer's taper
-    # could be routed here if one ever needed the polyline path.
-    "parking_buffer_taper_lines": (),
-    # The daylight zones (R.S. 39:4-138 - see src/geometry/daylighting.py) render as the same
-    # white diagonal hatching as the buffer beside them, because on a real street that is
-    # what both are. The plan view distinguishes them by colour; asphalt does not.
-    "parking_buffer_hatch_lines": ("buffer_fill", "daylight_fill"),
-}
-# Handled outside PAINT_KIND_LISTS: an apron is a textured surface rather than paint, and a
-# bollard is a 3D prop the export builds from state directly.
-PAINT_KINDS_NOT_IN_LISTS = frozenset({"apron", "bollard"})
+# Now each marking names its own channel (src/geometry/markings.py) and this is derived from
+# that one declaration, so the two cannot disagree. Kept as a name because tests read it.
+PAINT_KIND_LISTS = {channel.key: tuple(kind.name for kind in kinds_in(channel))
+                    for channel in CHANNELS}
+# Markings that reach the render some other way. An OBJECT is built from a prop - the render
+# never turns a marking into an object - and check_bollards_are_props fails the build if one
+# is painted with no prop behind it.
+PAINT_KINDS_NOT_IN_LISTS = frozenset(kind.name for kind in KINDS.values() if kind.is_object)
 
 
 def _marking_frame_m(prefix: str, leg, station_ft, center_ft) -> dict:
@@ -194,7 +178,7 @@ def export_scenario(model: IntersectionModel, state: DesignState, name: str, out
 
     props = build_props(model, state, crosswalk_offsets, center_ft, traffic_control, street_furniture,
                          crossings, fetch_kerbs(model.center_wgs84, radius_m=KERB_RADIUS_M))
-    paint = scene.build_paint(props)
+    paint, props = scene.build_paint_and_posts(props)
     # Invariants, not warnings: a pad in the carriageway is a false claim about an
     # accessibility feature, and a curb drawn across the intersection is a false claim
     # about the street. Checked on the same shared band geometry the plan view checks, so
@@ -224,24 +208,22 @@ def export_scenario(model: IntersectionModel, state: DesignState, name: str, out
                                             angle_deg=angle_deg,
                                             phase_origin=(center_ft.x, center_ft.y))]
 
-    def _lines_of(*kinds):
-        return [_line(p) for p in of_kind(paint, *kinds)]
+    def _surface(piece):
+        return ring_to_local_m(piece.geometry.exterior.coords, center_ft)
 
-    def _hatch_of(*kinds):
-        return [stroke for p in of_kind(paint, *kinds) for stroke in _hatch(p)]
+    # One serializer per role, so a new marking is drawn correctly in 3D the moment it is
+    # declared. This used to be eleven hand-written assignments naming eleven JSON keys, and
+    # picking the wrong helper for a key was silent: a sampled polyline routed through the
+    # straight-chord builder deviated 0.7 ft on Broad St's daylight zone.
+    BY_ROLE = {Role.LINE: lambda piece: [_line(piece)],
+               Role.FILL: _hatch,
+               Role.SURFACE: lambda piece: [_surface(piece)]}
 
-    lane_narrowing_edge_lines = _lines_of(*PAINT_KIND_LISTS["lane_narrowing_edge_lines"])
-    lane_narrowing_taper_lines = _lines_of(*PAINT_KIND_LISTS["lane_narrowing_taper_lines"])
-    lane_narrowing_hatch_lines = _hatch_of(*PAINT_KIND_LISTS["lane_narrowing_hatch_lines"])
-    corner_hatching_lines = _hatch_of(*PAINT_KIND_LISTS["corner_hatching_lines"])
-    parking_edge_lines = _lines_of(*PAINT_KIND_LISTS["parking_edge_lines"])
-    parking_stall_divider_lines = _lines_of(*PAINT_KIND_LISTS["parking_stall_divider_lines"])
-    parking_buffer_edge_lines = _lines_of(*PAINT_KIND_LISTS["parking_buffer_edge_lines"])
-    parking_buffer_taper_lines = _lines_of(*PAINT_KIND_LISTS["parking_buffer_taper_lines"])
-    parking_buffer_hatch_lines = _hatch_of(*PAINT_KIND_LISTS["parking_buffer_hatch_lines"])
+    def channel_data(channel):
+        serialize = BY_ROLE[channel.role]
+        return [item for piece in in_channel(paint, channel) for item in serialize(piece)]
 
-    corner_apron_polygons = [ring_to_local_m(p.geometry.exterior.coords, center_ft)
-                              for p in of_kind(paint, "apron")]
+    paint_channels = {channel.key: channel_data(channel) for channel in CHANNELS}
 
     building_entries = []
     for b in buildings:
@@ -277,16 +259,10 @@ def export_scenario(model: IntersectionModel, state: DesignState, name: str, out
         "sidewalks_near": [ring_to_local_m(p.exterior.coords, center_ft) for p in sidewalks_near],
         "sidewalks_far": [ring_to_local_m(p.exterior.coords, center_ft) for p in sidewalks_far],
         "tree_points": [pt_to_local_m(x, y, center_ft) for x, y in tree_points_ft],
-        "lane_narrowing_edge_lines": lane_narrowing_edge_lines,
-        "lane_narrowing_taper_lines": lane_narrowing_taper_lines,
-        "lane_narrowing_hatch_lines": lane_narrowing_hatch_lines,
-        "corner_hatching_lines": corner_hatching_lines,
-        "parking_edge_lines": parking_edge_lines,
-        "parking_stall_divider_lines": parking_stall_divider_lines,
-        "parking_buffer_hatch_lines": parking_buffer_hatch_lines,
-        "parking_buffer_edge_lines": parking_buffer_edge_lines,
-        "parking_buffer_taper_lines": parking_buffer_taper_lines,
-        "corner_apron_polygons": corner_apron_polygons,
+        # Every marking channel, in the order src/geometry/markings.py declares them. Splatted
+        # rather than listed key by key: a channel Blender reads and this file forgot to write
+        # is a treatment that vanishes between the two, and that is now impossible to type.
+        **paint_channels,
         "props": [
             {
                 **p,

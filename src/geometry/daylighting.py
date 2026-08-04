@@ -176,6 +176,20 @@ def no_parking_zones_ft(state, leg_name: str, side: str, crosswalk_offsets: dict
     end_ft, reason = max(junction)
     zones.append(NoParkingZone(0.0, end_ft, reason))
 
+    # What OSM says about this kerb, per stretch of it. A mapped prohibition is a no-parking
+    # zone exactly like a statutory one - same shape of fact, same consequence for what may be
+    # marked - so it joins the list here rather than being handled separately, and everything
+    # downstream (the hatching, the stall runs, check_parking_is_legal) picks it up unchanged.
+    #
+    # This is where a restriction covering only part of a leg finally lands. It has to be a span
+    # and not a flag on the side: at Broad & Greenwood, East Broad's first 79.5 ft are tagged
+    # no_parking and the rest is not, and a per-side flag can only be one or the other.
+    for restriction in getattr(state, "parking_restrictions", {}).get((leg_name, side), []):
+        if not restriction.prohibits:
+            continue
+        zones.append(NoParkingZone(restriction.start_ft, restriction.end_ft,
+                                    restriction.citation))
+
     # (h) and (i) - radii around a point feature, anywhere along the leg.
     for prop in props or []:
         setback = _SETBACK_BY_PROP.get(prop.get("type"))

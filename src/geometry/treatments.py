@@ -7,7 +7,8 @@ from dataclasses import dataclass, field
 import numpy as np
 from shapely.geometry import Polygon
 
-from src.geometry.model import build_pavement_polygon, fillet_curb_corner, leg_clearance_ft
+from src.geometry.model import (BULBOUT_TAPER_RATE, build_pavement_polygon, curb_extension_line,
+                                fillet_curb_corner, leg_clearance_ft, narrowest_half_width_ft)
 
 
 def _band_across_the_road(centerline, from_ft: float, to_ft: float, half_width_ft: float,
@@ -66,6 +67,111 @@ CORNER_APRON_DEFAULT_EXTENT_FT = 5.0  # mountable-apron zone depth - same shape 
 DEFAULT_CENTERLINE_STYLE = "single_yellow_dashed"
 VALID_CENTERLINE_STYLES = ("single_yellow_dashed", "double_yellow", "none")
 
+# Float slack when comparing a requested width against the room a leg has. The widths
+# themselves are specified to a tenth of a foot; this only absorbs the arithmetic.
+LANE_WIDTH_SLACK_FT = 0.05
+
+
+@dataclass(frozen=True)
+class ParkingRestriction:
+    """What OSM says about parking on ONE KERB over ONE STRETCH of it, in the leg's frame.
+
+    A stretch and not a whole side, because a restriction that changes part way along a street
+    is recorded in OSM by splitting the way - which is how "no parking for the first 100 ft from
+    the junction" is expressed, and it is what this project used to discard. See
+    src/geometry/intersection.py:RoadSpan.
+
+    `value` is the raw OSM value: no_parking / no_standing / no_stopping, or "none" for an
+    explicit statement that parking IS allowed, or None where that way says nothing at all. The
+    last two are different facts and must not be collapsed.
+    """
+    start_ft: float
+    end_ft: float
+    value: str | None
+    way_id: int | None = None
+
+    @property
+    def prohibits(self) -> bool:
+        """True where OSM forbids parking. Absent or "none" is not a prohibition."""
+        return self.value is not None and self.value != "none"
+
+    @property
+    def citation(self) -> str:
+        return (f"OSM parking restriction {self.value!r}"
+                + (f" on way {self.way_id}" if self.way_id is not None else ""))
+
+
+def _parking_restrictions_from_model(model) -> dict:
+    """{(leg, side): [ParkingRestriction]} from every OSM way lying along each leg.
+
+    Seeded onto the state the way centerline_styles is, so treatments, both renderers and the
+    invariants all read one resolved answer rather than each reaching back into the model - and
+    so a scenario can be handed a state without a model behind it.
+    """
+    out: dict[tuple[str, str], list[ParkingRestriction]] = {}
+    spans = getattr(model, "parking_restriction_spans", None)
+    if spans is None:
+        return out
+    for leg_name in getattr(model, "leg_road_spans", {}):
+        for start_ft, end_ft, sides, way_id in spans(leg_name):
+            for side, value in sides.items():
+                out.setdefault((leg_name, side), []).append(
+                    ParkingRestriction(start_ft=start_ft, end_ft=end_ft, value=value,
+                                        way_id=way_id))
+    for key in out:
+        out[key].sort(key=lambda r: r.start_ft)
+    return out
+
+
+@dataclass(frozen=True)
+class CurbExtension:
+    """One kerb moved into the roadway, and the numbers that put it there.
+
+    Recorded per (leg, side) because that is the degree of freedom the street gives: how deep
+    an extension a leg can take is set by its own spare width, and at Broad & Greenwood the two
+    Broad legs can give 15.0 and 16.8 ft per side while the two Greenwood legs can give 2.3 and
+    4.6. A corner between one of each cannot be extended symmetrically.
+    """
+    extension_ft: float       # how far the kerb moved, measured from the NOMINAL half-width
+    full_ft: float            # station the straight face runs to
+    taper_ft: float           # length of the return to the real kerb
+    face_radius_ft: float     # the corner a passenger car sees
+    swept_radius_ft: float | None = None   # the corner a bus still gets, via the apron
+
+    @property
+    def footprint_ft(self) -> float:
+        """How much kerb the extension occupies end to end - what has to fit inside the length
+        the parking ordinance already prohibits, if it is to cost no spaces."""
+        return self.full_ft + self.taper_ft
+
+
+@dataclass(frozen=True)
+class CornerApron:
+    """A flush, drivable corner surface. Two shapes, because there are two reasons for one.
+
+    `depth_ft` is a fixed reach inward from the corner arc: the standalone treatment
+    (add_mountable_apron), for a corner where a hard bulb-out is not an option.
+
+    `swept_radius_ft` is the radius a large vehicle needs, and the apron is then the ANNULUS
+    between that and `face_radius_ft` (src/geometry/model.py:corner_apron_annulus). This is the
+    one a curb extension lays: the claim it supports is that the swept path survives the
+    tightened corner, and a fixed depth cannot support that claim because nothing ties it to
+    the radius the vehicle needs.
+    """
+    depth_ft: float | None = None
+    swept_radius_ft: float | None = None
+    face_radius_ft: float | None = None
+
+    def __post_init__(self):
+        if (self.depth_ft is None) == (self.swept_radius_ft is None):
+            raise ValueError(
+                "A CornerApron is either a fixed depth inward from the arc (depth_ft) or the "
+                "annulus out to a swept radius (swept_radius_ft) - exactly one, since they are "
+                f"different shapes for different reasons. Got depth_ft={self.depth_ft}, "
+                f"swept_radius_ft={self.swept_radius_ft}.")
+        if self.swept_radius_ft is not None and self.face_radius_ft is None:
+            raise ValueError("An annulus apron needs the face_radius_ft it is measured from.")
+
 
 @dataclass
 class DesignState:
@@ -102,10 +208,24 @@ class DesignState:
     daylight_devices: dict = field(default_factory=dict)  # (leg name, "left"|"right") -> {"kind", "spacing_ft"} -
                                                             # physical objects standing in the daylight zone. See
                                                             # protect_daylight_zone. A kind listed in
-                                                            # CURB_EXTENSION_DEVICES would also cut the setback
-                                                            # under R.S. 39:4-138(e); none does today.
+                                                            # CURB_EXTENSION_DEVICES also cuts the setback under
+                                                            # R.S. 39:4-138(e) from 25 ft to 10 ft.
+    # (leg name, "left"|"right") -> [ParkingRestriction]. What OSM says about this kerb, per
+    # STRETCH of it - seeded from the model in from_model. Read by src/geometry/daylighting.py,
+    # which turns a prohibition into a no-parking zone like any statutory one.
+    parking_restrictions: dict = field(default_factory=dict)
+    # (leg name, "left"|"right") -> CurbExtension. The ONE treatment here that moves a kerb
+    # rather than painting on it, so the Leg's own curb line changes too and every measurement
+    # downstream follows - see add_curb_extension.
+    curb_extensions: dict = field(default_factory=dict)
+    # (leg name, "left"|"right") -> BikeLane. Paint-only: an exclusive lane with its own edge
+    # line, a buffer, and optionally a parking lane outside it - see add_bike_lane.
+    bike_lanes: dict = field(default_factory=dict)
+    # (leg name, "left"|"right") -> spacing_ft. Flex posts in the buffer on the TRAFFIC side of
+    # a bike lane, which is what makes it protected - see add_bike_lane_bollards.
+    bike_lane_bollards: dict = field(default_factory=dict)
     corner_hatching: dict = field(default_factory=dict)  # corner tuple -> depth_ft (paint-only, no curb change)
-    corner_aprons: dict = field(default_factory=dict)  # corner tuple -> extent_ft (mountable apron, no curb change)
+    corner_aprons: dict = field(default_factory=dict)  # corner tuple -> CornerApron (mountable, no curb change)
     crosswalk_offset_overrides: dict = field(default_factory=dict)  # leg name -> +/- delta_ft on top of the
                                                                      # normally-resolved offset (see shift_crosswalk)
     extra_props: list = field(default_factory=list)  # [{"leg","type","offset_ft","side","note"}] - see add_extra_prop
@@ -145,7 +265,8 @@ class DesignState:
             else:
                 centerline_styles[name] = DEFAULT_CENTERLINE_STYLE
         return cls(legs=deepcopy(model.legs), corner_fillets=deepcopy(model.corner_fillets),
-                   centerline_styles=centerline_styles)
+                   centerline_styles=centerline_styles,
+                   parking_restrictions=_parking_restrictions_from_model(model))
 
     def clone(self) -> "DesignState":
         return deepcopy(self)
@@ -164,26 +285,51 @@ def find_corner(state: DesignState, leg_a: str, leg_b: str) -> tuple[str, str]:
     raise KeyError(f"No corner between {leg_a!r} and {leg_b!r} in this state.")
 
 
-def bump_out(state: DesignState, corner: tuple[str, str], radius_ft: float) -> DesignState:
-    """
-    Curb extension / tightened turn radius: rebuild one corner's fillet at a
-    smaller (or larger) radius. A smaller radius simultaneously shortens the
-    pedestrian crossing distance (the curb physically extends into the corner)
-    and slows/tightens the vehicle turning path - the same geometric move
-    serves both treatments described in the design brief.
+def set_corner_radius(state: DesignState, corner: tuple[str, str], radius_ft: float,
+                       source: str = "designed") -> DesignState:
+    """Re-cut one corner's fillet at a different radius. Does NOT shorten a crossing here.
+
+    This was called `bump_out` and its docstring claimed "the curb physically extends into the
+    corner". It does not. It solves a new arc between two curb lines and leaves both of them
+    where they were, so all it moves is the corner itself. Measured on
+    broad_st_east x greenwood_ave_north, 29.2 -> 15.0 ft:
+
+        arc length     19.48 -> 3.51 ft      the arc is genuinely re-cut
+        trimmed_a     156.19 -> 164.19 ft    the curb only runs on to the new tangent point
+        pavement area  23,989.7 -> 23,989.5 sq ft         0.2 sq ft of 24,000
+        crossing spans unchanged to 0.00 ft on all four legs
+
+    Nothing was wrong with the arithmetic; the claim was wrong. The crossings at these
+    junctions sit 21-42 ft out, past the corner, so a radius change never reaches them. What
+    DOES shorten a crossing is add_curb_extension, which moves the kerb line laterally.
+
+    Still a real operation, and the one a curb extension needs: the tightened face a curb
+    extension presents to a passenger car IS a corner radius. `source` is recorded so the plan
+    view can say whether a corner's radius was traced or chosen.
 
     `corner` is a (leg_a, leg_b) key as produced by build_corner_fillets.
     """
     new_state = state.clone()
+    _rebuild_corner(new_state, corner, radius_ft, source)
+    new_state.notes.append(f"set_corner_radius({corner}, radius_ft={radius_ft})")
+    return new_state
+
+
+def _rebuild_corner(state: DesignState, corner: tuple[str, str], radius_ft: float,
+                     source: str) -> None:
+    """Solve `corner`'s fillet afresh off whatever its two curb lines currently are.
+
+    Mutates `state` - callers have already cloned. Separate from set_corner_radius because
+    add_curb_extension needs it too: an extension moves a kerb, and the corner that kerb feeds
+    has to be re-cut against the moved line or the pavement ring still follows the old one.
+    """
     leg_a, leg_b = corner
-    if leg_a not in new_state.legs or leg_b not in new_state.legs:
+    if leg_a not in state.legs or leg_b not in state.legs:
         raise KeyError(f"Corner {corner} references a leg not present in this state.")
     trimmed_a, arc, trimmed_b = fillet_curb_corner(
-        new_state.legs[leg_a].left_curb, new_state.legs[leg_b].right_curb, radius_ft
-    )
-    new_state.corner_fillets[corner] = {"trimmed_a": trimmed_a, "arc": arc, "trimmed_b": trimmed_b, "radius_ft": radius_ft}
-    new_state.notes.append(f"bump_out({corner}, radius_ft={radius_ft})")
-    return new_state
+        state.legs[leg_a].left_curb, state.legs[leg_b].right_curb, radius_ft)
+    state.corner_fillets[corner] = {"trimmed_a": trimmed_a, "arc": arc, "trimmed_b": trimmed_b,
+                                     "radius_ft": radius_ft, "source": source}
 
 
 def refuge_island(state: DesignState, leg_name: str, offset_ft: float, width_ft: float,
@@ -418,12 +564,383 @@ def add_mountable_apron(state: DesignState, corner: tuple[str, str],
     a fire apparatus's rear wheels during a wide turn) since no curb or
     elevation change is introduced. Same footprint as add_corner_hatching, a
     different real-world treatment for corners where a hard bump-out isn't an
-    option (see fire_apparatus_constraint in a proposal's spec)."""
+    option (see fire_apparatus_constraint in a proposal's spec).
+
+    A FIXED DEPTH inward from the corner arc. Where the apron exists to preserve a large
+    vehicle's swept path around a tightened corner, its depth is not free - it has to reach the
+    radius that vehicle needs - so add_curb_extension records CornerApron(swept_radius_ft=...)
+    instead and the annulus is built from the two radii. See CornerApron.
+    """
     if corner not in state.corner_fillets:
         raise KeyError(f"Corner {corner} references a fillet not present in this state.")
     new_state = state.clone()
-    new_state.corner_aprons[corner] = extent_ft
+    new_state.corner_aprons[corner] = CornerApron(depth_ft=extent_ft)
     new_state.notes.append(f"add_mountable_apron({corner}, extent_ft={extent_ft})")
+    return new_state
+
+
+# How wide a face a tightened corner presents to a passenger car. The design figure for the
+# bulb-outs at Broad & Greenwood: a 15 ft radius is a corner a car has to slow for, and the
+# apron behind it (see CornerApron) hands the larger radius back to a bus or a truck. A design
+# choice, not a measurement - which is exactly why the apron's own radius is measured.
+CURB_EXTENSION_FACE_RADIUS_FT = 15.0
+
+
+def add_curb_extension(state: DesignState, leg_name: str, side: str, extension_ft: float,
+                        crossing_ft: float, swept_radius_ft: float | None = None,
+                        face_radius_ft: float = CURB_EXTENSION_FACE_RADIUS_FT,
+                        taper_ft: float | None = None) -> DesignState:
+    """A real curb extension: move this kerb `extension_ft` into the roadway and taper it back.
+
+    This is the treatment set_corner_radius was mistaken for. It changes the KERB LINE, so
+    everything downstream that measures against the kerb follows it without being told:
+    the crossing gets shorter (src/render/crosswalks.py:crosswalk_reach_to_curbs_ft walks out
+    to the real kerb), the pavement polygon loses the corner, the kerbside paint rebuilds
+    against the new edge, and the invariants check the geometry that results.
+
+    HOW LONG. The face runs from the junction to `crossing_ft` plus half a crossing plus the
+    10 ft R.S. 39:4-138(e) setback that the extension itself buys - i.e. it covers exactly the
+    kerb where parking is prohibited once this is built - then tapers back over
+    `extension_ft * BULBOUT_TAPER_RATE`. Nothing about the length is chosen to look right; it
+    is the statutory zone plus a stated taper rate.
+
+    HOW FAR. Bounded by the travel lane that has to survive: an extension deeper than the
+    leg's spare width beside a TARGET_LANE_WIDTH_FT lane is refused rather than clamped,
+    because silently building a shallower bulb-out than the caller asked for is how a drawing
+    stops matching its own description. At Broad & Greenwood that permits the 8 ft asked for on
+    both Broad legs (15.0 and 16.8 ft spare per side) and refuses it on Greenwood (2.3 and
+    4.6 ft) - which is the finding, not an obstacle: Greenwood cannot hold a bulb-out and two
+    11 ft lanes at once.
+
+    WHAT IT COSTS IN PARKING. Nothing, at Broad & Greenwood. Schedule I of the borough code
+    prohibits parking 100 ft each way on both sides of both Broad legs, and the whole footprint
+    - face plus taper - fits inside that, so the extension occupies kerb that is already
+    legally not-parking. A curb extension normally trades spaces for safety; here it does not,
+    and that is the strongest thing that can be said for it.
+
+    `swept_radius_ft` is the corner's OWN measured radius, and passing it lays a mountable
+    apron over the annulus between that and `face_radius_ft` so a bus keeps the path it has
+    today. On CR 518, a rural arterial carrying buses and trucks, that is not optional.
+    """
+    # Local: src/render/crosswalks.py imports DesignState from here, and
+    # src/geometry/daylighting.py reads CURB_EXTENSION_DEVICES from here - both cycles back.
+    # The statutory figure and the crossing depth are single-sourced in those modules and must
+    # not be copied, since the whole length of the face is measured off them.
+    from src.geometry.daylighting import CROSSWALK_SETBACK_WITH_BULBOUT_FT
+    from src.render.crosswalks import CROSSWALK_DEPTH_FT
+
+    if leg_name not in state.legs:
+        raise KeyError(f"Leg {leg_name!r} not present in this state.")
+    if side not in ("left", "right"):
+        raise ValueError(f"side must be 'left' or 'right', got {side!r}")
+    leg = state.legs[leg_name]
+    if leg.curb_to_curb_ft is None:
+        raise ValueError(f"Leg {leg_name!r} has no width - nothing to measure an extension from.")
+
+    spare_ft = leg.curb_to_curb_ft / 2 - TARGET_LANE_WIDTH_FT
+    if extension_ft > spare_ft + LANE_WIDTH_SLACK_FT:
+        raise ValueError(
+            f"A {extension_ft:.1f} ft curb extension on {leg_name} {side} would leave a "
+            f"{leg.curb_to_curb_ft / 2 - extension_ft:.1f} ft travel lane, under the "
+            f"{TARGET_LANE_WIDTH_FT:.0f} ft target. That leg is {leg.curb_to_curb_ft:.1f} ft "
+            f"curb to curb, so it has {spare_ft:.1f} ft per side to give.")
+
+    taper_ft = extension_ft * BULBOUT_TAPER_RATE if taper_ft is None else taper_ft
+    full_ft = crossing_ft + CROSSWALK_DEPTH_FT / 2 + CROSSWALK_SETBACK_WITH_BULBOUT_FT
+    built = curb_extension_line(leg, side, extension_ft, full_ft, taper_ft)
+    if built is None:
+        raise ValueError(
+            f"{leg_name} {side} has no traced kerb to extend - a curb extension is measured "
+            f"from the kerb that is there, and nothing is mapped on that side.")
+
+    new_state = state.clone()
+    setattr(new_state.legs[leg_name], f"{side}_curb", built)
+    new_state.curb_extensions[(leg_name, side)] = CurbExtension(
+        extension_ft=extension_ft, full_ft=full_ft, taper_ft=taper_ft,
+        face_radius_ft=face_radius_ft, swept_radius_ft=swept_radius_ft)
+    # The corner this kerb feeds has to be re-cut against the line that moved, or the pavement
+    # ring keeps following the kerb that is no longer there. build_corner_fillets pairs leg A's
+    # LEFT curb with leg B's RIGHT, so which corner that is depends on the side.
+    corner = _corner_fed_by(new_state, leg_name, side)
+    if corner is not None:
+        _rebuild_corner(new_state, corner, face_radius_ft, "curb_extension")
+        if swept_radius_ft is not None:
+            new_state.corner_aprons[corner] = CornerApron(swept_radius_ft=swept_radius_ft,
+                                                           face_radius_ft=face_radius_ft)
+    new_state.notes.append(
+        f"add_curb_extension({leg_name}, {side}): kerb moved {extension_ft:.1f} ft into the "
+        f"roadway to station {full_ft:.0f} ft, tapering back over {taper_ft:.0f} ft; "
+        f"{face_radius_ft:.0f} ft face"
+        + (f" with a mountable apron out to the corner's measured {swept_radius_ft:.1f} ft"
+           if swept_radius_ft is not None else "")
+        + f". Leaves a {leg.curb_to_curb_ft / 2 - extension_ft:.1f} ft travel lane.")
+    return new_state
+
+
+def _corner_fed_by(state: DesignState, leg_name: str, side: str) -> tuple[str, str] | None:
+    """The corner whose fillet is built from this (leg, side)'s curb line, or None.
+
+    build_corner_fillets' contract: a corner keyed (A, B) is bounded by A's LEFT curb and B's
+    RIGHT curb. So a left side feeds the corner it is first in, a right side the corner it is
+    second in - and each side feeds exactly one.
+    """
+    wanted = 0 if side == "left" else 1
+    for corner in state.corner_fillets:
+        if corner[wanted] == leg_name:
+            return corner
+    return None
+
+
+# AASHTO's minimum width for an exclusive on-street bike lane. A hard floor, not a target: a
+# lane narrower than this is not a bike lane, and proposing one would be proposing something
+# that fails its own standard. It is what rules Greenwood Ave (2.3 and 4.6 ft spare per side)
+# and Princeton Ave (4.1) out of a bike lane entirely - see build_proposal_bike_lanes.
+AASHTO_MIN_BIKE_LANE_FT = 5.0
+# A bike lane hard against the kerb loses its outer foot or so to the gutter pan and to riders
+# keeping clear of the kerb. Holding the lane off the kerb by a shy distance instead buys back
+# usable width without claiming a wider lane than exists. Used on E Broad, a truck route, where
+# 5 ft of lane plus 2 ft of shy reads better than 6 ft of lane against the kerb.
+BIKE_LANE_DEFAULT_SHY_FT = 2.0
+
+
+@dataclass(frozen=True)
+class BikeLane:
+    """One exclusive bike lane, described from the centerline outward.
+
+    Across the road on this side: TARGET_LANE_WIDTH_FT of travel lane, then `buffer_ft` of
+    painted buffer (or just the lane line where there is no buffer), then `width_ft` of bike
+    lane, then `parking_ft` of marked parking, then `shy_ft` of spare asphalt to the kerb. Any
+    of the last three may be zero.
+
+    EVERY WIDTH HERE IS BETWEEN PAINT FACES, not between stripe centrelines, and the stripes'
+    own bodies come out of the buffer rather than out of either lane. A 0.82 ft edge line
+    centred on the 11 ft mark leaves a 10.59 ft travel lane, which
+    check_paint_clear_of_the_travel_lane reports and was right to: it is the same accounting
+    lane_edge_stripes already does for a lane-narrowing buffer.
+
+    `parking_ft` > 0 is the parking-protected form: the parked cars sit OUTSIDE the bike lane,
+    between it and the kerb, so the lane is shielded from moving traffic by the parking rather
+    than only by paint. That ordering is the whole point of it and is why the parking lane's
+    position is part of this record rather than a separate add_marked_parking call.
+    """
+    width_ft: float
+    buffer_ft: float = 0.0
+    parking_ft: float = 0.0
+    shy_ft: float = 0.0
+
+    def __post_init__(self):
+        if self.width_ft < AASHTO_MIN_BIKE_LANE_FT:
+            raise ValueError(
+                f"A {self.width_ft:.1f} ft bike lane is under AASHTO's {AASHTO_MIN_BIKE_LANE_FT:.0f} ft "
+                f"minimum for an exclusive lane. Draw no lane rather than one that fails the "
+                f"standard it is meant to meet.")
+        if self.buffer_ft and self.buffer_ft < 2 * _lane_line_ft():
+            raise ValueError(
+                f"A {self.buffer_ft:.2f} ft buffer cannot hold the two {_lane_line_ft():.2f} ft "
+                f"lines that bound it. Use no buffer - the lane then takes a single line against "
+                f"the travel lane, which is what a conventional bike lane is.")
+
+    @property
+    def has_outer_line(self) -> bool:
+        """A bike lane's outer edge is always painted, because it is never the kerb.
+
+        This returned False without parking outside, on the reasoning that a conventional bike
+        lane against a kerb is bounded by the kerb. It is not bounded by the kerb here: a lane
+        is a STANDARD width and the asphalt left over between it and the kerb is hatched, the
+        same way an 8 ft parking stall is a standard width with its leftover hatched
+        (add_marked_parking's curb_offset_ft). Without the outer stripe the lane read as running
+        all the way to the kerb - which is why the drawn lanes looked far wider than the 6 ft
+        they were specified at.
+        """
+        return True
+
+    def kerb_hatch_ft(self, available_ft: float) -> float:
+        """Leftover asphalt between the lane's outer stripe and the kerb, to be hatched.
+
+        The variable part of the cross-section, exactly as it is for a parking lane: the travel
+        lane holds its width, the bike lane holds its width, and the hatching absorbs everything
+        the street happens to have. `available_ft` is the room to the kerb at the station being
+        drawn, so this pinches to nothing where a leg narrows rather than pushing paint over the
+        kerb.
+        """
+        return max(available_ft - self.offsets_from_centerline_ft()["outer_ft"], 0.0)
+
+    @property
+    def total_ft(self) -> float:
+        """Everything this side needs, travel lane and stripes included."""
+        return self.offsets_from_centerline_ft()["outer_ft"] + self.shy_ft
+
+    def offsets_from_centerline_ft(self) -> dict:
+        """Where each boundary sits, as a distance from the centerline.
+
+        One place, so the plan view, the 3D export and the checks cannot disagree about which
+        stripe is which - the ordering across the road IS the design. Each `*_line_ft` is the
+        stripe's CENTRE, offset half a stripe outward from the face it marks so the protected
+        width behind it stays whole.
+        """
+        line_ft = _lane_line_ft()
+        travel_edge = TARGET_LANE_WIDTH_FT
+        # With a buffer the two stripes bounding it come out of the buffer's own width; without
+        # one there is a single stripe and it comes out of nothing but itself.
+        bike_inner = travel_edge + (self.buffer_ft if self.buffer_ft else line_ft)
+        bike_outer = bike_inner + self.width_ft
+        parking_inner = bike_outer + (line_ft if self.has_outer_line else 0.0)
+        return {"travel_lane_edge_ft": travel_edge,
+                "inner_line_ft": travel_edge + line_ft / 2,
+                "buffer_outer_line_ft": bike_inner - line_ft / 2 if self.buffer_ft else None,
+                "bike_inner_ft": bike_inner,
+                "bike_outer_ft": bike_outer,
+                "outer_line_ft": bike_outer + line_ft / 2 if self.has_outer_line else None,
+                "parking_outer_ft": parking_inner + self.parking_ft,
+                "outer_ft": parking_inner + self.parking_ft}
+
+
+def _lane_line_ft() -> float:
+    """The painted width of one edge line. Local import: src/geometry/paint.py imports this
+    module, and the figure is single-sourced there against what the 3D renderer actually lays."""
+    from src.geometry.paint import LANE_EDGE_LINE_WIDTH_FT
+
+    return LANE_EDGE_LINE_WIDTH_FT
+
+
+def bike_lane_spare_ft(state: DesignState, leg_name: str, side: str, width_ft: float,
+                        buffer_ft: float = 0.0, parking_ft: float = 0.0) -> float:
+    """Room left over on this kerb after a bike lane cross-section, at its narrowest point.
+
+    What a caller sizing a shy distance needs, and it goes through BikeLane's own accounting
+    rather than being re-derived: a caller subtracting the travel lane and the lane width by
+    hand misses the lane LINE, which is 0.82 ft and the difference between a section that fits
+    e_broad_st_east and one that is refused for being 0.70 ft too wide.
+    """
+    lane = BikeLane(width_ft=width_ft, buffer_ft=buffer_ft, parking_ft=parking_ft)
+    return narrowest_half_width_ft(state.legs[leg_name], side) - lane.total_ft
+
+
+def add_bike_lane(state: DesignState, leg_name: str, side: str, width_ft: float,
+                   buffer_ft: float = 0.0, parking_ft: float = 0.0,
+                   shy_ft: float = 0.0) -> DesignState:
+    """Mark an exclusive bike lane along one side of a leg. Paint only - no kerb moves.
+
+    add_lane_narrowing cannot express this. It paints a BUFFER: a hatched strip of spare
+    asphalt between the travel lane and the kerb, saying "nothing belongs here". A bike lane
+    says the opposite about the same ground - that a specific vehicle belongs in it - so it
+    needs its own edge line on both sides and its own reserved width, and where it is
+    parking-protected it also needs the parking lane to sit OUTSIDE it rather than against the
+    kerb in the ordinary way.
+
+    Refused rather than shrunk when the leg cannot hold the cross-section asked for. The point
+    of the exercise is to find out which legs can take a bike lane, and a lane quietly narrowed
+    to fit answers a different question - see AASHTO_MIN_BIKE_LANE_FT.
+
+    Measured against the NARROWEST point of the traced kerb, not the nominal half-width, because
+    a bike lane is a promise about a whole leg and the two figures differ by feet. broad_st_east
+    is 52.0 ft nominal - 26.0 per side - and its kerbs come within 22.8 ft of the alignment
+    somewhere along the traced run; a cross-section sized off the nominal number would be drawn
+    over the kerb there. This is what turns "verify before promising it corridor-wide" from a
+    caveat into a refusal.
+    """
+    if leg_name not in state.legs:
+        raise KeyError(f"Leg {leg_name!r} not present in this state.")
+    if side not in ("left", "right"):
+        raise ValueError(f"side must be 'left' or 'right', got {side!r}")
+    leg = state.legs[leg_name]
+    if leg.curb_to_curb_ft is None:
+        raise ValueError(f"Leg {leg_name!r} has no width - nothing to fit a bike lane into.")
+
+    lane = BikeLane(width_ft=width_ft, buffer_ft=buffer_ft, parking_ft=parking_ft, shy_ft=shy_ft)
+    available_ft = narrowest_half_width_ft(leg, side)
+    if lane.total_ft > available_ft + LANE_WIDTH_SLACK_FT:
+        raise ValueError(
+            f"{leg_name} {side} comes within {available_ft:.2f} ft of the centerline at its "
+            f"narrowest traced point ({leg.curb_to_curb_ft / 2:.2f} ft nominal), and this "
+            f"cross-section needs {lane.total_ft:.2f} ft ({TARGET_LANE_WIDTH_FT:.0f} travel + "
+            f"{buffer_ft:.1f} buffer + {width_ft:.1f} bike + {parking_ft:.1f} parking + "
+            f"{shy_ft:.1f} shy). Short by {lane.total_ft - available_ft:.2f} ft.")
+
+    new_state = state.clone()
+    new_state.bike_lanes[(leg_name, side)] = lane
+    spare_ft = available_ft - lane.total_ft
+    new_state.notes.append(
+        f"add_bike_lane({leg_name}, {side}): {width_ft:.0f} ft lane"
+        + (f", {buffer_ft:.0f} ft buffer" if buffer_ft else "")
+        + (f", parking-protected behind {parking_ft:.0f} ft of marked parking" if parking_ft
+           else f", {shy_ft:.1f} ft shy of the kerb" if shy_ft else "")
+        + f". Uses {lane.total_ft:.1f} of the {available_ft:.1f} ft this leg has at its "
+          f"narrowest" + (f", {spare_ft:.1f} ft spare." if spare_ft > 0.05 else ".")
+    )
+    return new_state
+
+
+def resolved_crossing_stations(model, state: DesignState) -> dict:
+    """{leg name: the station its crossing is resolved to}, for treatments measured off it.
+
+    A curb extension has to cover its leg's crossing, so it needs to know where that crossing
+    is - and the answer is resolved data, not a parameter: a real OSM-surveyed position where
+    one was matched, else the geometric estimate. Reaching for it here rather than making every
+    scenario re-derive it is what keeps a bulb-out's length tied to the same crossing the
+    renderers draw.
+
+    Local imports for the usual cycle: src/render/crosswalks.py imports DesignState from here.
+    """
+    from src.render.crosswalks import resolve_crosswalk_offsets
+    from src.sources.osm_context import fetch_crossings
+
+    crossings = fetch_crossings(model.center_wgs84, radius_m=CROSSING_CONTEXT_RADIUS_M)
+    return {name: offset.offset_ft
+            for name, offset in resolve_crosswalk_offsets(state, crossings).items()}
+
+
+# Matches src/render/export.py and src/render/plan_view.py, so a crossing resolved for a
+# treatment is the same crossing the renderers resolve rather than one from a different radius.
+CROSSING_CONTEXT_RADIUS_M = 130
+
+
+def bulb_out_corner_pair(state: DesignState, leg_name: str, extension_ft: float,
+                          crossing_ft: float, sides: tuple = ("left", "right")) -> DesignState:
+    """Curb extensions on both kerbs of one leg, each corner's apron out to its OWN traced radius.
+
+    The apron radius is READ FROM THE BASELINE FILLET rather than passed in, which is the point:
+    the four corners at Broad & Greenwood are traced at 29.2, 24.6, 29.0 and 22.9 ft, and a
+    scenario repeating those as literals would keep whatever they were the day it was written.
+    Re-tracing a kerb in OSM now flows through to the apron by itself.
+    """
+    for side in sides:
+        corner = _corner_fed_by(state, leg_name, side)
+        swept_radius_ft = None if corner is None else state.corner_fillets[corner].get("radius_ft")
+        state = add_curb_extension(state, leg_name, side, extension_ft=extension_ft,
+                                    crossing_ft=crossing_ft, swept_radius_ft=swept_radius_ft)
+        state = protect_daylight_zone(state, leg_name, side, kind="curb_extension")
+    return state
+
+
+def add_bike_lane_bollards(state: DesignState, leg_name: str, side: str,
+                            spacing_ft: float = BOLLARD_DEFAULT_SPACING_FT) -> DesignState:
+    """Flex-post delineators down the buffer between a bike lane and the travel lane.
+
+    This is what turns a painted bike lane into a protected one, and the position is the whole
+    point: the posts go on the TRAFFIC side of the lane, in the buffer, because that is the side
+    a rider needs protecting from. Posts in the kerb-side hatching would protect nothing.
+
+    Requires a buffer to stand them in, and refuses rather than improvising when there is none -
+    a lane with no buffer has no room for a post that is not either in the travel lane or in the
+    bike lane. That is a real constraint and not a formality: E Broad St has 17.6 ft from the
+    alignment to its nearest kerb, and an 11 ft lane plus a 5 ft lane plus their two edge stripes
+    already account for 17.6 of it.
+    """
+    lane = state.bike_lanes.get((leg_name, side))
+    if lane is None:
+        raise KeyError(f"({leg_name!r}, {side!r}) has no bike lane - call add_bike_lane first.")
+    if not lane.buffer_ft:
+        raise ValueError(
+            f"({leg_name!r}, {side!r})'s bike lane has no buffer, so there is nowhere to stand a "
+            f"delineator that is not in a travel lane or in the bike lane itself. A protected "
+            f"lane needs a buffer; give it one, or leave the lane conventional and say so.")
+    new_state = state.clone()
+    new_state.bike_lane_bollards[(leg_name, side)] = spacing_ft
+    new_state.notes.append(
+        f"add_bike_lane_bollards({leg_name}, {side}): flex-post delineators at {spacing_ft:.0f} ft "
+        f"in the {lane.buffer_ft:.0f} ft buffer between the travel lane and the bike lane - the "
+        f"traffic side, which is the side that needs protecting.")
     return new_state
 
 
@@ -510,17 +1027,24 @@ def build_sidewalk_pieces(state: DesignState, sidewalk_width_ft: float = 6) -> l
     return pieces
 
 
-# Spacing by device. A flex-post line reads as a delineator at 8 ft.
-DAYLIGHT_DEVICE_SPACING_FT = {"bollards": 8.0}
-# Which devices the statute's "curb extension or bulbout has been constructed" clause can be
-# argued to cover, cutting the setback in R.S. 39:4-138(e) from 25 ft to 10 ft. Nothing this
-# repo places does: a flex-post delineator bends flat under a tyre. Planters were listed
-# here and are not any more - the argument was that a row of them occupies the corner the
-# way a built bulbout does, but they rendered badly and the legal claim was never the
-# Borough's to concede anyway. An actual constructed extension belongs in this set; until
-# something is built, the 25 ft setback governs every kerb here.
-CURB_EXTENSION_DEVICES: frozenset = frozenset()
-VALID_DAYLIGHT_DEVICES = ("bollards",)
+# Spacing by device. A flex-post line reads as a delineator at 8 ft. A curb extension has no
+# spacing - it is one continuous kerb, not a row of objects.
+DAYLIGHT_DEVICE_SPACING_FT = {"bollards": 8.0, "curb_extension": 0.0}
+# Devices drawn as a row of physical objects standing in the zone. A curb extension is not one:
+# it is built ground, already drawn as the kerb itself (add_curb_extension moves the curb line),
+# so src/render/props.py must not also stand posts along it.
+DAYLIGHT_DEVICES_AS_POSTS = frozenset({"bollards"})
+# Which devices the statute's "curb extension or bulbout has been constructed" clause covers,
+# cutting the setback in R.S. 39:4-138(e) from 25 ft to 10 ft.
+#
+# `curb_extension` is in it because add_curb_extension builds the thing the clause names: the
+# kerb line moves and the pavement polygon loses the corner, so the parking lane is physically
+# out of the sight line rather than painted out of it. A flex-post delineator is NOT - it bends
+# flat under a tyre - and planters were listed here once and are not any more, because the
+# argument that a row of them occupies the corner the way a built bulbout does was never the
+# Borough's to concede.
+CURB_EXTENSION_DEVICES: frozenset = frozenset({"curb_extension"})
+VALID_DAYLIGHT_DEVICES = ("bollards", "curb_extension")
 
 
 def protect_daylight_zone(state: DesignState, leg_name: str, side: str, kind: str = "bollards",
@@ -532,13 +1056,25 @@ def protect_daylight_zone(state: DesignState, leg_name: str, side: str, kind: st
     and a street that enforces it.
 
     `kind` can matter legally, not just visually: R.S. 39:4-138(e) cuts the 25 ft setback to
-    10 ft "if a curb extension or bulbout has been constructed", so a device that counts as
-    one buys back kerb for parking. Nothing in CURB_EXTENSION_DEVICES does today - a
-    flex-post is not a constructed extension - so every kind here leaves the setback at
-    25 ft. See src/geometry/daylighting.py for where that is applied.
+    10 ft "if a curb extension or bulbout has been constructed", so a device that counts as one
+    buys back kerb for parking. `curb_extension` does and `bollards` does not - a flex-post
+    bends flat under a tyre. See src/geometry/daylighting.py for where that is applied, and
+    CURB_EXTENSION_DEVICES for why the set has one member and not two.
+
+    Declaring `curb_extension` here is what makes the statutory reduction apply; it does not
+    BUILD anything. add_curb_extension moves the kerb. The two go together, and
+    add_curb_extension's caller is expected to declare the device as well - which is why the
+    note below says which of the two setbacks now governs.
     """
     if kind not in VALID_DAYLIGHT_DEVICES:
         raise ValueError(f"kind must be one of {VALID_DAYLIGHT_DEVICES}, got {kind!r}")
+    if kind in CURB_EXTENSION_DEVICES and (leg_name, side) not in state.curb_extensions:
+        raise ValueError(
+            f"({leg_name!r}, {side!r}) is declared as a {kind!r} daylight device, which cuts the "
+            f"R.S. 39:4-138(e) setback from 25 ft to 10 ft - but no curb extension has been "
+            f"built there. Call add_curb_extension first; the statute's reduction is for an "
+            f"extension that EXISTS, and claiming it without one would let a proposal mark "
+            f"parking 15 ft closer to a crossing than the law allows.")
     spacing_ft = DAYLIGHT_DEVICE_SPACING_FT[kind] if spacing_ft is None else spacing_ft
     new_state = state.clone()
     new_state.daylight_devices[(leg_name, side)] = {"kind": kind, "spacing_ft": spacing_ft}
@@ -565,23 +1101,35 @@ def apply_osm_parking(state: DesignState, model, depth_ft: float = PARKING_STALL
     explicit restriction=none, which is a positive statement that parking is allowed, and an
     untagged side, which is the ordinary residential-street default.
 
+    A RESTRICTION OVER PART OF A KERB gets both. OSM records a restriction that changes part way
+    along a street by splitting the way, which is how "no parking for the first 100 ft from the
+    junction" is expressed - so a kerb can be restricted near the corner and open beyond it. Such
+    a kerb is marked for parking here, and the restricted stretch is carved back out of it by
+    src/geometry/daylighting.py, which treats a mapped prohibition as a no-parking zone exactly
+    like a statutory one: the stretch gets hatched and no stall is marked inside it. Only a kerb
+    restricted along its WHOLE length is hatched end to end.
+
+    That distinction is the reason this reads state.parking_restrictions rather than one way's
+    tags. It used to take the tags of the single way nearest the leg's midpoint, so at Broad &
+    Greenwood a no_parking restriction covering East Broad's first 79.5 ft was dropped in favour
+    of the unrestricted way beyond it, and the render marked stalls where the mapper had just
+    said there is none.
+
     "Unless otherwise specified": a side the scenario has ALREADY treated is left alone, so
     this can be applied as a baseline and then overridden per side.
 
-    Side mapping goes through parking_restriction_by_side, which flips OSM's left/right for
-    legs that run against their way - without which half these legs would have the
-    restriction painted on the wrong kerb.
+    Side mapping goes through parking_restriction_by_side per span, which flips OSM's left/right
+    for ways that run against the leg - without which half these kerbs would have the restriction
+    painted on the wrong side.
     """
-    from src.geometry.intersection import parking_is_restricted, parking_restriction_by_side
-
     new_state = state
     for leg_name in sorted(state.legs):
         if legs is not None and leg_name not in legs:
             continue
         leg = state.legs[leg_name]
-        tags = getattr(model, "leg_osm_tags", {}).get(leg_name, {})
-        aligned = getattr(model, "leg_osm_aligned", {}).get(leg_name, True)
-        sides = parking_restriction_by_side(tags, aligned)
+        leg_length_ft = leg.centerline.length
+        sides = {side: _restriction_summary(state, leg_name, side, leg_length_ft)
+                 for side in ("left", "right")}
 
         def already_treated(side):
             return ((leg_name, side) in new_state.parking_zones
@@ -603,7 +1151,12 @@ def apply_osm_parking(state: DesignState, model, depth_ft: float = PARKING_STALL
                       f"here. Its lanes are {half_ft:.1f} ft as they stand.")
             continue
 
-        restricted = [s for s in untouched if parking_is_restricted(sides[s])]
+        # Hatched end to end only where the restriction covers the whole kerb. A kerb restricted
+        # over PART of its length is marked for parking, and daylighting carves the restricted
+        # stretch back out - see the docstring.
+        restricted = [s for s in untouched
+                      if sides[s].restricted_throughout
+                      or (sides[s].restricted_in_part and sides[s].holds_no_stall)]
         # A standard stall or nothing: an unrestricted kerb with less than one stall's worth
         # of room gets its spare width HATCHED, not left bare. Leaving it bare was keeping
         # the lane at 18 ft on E Broad, which defeats the whole point of the target - and
@@ -623,7 +1176,7 @@ def apply_osm_parking(state: DesignState, model, depth_ft: float = PARKING_STALL
             new_state = add_lane_narrowing(new_state, leg_name, stripe_width_ft=allowance_ft,
                                             sides=tuple(restricted))
             for side in restricted:
-                why = (f"OSM says {sides[side]!r}" if parking_is_restricted(sides[side])
+                why = (sides[side].describe() if sides[side].prohibited_ft
                        else "too narrow for a stall")
                 new_state.notes.append(f"apply_osm_parking({leg_name}, {side}): {allowance_ft:.1f} ft "
                                         f"hatched - {why}")
@@ -637,11 +1190,114 @@ def apply_osm_parking(state: DesignState, model, depth_ft: float = PARKING_STALL
             new_state = add_marked_parking(new_state, leg_name, side,
                                             depth_ft=PARKING_STALL_DEPTH_DEFAULT_FT,
                                             curb_offset_ft=buffer_ft)
-            stated = "restriction=none" if sides[side] == "none" else "no restriction tagged"
             extra = (f" + {buffer_ft:.1f} ft hatched to the kerb" if buffer_ft > 0.05 else "")
             new_state.notes.append(f"apply_osm_parking({leg_name}, {side}): "
-                                    f"{PARKING_STALL_DEPTH_DEFAULT_FT:.0f} ft stalls{extra} - {stated}")
+                                    f"{PARKING_STALL_DEPTH_DEFAULT_FT:.0f} ft stalls{extra} - "
+                                    f"{sides[side].describe()}")
     return new_state
+
+
+@dataclass(frozen=True)
+class RestrictionSummary:
+    """What OSM says about one kerb, reduced to what a treatment and a label need.
+
+    A kerb can now be restricted over part of its length, so "is this side restricted" is no
+    longer a yes/no. Three cases have to be told apart, because they lead to three different
+    markings and three different sentences on the drawing:
+
+      restricted THROUGHOUT   hatch it end to end; no stall anywhere
+      restricted IN PART      mark parking, and let daylighting carve the restricted stretch out
+      not restricted          mark parking (whether tagged "none" or not tagged at all)
+    """
+    prohibited_ft: float           # how much of the kerb OSM forbids parking on
+    kerb_length_ft: float
+    worst_value: str | None        # the prohibition itself, e.g. "no_parking"
+    stated_ft: float               # how much of the kerb OSM says ANYTHING about
+    spans: tuple = ()              # the ParkingRestrictions behind it, in station order
+
+    @property
+    def open_ft(self) -> float:
+        """Kerb OSM does not forbid parking on. Untagged counts as open, which is the same
+        ordinary-street default apply_osm_parking has always applied to an untagged side."""
+        return max(self.kerb_length_ft - self.prohibited_ft, 0.0)
+
+    @property
+    def restricted_throughout(self) -> bool:
+        return self.prohibited_ft >= self.kerb_length_ft - RESTRICTION_COVERAGE_SLACK_FT
+
+    @property
+    def restricted_in_part(self) -> bool:
+        return not self.restricted_throughout and self.prohibited_ft > RESTRICTION_COVERAGE_SLACK_FT
+
+    @property
+    def holds_no_stall(self) -> bool:
+        """Whether what OSM leaves open is too short to park one car in.
+
+        The same "a standard stall or nothing" rule MIN_MARKED_PARKING_DEPTH_FT applies across the
+        road, applied along it. e_broad_st_west is tagged no_stopping over its first 114.5 ft and
+        open for the last 15.5, and 15.5 ft is not a parking space - so marking that kerb for
+        parking would claim a stall that cannot exist, and it is hatched end to end instead.
+        """
+        return self.open_ft < PARKING_STALL_LENGTH_DEFAULT_FT
+
+    def describe(self) -> str:
+        """One clause naming what OSM says, for a note or a plan-view label."""
+        if self.restricted_throughout:
+            return f"OSM says {self.worst_value!r} for the whole kerb"
+        if self.restricted_in_part and self.holds_no_stall:
+            return (f"OSM says {self.worst_value!r} for all but {self.open_ft:.0f} ft, under one "
+                    f"{PARKING_STALL_LENGTH_DEFAULT_FT:.0f} ft stall")
+        if self.restricted_in_part:
+            stretches = ", ".join(f"{r.start_ft:.0f}-{r.end_ft:.0f} ft" for r in self.spans
+                                  if r.prohibits)
+            return f"OSM says {self.worst_value!r} over {stretches}"
+        if self.stated_ft <= RESTRICTION_COVERAGE_SLACK_FT:
+            return "no restriction tagged"
+        return "restriction=none"
+
+
+# How much of a kerb may be untagged before "restricted throughout" stops being true. A way's
+# ends land a foot or two off the leg's own, and OSM splits are not surveyed to the inch.
+RESTRICTION_COVERAGE_SLACK_FT = 2.0
+
+
+def _restriction_summary(state: DesignState, leg_name: str, side: str,
+                          kerb_length_ft: float) -> RestrictionSummary:
+    """Reduce this kerb's ParkingRestriction spans to a RestrictionSummary.
+
+    Spans are clipped to the leg and merged, so a way that runs 900 ft down the block counts
+    only for the part of it that is on this leg, and two ways meeting at a split do not
+    double-count the foot they share.
+    """
+    spans = tuple(state.parking_restrictions.get((leg_name, side), []))
+    prohibited, stated = [], []
+    worst = None
+    for restriction in spans:
+        lo = max(restriction.start_ft, 0.0)
+        hi = min(restriction.end_ft, kerb_length_ft)
+        if hi <= lo:
+            continue
+        if restriction.value is not None:
+            stated.append((lo, hi))
+        if restriction.prohibits:
+            prohibited.append((lo, hi))
+            worst = worst or restriction.value
+    return RestrictionSummary(prohibited_ft=_merged_length_ft(prohibited),
+                               kerb_length_ft=kerb_length_ft, worst_value=worst,
+                               stated_ft=_merged_length_ft(stated), spans=spans)
+
+
+def _merged_length_ft(intervals: list[tuple[float, float]]) -> float:
+    """Total length covered by possibly-overlapping (start, end) intervals."""
+    total, reach = 0.0, None
+    for lo, hi in sorted(intervals):
+        if reach is None or lo > reach:
+            total += hi - lo
+            reach = hi
+        elif hi > reach:
+            total += hi - reach
+            reach = hi
+    return total
 
 
 def complete_centerlines(state: DesignState, style: str = "double_yellow") -> DesignState:

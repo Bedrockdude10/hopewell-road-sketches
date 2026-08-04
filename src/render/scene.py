@@ -114,19 +114,43 @@ class SceneGeometry:
                                   self.crosswalk_bands, props,
                                   marked_crosswalks=self.marked_crosswalks)
 
+    def build_paint_and_posts(self, props: list[dict]) -> tuple[list, list[dict]]:
+        """The paint, and `props` extended with the posts only the paint knows the place of.
+
+        The dependency runs both ways, which is why both come back from one call: the paint
+        needs the props (a hydrant or a stop sign lengthens a daylight zone), and a bike
+        lane's bollards need the paint (the row starts where the crossing stops reaching, a
+        station resolved in the paint builder). Returning them together is what stops one
+        renderer from having posts the other does not - see props.bollard_props_from_paint.
+        """
+        from src.render.props import bollard_props_from_paint
+
+        paint = self.build_paint(props)
+        return paint, props + bollard_props_from_paint(self.state, paint)
+
+    def context(self, props: list[dict], paint: list):
+        """This scene as the one object every invariant reads (src/checks.py:SceneContext).
+
+        Built here because this class is already the single resolution of the geometry both
+        renderers draw - so the invariants are checked against that same resolution rather than
+        against whatever subset of it a call site remembered to pass.
+        """
+        from src.checks import SceneContext
+
+        return SceneContext(model=self.model, state=self.state, pavement=self.pavement,
+                             props=tuple(props), paint=tuple(paint),
+                             crosswalk_bands=self.crosswalk_bands,
+                             crosswalk_offsets=self.crosswalk_offsets,
+                             stop_bars=self.stop_bar_bands)
+
     def check(self, props: list[dict], paint: list) -> list:
         """Every scene invariant, all violations, no raising (src/checks.py)."""
         from src.checks import check_scene
 
-        return check_scene(self.model, self.state, props, self.pavement,
-                            crosswalk_bands=self.crosswalk_bands, stop_bars=self.stop_bar_bands,
-                            paint=paint, crosswalk_offsets=self.crosswalk_offsets)
+        return check_scene(self.context(props, paint))
 
     def assert_valid(self, props: list[dict], paint: list, scenario: str = "") -> None:
         """Raise SceneInvariantError listing every violation, or return quietly."""
         from src.checks import assert_scene_valid
 
-        assert_scene_valid(self.model, self.state, props, self.pavement,
-                            crosswalk_bands=self.crosswalk_bands, stop_bars=self.stop_bar_bands,
-                            scenario=scenario, paint=paint,
-                            crosswalk_offsets=self.crosswalk_offsets)
+        assert_scene_valid(self.context(props, paint), scenario=scenario)

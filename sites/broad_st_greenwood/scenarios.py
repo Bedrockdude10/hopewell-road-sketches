@@ -1,8 +1,13 @@
 """Example treatment scenarios, shared by the Phase 3 plan-view render and the
 Phase 4 3D export so both phases show the exact same design."""
 from src.geometry.treatments import (
-    protect_daylight_zone, all_crosswalks_continental, complete_centerlines, DesignState, add_lane_narrowing, add_marked_parking, apply_osm_parking,
+    TARGET_LANE_WIDTH_FT,
+    add_bike_lane, add_bike_lane_bollards, add_lane_narrowing, add_marked_parking, all_crosswalks_continental,
+    apply_osm_parking, bulb_out_corner_pair, complete_centerlines, DesignState,
+    protect_daylight_zone, resolved_crossing_stations,
 )
+
+GREENWOOD_LEGS = ("greenwood_ave_north", "greenwood_ave_south")
 
 TIGHTENED_RADIUS_FT = 10
 
@@ -83,7 +88,10 @@ def _add_broad_st_both_side_parking(state: DesignState, curb_offset_ft: float = 
 # proposals above. Each is a distinct scenario, not a stack, so they can be
 # compared side by side.
 BROAD_ST_LEGS = ("broad_st_west", "broad_st_east")
-TARGET_LANE_WIDTH_FT = 11  # NACTO/AASHTO urban minor-arterial minimum travel lane width
+# TARGET_LANE_WIDTH_FT is imported from src, not redeclared here. It is a standard
+# (NACTO/AASHTO urban minimum travel lane), not a per-site choice, and four sites each
+# holding their own copy is what src/geometry/treatments.py's own comment on it warns
+# about - a leg could then be narrowed to one number and checked against another.
 
 
 def _narrow_broad_st_to_11ft_lanes(state: DesignState, line_only: bool = False) -> DesignState:
@@ -108,4 +116,167 @@ def _narrow_broad_st_to_11ft_lanes(state: DesignState, line_only: bool = False) 
         half_width_ft = state.legs[leg_name].curb_to_curb_ft / 2
         stripe_width_ft = half_width_ft - TARGET_LANE_WIDTH_FT
         state = add_lane_narrowing(state, leg_name, stripe_width_ft, line_only=line_only)
+    return state
+
+
+# --- Curb extensions with mountable aprons -------------------------------------------------
+#
+# The two Broad St legs only. Greenwood Ave is 26.6 and 31.2 ft curb to curb, so it has 2.3
+# and 4.6 ft per side to give beside an 11 ft travel lane and cannot hold a bulb-out at all;
+# add_curb_extension refuses one rather than quietly building a shallower thing than this
+# docstring describes. That asymmetry is real: a corner treated on the Broad side only still
+# shortens the Broad crossing, which is the one 65 ft long.
+BULBOUT_EXTENSION_FT = 8.0
+BROAD_ST_BULBOUT_LEGS = ("broad_st_east", "broad_st_west")
+
+
+def build_proposal_apron_bulbouts(baseline: DesignState, model=None) -> DesignState:
+    """Curb extensions at all four corners of Broad St, each backed by a mountable apron.
+
+    WHAT IT DOES. Both kerbs of both Broad St legs move 8 ft into the roadway for the length
+    of the crossing plus the statutory setback, then taper back. Measured, not asserted - the
+    crossing is re-measured against the moved kerb the way both renderers measure it:
+
+        broad_st_east    65.0 ft -> 35.5 ft
+        broad_st_west    69.5 ft -> 39.0 ft
+
+    Note which numbers those are. The 52.0 and 55.5 ft in config.yaml are mid-block
+    cross-sections; the crossings are painted where the traced kerbs have already flared
+    through the corner returns, 39.4 and 31.6 ft off the centerline on broad_st_east against
+    a 26.0 ft nominal half-width. So a person crossing Broad St today walks 65 ft of asphalt,
+    not 52, and the extension takes nearly 30 ft off that rather than the 16 ft the
+    cross-section arithmetic suggests. The pavement polygon loses about 1,090 sq ft.
+
+    IT REMOVES NO PARKING. Schedule I of the borough code prohibits parking 100 ft each way
+    on both sides of both Broad St legs. Each extension's whole footprint - the straight face
+    plus the taper - is 74 ft, so it occupies kerb that is already legally not-parking. A
+    curb extension normally trades spaces for safety; this one does not, and that is the
+    strongest thing that can be said for it to a Borough council.
+    tests/test_curb_extensions.py pins the footprint against the 100 ft, so the claim cannot
+    quietly stop being true.
+
+    THE APRON IS NOT OPTIONAL. Broad St is CR 518, a rural arterial carrying buses and
+    trucks. Each extension presents a 15 ft face to a passenger car, and the annulus from
+    that out to the corner's OWN measured radius is laid as mountable apron - flush, drivable,
+    read as corner rather than carriageway. The four corners here are traced at 29.2, 24.6,
+    29.0 and 22.9 ft and each apron is built to its own, read off the baseline fillet rather
+    than repeated here as a literal, so re-tracing a kerb in OSM flows straight through. The
+    swept path a bus has today is preserved by construction, not by assertion.
+
+    AND IT BUYS BACK KERB. A constructed extension triggers the second clause of
+    R.S. 39:4-138(e), which cuts the no-parking setback from 25 ft to 10 ft. The four treated
+    kerbs are declared as `curb_extension` daylight devices, and each one's no-parking zone
+    shortens by exactly that 15 ft: 63.7 -> 48.7, 63.0 -> 48.0, 66.6 -> 51.6 and 59.2 -> 44.2 ft.
+    Sixty feet of kerb across the junction returned to potential parking, on top of the zero it
+    costs. Nothing is drawn differently to claim it; the statute applies because the thing it
+    names has been built.
+
+    It arrives through the SIDE LINE arm, not the crosswalk arm, and the difference is worth
+    knowing before anyone quotes it. The clause reads "within 25 feet of the nearest crosswalk
+    OR side line", further wins, and src/geometry/daylighting.py:sideline_station_ft takes the
+    corner fillet's tangent point as a deliberately conservative stand-in for the side line -
+    34-42 ft out at these corners against a crossing at 21 ft. So the side line binds. That
+    makes these zones longer than the statute strictly requires, which is the safe direction to
+    err, and it is the same corner-tangent proxy the known-open leg_clearance_ft thread is
+    about: tightening it would return more kerb still.
+
+    BROAD ST'S KERBS ARE HATCHED, NOT MARKED FOR PARKING, and that is a correction rather than
+    a style choice. apply_osm_parking reads the OSM tags, and neither Broad St leg carries a
+    parking:*:restriction at all - so from OSM alone the kerb looks parkable and the first
+    version of this proposal duly marked 8 ft stalls starting about 50 ft out. Schedule I
+    prohibits parking there for 100 ft. The drawing was asserting something the ordinance
+    forbids, in the same proposal whose central claim is that Schedule I already bans parking on
+    this kerb - so the ordinance is used as the source it is, and the spare width is hatched the
+    way any restricted kerb here is hatched.
+
+    That gap is not this junction's alone: the borough ordinance (Schedules I-IV) is
+    under-tagged in OSM at all four sites, and until it is tagged, a scenario that derives
+    kerbside parking from OSM tags will over-mark exactly where the ordinance is strictest.
+    Greenwood Ave IS tagged (no_parking on three of its four kerbs) so it keeps its OSM-derived
+    markings, and the junction still reads as a whole street.
+    """
+    if model is None:
+        return baseline
+    state = apply_osm_parking(baseline, model, legs=GREENWOOD_LEGS)
+    state = complete_centerlines(state)
+    state = all_crosswalks_continental(state)
+    # Schedule I, not OSM: no parking for 100 ft either way, so the spare asphalt beside an
+    # 11 ft lane is hatched rather than marked. Sized per leg from its own measured width.
+    for leg_name in BROAD_ST_BULBOUT_LEGS:
+        spare_ft = state.legs[leg_name].curb_to_curb_ft / 2 - TARGET_LANE_WIDTH_FT
+        state = add_lane_narrowing(state, leg_name, stripe_width_ft=spare_ft)
+    crossing_at = resolved_crossing_stations(model, baseline)
+    for leg_name in BROAD_ST_BULBOUT_LEGS:
+        state = bulb_out_corner_pair(state, leg_name, extension_ft=BULBOUT_EXTENSION_FT,
+                                      crossing_ft=crossing_at[leg_name])
+    return state
+
+
+# --- Bike lanes ----------------------------------------------------------------------------
+#
+# Buffered, not parking-protected, and the reason is worth keeping in the file.
+#
+# The parking-protected section - 8 parking + 3 buffer + 6 bike + 11 + 11 + 6 bike + 3 buffer
+# - totals 48 ft, which does fit inside 52.0 and 55.5 ft of roadway. But the total is not the
+# constraint. Everything in this project is measured as an offset from the leg centerline (the
+# NJDOT alignment), and the PARKING SIDE alone needs 28.0 ft of it. broad_st_east has 26.0 ft
+# nominal and 22.8 at its narrowest traced point; broad_st_west has 27.8 and 25.9. Both short.
+#
+# Fitting it would mean shifting the travel lanes off the alignment, which is a real design
+# and not one this pipeline can draw: the alignment is the datum every offset, stop bar and
+# crossing frame is measured from. Rather than draw 48 ft of paint across a leg that narrows
+# to 46.5 ft, the proposal uses the buffered section, which fits at both legs' NARROWEST
+# traced cross-section and not merely at their nominal one.
+#
+# The parking-protected form is also less useful here than it looks: Schedule I bans parking
+# for 100 ft from the junction and Schedule III's 2-hour parking on the south side only starts
+# about 114 ft out, so there is almost no legal parking inside the area these renders cover to
+# protect a lane with.
+BIKE_LANE_WIDTH_FT = 6.0     # AASHTO's 5 ft minimum plus a foot; Broad St can afford it
+BIKE_LANE_BUFFER_FT = 3.0    # painted separation from an 11 ft travel lane on an arterial
+BIKE_LANE_BOLLARD_SPACING_FT = 8.0  # same flex-post pitch a daylight zone uses - reads as a
+                                     # continuous delineator rather than a row of dots
+
+
+def build_proposal_bike_lanes(baseline: DesignState, model=None) -> DesignState:
+    """Buffered bike lanes both sides of both Broad St legs. Greenwood Ave gets none.
+
+    Per side, outward from the centerline: 11 ft travel lane, 3 ft painted buffer with flex-post
+    delineators down it, 6 ft bike lane, then the leftover asphalt HATCHED to the kerb. That last
+    part matters: a bike lane is a standard width and the street's spare width is not part of it,
+    the same accounting an 8 ft parking stall gets when the remainder becomes a hatched kerb
+    buffer. Without the outer stripe and that hatching the lane read as running all the way to
+    the kerb and looked far wider than the 6 ft it is.
+
+    PROTECTED, not just painted. The delineators stand in the buffer on the TRAFFIC side of the
+    lane, which is the side a rider needs protecting from - posts in the kerb-side hatching would
+    protect nothing. The 3 ft buffer is what makes that possible, and it is why E Broad's lanes
+    (see that site's scenarios.py) cannot be protected: 17.6 ft to its nearest kerb is fully spent
+    on an 11 ft lane, a 5 ft lane and their two stripes.
+
+    The cross-section takes 20.8 ft of the 21.3 ft broad_st_east has where its kerbs come closest
+    to the alignment, and of the 25.9 ft broad_st_west has - so it holds for the whole traced
+    length of both legs rather than only where they are widest. broad_st_east is the binding case,
+    and its kerb hatching pinches from about 5 ft down to half a foot at that narrow point.
+
+    GREENWOOD AVE IS NOT PROPOSED FOR ONE. It has 2.3 ft (north) and 4.6 ft (south) per side
+    spare beside an 11 ft lane, both under AASHTO's 5 ft minimum for an exclusive lane. A
+    narrower lane is not a bike lane, and drawing one would be proposing something that fails
+    the standard it is meant to meet - the sort of thing that gets waved through because the
+    picture looks plausible. add_bike_lane refuses it; this is why.
+
+    Greenwood's kerbs keep the OSM-derived markings the other proposals give them, so the
+    junction still reads as a whole street rather than two treated legs floating in it.
+    """
+    if model is None:
+        return baseline
+    state = apply_osm_parking(baseline, model, legs=GREENWOOD_LEGS)
+    state = complete_centerlines(state)
+    state = all_crosswalks_continental(state)
+    for leg_name in BROAD_ST_LEGS:
+        for side in ("left", "right"):
+            state = add_bike_lane(state, leg_name, side, width_ft=BIKE_LANE_WIDTH_FT,
+                                   buffer_ft=BIKE_LANE_BUFFER_FT)
+            state = add_bike_lane_bollards(state, leg_name, side,
+                                            spacing_ft=BIKE_LANE_BOLLARD_SPACING_FT)
     return state

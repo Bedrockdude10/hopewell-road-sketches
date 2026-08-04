@@ -211,6 +211,13 @@ def build_scene(data: dict):
         add_paint_polyline(f"parking_buffer_taper_{i}", line, 0.15, marking_mat, z_base=marking_z)
     for i, line in enumerate(data.get("parking_buffer_hatch_lines", [])):
         add_paint_line(f"parking_buffer_hatch_{i}", line[0], line[-1], 0.15, marking_mat, z_base=marking_z)
+    # An exclusive bike lane's two edge lines and the hatched buffer beside it. Sampled
+    # polylines for the edges (they follow the traced kerb's own station grid), straight
+    # two-point strokes for the hatch, same as every other zone above.
+    for i, line in enumerate(data.get("bike_lane_edge_lines", [])):
+        add_paint_polyline(f"bike_lane_edge_{i}", line, 0.25, marking_mat, z_base=marking_z)
+    for i, line in enumerate(data.get("bike_lane_hatch_lines", [])):
+        add_paint_line(f"bike_lane_hatch_{i}", line[0], line[-1], 0.15, marking_mat, z_base=marking_z)
 
     for island in data.get("refuge_islands", []):
         extrude_polygon(f"refuge_{island['name']}", island["coords"], island.get("height_m", 0.15), refuge_mat)

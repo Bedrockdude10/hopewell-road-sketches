@@ -16,12 +16,17 @@ import numpy as np
 import pytest
 from shapely.geometry import LineString
 
-from src.checks import PAINT_PAST_CURB_TOLERANCE_FT, check_paint_inside_the_curb
+from src.checks import (PAINT_PAST_CURB_TOLERANCE_FT, PaintInsideTheCurb, SceneContext)
 from src.geometry.model import (curb_offsets_at_stations, curb_station_span,
                                 curbside_strip_polygon, inset_line_ft,
                                 lane_narrowing_polygons_ft, parking_stall_lines_ft,
                                 station_offset_many)
+from src.geometry.markings import (BUFFER_EDGE_LINE, BUFFER_FILL, CORNER_HATCH_FILL,
+                                   CROSSING_RIM_LINE, DAYLIGHT_EDGE_LINE, DAYLIGHT_FILL,
+                                   LANE_EDGE_LINE, LANE_NARROWING_FILL, PARKING_EDGE_LINE,
+                                   STALL_DIVIDER, TAPER_LINE)
 from src.geometry.paint import PaintPiece
+from src.geometry.treatments import DesignState
 from src.render.crosswalks import CrosswalkOffset
 
 
@@ -176,21 +181,23 @@ def test_curb_offsets_are_read_at_the_station_asked_for():
 # The invariant
 # --------------------------------------------------------------------------
 
-class FakeState:
-    def __init__(self, legs):
-        self.legs = legs
-        self.corner_fillets = {}
-        self.notes = []
+def a_state(legs):
+    """A DesignState over these legs, with every treatment field at its default.
 
-    def clone(self):
-        return self
+    The real dataclass, not a stub of it. There was a FakeState here and each test then
+    assigned the six or seven treatment dicts curbside_paint_ft happens to read - which meant
+    adding a field to DesignState broke these tests with an AttributeError from inside the
+    builder instead of a failure about behaviour, and a test could silently stop covering a
+    field nobody remembered to add. DesignState defaults them all.
+    """
+    return DesignState(legs=legs, corner_fillets={})
 
 
 def test_paint_over_the_curb_is_a_violation():
     leg = traced(a_leg(), "left", [(20, 15), (130, 15)])
     over = LineString([(40, 18), (120, 18)])            # 3 ft outside the kerb
-    violations = check_paint_inside_the_curb(FakeState({"east": leg}),
-                                              [PaintPiece("lane_edge_line", over, "east", "left")])
+    violations = PaintInsideTheCurb().run(SceneContext(state=a_state({"east": leg}),
+                                              paint=[PaintPiece(LANE_EDGE_LINE, over, "east", "left")]))
     assert len(violations) == 1
     assert violations[0].check == "paint_over_the_curb"
     assert "3.0 ft past" in violations[0].detail
@@ -200,8 +207,8 @@ def test_paint_meeting_the_curb_is_fine():
     """A curbside marking touches the kerb by definition - this is not a clearance check."""
     leg = traced(a_leg(), "left", [(20, 15), (130, 15)])
     at_the_kerb = LineString([(40, 15), (120, 15)])
-    assert not check_paint_inside_the_curb(FakeState({"east": leg}),
-                                            [PaintPiece("lane_edge_line", at_the_kerb, "east", "left")])
+    assert not PaintInsideTheCurb().run(SceneContext(state=a_state({"east": leg}),
+                                            paint=[PaintPiece(LANE_EDGE_LINE, at_the_kerb, "east", "left")]))
 
 
 def test_the_violation_is_measured_against_the_traced_kerb_not_the_nominal_width():
@@ -209,8 +216,8 @@ def test_the_violation_is_measured_against_the_traced_kerb_not_the_nominal_width
     12 ft is inside the nominal road and 3 ft up on the footway."""
     leg = traced(a_leg(width_ft=30.0), "left", [(20, 9.0), (130, 9.0)])
     paint = LineString([(40, 12), (120, 12)])
-    violations = check_paint_inside_the_curb(FakeState({"east": leg}),
-                                              [PaintPiece("lane_edge_line", paint, "east", "left")])
+    violations = PaintInsideTheCurb().run(SceneContext(state=a_state({"east": leg}),
+                                              paint=[PaintPiece(LANE_EDGE_LINE, paint, "east", "left")]))
     assert violations, "measured against the nominal half-width this passes, and it should not"
 
 
@@ -218,17 +225,17 @@ def test_a_corner_treatment_is_not_measured_against_one_leg():
     """corner_hatch_fill/apron span the corner between two legs, so neither side applies."""
     leg = traced(a_leg(), "left", [(20, 15), (130, 15)])
     way_outside = LineString([(40, 60), (120, 60)])
-    assert not check_paint_inside_the_curb(FakeState({"east": leg}),
-                                            [PaintPiece("corner_hatch_fill", way_outside)])
+    assert not PaintInsideTheCurb().run(SceneContext(state=a_state({"east": leg}),
+                                            paint=[PaintPiece(CORNER_HATCH_FILL, way_outside)]))
 
 
 def test_the_tolerance_allows_sampling_noise_and_nothing_more():
     leg = traced(a_leg(), "left", [(20, 15), (130, 15)])
     just_inside = LineString([(40, 15 + PAINT_PAST_CURB_TOLERANCE_FT / 2), (120, 15)])
     just_outside = LineString([(40, 15 + PAINT_PAST_CURB_TOLERANCE_FT * 3), (120, 15)])
-    state = FakeState({"east": leg})
-    assert not check_paint_inside_the_curb(state, [PaintPiece("hatch", just_inside, "east", "left")])
-    assert check_paint_inside_the_curb(state, [PaintPiece("hatch", just_outside, "east", "left")])
+    state = a_state({"east": leg})
+    assert not PaintInsideTheCurb().run(SceneContext(state=state, paint=[PaintPiece(BUFFER_FILL, just_inside, "east", "left")]))
+    assert PaintInsideTheCurb().run(SceneContext(state=state, paint=[PaintPiece(BUFFER_FILL, just_outside, "east", "left")]))
 
 
 def test_the_right_side_is_measured_against_the_right_kerb():
@@ -236,8 +243,8 @@ def test_the_right_side_is_measured_against_the_right_kerb():
     on the right-hand side of the leg."""
     leg = traced(a_leg(), "right", [(20, 15), (130, 15)])
     over = LineString([(40, -18), (120, -18)])
-    assert check_paint_inside_the_curb(FakeState({"east": leg}),
-                                        [PaintPiece("lane_edge_line", over, "east", "right")])
+    assert PaintInsideTheCurb().run(SceneContext(state=a_state({"east": leg}),
+                                        paint=[PaintPiece(LANE_EDGE_LINE, over, "east", "right")]))
 
 
 # --------------------------------------------------------------------------
@@ -247,13 +254,13 @@ def test_the_right_side_is_measured_against_the_right_kerb():
 def test_lane_narrowing_strips_stay_inside_the_kerb():
     leg = traced(a_leg(width_ft=30.0), "left", [(20, 12.0), (75, 13.0), (130, 12.0)])
     leg = traced(leg, "right", [(20, 16.0), (130, 16.0)])
-    state = FakeState({"east": leg})
-    pieces = [PaintPiece("lane_narrowing_fill", poly, "east", side)
+    state = a_state({"east": leg})
+    pieces = [PaintPiece(LANE_NARROWING_FILL, poly, "east", side)
               for side in ("left", "right")
               for poly in lane_narrowing_polygons_ft(leg, 4.0, start_left_ft=40.0,
                                                       start_right_ft=40.0, sides=(side,))]
     assert len(pieces) == 2
-    assert not check_paint_inside_the_curb(state, pieces)
+    assert not PaintInsideTheCurb().run(SceneContext(state=state, paint=pieces))
 
 
 # --------------------------------------------------------------------------
@@ -316,11 +323,11 @@ def test_two_fills_over_the_same_ground_is_a_collision():
     """
     from shapely.geometry import box
 
-    from src.checks import check_markings_do_not_collide
+    from src.checks import MarkingsDoNotCollide, SceneContext
 
-    outer = PaintPiece("daylight_fill", box(0, 0, 50, 10), "east", "left")
-    inner = PaintPiece("daylight_fill", box(19, 0, 39, 10), "east", "left")
-    violations = check_markings_do_not_collide([outer, inner])
+    outer = PaintPiece(DAYLIGHT_FILL, box(0, 0, 50, 10), "east", "left")
+    inner = PaintPiece(DAYLIGHT_FILL, box(19, 0, 39, 10), "east", "left")
+    violations = MarkingsDoNotCollide().run(SceneContext(paint=[outer, inner]))
     assert len(violations) == 1
     assert violations[0].check == "markings_collide"
     assert "200 sq ft" in violations[0].detail
@@ -330,42 +337,42 @@ def test_fills_that_merely_abut_are_fine():
     """The junction zone ends exactly where the stalls begin - by design, not by accident."""
     from shapely.geometry import box
 
-    from src.checks import check_markings_do_not_collide
+    from src.checks import MarkingsDoNotCollide, SceneContext
 
-    a = PaintPiece("daylight_fill", box(0, 0, 50, 10), "east", "left")
-    b = PaintPiece("buffer_fill", box(50, 0, 90, 10), "east", "left")
-    assert not check_markings_do_not_collide([a, b])
+    a = PaintPiece(DAYLIGHT_FILL, box(0, 0, 50, 10), "east", "left")
+    b = PaintPiece(BUFFER_FILL, box(50, 0, 90, 10), "east", "left")
+    assert not MarkingsDoNotCollide().run(SceneContext(paint=[a, b]))
 
 
 def test_two_lines_down_the_same_stretch_is_a_collision():
     """daylight_edge_line and parking_edge_line sit at the SAME offset - the lane edge - and
     are kept apart only by their station ranges. If a range ever overlaps, both get painted."""
-    from src.checks import check_markings_do_not_collide
+    from src.checks import MarkingsDoNotCollide, SceneContext
 
-    a = PaintPiece("daylight_edge_line", LineString([(0, 11), (60, 11)]), "east", "left")
-    b = PaintPiece("parking_edge_line", LineString([(40, 11), (100, 11)]), "east", "left")
-    violations = check_markings_do_not_collide([a, b])
+    a = PaintPiece(DAYLIGHT_EDGE_LINE, LineString([(0, 11), (60, 11)]), "east", "left")
+    b = PaintPiece(PARKING_EDGE_LINE, LineString([(40, 11), (100, 11)]), "east", "left")
+    violations = MarkingsDoNotCollide().run(SceneContext(paint=[a, b]))
     assert violations and "run along each other" in violations[0].detail
 
 
 def test_a_stall_divider_crossing_the_lane_edge_is_not_a_collision():
     """A divider meets the lane edge at right angles - that is what a divider does. A check
     that flagged every touch would fire on every correct drawing and get switched off."""
-    from src.checks import check_markings_do_not_collide
+    from src.checks import MarkingsDoNotCollide, SceneContext
 
-    edge = PaintPiece("parking_edge_line", LineString([(0, 11), (100, 11)]), "east", "left")
-    divider = PaintPiece("stall_divider", LineString([(40, 11), (40, 19)]), "east", "left")
-    assert not check_markings_do_not_collide([edge, divider])
+    edge = PaintPiece(PARKING_EDGE_LINE, LineString([(0, 11), (100, 11)]), "east", "left")
+    divider = PaintPiece(STALL_DIVIDER, LineString([(40, 11), (40, 19)]), "east", "left")
+    assert not MarkingsDoNotCollide().run(SceneContext(paint=[edge, divider]))
 
 
 def test_a_hatch_stroke_ending_on_its_own_boundary_line_is_not_a_collision():
     """Measured on the real geometry: a buffer stroke ends at offset -19.000000000 and the
     buffer's edge line is at -19.0. It touches its own boundary, which is correct."""
-    from src.checks import check_markings_do_not_collide
+    from src.checks import MarkingsDoNotCollide, SceneContext
 
-    edge = PaintPiece("buffer_edge_line", LineString([(0, 19), (100, 19)]), "east", "left")
-    stroke = PaintPiece("buffer_fill_stroke", LineString([(45, 22.2), (48.9, 19.0)]), "east", "left")
-    assert not check_markings_do_not_collide([edge, stroke])
+    edge = PaintPiece(BUFFER_EDGE_LINE, LineString([(0, 19), (100, 19)]), "east", "left")
+    stroke = PaintPiece(TAPER_LINE, LineString([(45, 22.2), (48.9, 19.0)]), "east", "left")
+    assert not MarkingsDoNotCollide().run(SceneContext(paint=[edge, stroke]))
 
 
 # --------------------------------------------------------------------------
@@ -387,7 +394,7 @@ def test_the_taper_aims_past_a_skewed_crossing_on_the_side_it_reaches_furthest()
 
     leg = traced(a_leg(width_ft=30.0), "left", [(10, 15), (130, 15)])
     leg = traced(leg, "right", [(10, 15), (130, 15)])
-    state = FakeState({"east": leg})
+    state = a_state({"east": leg})
     # Skewed: its far edge runs from (30, 15) at the left kerb to (20, -15) at the right.
     skewed = Polygon([(24, 15), (30, 15), (20, -15), (14, -15)])
 
@@ -425,7 +432,7 @@ def test_the_taper_also_clears_the_cross_streets_crossing():
     from src.geometry.paint import leg_anchors
 
     leg = traced(a_leg(width_ft=30.0), "left", [(10, 15), (130, 15)])
-    state = FakeState({"east": leg})
+    state = a_state({"east": leg})
     state.corner_fillets = {}
     own = Polygon([(22, 15), (28, 15), (28, -15), (22, -15)])
     # The cross street's crossing, lying across this leg's left side further out.
@@ -443,7 +450,7 @@ def test_no_crossing_geometry_falls_back_to_the_offset():
     from src.render.crosswalks import CROSSWALK_CLEARANCE_FT
 
     leg = traced(a_leg(), "left", [(10, 15), (130, 15)])
-    state = FakeState({"east": leg})
+    state = a_state({"east": leg})
     state.corner_fillets = {}
     at = leg_anchors(state, "east", "left", crossing_at(25.0), None)
     assert at.target_ft == pytest.approx(25.0 + CROSSWALK_CLEARANCE_FT)
@@ -579,17 +586,14 @@ def test_a_daylight_zone_is_square_ended():
 
     leg = traced(a_leg(width_ft=40.0, length_ft=130.0), "left", [(10, 20), (130, 20)])
     leg = traced(leg, "right", [(10, 20), (130, 20)])
-    state = FakeState({"east": leg})
-    state.lane_narrowing, state.lane_narrowing_sides, state.lane_narrowing_line_only = {}, {}, set()
-    state.bollard_lines, state.parking_buffer_bollards = {}, {}
-    state.corner_hatching, state.corner_aprons = {}, {}
+    state = a_state({"east": leg})
     state.parking_zones = {("east", "left"): {"depth_ft": 8.0, "stall_length_ft": 22.0,
                                                 "curb_offset_ft": 1.0}}
 
     paint = curbside_paint_ft(state, crossing_at(20.0), None)
-    fills = [p for p in paint if p.kind == "daylight_fill"]
+    fills = [p for p in paint if p.kind is DAYLIGHT_FILL]
     assert fills, "the daylight zone has to be drawn at all"
-    assert not [p for p in paint if "taper" in p.kind], "a keep-clear zone has no taper"
+    assert not [p for p in paint if "taper" in p.kind.name], "a keep-clear zone has no taper"
 
     for piece in fills:
         stations, _ = stations_of(piece.geometry, leg)
@@ -610,17 +614,14 @@ def test_a_fill_cut_by_a_crossing_gets_a_line_along_the_cut():
 
     leg = traced(a_leg(width_ft=40.0, length_ft=130.0), "left", [(10, 20), (130, 20)])
     leg = traced(leg, "right", [(10, 20), (130, 20)])
-    state = FakeState({"east": leg})
-    state.lane_narrowing, state.lane_narrowing_sides, state.lane_narrowing_line_only = {}, {}, set()
-    state.bollard_lines, state.parking_buffer_bollards = {}, {}
-    state.corner_hatching, state.corner_aprons = {}, {}
+    state = a_state({"east": leg})
     state.parking_zones = {("east", "left"): {"depth_ft": 8.0, "stall_length_ft": 22.0,
                                                 "curb_offset_ft": 1.0}}
     band = box(18, -20, 24, 20)
 
     paint = curbside_paint_ft(state, crossing_at(21.0), None, {"east": band},
                                marked_crosswalks={"east"})
-    rims = [p for p in paint if p.kind == "crossing_rim_line"]
+    rims = [p for p in paint if p.kind is CROSSING_RIM_LINE]
     assert rims, "no line drawn where the zone meets the crossing"
     # It runs across the zone's depth, and it hugs the crossing.
     for r in rims:
@@ -633,14 +634,11 @@ def test_no_rim_where_there_is_no_crossing_to_cut_against():
 
     leg = traced(a_leg(width_ft=40.0, length_ft=130.0), "left", [(10, 20), (130, 20)])
     leg = traced(leg, "right", [(10, 20), (130, 20)])
-    state = FakeState({"east": leg})
-    state.lane_narrowing, state.lane_narrowing_sides, state.lane_narrowing_line_only = {}, {}, set()
-    state.bollard_lines, state.parking_buffer_bollards = {}, {}
-    state.corner_hatching, state.corner_aprons = {}, {}
+    state = a_state({"east": leg})
     state.parking_zones = {("east", "left"): {"depth_ft": 8.0, "stall_length_ft": 22.0,
                                                 "curb_offset_ft": 1.0}}
     paint = curbside_paint_ft(state, crossing_at(21.0), None)
-    assert not [p for p in paint if p.kind == "crossing_rim_line"]
+    assert not [p for p in paint if p.kind is CROSSING_RIM_LINE]
 
 
 def test_sampled_polylines_are_rendered_as_polylines_not_chords():
@@ -708,18 +706,18 @@ def test_the_travel_lane_check_measures_against_the_real_kerb():
     """W Broad's north-east approach has the alignment 7.2 ft from its right kerb and 25-31 ft
     from its left. There is no 11 ft lane to protect on that side, so paint clamped to the
     kerb is correct - measuring against the NOMINAL half-width called it a violation."""
-    from src.checks import check_paint_clear_of_the_travel_lane
+    from src.checks import PaintClearOfTheTravelLane, SceneContext
 
     leg = traced(a_leg(width_ft=30.0), "left", [(10, 7.2), (130, 7.2)])   # nominal half 15
-    state = FakeState({"east": leg})
-    at_the_kerb = PaintPiece("lane_edge_line", LineString([(30, 6.79), (120, 6.79)]),
+    state = a_state({"east": leg})
+    at_the_kerb = PaintPiece(LANE_EDGE_LINE, LineString([(30, 6.79), (120, 6.79)]),
                               "east", "left")
-    assert not check_paint_clear_of_the_travel_lane(state, [at_the_kerb])
+    assert not PaintClearOfTheTravelLane().run(SceneContext(state=state, paint=[at_the_kerb]))
 
     roomy = traced(a_leg(width_ft=30.0), "left", [(10, 15.0), (130, 15.0)])
-    intruding = PaintPiece("lane_edge_line", LineString([(30, 11.0), (120, 11.0)]),
+    intruding = PaintPiece(LANE_EDGE_LINE, LineString([(30, 11.0), (120, 11.0)]),
                             "east", "left")
-    violations = check_paint_clear_of_the_travel_lane(FakeState({"east": roomy}), [intruding])
+    violations = PaintClearOfTheTravelLane().run(SceneContext(state=a_state({"east": roomy}), paint=[intruding]))
     assert violations and violations[0].check == "paint_in_the_travel_lane"
 
 

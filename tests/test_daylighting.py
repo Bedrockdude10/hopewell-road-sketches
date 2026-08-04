@@ -13,19 +13,18 @@ from src.geometry.daylighting import (CROSSWALK_SETBACK_FT, CROSSWALK_SETBACK_WI
                                        STOP_SIGN_SETBACK_FT, legal_parking_start_ft,
                                        no_parking_zones_ft, parkable_runs_ft)
 from src.geometry.model import Leg
+from src.geometry.treatments import DesignState
 
-
-class FakeState:
-    def __init__(self, legs, corner_fillets=None, parking_zones=None):
-        self.legs = legs
-        self.corner_fillets = corner_fillets or {}
-        self.parking_zones = parking_zones or {}
-        self.daylight_devices = {}
+# The real DesignState, not a stub of it. There was a hand-rolled FakeState here mirroring the
+# four fields these rules read, and it had already drifted: curb_extensions was added to
+# DesignState and the stub did not have it, so a rule that consults it raised AttributeError
+# from inside a test rather than failing on the behaviour. DesignState needs nothing these tests
+# do not already build.
 
 
 def a_state(length_ft=200.0, width_ft=30.0):
     leg = Leg(name="east", centerline=LineString([(0, 0), (length_ft, 0)]), curb_to_curb_ft=width_ft)
-    return FakeState({"east": leg})
+    return DesignState(legs={"east": leg}, corner_fillets={})
 
 
 def prop(kind, x, y):
@@ -48,10 +47,10 @@ def test_a_curb_extension_reduces_both_setbacks_to_ten_feet(monkeypatch):
     a curb extension or bulbout has been constructed". Cutting only the crosswalk arm leaves
     the side line binding at 25 ft, so the extension buys nothing, which is not what it says.
 
-    CURB_EXTENSION_DEVICES is empty today (planters were in it and were removed), so the
-    device that triggers the reduction has to be supplied here. Testing the clause against
-    an empty set would only prove the set is empty, and the clause is what has to keep
-    working for whenever something is actually built.
+    The device is monkeypatched in rather than using the real `curb_extension`, so this stays a
+    test of the CLAUSE and not of the set's current contents. Pinning it to whatever happens to
+    be in CURB_EXTENSION_DEVICES today would make it re-fail every time that set changes, which
+    is what test_only_a_built_curb_extension_buys_back_the_setback is for.
     """
     import src.geometry.treatments as treatments
     from src.geometry.daylighting import SIDELINE_SETBACK_WITH_BULBOUT_FT
@@ -70,19 +69,39 @@ def test_a_curb_extension_reduces_both_setbacks_to_ten_feet(monkeypatch):
         30.0 + CROSSWALK_SETBACK_FT)
 
 
-def test_nothing_this_repo_places_counts_as_a_constructed_curb_extension():
-    """The complement, and the one that guards the live behaviour: with the set empty, every
-    device this repo can stand in a daylight zone leaves the 25 ft setback intact. Painting
-    or posting a setback is not constructing a bulbout, and parking at 10 ft is only lawful
-    where one has actually been built."""
+def test_only_a_built_curb_extension_buys_back_the_setback():
+    """The complement, and the one that guards the live behaviour.
+
+    This used to assert CURB_EXTENSION_DEVICES was EMPTY - true while nothing in the repo could
+    build the thing the statute names. add_curb_extension now can, so `curb_extension` is in the
+    set and the assertion had to become the narrower one that was always the real point:
+    everything OTHER than a constructed extension leaves the 25 ft setback intact. Painting or
+    posting a setback is not constructing a bulbout, and parking at 10 ft is only lawful where
+    one has actually been built.
+    """
     from src.geometry.treatments import CURB_EXTENSION_DEVICES, VALID_DAYLIGHT_DEVICES
 
-    assert not CURB_EXTENSION_DEVICES
+    assert CURB_EXTENSION_DEVICES == {"curb_extension"}
     for kind in VALID_DAYLIGHT_DEVICES:
         state = a_state()
         state.daylight_devices = {("east", "left"): {"kind": kind, "spacing_ft": 8.0}}
-        assert legal_parking_start_ft(state, "east", "left", {"east": (30.0,)}) == pytest.approx(
-            30.0 + CROSSWALK_SETBACK_FT), f"{kind} must not buy back the setback"
+        start = legal_parking_start_ft(state, "east", "left", {"east": (30.0,)})
+        expected = (CROSSWALK_SETBACK_WITH_BULBOUT_FT if kind in CURB_EXTENSION_DEVICES
+                    else CROSSWALK_SETBACK_FT)
+        assert start == pytest.approx(30.0 + expected), f"{kind} resolved the wrong setback"
+
+
+def test_claiming_a_curb_extension_setback_without_building_one_is_refused():
+    """The statutory reduction is for an extension that EXISTS.
+
+    protect_daylight_zone(kind="curb_extension") is only a declaration - add_curb_extension is
+    what moves the kerb. Letting the declaration stand alone would mark parking 15 ft closer to
+    a crossing than R.S. 39:4-138(e) allows, on the strength of a bulbout nobody drew.
+    """
+    from src.geometry.treatments import protect_daylight_zone
+
+    with pytest.raises(ValueError, match="no curb extension has been built"):
+        protect_daylight_zone(a_state(), "east", "left", kind="curb_extension")
 
 
 def test_the_side_line_governs_a_leg_with_no_marked_crossing():
@@ -234,7 +253,7 @@ def test_stations_are_measured_in_the_leg_frame_not_world_coordinates():
     """A leg that does not run along +x. The setbacks are distances along the street."""
     diagonal = Leg(name="ne", centerline=LineString([(0, 0), (100 / np.sqrt(2), 100 / np.sqrt(2))]),
                     curb_to_curb_ft=30.0)
-    state = FakeState({"ne": diagonal})
+    state = DesignState(legs={"ne": diagonal}, corner_fillets={})
     hydrant_at_station_50 = prop("fire_hydrant", 50 / np.sqrt(2) - 10 / np.sqrt(2),
                                   50 / np.sqrt(2) + 10 / np.sqrt(2))
     zones = [z for z in no_parking_zones_ft(state, "ne", "left", {"ne": (10.0,)},

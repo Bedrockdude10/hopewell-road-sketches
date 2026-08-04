@@ -11,10 +11,15 @@ measured, so treat the lane/parking dimensions below as a design study rather th
 construction drawing.
 """
 from src.geometry.treatments import (
-    all_crosswalks_continental, complete_centerlines, DesignState, add_lane_narrowing, add_marked_parking, apply_osm_parking, protect_daylight_zone, upgrade_crosswalk_markings,
+    add_bike_lane, add_lane_narrowing, add_marked_parking, all_crosswalks_continental,
+    apply_osm_parking, complete_centerlines, DesignState, protect_daylight_zone,
+    TARGET_LANE_WIDTH_FT, upgrade_crosswalk_markings,
 )
 
-TARGET_LANE_WIDTH_FT = 11.0   # NACTO/AASHTO urban minimum travel lane - the width the road diet aims at
+# TARGET_LANE_WIDTH_FT is imported from src, not redeclared here. It is a standard
+# (NACTO/AASHTO urban minimum travel lane), not a per-site choice, and four sites each
+# holding their own copy is what src/geometry/treatments.py's own comment on it warns
+# about - a leg could then be narrowed to one number and checked against another.
 PARKING_DEPTH_FT = 8.0        # a standard marked parallel stall
 MIN_PARKING_DEPTH_FT = 7.0    # below this it isn't a usable stall, so none is marked
 
@@ -108,4 +113,58 @@ def build_proposal_daylight_bollards(baseline: DesignState, model=None) -> Desig
             treated.add((leg_name, side))
     for leg_name, side in sorted(treated):
         state = protect_daylight_zone(state, leg_name, side, kind="bollards")
+    return state
+
+
+# --- Bike lanes ----------------------------------------------------------------------------
+#
+# Conventional, not parking-protected: there is no parking here to protect a lane with. Both
+# sides of e_broad_st_east are tagged no_stopping in OSM, and e_broad_st_west is no_stopping too -
+# so the width a bike lane would use is width nobody is allowed to stand a vehicle in today.
+#
+# AND NOT BOLLARD-PROTECTED EITHER, which is a width finding rather than a choice. Flex posts
+# protecting a bike lane belong in a buffer on the TRAFFIC side of it, and E Broad has no room
+# for one. Measured to each kerb's nearest approach to the alignment:
+#
+#     e_broad_st_east  left  17.62 ft    right 18.31 ft
+#     e_broad_st_west  left  18.83 ft    right 18.96 ft
+#
+# An 11 ft travel lane, a 5 ft bike lane and the two 0.82 ft stripes bounding them already come
+# to 17.64 ft. Adding even a 2 ft buffer needs 18.82, which fits neither side of
+# e_broad_st_east. e_broad_st_west alone could take one, and a protected lane that loses its
+# posts at the junction is worse than a consistently conventional pair - so both legs stay
+# conventional and this says why. Broad & Greenwood's lanes ARE protected; it has the width.
+BIKE_LANE_WIDTH_FT = 5.0   # AASHTO's minimum for an exclusive lane - the floor, and all that fits
+E_BROAD_LEGS = ("e_broad_st_east", "e_broad_st_west")
+
+
+def build_proposal_bike_lanes(baseline: DesignState, model=None) -> DesignState:
+    """Conventional bike lanes both sides of both E Broad St legs. Princeton Ave gets none.
+
+    Per side, outward from the centerline: 11 ft travel lane, its edge stripe, a 5 ft bike lane,
+    its outer stripe, and whatever asphalt is left hatched to the kerb. On e_broad_st_east that
+    leftover is essentially nothing - the cross-section spends 17.64 of the 17.62 ft its narrowest
+    kerb offers - so its lane runs hard against the kerb rather than with the hatched margin
+    Broad & Greenwood's lanes get. That is the leg's width, not a drawing choice, and it is the
+    reason these lanes are unbuffered and unprotected: see the note above.
+
+    PRINCETON AVE IS NOT PROPOSED FOR ONE. It has 4.1 ft per side spare beside an 11 ft lane,
+    under AASHTO's 5 ft minimum, so there is no lane to draw - only a narrower stripe that would
+    read as one. Its kerbs keep the OSM-derived markings the other proposals give them.
+
+    Both E Broad legs are already no_stopping, so this displaces no parking. Where a leg turns
+    out not to have the room after all, it is reported and left alone rather than given a lane
+    that does not fit - the point of the exercise is to find out which legs can take one.
+    """
+    if model is None:
+        return baseline
+    state = apply_osm_parking(baseline, model, legs=("princeton_ave_south",))
+    state = complete_centerlines(state)
+    state = all_crosswalks_continental(state)
+    for leg_name in E_BROAD_LEGS:
+        for side in ("left", "right"):
+            try:
+                state = add_bike_lane(state, leg_name, side, width_ft=BIKE_LANE_WIDTH_FT)
+            except ValueError as too_narrow:
+                print(f"  NOTE: no bike lane on {leg_name} {side} - {too_narrow}")
     return state

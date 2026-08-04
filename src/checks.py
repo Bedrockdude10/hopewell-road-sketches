@@ -21,12 +21,17 @@ Two design choices worth stating:
 `check_scene` reports; `assert_scene_valid` raises. Phase scripts save the plot first and
 assert after, so a failure always comes with a picture of itself.
 """
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from typing import TYPE_CHECKING
 
 import numpy as np
 from shapely.geometry import Point
 
+from src.geometry.markings import PARKING_EDGE_LINE, STALL_DIVIDER
 from src.geometry.model import curb_offsets_at_stations, station_offset_many
+
+if TYPE_CHECKING:                      # the runtime import is in _empty_state, below
+    from src.geometry.treatments import DesignState
 
 # ---------------------------------------------------------------------------
 # Tolerances. Each is a real physical claim, not a fudge factor.
@@ -70,6 +75,10 @@ COLLINEAR_PAINT_TOLERANCE_FT = 0.1
 # or a crossing - a stall divider meets the lane edge at right angles by design.
 MIN_COLLINEAR_OVERLAP_FT = 1.0
 
+# A post is one object, and the paint dot and the prop are that one object placed once - the
+# prop is read off the paint. This absorbs float noise, nothing more.
+POST_PROP_TOLERANCE_FT = 0.1
+
 # Props that belong on the footway. Anything not listed is assumed to belong there too -
 # a new prop type is checked by default, and the exceptions have to be declared. Bollards
 # and delineators are the deliberate exception: they are placed IN the carriageway.
@@ -101,11 +110,86 @@ class Violation:
         return f"[{self.check}]{at} {self.detail}"
 
 
+def _empty_state():
+    """A DesignState with no legs and no treatments - the default scene.
+
+    Imported here rather than at module scope only to keep this module importable on its own;
+    src.geometry.treatments does not import this one, so there is no cycle either way.
+    """
+    from src.geometry.treatments import DesignState
+
+    return DesignState(legs={}, corner_fillets={})
+
+
+@dataclass(frozen=True)
+class SceneContext:
+    """Everything an invariant may ask about one scene, resolved once and handed to all of them.
+
+    One object rather than a per-check argument list, because the argument list was the bug.
+    check_scene called thirteen functions with thirteen hand-picked subsets of the same scene,
+    and getting a subset wrong was invisible: one check was handed the crossing bands built WITH
+    the two-pass mutual-exclusion reaches and another the bands built without them, so at W Broad
+    & Louellen the two were validating geometry 15 sq ft apart, and one of them geometry that no
+    renderer drew. A check cannot now be handed a different scene from its neighbour.
+
+    Everything defaults, and `state` defaults to a real empty DesignState rather than None, so a
+    test can describe the two parts of a scene its check reads and every other check still runs
+    over it and finds nothing. A scene with nothing in it is vacuously valid, which is what
+    test_a_check_reading_a_field_the_caller_left_out_gets_a_default pins - it caught this class
+    reaching `scene.state.legs` through a None.
+    """
+    model: object = None
+    state: "DesignState" = field(default_factory=lambda: _empty_state())
+    pavement: object = None
+    props: tuple = ()
+    paint: tuple = ()
+    crosswalk_bands: dict = field(default_factory=dict)
+    crosswalk_offsets: dict = field(default_factory=dict)
+    stop_bars: dict = field(default_factory=dict)
+
+    @property
+    def legs(self) -> dict:
+        return self.state.legs or {}
+
+    @property
+    def corner_fillets(self) -> dict:
+        return self.state.corner_fillets or {}
+
+
+# Every invariant, in declaration order. Populated by SceneCheck.__init_subclass__ - defining a
+# check is what registers it, so the list cannot fall behind the file.
+CHECKS: list["SceneCheck"] = []
+
+
+class SceneCheck:
+    """One invariant. Subclassing runs it.
+
+    The point of the base class is that the registry is not written by hand. check_scene used to
+    be a `+` chain of thirteen calls, and a check that was defined and never added to that chain
+    was dead code that looked live - the same shape of mistake as a paint kind declared and
+    routed nowhere (see src/geometry/markings.py). Now the chain IS the file.
+
+    A check reads what it needs off the SceneContext, returns every violation it finds, and never
+    raises: collecting all of them means one edit-run cycle for a bad junction instead of one per
+    violation. See assert_scene_valid for the raising wrapper.
+    """
+
+    def __init_subclass__(cls, **kwargs):
+        super().__init_subclass__(**kwargs)
+        CHECKS.append(cls())
+
+    def run(self, scene: SceneContext) -> list[Violation]:
+        raise NotImplementedError
+
+    def __repr__(self) -> str:
+        return f"{type(self).__name__}()"
+
+
 # ---------------------------------------------------------------------------
-# Individual checks. Each returns a list of Violations and never raises.
+# The invariants. Each returns a list of Violations and never raises.
 # ---------------------------------------------------------------------------
 
-def check_furniture_off_roadway(props: list[dict], pavement) -> list[Violation]:
+class FurnitureOffRoadway(SceneCheck):
     """Nothing that belongs on the footway may sit in the carriageway.
 
     Signs, signal poles, pushbuttons, beacons, streetlights, hydrants and tactile pads are
@@ -113,71 +197,77 @@ def check_furniture_off_roadway(props: list[dict], pavement) -> list[Violation]:
     asserting something false about an accessibility feature - but a stop sign in the
     middle of the street is just as wrong and had no check at all before.
     """
-    from src.render.props import pad_polygon  # local: props imports geometry, avoid a cycle
 
-    if pavement is None or pavement.is_empty:
-        return []
-    violations = []
-    for prop in props:
-        kind = prop.get("type")
-        if kind in ROADWAY_PROP_TYPES:
-            continue
-        position = prop.get("position_ft")
-        if position is None:
-            continue
-        if kind == "tactile_paving_pad":
-            pad = pad_polygon(*position, prop.get("heading_deg", 0.0))
-            if pad.is_empty or pad.area <= 0:
+    def run(self, scene: SceneContext) -> list[Violation]:
+        props, pavement = scene.props, scene.pavement
+        from src.render.props import pad_polygon  # local: props imports geometry, avoid a cycle
+
+        if pavement is None or pavement.is_empty:
+            return []
+        violations = []
+        for prop in props:
+            kind = prop.get("type")
+            if kind in ROADWAY_PROP_TYPES:
                 continue
-            overlap = pad.intersection(pavement).area / pad.area
-            if overlap > MAX_PAD_ROADWAY_OVERLAP:
-                violations.append(Violation(
-                    "furniture_in_roadway",
-                    f"tactile paving pad has {overlap * 100:.0f}% of its area in the roadway - a "
-                    f"detectable warning surface is on the footway at a kerb ramp, by definition",
-                    position))
-        elif pavement.contains(Point(*position)):
-            if prop.get("surveyed_position"):
-                violations.append(Violation(
-                    "surveyed_furniture_in_roadway",
-                    f"{kind} is drawn at its surveyed OSM position and that position falls inside our "
-                    f"modelled roadway - so either the OSM node is misplaced or this junction's modelled "
-                    f"pavement is too wide. Not something placement code can fix; check the two sources",
-                    position, fatal=False))
-            else:
-                violations.append(Violation(
-                    "furniture_in_roadway",
-                    f"{kind} stands in the roadway - it belongs on the footway. Either its placement is "
-                    f"wrong (src/render/props.py) or this junction's modelled pavement is too wide",
-                    position))
-    return violations
+            position = prop.get("position_ft")
+            if position is None:
+                continue
+            if kind == "tactile_paving_pad":
+                pad = pad_polygon(*position, prop.get("heading_deg", 0.0))
+                if pad.is_empty or pad.area <= 0:
+                    continue
+                overlap = pad.intersection(pavement).area / pad.area
+                if overlap > MAX_PAD_ROADWAY_OVERLAP:
+                    violations.append(Violation(
+                        "furniture_in_roadway",
+                        f"tactile paving pad has {overlap * 100:.0f}% of its area in the roadway - a "
+                        f"detectable warning surface is on the footway at a kerb ramp, by definition",
+                        position))
+            elif pavement.contains(Point(*position)):
+                if prop.get("surveyed_position"):
+                    violations.append(Violation(
+                        "surveyed_furniture_in_roadway",
+                        f"{kind} is drawn at its surveyed OSM position and that position falls inside our "
+                        f"modelled roadway - so either the OSM node is misplaced or this junction's modelled "
+                        f"pavement is too wide. Not something placement code can fix; check the two sources",
+                        position, fatal=False))
+                else:
+                    violations.append(Violation(
+                        "furniture_in_roadway",
+                        f"{kind} stands in the roadway - it belongs on the footway. Either its placement is "
+                        f"wrong (src/render/props.py) or this junction's modelled pavement is too wide",
+                        position))
+        return violations
 
 
-def check_pads_against_a_curb(props: list[dict], legs: dict, corner_fillets: dict) -> list[Violation]:
+class PadsAgainstACurb(SceneCheck):
     """A tactile pad marks a kerb ramp, so it has to be at a kerb.
 
     Off the roadway is necessary but not sufficient: a pad nudged clear of a too-wide
     pavement can end up out in a front garden, which reads as fine in plan and absurd in 3D.
     """
-    curbs = _all_curb_lines(legs, corner_fillets)
-    if not curbs:
-        return []
-    violations = []
-    for prop in props:
-        if prop.get("type") != "tactile_paving_pad":
-            continue
-        point = Point(*prop["position_ft"])
-        distance = min(curb.distance(point) for curb in curbs)
-        if distance > PAD_MAX_DISTANCE_FROM_CURB_FT:
-            violations.append(Violation(
-                "pad_off_the_kerb",
-                f"tactile paving pad sits {distance:.1f} ft from the nearest curb line (limit "
-                f"{PAD_MAX_DISTANCE_FROM_CURB_FT:.0f} ft) - it marks a ramp, so it belongs against one",
-                prop["position_ft"]))
-    return violations
+
+    def run(self, scene: SceneContext) -> list[Violation]:
+        props, legs, corner_fillets = scene.props, scene.legs, scene.corner_fillets
+        curbs = _all_curb_lines(legs, corner_fillets)
+        if not curbs:
+            return []
+        violations = []
+        for prop in props:
+            if prop.get("type") != "tactile_paving_pad":
+                continue
+            point = Point(*prop["position_ft"])
+            distance = min(curb.distance(point) for curb in curbs)
+            if distance > PAD_MAX_DISTANCE_FROM_CURB_FT:
+                violations.append(Violation(
+                    "pad_off_the_kerb",
+                    f"tactile paving pad sits {distance:.1f} ft from the nearest curb line (limit "
+                    f"{PAD_MAX_DISTANCE_FROM_CURB_FT:.0f} ft) - it marks a ramp, so it belongs against one",
+                    prop["position_ft"]))
+        return violations
 
 
-def check_curbs_clear_of_junction(legs: dict) -> list[Violation]:
+class CurbsClearOfJunction(SceneCheck):
     """No leg's curb may run back through the intersection.
 
     A leg's curb line starts at that leg's cross-section and goes outward. When one runs
@@ -186,48 +276,54 @@ def check_curbs_clear_of_junction(legs: dict) -> list[Violation]:
     leg's curb, which is what makes the pavement ring self-intersect. Measured in the leg's
     own frame, so it is the same signed station the curb was built from.
     """
-    violations = []
-    for name, leg in legs.items():
-        for side in ("left", "right"):
-            curb = getattr(leg, f"{side}_curb")
-            if curb is None:
-                continue
-            stations, _offsets = station_offset_many(leg.centerline, np.asarray(curb.coords, dtype=float))
-            worst = float(stations.min())
-            if worst < -CURB_BEHIND_JUNCTION_TOLERANCE_FT:
-                index = int(np.argmin(stations))
-                violations.append(Violation(
-                    "curb_through_junction",
-                    f"{name}'s {side} curb runs {abs(worst):.1f} ft back past the junction, drawing curb "
-                    f"across the middle of the intersection (tolerance "
-                    f"{CURB_BEHIND_JUNCTION_TOLERANCE_FT:.0f} ft)",
-                    tuple(curb.coords[index])))
-    return violations
+
+    def run(self, scene: SceneContext) -> list[Violation]:
+        legs = scene.legs
+        violations = []
+        for name, leg in legs.items():
+            for side in ("left", "right"):
+                curb = getattr(leg, f"{side}_curb")
+                if curb is None:
+                    continue
+                stations, _offsets = station_offset_many(leg.centerline, np.asarray(curb.coords, dtype=float))
+                worst = float(stations.min())
+                if worst < -CURB_BEHIND_JUNCTION_TOLERANCE_FT:
+                    index = int(np.argmin(stations))
+                    violations.append(Violation(
+                        "curb_through_junction",
+                        f"{name}'s {side} curb runs {abs(worst):.1f} ft back past the junction, drawing curb "
+                        f"across the middle of the intersection (tolerance "
+                        f"{CURB_BEHIND_JUNCTION_TOLERANCE_FT:.0f} ft)",
+                        tuple(curb.coords[index])))
+        return violations
 
 
-def check_curbs_do_not_cross(legs: dict) -> list[Violation]:
+class CurbsDoNotCross(SceneCheck):
     """A leg's two curb lines are the two sides of one street: they never meet.
 
     They crossed when a curb was extrapolated out of a corner return's flare, which closed
     the roadway to zero width and then opened it inside out.
     """
-    violations = []
-    for name, leg in legs.items():
-        left, right = leg.left_curb, leg.right_curb
-        if left is None or right is None or not left.intersects(right):
-            continue
-        crossing = left.intersection(right)
-        point = crossing.centroid if not crossing.is_empty else None
-        violations.append(Violation(
-            "curbs_cross",
-            f"{name}'s left and right curb lines cross - the modelled roadway closes to zero width "
-            f"and reopens inverted. Usually an extrapolated curb taking its bearing from a corner "
-            f"return rather than from the street",
-            (point.x, point.y) if point is not None else None))
-    return violations
+
+    def run(self, scene: SceneContext) -> list[Violation]:
+        legs = scene.legs
+        violations = []
+        for name, leg in legs.items():
+            left, right = leg.left_curb, leg.right_curb
+            if left is None or right is None or not left.intersects(right):
+                continue
+            crossing = left.intersection(right)
+            point = crossing.centroid if not crossing.is_empty else None
+            violations.append(Violation(
+                "curbs_cross",
+                f"{name}'s left and right curb lines cross - the modelled roadway closes to zero width "
+                f"and reopens inverted. Usually an extrapolated curb taking its bearing from a corner "
+                f"return rather than from the street",
+                (point.x, point.y) if point is not None else None))
+        return violations
 
 
-def check_travel_lanes(state) -> list[Violation]:
+class TravelLanesKeepTheirWidth(SceneCheck):
     """Kerbside paint must never squeeze a travel lane below the target width.
 
     Only fires where THIS design painted something. A leg that is naturally narrower than
@@ -237,35 +333,38 @@ def check_travel_lanes(state) -> list[Violation]:
     hatching that leaves less: fixed 5 ft and 8 ft paint widths, applied without reference
     to how much road was left, once produced 1.7 ft lanes there.
     """
-    from src.geometry.treatments import TARGET_LANE_WIDTH_FT
 
-    violations = []
-    for leg_name, leg in state.legs.items():
-        if leg.curb_to_curb_ft is None:
-            continue
-        half_ft = leg.curb_to_curb_ft / 2
-        for side in ("left", "right"):
-            painted_ft = 0.0
-            if (leg_name in state.lane_narrowing
-                    and side in state.lane_narrowing_sides.get(leg_name, ("left", "right"))):
-                painted_ft = state.lane_narrowing[leg_name]
-            zone = state.parking_zones.get((leg_name, side))
-            if zone is not None:
-                painted_ft = zone["depth_ft"] + zone["curb_offset_ft"]
-            if painted_ft <= 0:
+    def run(self, scene: SceneContext) -> list[Violation]:
+        state = scene.state
+        from src.geometry.treatments import TARGET_LANE_WIDTH_FT
+
+        violations = []
+        for leg_name, leg in state.legs.items():
+            if leg.curb_to_curb_ft is None:
                 continue
-            lane_ft = half_ft - painted_ft
-            if lane_ft < TARGET_LANE_WIDTH_FT - LANE_WIDTH_TOLERANCE_FT:
-                violations.append(Violation(
-                    "travel_lane_too_narrow",
-                    f"{leg_name} {side} is painted {painted_ft:.1f} ft wide, leaving a "
-                    f"{lane_ft:.1f} ft travel lane - under the {TARGET_LANE_WIDTH_FT:.0f} ft "
-                    f"target. The paint has to be sized from what the road can spare",
-                    tuple(leg.centerline.interpolate(leg.centerline.length / 2).coords[0])))
-    return violations
+            half_ft = leg.curb_to_curb_ft / 2
+            for side in ("left", "right"):
+                painted_ft = 0.0
+                if (leg_name in state.lane_narrowing
+                        and side in state.lane_narrowing_sides.get(leg_name, ("left", "right"))):
+                    painted_ft = state.lane_narrowing[leg_name]
+                zone = state.parking_zones.get((leg_name, side))
+                if zone is not None:
+                    painted_ft = zone["depth_ft"] + zone["curb_offset_ft"]
+                if painted_ft <= 0:
+                    continue
+                lane_ft = half_ft - painted_ft
+                if lane_ft < TARGET_LANE_WIDTH_FT - LANE_WIDTH_TOLERANCE_FT:
+                    violations.append(Violation(
+                        "travel_lane_too_narrow",
+                        f"{leg_name} {side} is painted {painted_ft:.1f} ft wide, leaving a "
+                        f"{lane_ft:.1f} ft travel lane - under the {TARGET_LANE_WIDTH_FT:.0f} ft "
+                        f"target. The paint has to be sized from what the road can spare",
+                        tuple(leg.centerline.interpolate(leg.centerline.length / 2).coords[0])))
+        return violations
 
 
-def check_paint_inside_the_curb(state, paint) -> list[Violation]:
+class PaintInsideTheCurb(SceneCheck):
     """Road markings are painted on the road. None may cross its own side's curb.
 
     Touching the kerb is the point of a curbside marking, so this is not a clearance check -
@@ -286,36 +385,38 @@ def check_paint_inside_the_curb(state, paint) -> list[Violation]:
     the leg. The result was a wedge with long diagonal ends rather than a strip, which both
     fragmented the hatching and pushed paint outside the kerb.
     """
-    violations = []
-    for piece in paint:
-        if piece.side is None or piece.leg is None:
-            continue        # a corner treatment spans two legs - no single side to measure from
-        leg = state.legs.get(piece.leg)
-        if leg is None:
-            continue
-        coords = (piece.geometry.exterior.coords if piece.geometry.geom_type == "Polygon"
-                  else piece.geometry.coords)
-        points = np.asarray(coords, dtype=float)
-        stations, offsets = station_offset_many(leg.centerline, points)
-        curb_offsets = curb_offsets_at_stations(leg, piece.side, stations)
-        if curb_offsets is None:
-            continue        # no traced kerb on this side - nothing to be outside of
-        over_ft = np.abs(offsets) - np.abs(curb_offsets)
-        worst = float(over_ft.max())
-        if worst > PAINT_PAST_CURB_TOLERANCE_FT:
-            index = int(np.argmax(over_ft))
-            violations.append(Violation(
-                "paint_over_the_curb",
-                f"{piece.leg} {piece.side}: {piece.kind} is painted {worst:.1f} ft past the traced "
-                f"kerb (tolerance {PAINT_PAST_CURB_TOLERANCE_FT} ft) - a marking may meet the kerb, "
-                f"never cross it. Usually paint sized off the nominal half-width instead of the "
-                f"kerb that was actually traced there",
-                tuple(points[index])))
-    return violations
+
+    def run(self, scene: SceneContext) -> list[Violation]:
+        state, paint = scene.state, scene.paint
+        violations = []
+        for piece in paint:
+            if piece.side is None or piece.leg is None:
+                continue        # a corner treatment spans two legs - no single side to measure from
+            leg = state.legs.get(piece.leg)
+            if leg is None:
+                continue
+            coords = (piece.geometry.exterior.coords if piece.geometry.geom_type == "Polygon"
+                      else piece.geometry.coords)
+            points = np.asarray(coords, dtype=float)
+            stations, offsets = station_offset_many(leg.centerline, points)
+            curb_offsets = curb_offsets_at_stations(leg, piece.side, stations)
+            if curb_offsets is None:
+                continue        # no traced kerb on this side - nothing to be outside of
+            over_ft = np.abs(offsets) - np.abs(curb_offsets)
+            worst = float(over_ft.max())
+            if worst > PAINT_PAST_CURB_TOLERANCE_FT:
+                index = int(np.argmax(over_ft))
+                violations.append(Violation(
+                    "paint_over_the_curb",
+                    f"{piece.leg} {piece.side}: {piece.kind} is painted {worst:.1f} ft past the traced "
+                    f"kerb (tolerance {PAINT_PAST_CURB_TOLERANCE_FT} ft) - a marking may meet the kerb, "
+                    f"never cross it. Usually paint sized off the nominal half-width instead of the "
+                    f"kerb that was actually traced there",
+                    tuple(points[index])))
+        return violations
 
 
-def check_parking_is_legal(state, paint, crosswalk_offsets: dict,
-                            props: list[dict] | None = None) -> list[Violation]:
+class ParkingIsLegal(SceneCheck):
     """No marked stall may sit inside a statutory no-parking setback.
 
     A proposal that paints a stall within 25 ft of a crossing, 50 ft of a stop sign or 10 ft
@@ -327,40 +428,44 @@ def check_parking_is_legal(state, paint, crosswalk_offsets: dict,
     two agree only if every builder downstream honoured it, and this is exactly the class of
     thing that silently stops being true.
     """
-    from src.geometry.daylighting import no_parking_zones_ft
 
-    violations = []
-    zones_by_side = {}
-    for piece in paint:
-        if piece.kind not in ("stall_divider", "parking_edge_line") or piece.leg is None:
-            continue
-        leg = state.legs.get(piece.leg)
-        if leg is None:
-            continue
-        key = (piece.leg, piece.side)
-        if key not in zones_by_side:
-            zones_by_side[key] = no_parking_zones_ft(state, piece.leg, piece.side,
-                                                      crosswalk_offsets, props)
-        points = np.asarray(piece.geometry.coords, dtype=float)
-        stations, _offsets = station_offset_many(leg.centerline, points)
-        for zone in zones_by_side[key]:
-            # Any part of the marking inside a prohibited interval, not just its near end -
-            # a stall run that starts legally can still cross a hydrant further along.
-            inside = ((stations > zone.start_ft + PARKING_SETBACK_TOLERANCE_FT)
-                      & (stations < zone.end_ft - PARKING_SETBACK_TOLERANCE_FT))
-            if not inside.any():
+    def run(self, scene: SceneContext) -> list[Violation]:
+        state, paint, crosswalk_offsets, props = (
+            scene.state, scene.paint, scene.crosswalk_offsets, scene.props)
+        from src.geometry.daylighting import no_parking_zones_ft
+
+        violations = []
+        zones_by_side = {}
+        for piece in paint:
+            if piece.kind not in (STALL_DIVIDER, PARKING_EDGE_LINE) or piece.leg is None:
                 continue
-            index = int(np.argmax(inside))
-            violations.append(Violation(
-                "parking_inside_a_legal_setback",
-                f"{piece.leg} {piece.side}: marked parking reaches station "
-                f"{float(stations[inside].min()):.1f} ft, inside the no-parking zone from "
-                f"{zone.start_ft:.1f} to {zone.end_ft:.1f} ft - {zone.reason}",
-                tuple(points[index])))
-    return violations
+            leg = state.legs.get(piece.leg)
+            if leg is None:
+                continue
+            key = (piece.leg, piece.side)
+            if key not in zones_by_side:
+                zones_by_side[key] = no_parking_zones_ft(state, piece.leg, piece.side,
+                                                          crosswalk_offsets, props)
+            points = np.asarray(piece.geometry.coords, dtype=float)
+            stations, _offsets = station_offset_many(leg.centerline, points)
+            for zone in zones_by_side[key]:
+                # Any part of the marking inside a prohibited interval, not just its near end -
+                # a stall run that starts legally can still cross a hydrant further along.
+                inside = ((stations > zone.start_ft + PARKING_SETBACK_TOLERANCE_FT)
+                          & (stations < zone.end_ft - PARKING_SETBACK_TOLERANCE_FT))
+                if not inside.any():
+                    continue
+                index = int(np.argmax(inside))
+                violations.append(Violation(
+                    "parking_inside_a_legal_setback",
+                    f"{piece.leg} {piece.side}: marked parking reaches station "
+                    f"{float(stations[inside].min()):.1f} ft, inside the no-parking zone from "
+                    f"{zone.start_ft:.1f} to {zone.end_ft:.1f} ft - {zone.reason}",
+                    tuple(points[index])))
+        return violations
 
 
-def check_markings_do_not_collide(paint) -> list[Violation]:
+class MarkingsDoNotCollide(SceneCheck):
     """Two painted markings may not occupy the same asphalt.
 
     Real paint is opaque and applied once. Two hatch zones over the same ground get their
@@ -372,55 +477,60 @@ def check_markings_do_not_collide(paint) -> list[Violation]:
     caught it: every other invariant here checks paint against the STREET - the kerb, the
     roadway, the crosswalk - and none checked paint against other paint.
     """
-    violations = []
-    # A bollard's geometry is a degenerate 1e-6 ft square standing in for a point
-    # (src/geometry/paint.py:_dot), so it is a Polygon by type but has no area to collide.
-    fills = [p for p in paint if p.is_fill and p.kind != "bollard"]
-    # Bounding boxes first: two markings can only share ground if their extents do, and an
-    # envelope test is arithmetic against a GEOS overlay. This is O(n^2) either way, and a
-    # proposal carries a few hundred pieces, so the pairs that reach GEOS should be the pairs
-    # that might actually overlap.
-    fill_bounds = [p.geometry.bounds for p in fills]
-    for i, a in enumerate(fills):
-        for j in range(i + 1, len(fills)):
-            if _boxes_apart(fill_bounds[i], fill_bounds[j]):
-                continue
-            shared = a.geometry.intersection(fills[j].geometry)
-            if shared.area <= MARKING_OVERLAP_TOLERANCE_SQ_FT:
-                continue
-            where = shared.centroid
-            violations.append(Violation(
-                "markings_collide",
-                f"{a.kind} and {fills[j].kind} overlap by {shared.area:.0f} sq ft"
-                + (f" on {a.leg} {a.side}" if a.leg else "")
-                + " - that ground would be painted twice",
-                (where.x, where.y)))
 
-    # Lines too, and only where they run ALONG each other. Two lines that touch or cross are
-    # ordinary - a stall divider meets the lane edge at right angles by design, and a hatch
-    # stroke ends exactly on the edge line that bounds its zone. What is wrong is two lines
-    # painted down the same stretch of road: the daylight zone's edge line and the parking
-    # lane's sit at the same offset and are kept apart only by their station ranges.
-    lines = [p for p in paint if not p.is_fill and p.kind != "bollard"]
-    # Buffered once each, not once per comparison: buffering is the expensive half of this
-    # test and it was inside the inner loop, so each line was re-buffered for every line
-    # after it.
-    fattened = [p.geometry.buffer(COLLINEAR_PAINT_TOLERANCE_FT) for p in lines]
-    line_bounds = [g.bounds for g in fattened]
-    for i, a in enumerate(lines):
-        for j in range(i + 1, len(lines)):
-            if _boxes_apart(line_bounds[i], line_bounds[j]):
-                continue
-            shared = fattened[i].intersection(lines[j].geometry)
-            if shared.length <= MIN_COLLINEAR_OVERLAP_FT:
-                continue
-            violations.append(Violation(
-                "markings_collide",
-                f"{a.kind} and {lines[j].kind} run along each other for {shared.length:.1f} ft"
-                + (f" on {a.leg} {a.side}" if a.leg else "")
-                + " - two lines painted down the same stretch of road",
-                (shared.centroid.x, shared.centroid.y)))
-    return violations
+    def run(self, scene: SceneContext) -> list[Violation]:
+        paint = scene.paint
+        violations = []
+        # covers_area, not "is a Polygon": a bollard's geometry is a degenerate 1e-6 ft square
+        # standing in for a point (src/geometry/paint.py:_dot), so it is a Polygon by type with no
+        # area to collide, and every test here used to carry `and p.kind != "bollard"` to say so.
+        # The marking knows what it is - see src/geometry/markings.py:Role.
+        fills = [p for p in paint if p.covers_area]
+        # Bounding boxes first: two markings can only share ground if their extents do, and an
+        # envelope test is arithmetic against a GEOS overlay. This is O(n^2) either way, and a
+        # proposal carries a few hundred pieces, so the pairs that reach GEOS should be the pairs
+        # that might actually overlap.
+        fill_bounds = [p.geometry.bounds for p in fills]
+        for i, a in enumerate(fills):
+            for j in range(i + 1, len(fills)):
+                if _boxes_apart(fill_bounds[i], fill_bounds[j]):
+                    continue
+                shared = a.geometry.intersection(fills[j].geometry)
+                if shared.area <= MARKING_OVERLAP_TOLERANCE_SQ_FT:
+                    continue
+                where = shared.centroid
+                violations.append(Violation(
+                    "markings_collide",
+                    f"{a.kind} and {fills[j].kind} overlap by {shared.area:.0f} sq ft"
+                    + (f" on {a.leg} {a.side}" if a.leg else "")
+                    + " - that ground would be painted twice",
+                    (where.x, where.y)))
+
+        # Lines too, and only where they run ALONG each other. Two lines that touch or cross are
+        # ordinary - a stall divider meets the lane edge at right angles by design, and a hatch
+        # stroke ends exactly on the edge line that bounds its zone. What is wrong is two lines
+        # painted down the same stretch of road: the daylight zone's edge line and the parking
+        # lane's sit at the same offset and are kept apart only by their station ranges.
+        lines = [p for p in paint if p.kind.is_line]
+        # Buffered once each, not once per comparison: buffering is the expensive half of this
+        # test and it was inside the inner loop, so each line was re-buffered for every line
+        # after it.
+        fattened = [p.geometry.buffer(COLLINEAR_PAINT_TOLERANCE_FT) for p in lines]
+        line_bounds = [g.bounds for g in fattened]
+        for i, a in enumerate(lines):
+            for j in range(i + 1, len(lines)):
+                if _boxes_apart(line_bounds[i], line_bounds[j]):
+                    continue
+                shared = fattened[i].intersection(lines[j].geometry)
+                if shared.length <= MIN_COLLINEAR_OVERLAP_FT:
+                    continue
+                violations.append(Violation(
+                    "markings_collide",
+                    f"{a.kind} and {lines[j].kind} run along each other for {shared.length:.1f} ft"
+                    + (f" on {a.leg} {a.side}" if a.leg else "")
+                    + " - two lines painted down the same stretch of road",
+                    (shared.centroid.x, shared.centroid.y)))
+        return violations
 
 
 def _boxes_apart(a: tuple, b: tuple) -> bool:
@@ -428,7 +538,7 @@ def _boxes_apart(a: tuple, b: tuple) -> bool:
     return a[2] < b[0] or b[2] < a[0] or a[3] < b[1] or b[3] < a[1]
 
 
-def check_paint_clear_of_the_travel_lane(state, paint) -> list[Violation]:
+class PaintClearOfTheTravelLane(SceneCheck):
     """The travel lane is clear asphalt, all the way to the target width.
 
     Distinct from check_travel_lanes, which checks the DESIGN arithmetic (does the paint the
@@ -438,137 +548,173 @@ def check_paint_clear_of_the_travel_lane(state, paint) -> list[Violation]:
     approach at every site was really 10.59 ft. The arithmetic said 11.0 and the check that
     only looked at the arithmetic agreed with it.
     """
-    from src.geometry.paint import LANE_EDGE_LINE_WIDTH_FT
-    from src.geometry.treatments import TARGET_LANE_WIDTH_FT
 
-    violations = []
-    for piece in paint:
-        if piece.leg is None or piece.side is None or piece.kind == "bollard":
-            continue
-        leg = state.legs.get(piece.leg)
-        if leg is None or leg.curb_to_curb_ft is None:
-            continue
-        coords = (piece.geometry.exterior.coords if piece.geometry.geom_type == "Polygon"
-                  else piece.geometry.coords)
-        points = np.asarray(coords, dtype=float)
-        stations, offsets = station_offset_many(leg.centerline, points)
-        curb_offsets = curb_offsets_at_stations(leg, piece.side, stations)
-        if curb_offsets is None:
-            continue
-        # What the lane is entitled to AT EACH STATION: the target, or the kerb where the
-        # kerb is closer than that. A road narrower than the target is a fact about the
-        # street, not something this design introduced - and it is not hypothetical.
-        # W Broad's north-east approach has the NJDOT alignment 7.2 ft from its right kerb
-        # and 25-31 ft from its left, so on that side there is no 11 ft lane to protect and
-        # the paint correctly clamps to the kerb. Comparing against the NOMINAL half-width
-        # instead would call that a violation on every vertex.
-        entitled = np.minimum(TARGET_LANE_WIDTH_FT,
-                               np.abs(curb_offsets) - LANE_EDGE_LINE_WIDTH_FT)
-        # The painted body reaches half a stripe width inside its own centreline.
-        shortfall = entitled - (np.abs(offsets) - LANE_EDGE_LINE_WIDTH_FT / 2)
-        worst = float(shortfall.max())
-        if worst > LANE_WIDTH_TOLERANCE_FT:
-            index = int(np.argmax(shortfall))
-            inner_ft = float(np.abs(offsets[index])) - LANE_EDGE_LINE_WIDTH_FT / 2
+    def run(self, scene: SceneContext) -> list[Violation]:
+        state, paint = scene.state, scene.paint
+        from src.geometry.paint import LANE_EDGE_LINE_WIDTH_FT
+        from src.geometry.treatments import TARGET_LANE_WIDTH_FT
+
+        violations = []
+        for piece in paint:
+            if piece.leg is None or piece.side is None or piece.kind.is_object:
+                continue
+            leg = state.legs.get(piece.leg)
+            if leg is None or leg.curb_to_curb_ft is None:
+                continue
+            coords = (piece.geometry.exterior.coords if piece.geometry.geom_type == "Polygon"
+                      else piece.geometry.coords)
+            points = np.asarray(coords, dtype=float)
+            stations, offsets = station_offset_many(leg.centerline, points)
+            curb_offsets = curb_offsets_at_stations(leg, piece.side, stations)
+            if curb_offsets is None:
+                continue
+            # What the lane is entitled to AT EACH STATION: the target, or the kerb where the
+            # kerb is closer than that. A road narrower than the target is a fact about the
+            # street, not something this design introduced - and it is not hypothetical.
+            # W Broad's north-east approach has the NJDOT alignment 7.2 ft from its right kerb
+            # and 25-31 ft from its left, so on that side there is no 11 ft lane to protect and
+            # the paint correctly clamps to the kerb. Comparing against the NOMINAL half-width
+            # instead would call that a violation on every vertex.
+            entitled = np.minimum(TARGET_LANE_WIDTH_FT,
+                                   np.abs(curb_offsets) - LANE_EDGE_LINE_WIDTH_FT)
+            # The painted body reaches half a stripe width inside its own centreline.
+            shortfall = entitled - (np.abs(offsets) - LANE_EDGE_LINE_WIDTH_FT / 2)
+            worst = float(shortfall.max())
+            if worst > LANE_WIDTH_TOLERANCE_FT:
+                index = int(np.argmax(shortfall))
+                inner_ft = float(np.abs(offsets[index])) - LANE_EDGE_LINE_WIDTH_FT / 2
+                violations.append(Violation(
+                    "paint_in_the_travel_lane",
+                    f"{piece.leg} {piece.side}: {piece.kind} is painted to {inner_ft:.2f} ft from "
+                    f"the centerline, leaving a {inner_ft:.2f} ft travel lane where "
+                    f"{float(entitled[index]):.2f} ft was available - the stripe's own width has "
+                    f"to come out of the treatment, not out of the lane",
+                    tuple(points[index])))
+        return violations
+
+
+class BollardsAreProps(SceneCheck):
+    """A bollard the treatment layer paints must also exist as a prop, or the 3D render
+    has no post there.
+
+    The two renderers get posts from different places. The plan view draws them straight off
+    the paint (src/geometry/paint.py emits a dot per post); the 3D render builds objects, and
+    it only ever builds objects from props - it never turns a marking into one. So a post that
+    exists only as a PaintPiece is a post that is in the 2D picture and absent from the
+    render. That shipped: Broad St's bike lanes were drawn with 61 protecting flex posts and
+    exported with none, and neither view was internally wrong about anything.
+
+    Deliberately one-directional. A daylight zone's posts are props ONLY - nothing paints
+    them, and the plan view draws them from the props - so a prop with no paint behind it is
+    correct and common. See src/render/props.py:bollard_props_from_paint.
+    """
+
+    def run(self, scene: SceneContext) -> list[Violation]:
+        paint, props = scene.paint, scene.props
+        placed = np.array([p["position_ft"] for p in props if p["type"] == "bollard"], dtype=float)
+        violations = []
+        for piece in paint:
+            if not piece.kind.is_object:
+                continue
+            point = piece.geometry.centroid
+            if len(placed) and np.hypot(placed[:, 0] - point.x,
+                                        placed[:, 1] - point.y).min() <= POST_PROP_TOLERANCE_FT:
+                continue
             violations.append(Violation(
-                "paint_in_the_travel_lane",
-                f"{piece.leg} {piece.side}: {piece.kind} is painted to {inner_ft:.2f} ft from "
-                f"the centerline, leaving a {inner_ft:.2f} ft travel lane where "
-                f"{float(entitled[index]):.2f} ft was available - the stripe's own width has "
-                f"to come out of the treatment, not out of the lane",
-                tuple(points[index])))
-    return violations
+                "post_not_in_the_render",
+                f"{piece.leg} {piece.side}: a bollard is drawn in the plan view with no prop at "
+                f"that position, so the 3D render builds no post there - see "
+                f"src/render/props.py:bollard_props_from_paint",
+                (point.x, point.y)))
+        return violations
 
 
-def check_pavement_ring(pavement) -> list[Violation]:
+class PavementRingCloses(SceneCheck):
     """The pavement must be one simple polygon - no bowties, no pinches."""
-    if pavement is None or pavement.is_empty:
-        return [Violation("pavement_ring", "no pavement polygon was built for this junction")]
-    if not pavement.is_valid:
-        from shapely.validation import explain_validity
-        return [Violation("pavement_ring", f"pavement polygon is invalid: {explain_validity(pavement)}")]
-    return []
+
+    def run(self, scene: SceneContext) -> list[Violation]:
+        pavement = scene.pavement
+        if pavement is None or pavement.is_empty:
+            return [Violation("pavement_ring", "no pavement polygon was built for this junction")]
+        if not pavement.is_valid:
+            from shapely.validation import explain_validity
+            return [Violation("pavement_ring", f"pavement polygon is invalid: {explain_validity(pavement)}")]
+        return []
 
 
-def check_crosswalks_cross_the_roadway(bands: dict, pavement) -> list[Violation]:
+class CrosswalksCrossTheRoadway(SceneCheck):
     """A painted crosswalk lies across the roadway, touching the curb at both ends.
 
     Catches the two failures seen here: a band drawn out in the middle of the carriageway
     parallel to traffic (it was inheriting a leg offset from the wrong frame), and a band
     sitting almost entirely outside the pavement.
     """
-    if pavement is None or pavement.is_empty:
-        return []
-    violations = []
-    for leg_name, band in bands.items():
-        if band is None or band.is_empty or band.area <= 0:
-            continue
-        inside = band.intersection(pavement).area / band.area
-        if inside < MIN_CROSSWALK_IN_PAVEMENT:
-            violations.append(Violation(
-                "crosswalk_off_the_roadway",
-                f"{leg_name}'s crosswalk is only {inside * 100:.0f}% inside the roadway it crosses "
-                f"(expected at least {MIN_CROSSWALK_IN_PAVEMENT * 100:.0f}%)",
-                (band.centroid.x, band.centroid.y)))
-    return violations
+
+    def run(self, scene: SceneContext) -> list[Violation]:
+        bands, pavement = scene.crosswalk_bands, scene.pavement
+        if pavement is None or pavement.is_empty:
+            return []
+        violations = []
+        for leg_name, band in bands.items():
+            if band is None or band.is_empty or band.area <= 0:
+                continue
+            inside = band.intersection(pavement).area / band.area
+            if inside < MIN_CROSSWALK_IN_PAVEMENT:
+                violations.append(Violation(
+                    "crosswalk_off_the_roadway",
+                    f"{leg_name}'s crosswalk is only {inside * 100:.0f}% inside the roadway it crosses "
+                    f"(expected at least {MIN_CROSSWALK_IN_PAVEMENT * 100:.0f}%)",
+                    (band.centroid.x, band.centroid.y)))
+        return violations
 
 
-def check_stop_bars_on_entering_half(bars: dict, legs: dict) -> list[Violation]:
+class StopBarsOnEnteringHalf(SceneCheck):
     """A driver stops in their own lanes, never across the opposing ones.
 
     The bar must stay on one side of its leg's centerline. It was previously drawn full
     width, across both directions of travel.
     """
-    violations = []
-    for leg_name, bar in bars.items():
-        leg = legs.get(leg_name)
-        if leg is None or bar is None or bar.is_empty or bar.area <= 0:
-            continue
-        _stations, offsets = station_offset_many(
-            leg.centerline, np.asarray(bar.exterior.coords, dtype=float))
-        spans_both = offsets.min() < 0 < offsets.max()
-        if not spans_both:
-            continue
-        minority = min(abs(offsets.min()), abs(offsets.max())) / (offsets.max() - offsets.min())
-        if minority > MAX_STOP_BAR_OPPOSING_FRACTION:
-            violations.append(Violation(
-                "stop_bar_crosses_centerline",
-                f"{leg_name}'s stop bar reaches {minority * 100:.0f}% of its width across the "
-                f"centerline into opposing lanes - a stop bar covers the entering half only",
-                (bar.centroid.x, bar.centroid.y)))
-    return violations
+
+    def run(self, scene: SceneContext) -> list[Violation]:
+        bars, legs = scene.stop_bars, scene.legs
+        violations = []
+        for leg_name, bar in bars.items():
+            leg = legs.get(leg_name)
+            if leg is None or bar is None or bar.is_empty or bar.area <= 0:
+                continue
+            _stations, offsets = station_offset_many(
+                leg.centerline, np.asarray(bar.exterior.coords, dtype=float))
+            spans_both = offsets.min() < 0 < offsets.max()
+            if not spans_both:
+                continue
+            minority = min(abs(offsets.min()), abs(offsets.max())) / (offsets.max() - offsets.min())
+            if minority > MAX_STOP_BAR_OPPOSING_FRACTION:
+                violations.append(Violation(
+                    "stop_bar_crosses_centerline",
+                    f"{leg_name}'s stop bar reaches {minority * 100:.0f}% of its width across the "
+                    f"centerline into opposing lanes - a stop bar covers the entering half only",
+                    (bar.centroid.x, bar.centroid.y)))
+        return violations
 
 
 # ---------------------------------------------------------------------------
 # Running them together
 # ---------------------------------------------------------------------------
 
-def check_scene(model, state, props: list[dict], pavement, crosswalk_bands: dict | None = None,
-                 stop_bars: dict | None = None, paint: list | None = None,
-                 crosswalk_offsets: dict | None = None) -> list[Violation]:
-    """Every invariant, all violations, no raising. See assert_scene_valid to fail on them."""
-    return (
-        check_furniture_off_roadway(props, pavement)
-        + check_pads_against_a_curb(props, state.legs, state.corner_fillets)
-        + check_curbs_clear_of_junction(state.legs)
-        + check_curbs_do_not_cross(state.legs)
-        + check_travel_lanes(state)
-        + check_pavement_ring(pavement)
-        + check_crosswalks_cross_the_roadway(crosswalk_bands or {}, pavement)
-        + check_stop_bars_on_entering_half(stop_bars or {}, state.legs)
-        + check_paint_inside_the_curb(state, paint or [])
-        + check_parking_is_legal(state, paint or [], crosswalk_offsets or {}, props)
-        + check_markings_do_not_collide(paint or [])
-        + check_paint_clear_of_the_travel_lane(state, paint or [])
-    )
+def check_scene(scene: SceneContext) -> list[Violation]:
+    """Every registered invariant, all violations, no raising.
+
+    A loop over CHECKS, not a list of calls: this used to name each check and pick its arguments
+    here, so a check could be written and never run, and two checks could be handed different
+    versions of the same geometry. See SceneCheck and SceneContext for both halves of that.
+    """
+    return [violation for check in CHECKS for violation in check.run(scene)]
 
 
-def assert_scene_valid(model, state, props: list[dict], pavement, crosswalk_bands: dict | None = None,
-                        stop_bars: dict | None = None, scenario: str = "", paint: list | None = None,
-                        crosswalk_offsets: dict | None = None) -> None:
+def assert_scene_valid(scene: SceneContext, scenario: str = "") -> None:
     """Raise SceneInvariantError listing EVERY violation in this scene, or return quietly."""
-    violations = check_scene(model, state, props, pavement, crosswalk_bands, stop_bars, paint,
-                              crosswalk_offsets)
+    model = scene.model
+    violations = check_scene(scene)
     for violation in (v for v in violations if not v.fatal):
         print(f"  SOURCE CONFLICT: {violation}")
 

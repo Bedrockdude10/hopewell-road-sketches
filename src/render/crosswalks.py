@@ -100,13 +100,24 @@ def stop_bar_band_geometry_ft(width_ft: float, edge_is_kerb: bool = True) -> tup
 
 def entering_lane_width_ft(state: DesignState, leg_name: str) -> float | None:
     """Real width of the entering travel lane if a treatment has narrowed that side
-    (lane narrowing or marked parking), else None meaning the full curb-to-curb half.
+    (a bike lane, lane narrowing, or marked parking), else None meaning the full
+    curb-to-curb half.
 
     Lives here rather than in export.py so the plan view and the 3D export size the stop
     bar from the same rule - a bar should stop at the real lane edge, not run across a
-    painted buffer or a parking lane no stopped vehicle occupies.
+    painted buffer, a parking lane, or a bike lane that no stopped vehicle occupies.
+
+    The LEFT side, because that is the entering driver's own side under right-hand traffic -
+    the same swap src/render/props.py:APPROACHING_DRIVER_RIGHT documents.
     """
     half_ft = state.legs[leg_name].curb_to_curb_ft / 2
+    # A bike lane is checked first and answers with the travel lane's own edge. Everything
+    # outside that edge - buffer, bike lane, kerb hatching - is width a stopping car has no
+    # business in, and the bar was running straight across all of it because this rule knew
+    # about narrowing and parking but not about bike lanes.
+    lane = state.bike_lanes.get((leg_name, "left"))
+    if lane is not None:
+        return lane.offsets_from_centerline_ft()["travel_lane_edge_ft"]
     if leg_name in state.lane_narrowing and "left" in state.lane_narrowing_sides.get(leg_name, ("left", "right")):
         return half_ft - state.lane_narrowing[leg_name]
     parking_zone = state.parking_zones.get((leg_name, "left"))

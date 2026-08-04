@@ -599,18 +599,25 @@ def _bollard_props(state: DesignState) -> list[dict]:
     lane-narrowing buffer for legs a scenario has explicitly added them to
     (src/geometry/treatments.py:add_bollards) - not a general per-site fact, only
     ever present when a proposal calls for this specific paint+bollard
-    escalation."""
+    escalation.
+
+    On the sides the buffer is actually painted on, which is not always both: a leg can be
+    narrowed on one kerb only (state.lane_narrowing_sides), and taking bollard_points_ft's
+    default here stood a row of posts down a buffer that does not exist on the other kerb -
+    visible in the 3D render, absent from the plan view, which draws them from the paint.
+    """
     props = []
     for leg_name, spacing_ft in state.bollard_lines.items():
         leg = state.legs[leg_name]
         stripe_width_ft = state.lane_narrowing[leg_name]
+        sides = state.lane_narrowing_sides.get(leg_name, ("left", "right"))
         start_ft = leg_clearance_ft(leg_name, state.legs, state.corner_fillets)
-        for pos in bollard_points_ft(leg, stripe_width_ft, start_ft, spacing_ft):
+        for pos in bollard_points_ft(leg, stripe_width_ft, start_ft, spacing_ft, sides=sides):
             props.append({
                 "type": "bollard", "position_ft": pos, "heading_deg": 0.0,
                 "source": f"scenario-specified (add_bollards): flex-post delineator centered in {leg_name}'s "
-                          f"painted lane-narrowing buffer (stripe_width_ft={stripe_width_ft:.1f}), spaced "
-                          f"{spacing_ft:.0f} ft apart.",
+                          f"painted lane-narrowing buffer (stripe_width_ft={stripe_width_ft:.1f}) on its "
+                          f"{'/'.join(sides)} side, spaced {spacing_ft:.0f} ft apart.",
             })
     return props
 
@@ -837,6 +844,43 @@ def _parking_buffer_bollard_props(state: DesignState) -> list[dict]:
     return props
 
 
+def bollard_props_from_paint(state: DesignState, paint: list) -> list[dict]:
+    """Props for the bike lane's flex posts, taken FROM the paint rather than recomputed.
+
+    A bollard is a physical object, so the 3D render can only build it from a prop - it draws
+    props and paint from two different lists and never turns one into the other. The plan
+    view, which builds its markings from src/geometry/paint.py, was therefore showing 61
+    posts protecting Broad St's bike lanes while the export shipped none of them and Blender
+    drew a bare painted buffer. No error anywhere: paint and props are both valid on their
+    own, and nothing compared them. check_bollards_are_props does now.
+
+    Derived rather than recomputed, unlike the two builders above, because where a bike
+    lane's row of posts STARTS depends on how far that leg's crossing actually reaches on
+    that side - which is resolved from the crosswalk bands inside the paint builder and is
+    not available here. Recomputing it here would mean two implementations of one station,
+    and the last time this module recomputed something paint.py also knew, the 2D and the 3D
+    disagreed about where thirteen posts stood.
+    """
+    posts = []
+    for piece in paint:
+        if not piece.kind.is_object:
+            continue
+        spacing_ft = state.bike_lane_bollards.get((piece.leg, piece.side))
+        if spacing_ft is None:
+            continue        # a lane-narrowing or parking-buffer post - already a prop above
+        lane = state.bike_lanes[(piece.leg, piece.side)]
+        point = piece.geometry.centroid
+        posts.append({
+            "type": "bollard", "position_ft": (point.x, point.y), "heading_deg": 0.0,
+            DRAWN_BY_PAINT: True,
+            "source": f"scenario-specified (add_bike_lane_bollards): flex-post delineator centered in the "
+                      f"{lane.buffer_ft:.0f} ft buffer on the traffic side of {piece.leg}'s {piece.side} bike "
+                      f"lane, spaced {spacing_ft:.0f} ft apart. Position read off the painted post row "
+                      f"(src/geometry/paint.py), which is where the row's first station is resolved.",
+        })
+    return posts
+
+
 def _daylight_device_props(state: DesignState, offsets_ft: dict, so_far: list[dict]) -> list[dict]:
     """Bollards standing in a daylight zone (treatments.protect_daylight_zone).
 
@@ -846,15 +890,22 @@ def _daylight_device_props(state: DesignState, offsets_ft: dict, so_far: list[di
 
     `so_far` is the props already built, because the span depends on them: a hydrant or a
     stop sign carries its own setback (R.S. 39:4-138(h),(i)) and lengthens the zone.
+
+    Only devices that ARE a row of objects get props. A `curb_extension` is built ground, and
+    it is already drawn - add_curb_extension moved the kerb line itself, so the pavement
+    polygon, the sidewalk band and the plan view's curb all show it. Standing a line of
+    flex-posts along it as well would draw posts down the middle of a new sidewalk.
     """
     from src.geometry.daylighting import merged_no_parking_spans_ft, no_parking_zones_ft
     from src.geometry.model import _point_at
     from src.geometry.paint import LANE_EDGE_LINE_WIDTH_FT
-    from src.geometry.treatments import TARGET_LANE_WIDTH_FT
+    from src.geometry.treatments import DAYLIGHT_DEVICES_AS_POSTS, TARGET_LANE_WIDTH_FT
 
     MIN_DAYLIGHT_DEVICE_SPAN_FT = 3.0
     props = []
     for (leg_name, side), device in sorted(state.daylight_devices.items()):
+        if device["kind"] not in DAYLIGHT_DEVICES_AS_POSTS:
+            continue
         # A zone shorter than this cannot hold even one device clear of the crossing.
         leg = state.legs.get(leg_name)
         if leg is None or leg_name not in offsets_ft:

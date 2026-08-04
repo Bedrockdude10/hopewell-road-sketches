@@ -50,15 +50,33 @@ class IntersectionModel:
     corner_fillets: dict
     parcels: gpd.GeoDataFrame
     corner_parcels: gpd.GeoDataFrame
-    # {leg name: OSM tags of the highway way carrying it}. How the carriageway is OPERATED,
-    # as opposed to where things are: overtaking=no is what a double-yellow centerline
-    # means, and reading it beats defaulting every leg to a dashed line.
+    # {leg name: [RoadSpan]} - every OSM highway way lying along the leg, with the stretch of
+    # it each one covers. A LIST because what a way says varies along a street and OSM
+    # expresses that by splitting the way; see RoadSpan for the restriction that was being
+    # dropped when this was one way per leg.
+    leg_road_spans: dict = field(default_factory=dict)
+    # {leg name: OSM tags of the way covering MOST of the leg}. For whole-leg facts only -
+    # overtaking=no is what a double-yellow centerline means, and reading it beats defaulting
+    # every leg to a dashed line. Anything that varies along the leg has to read
+    # leg_road_spans instead, which is exactly the distinction kerbside parking needs.
     leg_osm_tags: dict = field(default_factory=dict)
-    # {leg name: True if the OSM way runs the same way the leg points outward}. OSM's
-    # left/right are relative to the WAY's direction; a leg's are relative to its own
-    # outward direction. Where they disagree the sides swap, so anything side-specific
-    # (parking restrictions) is wrong on half the legs without this.
+    # {leg name: True if that way runs the same way the leg points outward}. OSM's left/right
+    # are relative to the WAY's direction; a leg's are relative to its own outward direction.
+    # Where they disagree the sides swap. Per span in leg_road_spans, since two ways covering
+    # one leg can be drawn in opposite directions.
     leg_osm_aligned: dict = field(default_factory=dict)
+
+    def parking_restriction_spans(self, leg_name: str) -> list[tuple]:
+        """[(start_ft, end_ft, {"left": value, "right": value}, way_id)] in the LEG's frame.
+
+        Every way along this leg, its stretch, and what it says about each kerb - already
+        flipped into the leg's own left/right where the way runs against it. The spans are
+        contiguous where OSM split a way and may be absent where nothing is mapped; a value of
+        None means that way says nothing about that side, which is NOT the same as "none".
+        """
+        return [(span.start_ft, span.end_ft,
+                 parking_restriction_by_side(span.tags, span.aligned), span.way_id)
+                for span in self.leg_road_spans.get(leg_name, [])]
 
 
 def _bearing_deg(from_pt, to_pt) -> float:
@@ -729,25 +747,73 @@ def _match_legs_to_osm_roads(legs: dict, center_wgs84: Point, center_ft: Point) 
         if road["tags"].get("highway") in ROAD_MATCH_HIGHWAY_CLASSES
     ]
 
-    out = {}
+    out: dict[str, list[RoadSpan]] = {}
     for name, leg in legs.items():
         leg_dir = _line_direction(leg.centerline)
-        midpoint = leg.centerline.interpolate(leg.centerline.length / 2)
-        best = None
+        spans = []
         for road, line in carriageways:
-            offset = line.distance(midpoint)
-            if offset > ROAD_MATCH_MAX_OFFSET_FT:
-                continue
             along = np.dot(_line_direction(line), leg_dir)
             angle = np.degrees(np.arccos(np.clip(abs(along), -1, 1)))
             if angle > ROAD_MATCH_MAX_ANGLE_DEG:
                 continue
-            if best is None or offset < best[0]:
-                best = (offset, road, along)
-        if best is not None:
-            _offset, road, along = best
-            out[name] = (road["tags"], bool(along >= 0))
+            # The stretch of THIS leg the way actually covers, in the leg's own frame. A way is
+            # matched on lying along the leg over that stretch, not on being nearest the leg's
+            # midpoint - see RoadSpan for why the difference discarded a real restriction.
+            stations, offsets = station_offset_many(leg.centerline,
+                                                    np.asarray(line.coords, dtype=float))
+            lo = max(float(stations.min()), 0.0)
+            hi = min(float(stations.max()), leg.centerline.length)
+            if hi - lo < MIN_ROAD_SPAN_FT:
+                continue
+            # Measured over the part that overlaps, so a way running alongside for miles is not
+            # judged by how far away its far end wanders.
+            covering = (stations >= -MIN_ROAD_SPAN_FT) & (stations <= leg.centerline.length
+                                                          + MIN_ROAD_SPAN_FT)
+            if not covering.any():
+                continue
+            if float(np.abs(offsets[covering]).min()) > ROAD_MATCH_MAX_OFFSET_FT:
+                continue
+            spans.append(RoadSpan(start_ft=lo, end_ft=hi, tags=road["tags"],
+                                   aligned=bool(along >= 0), way_id=road.get("id")))
+        if spans:
+            out[name] = sorted(spans, key=lambda span: span.start_ft)
     return out
+
+
+# Below this a way barely touches a leg - usually the cross street clipping the junction node -
+# and its tags describe a different street.
+MIN_ROAD_SPAN_FT = 5.0
+
+
+@dataclass(frozen=True)
+class RoadSpan:
+    """One OSM highway way, and the stretch of one leg it covers.
+
+    A LIST of these per leg, because the thing they carry varies along a street and OSM says so
+    by SPLITTING THE WAY. That is how a kerbside parking restriction covering only the approach
+    to a junction is expressed, and it is what this project was throwing away: the matcher kept
+    the single way nearest the leg's MIDPOINT and dropped the rest, so at Broad & Greenwood a
+    `parking:both:restriction=no_parking` tagged over East Broad's first 79.5 ft (way 1547092834)
+    lost to the unrestricted way beyond it (11647647) by 1.9 ft against 5.8 - the leg's midpoint
+    sits at station 85, past the split. The render then marked parking exactly where the mapper
+    had just said there is none, and nothing anywhere reported a problem: a pipeline reading one
+    way and finding no restriction looks identical to one that read the restriction and dropped it.
+
+    `aligned` is per SPAN, not per leg: OSM's left/right are relative to the way's own direction,
+    and two ways covering one leg can be drawn in opposite directions.
+    """
+    start_ft: float
+    end_ft: float
+    tags: dict
+    aligned: bool
+    way_id: int | None = None
+
+    @property
+    def length_ft(self) -> float:
+        return max(self.end_ft - self.start_ft, 0.0)
+
+    def covers(self, station_ft: float) -> bool:
+        return self.start_ft <= station_ft <= self.end_ft
 
 
 def _apply_traced_curb_lines(legs: dict, kerb_ways: list, center_ft: Point,
@@ -940,9 +1006,22 @@ def load_intersection_model(config: dict | None = None, site: str | None = None)
     # time round - the coverage it reports is about the final geometry, not the scaffold.
     near_coverage = _fit_legs_to_traced_kerbs(legs, kerb_ways, center_ft, legs_cfg)
     _extend_curbs_with_far_tracing(legs, center, center_ft, near_coverage)
-    matched_roads = _match_legs_to_osm_roads(legs, center, center_ft)
-    leg_osm_tags = {name: tags for name, (tags, _aligned) in matched_roads.items()}
-    leg_osm_aligned = {name: aligned for name, (_tags, aligned) in matched_roads.items()}
+    leg_road_spans = _match_legs_to_osm_roads(legs, center, center_ft)
+    # The way covering MOST of the leg carries its whole-leg tags. Not the way nearest the
+    # leg's midpoint, which is what this used to pick: on a split leg those differ, and the
+    # nearest-to-midpoint rule has no claim to describing the leg as a whole.
+    dominant = {name: max(spans, key=lambda span: span.length_ft)
+                for name, spans in leg_road_spans.items()}
+    leg_osm_tags = {name: span.tags for name, span in dominant.items()}
+    leg_osm_aligned = {name: span.aligned for name, span in dominant.items()}
+    for name, spans in sorted(leg_road_spans.items()):
+        if len(spans) < 2:
+            continue
+        # A split leg is worth saying out loud: it is how OSM records a fact that changes part
+        # way along a street, and reading only one of the ways is how such a fact disappears.
+        detail = "; ".join(f"way {s.way_id} over {s.start_ft:.0f}-{s.end_ft:.0f} ft" for s in spans)
+        print(f"  NOTE: {name} is covered by {len(spans)} OSM ways ({detail}). Kerbside parking "
+              f"is read per span; whole-leg tags come from the longest.")
 
     radius_ft = config["treatments"]["existing_corner_radius_ft"]
     # Traced OSM kerbs give a real measured radius per corner where they exist; the
@@ -963,6 +1042,7 @@ def load_intersection_model(config: dict | None = None, site: str | None = None)
         center_ft=center_ft,
         legs=legs,
         corner_fillets=corner_fillets,
+        leg_road_spans=leg_road_spans,
         leg_osm_tags=leg_osm_tags,
         leg_osm_aligned=leg_osm_aligned,
         parcels=parcels,

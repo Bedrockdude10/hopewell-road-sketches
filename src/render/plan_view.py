@@ -11,6 +11,8 @@ from src.geometry.model import inset_point_at_station, trimmed_curb_lines
 from src.geometry.intersection import IntersectionModel, kerb_lines_with_tags_ft
 from src.geometry.treatments import DEFAULT_CENTERLINE_STYLE, DesignState
 from src.provenance import PLOT_STYLE, built_width_provenance
+from src.geometry import markings
+from src.geometry.markings import require_every_kind
 from src.render.props import (DRAWN_BY_PAINT, TACTILE_PAD_DEPTH_FT, TACTILE_PAD_WIDTH_FT,
                                build_props, pad_polygon, signalization_conflicts)
 from src.render.coords import FT_TO_M, wgs84_to_state_plane
@@ -102,31 +104,41 @@ PROP_MARKERS = {
 # dedicated marker: they are whatever a config or a proposal named.
 EXTRA_PROP_MARKER = dict(color="darkgoldenrod", marker="^", s=30, zorder=7)
 
-# How each src/geometry/paint.py piece kind is drawn. A kind absent here is not drawn at all -
-# tests/test_paint.py asserts every kind the builder emits appears in this table or in
-# src/render/export.py's PAINT_KIND_LISTS, so a renamed kind can't silently vanish from one view.
-PAINT_STYLE = {
-    "lane_narrowing_fill":  dict(color="gold", alpha=0.5, hatch="//", zorder=3),
-    "taper_fill":           dict(color="gold", alpha=0.5, hatch="//", zorder=3),
-    "buffer_fill":          dict(color="gold", alpha=0.5, hatch="//", zorder=3),
+# How each marking is drawn in plan. Styling is a real per-marking choice - what colour says
+# "this asphalt is spare" versus "parking here is illegal" is a judgement, not something
+# derivable - so this table is written by hand. require_every_kind is what makes forgetting an
+# entry impossible: a marking declared in src/geometry/markings.py with no style here raises on
+# import, rather than being silently absent from the plan view while the 3D render draws it. An
+# OBJECT is exempt - a flex post is drawn as a marker, not as paint (see BOLLARD_PLAN_COLOR).
+PAINT_STYLE = require_every_kind({
+    markings.LANE_NARROWING_FILL: dict(color="gold", alpha=0.5, hatch="//", zorder=3),
+    markings.TAPER_FILL:          dict(color="gold", alpha=0.5, hatch="//", zorder=3),
+    markings.BUFFER_FILL:         dict(color="gold", alpha=0.5, hatch="//", zorder=3),
     # The statutory no-parking zone at the corner (R.S. 39:4-138). Drawn in a distinct
     # colour from the ordinary buffer hatch because it is a different claim: not "this
     # asphalt is spare", but "parking here is illegal and this proposal marks it".
-    "daylight_fill":        dict(color="orangered", alpha=0.40, hatch="xx", zorder=3),
-    "corner_hatch_fill":    dict(color="gold", alpha=0.5, hatch="//", zorder=3),
-    "apron":                dict(color="peru", alpha=0.6, zorder=3),
-    "lane_edge_line":       dict(color="goldenrod", linewidth=1.5, zorder=3),
-    "taper_line":           dict(color="goldenrod", linewidth=1.5, zorder=3),
-    "buffer_edge_line":     dict(color="goldenrod", linewidth=1.5, zorder=3),
-    "daylight_edge_line":   dict(color="orangered", linewidth=1.5, zorder=3),
-    "crossing_rim_line":    dict(color="orangered", linewidth=1.5, zorder=3),
+    markings.DAYLIGHT_FILL:       dict(color="orangered", alpha=0.40, hatch="xx", zorder=3),
+    markings.CORNER_HATCH_FILL:   dict(color="gold", alpha=0.5, hatch="//", zorder=3),
+    markings.APRON:               dict(color="peru", alpha=0.6, zorder=3),
+    markings.LANE_EDGE_LINE:      dict(color="goldenrod", linewidth=1.5, zorder=3),
+    markings.TAPER_LINE:          dict(color="goldenrod", linewidth=1.5, zorder=3),
+    markings.BUFFER_EDGE_LINE:    dict(color="goldenrod", linewidth=1.5, zorder=3),
+    markings.DAYLIGHT_EDGE_LINE:  dict(color="orangered", linewidth=1.5, zorder=3),
+    markings.CROSSING_RIM_LINE:   dict(color="orangered", linewidth=1.5, zorder=3),
     # The square end of a zone with no crossing to be cut by and no room to taper.
-    "zone_end_line":        dict(color="goldenrod", linewidth=1.5, zorder=3),
-    "parking_edge_line":    dict(color="steelblue", linewidth=1.5, zorder=3),
-    "stall_divider":        dict(color="steelblue", linewidth=1, zorder=3),
-}
+    markings.ZONE_END_LINE:       dict(color="goldenrod", linewidth=1.5, zorder=3),
+    markings.PARKING_EDGE_LINE:   dict(color="steelblue", linewidth=1.5, zorder=3),
+    markings.STALL_DIVIDER:       dict(color="steelblue", linewidth=1, zorder=3),
+    # An exclusive bike lane. Green, because that is what a bike lane is coloured on a real
+    # street and in every other agency's drawings - and a colour of its own is the point: this
+    # is the one treatment here that says a vehicle BELONGS in the strip, where the gold
+    # hatching says nothing does.
+    markings.BIKE_LANE_EDGE_LINE: dict(color="seagreen", linewidth=1.6, zorder=3),
+    markings.BIKE_BUFFER_FILL:    dict(color="mediumseagreen", alpha=0.35, hatch="\\\\", zorder=3),
+}, "plan_view.PAINT_STYLE")
 # Outline colour for each filled zone's own fill colour.
-PAINT_FILL_EDGE = {"gold": "goldenrod", "peru": "saddlebrown", "orangered": "orangered"}
+PAINT_FILL_EDGE = {"gold": "goldenrod", "peru": "saddlebrown", "orangered": "orangered",
+                   "mediumseagreen": "seagreen"}
 
 
 def _draw_props(ax, model: IntersectionModel, state: DesignState, crosswalk_offsets: dict,
@@ -400,25 +412,32 @@ def plot_design_state(ax, model: IntersectionModel, state: DesignState, title: s
     # itself, in parallel with export.py doing the same, and the two had already drifted on
     # where a parking buffer's taper starts and on whether taper fill is cut around a
     # crossing. Both views now show the same geometry because it IS the same geometry.
-    paint = scene.build_paint(props)
+    #
+    # props comes back extended with the bollards the paint places (see
+    # SceneGeometry.build_paint_and_posts). Nothing more is drawn for them here - the loop
+    # below already draws them from the paint - but the invariant pass has to see the same
+    # props the export will, or the check that they reach the 3D render can only fail there.
+    paint, props = scene.build_paint_and_posts(props)
 
     # All pieces of one kind in one collection. A proposal builds well over a hundred, and
     # adding a matplotlib collection costs more the more are already there - drawn one at a
     # time this was the single most expensive thing in a 2D build. See _draw.
-    by_kind: dict[str, list] = {}
+    by_kind: dict[markings.PaintKind, list] = {}
     bollards = []
     for piece in paint:
-        if piece.kind == "bollard":
+        # A flex post is an object, not paint, and is drawn as a marker below. Asked of the
+        # marking rather than matched against its name - see markings.Role.
+        if piece.kind.is_object:
             bollards.append(piece.geometry.centroid)
-        elif piece.kind in PAINT_STYLE:
+        else:
             by_kind.setdefault(piece.kind, []).append(piece.geometry)
     for kind, geometries in by_kind.items():
         style = PAINT_STYLE[kind]
-        # A filled zone gets its outline drawn too; a line has no boundary. Read off the
-        # geometry, the same test PaintPiece.is_fill makes - every piece of one kind comes
-        # from one builder, so a group is homogeneous.
+        # A zone that covers ground gets its outline drawn too; a line has no boundary. Asked
+        # of the marking, not of the geometry: a bollard is stored as a degenerate polygon, so
+        # the geometry test answered "fill" for something that is neither.
         edge = (dict(color=PAINT_FILL_EDGE[style["color"]], linewidth=1, zorder=3)
-                if geometries[0].geom_type == "Polygon" else None)
+                if kind.covers_area else None)
         _draw(ax, geometries, boundary=edge, **style)
     if bollards:
         ax.scatter([p.x for p in bollards], [p.y for p in bollards],
@@ -498,35 +517,60 @@ def _label_parking_legality(ax, model, state):
     no parking, OSM says parking is fine but the road has less than one stall's width spare,
     and nobody has tagged it at all. The first is a restriction being marked; the other two
     are this design's own arithmetic. Only the tag distinguishes them, so the tag is drawn.
-    """
-    from src.geometry.intersection import parking_restriction_by_side, parking_is_restricted
-    from src.geometry.model import curb_point_at_station
-    from src.geometry.treatments import MIN_MARKED_PARKING_DEPTH_FT, TARGET_LANE_WIDTH_FT
 
-    osm_tags = getattr(model, "leg_osm_tags", {})
-    aligned_by_leg = getattr(model, "leg_osm_aligned", {})
+    Read per STRETCH of kerb, not per leg. A restriction covering only the approach to the
+    junction is how OSM records "no parking for the first 100 ft", and a label that reduced the
+    kerb to one value could only report one end of it - which is how East Broad came to be
+    labelled "parking OK" over a kerb whose first 80 ft are tagged no_parking. See
+    src/geometry/treatments.py:RestrictionSummary.
+    """
+    from src.geometry.model import curb_point_at_station
+    from src.geometry.treatments import (MIN_MARKED_PARKING_DEPTH_FT, TARGET_LANE_WIDTH_FT,
+                                         _restriction_summary)
+
     for leg_name, leg in state.legs.items():
         if leg.curb_to_curb_ft is None:
             continue
-        sides = parking_restriction_by_side(osm_tags.get(leg_name, {}),
-                                             aligned_by_leg.get(leg_name, True))
         allowance_ft = leg.curb_to_curb_ft / 2 - TARGET_LANE_WIDTH_FT
         for side in ("left", "right"):
-            restriction = sides[side]
-            if parking_is_restricted(restriction):
-                kind, says = "restricted", restriction
-            elif restriction == "none":
+            at = _restriction_summary(state, leg_name, side, leg.centerline.length)
+            if at.restricted_throughout:
+                kind, says = "restricted", at.worst_value
+            elif at.restricted_in_part:
+                # The case a single value cannot express. Named on the drawing with the stretch
+                # it covers, because "which 80 ft" is the whole content of the fact.
+                kind = "restricted"
+                says = at.describe().replace("OSM says ", "").replace("'", "")
+            elif at.stated_ft > 0:
                 kind, says = "allowed", "none (parking OK)"
             else:
                 kind, says = "untagged", "untagged"
 
-            if (leg_name, side) in state.parking_zones:
-                drew = "stalls"
+            if (leg_name, side) in state.bike_lanes:
+                lane = state.bike_lanes[(leg_name, side)]
+                drew = f"bike lane, {lane.width_ft:.0f} ft"
+            elif (leg_name, side) in state.parking_zones:
+                # Naming the carve-out matters on a partly-restricted kerb: "stalls" alone, next
+                # to a label saying no_parking over the first 80 ft, reads as a contradiction
+                # rather than as the two facts it is.
+                drew = ("stalls beyond it" if at.restricted_in_part else "stalls")
             elif (leg_name in state.lane_narrowing
                   and side in state.lane_narrowing_sides.get(leg_name, ("left", "right"))):
-                drew = ("hatched" if kind == "restricted"
-                        else f"hatched: only {allowance_ft:.1f} ft spare, "
-                             f"under a {MIN_MARKED_PARKING_DEPTH_FT:.0f} ft stall")
+                # Three reasons a kerb ends up hatched, and the label may only claim the one
+                # that applies. It used to attribute every unrestricted hatched kerb to
+                # insufficient width, which on Broad St reads "only 15.0 ft spare, under a 8 ft
+                # stall" - self-contradictory, because 15 is not under 8. What is really going
+                # on there is that the borough ordinance prohibits parking where OSM carries no
+                # tag at all, so the scenario hatched it deliberately; the label cannot know
+                # which, so it stops asserting and says what it can see.
+                if kind == "restricted":
+                    drew = "hatched"
+                elif allowance_ft < MIN_MARKED_PARKING_DEPTH_FT:
+                    drew = (f"hatched: only {allowance_ft:.1f} ft spare, under a "
+                            f"{MIN_MARKED_PARKING_DEPTH_FT:.0f} ft stall")
+                else:
+                    drew = (f"hatched by this proposal, though {allowance_ft:.1f} ft is spare "
+                            f"- see the scenario for why")
             else:
                 drew = (f"nothing: {allowance_ft:.1f} ft spare beside an "
                         f"{TARGET_LANE_WIDTH_FT:.0f} ft lane")
@@ -574,7 +618,7 @@ def _label_paint(ax, state, paint):
     # One label per RUN of stalls, not per side: a hydrant mid-block splits a kerb into two
     # separate runs, and a single label would be counting stalls that are not in one place.
     for piece in paint:
-        if piece.kind != "parking_edge_line":
+        if piece.kind is not markings.PARKING_EDGE_LINE:
             continue
         zone = state.parking_zones.get((piece.leg, piece.side))
         if zone is None:
@@ -630,7 +674,10 @@ def legend_handles():
         Patch(facecolor="white", edgecolor=PARKING_LEGALITY_COLOR["untagged"],
                label="OSM: parking untagged"),
         Line2D([0], [0], color="darkviolet", lw=1, ls=":", label="OSM crossing way (as surveyed)"),
-        Line2D([0], [0], color="darkorange", lw=2.5, label="Corner fillet (radius labeled)"),
+        # A curb extension's tightened face is drawn as this same arc - it IS a corner fillet,
+        # solved at the radius the extension presents (src/geometry/treatments.py).
+        Line2D([0], [0], color="darkorange", lw=2.5,
+                label="Corner fillet / curb extension face (radius labeled)"),
         Line2D([0], [0], color="seagreen", lw=6, alpha=0.6, label="Pedestrian refuge island"),
         Line2D([0], [0], color="slateblue", lw=6, alpha=0.35, label="Raised crossing"),
         Patch(facecolor="gold", alpha=0.5, hatch="//", edgecolor="goldenrod", label="Lane narrowing / corner hatching"),
@@ -638,6 +685,9 @@ def legend_handles():
         Patch(facecolor="orangered", alpha=0.40, hatch="xx", edgecolor="orangered",
                label="Daylighting - no parking (R.S. 39:4-138)"),
         Patch(facecolor="peru", alpha=0.6, edgecolor="saddlebrown", label="Mountable apron"),
+        Line2D([0], [0], color="seagreen", lw=1.6, label="Bike lane - edge lines"),
+        Patch(facecolor="mediumseagreen", alpha=0.35, hatch="\\\\", edgecolor="seagreen",
+               label="Bike lane buffer"),
         Line2D([0], [0], marker="o", color=BOLLARD_PLAN_COLOR, lw=0, label="Bollard"),
         Line2D([0], [0], color="steelblue", lw=1.5, label="Marked parking lane + stalls"),
         Patch(facecolor="white", edgecolor="darkviolet", label="Crosswalk - OSM-surveyed position"),

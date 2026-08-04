@@ -498,6 +498,32 @@ def curb_station_span(leg: "Leg", side: str) -> tuple[float, float] | None:
     return (lo, hi) if hi > lo else None
 
 
+def narrowest_half_width_ft(leg: "Leg", side: str, from_ft: float = 0.0,
+                             to_ft: float | None = None) -> float:
+    """The least room this side has between the centerline and the real kerb, over a span.
+
+    The bound a cross-section has to fit if it is to be promised for the whole of a leg rather
+    than at one station. The nominal half-width is a summary and is routinely the wrong number
+    for this: broad_st_east's nominal half is 26.0 ft, and its kerbs come within 22.8 ft of the
+    alignment somewhere along the traced run. A 48 ft parking-protected section sized off the
+    nominal figure would be drawn 5.2 ft over the kerb at that point.
+
+    Falls back to the nominal half-width where the side has no traced kerb, since then there is
+    no measurement to prefer.
+    """
+    half_ft = leg.curb_to_curb_ft / 2 if leg.curb_to_curb_ft is not None else 0.0
+    span = curb_station_span(leg, side)
+    if span is None:
+        return half_ft
+    lo = max(span[0], from_ft)
+    hi = min(span[1], leg.centerline.length if to_ft is None else to_ft)
+    if hi - lo < STRIP_SAMPLE_FT:
+        return half_ft
+    n = max(int(np.ceil((hi - lo) / STRIP_SAMPLE_FT)) + 1, 2)
+    offsets = curb_offsets_at_stations(leg, side, np.linspace(lo, hi, n))
+    return float(np.abs(offsets).min())
+
+
 def curbside_strip_polygon(leg: "Leg", side: str, inner_offset_ft: float,
                             start_ft: float, end_ft: float | None = None) -> Polygon | None:
     """The strip of roadway between a leg's real curb and a line inner_offset_ft from its
@@ -537,8 +563,14 @@ def curbside_strip_polygon(leg: "Leg", side: str, inner_offset_ft: float,
     sign = 1.0 if side == "left" else -1.0
     inner = sign * np.minimum(inner_offset_ft, np.abs(curb_offsets))
 
-    outer_pts = [_point_at(leg.centerline, s, float(o)) for s, o in zip(stations, curb_offsets)]
-    inner_pts = [_point_at(leg.centerline, s, float(o)) for s, o in zip(stations, inner)]
+    # The outer boundary is the kerb, so it uses the KERB'S OWN coordinates rather than a
+    # resampling of them - see curb_edge_by_station for why that difference is load-bearing near
+    # a centerline bend. The inner boundary has no such geometry to borrow and is placed in the
+    # measuring frame instead.
+    outer_pts = curb_edge_by_station(leg, side, lo, hi)
+    if outer_pts is None:
+        return None
+    inner_pts = _place_in_measured_frame(leg.centerline, stations, inner)
     poly = Polygon(list(outer_pts) + list(reversed(inner_pts)))
     if not poly.is_valid:
         poly = poly.buffer(0)
@@ -637,7 +669,9 @@ def inset_line_ft(leg: "Leg", side: str, offset_ft: float,
     sign = 1.0 if side == "left" else -1.0
     room = np.maximum(np.abs(curb_offsets) - keep_inside_ft, 0.0)
     inner = sign * np.minimum(offset_ft, room)
-    return LineString([_point_at(leg.centerline, s, float(o)) for s, o in zip(stations, inner)])
+    # Same measured-frame placement curbside_strip_polygon uses, and for the same reason - this
+    # line is the inner boundary of that strip and the two must not disagree about where it is.
+    return LineString(_place_in_measured_frame(leg.centerline, stations, inner))
 
 
 def _corner_bulge_normal(leg: "Leg", role: str) -> np.ndarray:
@@ -850,6 +884,35 @@ def bollard_points_ft(leg: "Leg", stripe_width_ft: float, start_ft: float,
     return points
 
 
+def points_at_offset_ft(leg: "Leg", side: str, offset_ft: float, start_ft: float,
+                         end_ft: float | None = None, spacing_ft: float = 10.0) -> list[tuple]:
+    """Points at a FIXED lateral offset from the centerline, spaced along the leg.
+
+    For anything standing in a strip whose position is measured from the centerline rather than
+    from the kerb - a delineator in a bike lane's buffer, say. bollard_points_ft centres its
+    points between the kerb and a lane edge, which is the right rule for a kerbside buffer and
+    the wrong one for a buffer sitting between two lanes: it would drift outward with the kerb
+    instead of holding the line the paint holds.
+
+    Clipped to the stations this side's kerb actually covers, so nothing is placed where there is
+    no measured roadway, and never outside the kerb itself.
+    """
+    span = curb_station_span(leg, side)
+    if span is None:
+        return []
+    lo = max(span[0], start_ft)
+    hi = min(span[1], leg.centerline.length if end_ft is None else end_ft)
+    if hi <= lo or spacing_ft <= 0:
+        return []
+    n = int((hi - lo) // spacing_ft) + 1
+    stations = lo + np.arange(n) * spacing_ft
+    curb_offsets = np.abs(curb_offsets_at_stations(leg, side, stations))
+    sign = 1.0 if side == "left" else -1.0
+    lateral = np.minimum(offset_ft, curb_offsets)
+    return [tuple(_point_at(leg.centerline, float(s), sign * float(o)))
+            for s, o in zip(stations, lateral)]
+
+
 def parking_stall_count_ft(leg: "Leg", stall_length_ft: float, start_ft: float, end_ft: float | None = None) -> int:
     """How many full stall_length_ft stalls fit between start_ft and end_ft
     (defaults to the leg's own far end) - shared by parking_stall_lines_ft
@@ -921,6 +984,216 @@ def parking_stall_lines_ft(leg: "Leg", side: str, depth_ft: float, stall_length_
                 _point_at(leg.centerline, float(station), sign * min(inner_off, float(off))),
             ])
             for station, off in zip(stations, curb_off)]
+
+
+# ---------------------------------------------------------------------------
+# Curb extensions (bulb-outs)
+# ---------------------------------------------------------------------------
+#
+# A curb extension shortens a crossing by moving the KERB LINE laterally into the roadway
+# near the junction and tapering it back out. That is the whole mechanism, and it is worth
+# stating because the obvious-looking alternative does nothing: re-cutting the corner ARC at a
+# smaller radius (set_corner_radius, formerly and misleadingly called bump_out) leaves both
+# curb lines exactly where they were. Measured on broad_st_east x greenwood_ave_north at
+# 29.2 -> 15.0 ft:
+#
+#     arc length     19.48 -> 3.51 ft     the arc really is re-cut
+#     trimmed_a     156.19 -> 164.19 ft   the curb just extends to the new tangent point
+#     pavement area  23,989.7 -> 23,989.5 sq ft      0.2 sq ft of 24,000
+#     crossing spans unchanged to 0.00 ft on all four legs
+#
+# The crossings here sit 21-42 ft out, past the corner, so a radius change never reaches them.
+#
+# The extension is measured from the leg's NOMINAL half-width, not from the traced kerb at that
+# station, and the difference matters. The traced kerb flares through the corner return -
+# broad_st_east's kerbs are 39.4 and 31.6 ft off the centerline where its crossing is painted,
+# against a 26.0 ft nominal half-width - so the crossing today spans 65.0 ft of pavement, not
+# the 52.0 ft the cross-section suggests. Extending from the nominal half-width replaces that
+# flare with the extension's own straight face, which is what a built bulb-out does, and it is
+# why the crossing falls further than the extension alone would imply: 8 ft of extension per
+# side takes broad_st_east from 65.0 ft to about 2 x (26.0 - 8) = 36 ft.
+#
+# How far a curb extension may be pushed is bounded by the travel lane it must leave behind,
+# so every caller is checked against TARGET_LANE_WIDTH_FT - see
+# src/geometry/treatments.py:add_curb_extension.
+
+# How gently the extension returns to the real kerb: feet along the leg per foot of lateral
+# shift. A DESIGN CHOICE, not a measured or standard figure - flagged like
+# PARKING_BUFFER_DEFAULT_FT rather than dressed up as a citation. 5:1 is at the gentle end of
+# what low-speed parking-lane transitions use, and the check that matters is not the rate but
+# the total: face plus taper has to stay inside the length of kerb where parking is already
+# prohibited, or the extension removes a space. See
+# tests/test_curb_extensions.py:test_a_bulbout_fits_inside_the_ordinance_no_parking_length.
+BULBOUT_TAPER_RATE = 5.0
+
+
+def curb_extension_line(leg: "Leg", side: str, extension_ft: float, full_ft: float,
+                         taper_ft: float) -> LineString | None:
+    """One leg side's kerb with a curb extension built into it.
+
+    Three stretches, in station order:
+
+      0 -> full_ft                  the extension's face, straight, at the leg's nominal
+                                    half-width less `extension_ft`
+      full_ft -> full_ft + taper_ft the return to the real kerb
+      beyond                        the traced kerb itself, vertex for vertex
+
+    The taper is a raised-cosine blend between the two offsets, which is tangent to both ends
+    by construction - no kink where the face meets it and none where it rejoins the tracing.
+    (An arc solved through two points, which lane_narrowing_taper_ft uses for painted tapers,
+    is free to bulge between them; for a KERB that bulge would be built concrete.)
+
+    The face never sits outside the traced kerb. Where the real kerb is already inside the
+    nominal half-width - which happens mid-block, broad_st_east's left kerb is traced at
+    22.7 ft against a 24.2 ft nominal - the tracing wins and no extension is built there. An
+    extension is only ever allowed to take roadway, never to invent it.
+    """
+    frame = _traced_curb_frame(leg, side)
+    if frame is None or leg.curb_to_curb_ft is None:
+        return None
+    curb_stations, curb_offsets = frame
+    sign = 1.0 if side == "left" else -1.0
+    face_abs = leg.curb_to_curb_ft / 2 - extension_ft
+    taper_end_ft = full_ft + taper_ft
+
+    n = max(int(np.ceil(taper_end_ft / STRIP_SAMPLE_FT)) + 1, 2)
+    stations = np.linspace(0.0, taper_end_ft, n)
+    real_abs = np.abs(np.interp(stations, curb_stations, curb_offsets))
+    # Raised cosine over the taper, 0 on the face, 1 once the real kerb governs again.
+    ease = (1 - np.cos(np.pi * np.clip((stations - full_ft) / taper_ft, 0.0, 1.0))) / 2
+    built_abs = np.minimum(face_abs, real_abs) * (1 - ease) + real_abs * ease
+
+    points = _place_in_measured_frame(leg.centerline, stations, sign * built_abs)
+    # The tracing itself past the taper, not a resampling of it: beyond the extension this
+    # side's kerb is still the surveyor's, and it should stay vertex-for-vertex theirs.
+    points += [_point_at(leg.centerline, float(s), float(o))
+               for s, o in zip(curb_stations, curb_offsets) if s > taper_end_ft]
+    return LineString(points) if len(points) >= 2 else None
+
+
+# How many corrective passes _place_in_measured_frame takes. Two is enough at every leg here -
+# the residual falls from 0.59 ft to under a thousandth - and a cap means a pathological frame
+# ends the loop rather than spinning in it.
+_FRAME_CORRECTION_PASSES = 2
+
+
+def _place_in_measured_frame(centerline: LineString, stations: np.ndarray,
+                             offsets: np.ndarray) -> list[tuple]:
+    """World points that MEASURE BACK as (station, offset), not merely that were built from it.
+
+    _point_at and station_offset_many are inverses along a straight centerline and drift apart
+    near a kink, because they resolve the ambiguity differently: _point_at extrapolates the frame
+    of the segment the station falls on, while station_offset_many assigns a point to whichever
+    segment it is perpendicular-nearest to. In the wedge outside a bend those are different
+    segments, and the further from the centerline the wider the gap.
+
+    It matters here and not for a traced kerb because a traced kerb's stations were DERIVED by
+    station_offset_many from surveyed points, so they agree with it by construction. An extension
+    imposes stations instead, at ±19 ft of offset, and broad_st_east's centerline kinks 4.5 deg
+    43.1 ft out where NJDOT rounds the corner: a vertex placed at station 44.0 read back at
+    41.59, and across the taper's 0.2 ft-per-ft slope that is 0.59 ft of offset - enough to put
+    the kerbside hatching built against this kerb 0.6 ft over it, which check_paint_inside_the_curb
+    duly caught.
+
+    So the placement is corrected against the measuring frame rather than trusted: place, measure,
+    move by the residual. Everything downstream - the paint, the crossing reach, the invariants -
+    measures with station_offset_many, so that is the frame the geometry has to be right in.
+
+    Corrected per point and only where it HELPS. The two frames do not merely drift: at an offset
+    larger than the bend's radius of curvature the offset curve FOLDS, and inside the fold the
+    station order reverses - on broad_st_east's right kerb, 19 ft in from the bend at station
+    43.1, asking for station 42 lands at 44.35 and asking for 44 lands at 41.59. A correction step
+    across that discontinuity overshoots instead of converging, so each point keeps whichever
+    estimate measures closest to what was asked and the fold is left alone rather than chased.
+    """
+    target_s = np.asarray(stations, dtype=float)
+    target_o = np.asarray(offsets, dtype=float)
+    ask_s, ask_o = target_s.copy(), target_o.copy()
+    best = np.array([_point_at(centerline, float(s), float(o)) for s, o in zip(ask_s, ask_o)])
+    got_s, got_o = station_offset_many(centerline, best)
+    best_error = np.hypot(got_s - target_s, got_o - target_o)
+    for _ in range(_FRAME_CORRECTION_PASSES):
+        ask_s = ask_s + (target_s - got_s)
+        ask_o = ask_o + (target_o - got_o)
+        trial = np.array([_point_at(centerline, float(s), float(o))
+                          for s, o in zip(ask_s, ask_o)])
+        got_s, got_o = station_offset_many(centerline, trial)
+        error = np.hypot(got_s - target_s, got_o - target_o)
+        better = error < best_error
+        best[better], best_error[better] = trial[better], error[better]
+    return [tuple(p) for p in best]
+
+
+def curb_edge_by_station(leg: "Leg", side: str, lo_ft: float, hi_ft: float) -> list[tuple] | None:
+    """The kerb's OWN world coordinates between two stations, with exact ends.
+
+    For the outer boundary of anything that runs along a kerb. Resampling the kerb onto a station
+    grid and re-placing it with _point_at was near enough while every kerb offset changed slowly,
+    and stopped being so once a curb extension's taper made one change at 0.2 ft per ft: the
+    placement drifts from the frame the checks measure in, and inside a fold (see
+    _place_in_measured_frame) it cannot be corrected at all.
+
+    Taking the kerb's real coordinates sidesteps the frame entirely. Nothing is interpolated
+    except the two end vertices, which are held at exactly lo_ft and hi_ft so the strip's two
+    boundaries still start and finish at the same stations - the property the resampling existed
+    to guarantee, and the one that keeps a strip a strip rather than a wedge.
+    """
+    frame = _traced_curb_frame(leg, side)
+    if frame is None:
+        return None
+    curb_stations, curb_offsets = frame
+    coords = np.asarray(getattr(leg, f"{side}_curb").coords, dtype=float)
+    order = np.argsort(np.asarray(_traced_curb_station_order(leg, side)))
+    inside = [tuple(coords[order[i]]) for i in range(len(order))
+              if lo_ft < curb_stations[i] < hi_ft]
+    ends = _place_in_measured_frame(leg.centerline, np.array([lo_ft, hi_ft]),
+                                    np.interp([lo_ft, hi_ft], curb_stations, curb_offsets))
+    return [ends[0]] + inside + [ends[1]]
+
+
+def _traced_curb_station_order(leg: "Leg", side: str) -> np.ndarray:
+    """The kerb's vertex indices in station order - the same sort _curb_in_leg_frame applies."""
+    curb = getattr(leg, f"{side}_curb")
+    stations, _offsets = station_offset_many(leg.centerline, np.asarray(curb.coords, dtype=float))
+    return np.argsort(stations)
+
+
+def corner_apron_annulus(curb_a: LineString, curb_b: LineString, face_radius_ft: float,
+                          swept_radius_ft: float, n_points: int = 24) -> Polygon | None:
+    """The mountable ground between a tightened corner face and the radius a bus still needs.
+
+    A curb extension presents a `face_radius_ft` corner to a passenger car. A bus tracking the
+    same corner needs the radius the corner was BUILT to, which at these junctions is a traced,
+    measured figure per corner (29.2 / 24.6 / 29.0 / 22.9 ft at Broad & Greenwood). The ground
+    between the two arcs is the difference: paved and flush, so a bus rides over it, but read
+    by a driver as corner rather than carriageway.
+
+    That region is what makes the "swept path is preserved by construction" claim true rather
+    than asserted, so it is built as the actual annulus between the two arcs - both solved by
+    the same fillet math off the same two curb lines. corner_overlay_polygon, which the
+    standalone add_mountable_apron uses, draws a fixed-depth kite off one arc instead; it is
+    the right shape for "hatch this corner" and the wrong one for "a bus fits through here",
+    because nothing ties its depth to the radius a bus needs.
+
+    Returns None where there is nothing to pave: a face radius at or above the swept radius
+    means the corner was not tightened.
+    """
+    if swept_radius_ft <= face_radius_ft:
+        return None
+    try:
+        _a, face_arc, _b = fillet_curb_corner(curb_a, curb_b, face_radius_ft, n_points)
+        _a, swept_arc, _b = fillet_curb_corner(curb_a, curb_b, swept_radius_ft, n_points)
+    except (ValueError, np.linalg.LinAlgError):
+        return None
+    ring = list(face_arc.coords) + list(reversed(swept_arc.coords))
+    if len(ring) < 3:
+        return None
+    polygon = Polygon(ring)
+    if not polygon.is_valid:
+        polygon = polygon.buffer(0)
+    if polygon.is_empty or polygon.area <= 1e-6:
+        return None
+    return polygon
 
 
 def corner_overlay_polygon(pieces: dict, center_ft: Point, depth_ft: float) -> Polygon:

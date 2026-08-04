@@ -42,9 +42,9 @@ It writes the same files the phase scripts do, runs sites in parallel (`--jobs`)
 
 This runs `.venv/bin/python -m pytest` and works whether or not the venv is active. Plain `python -m pytest` only works once you've run `source .venv/bin/activate` — without it, `python` is whatever is on your PATH, and if that interpreter happens to have pytest but not geopandas the suite fails at collection. The root `conftest.py` detects that case and prints one message telling you which interpreter you're on and what to run instead, rather than five `ModuleNotFoundError` tracebacks.
 
-296 tests, ~11 s, **no network**: they run against a committed snapshot of the OSM responses in `tests/fixtures/osm_cache/`, and `HOPEWELL_OFFLINE=1` makes any un-snapshotted fetch fail loudly rather than reach Overpass. Refresh the snapshot with `cp output/.cache/*.json tests/fixtures/osm_cache/`.
+348 tests, ~17 s, **no network**: they run against a committed snapshot of the OSM responses in `tests/fixtures/osm_cache/`, and `HOPEWELL_OFFLINE=1` makes any un-snapshotted fetch fail loudly rather than reach Overpass. Refresh the snapshot with `cp output/.cache/borough_*.json tests/fixtures/osm_cache/` — it does NOT update itself when you re-pull, so after editing OSM you have to do both (see "Kerbside parking varies ALONG a leg" below).
 
-`tests/test_checks.py` covers the scene invariants (see below), `tests/test_traced_curbs.py` covers building curb lines from traced OSM kerbs, and `tests/test_sites.py` asserts all four real junctions and their proposals satisfy the invariants.
+`tests/test_checks.py` covers the scene invariants (see below), `tests/test_traced_curbs.py` covers building curb lines from traced OSM kerbs, `tests/test_curb_extensions.py` covers curb extensions and bike lanes (and pins what a corner-radius change does *not* do), and `tests/test_sites.py` asserts all four real junctions and every proposal satisfy the invariants.
 
 ## Scene invariants
 
@@ -59,6 +59,7 @@ This runs `.venv/bin/python -m pytest` and works whether or not the venv is acti
 | `pavement_ring` | a pavement polygon that isn't simple |
 | `crosswalk_off_the_roadway` | a crosswalk floating outside the roadway it crosses |
 | `stop_bar_crosses_centerline` | a stop bar painted across the opposing lanes |
+| `post_not_in_the_render` | a bollard drawn in the plan view with no prop behind it, so the 3D render builds no post there — the two views take posts from different places, and Broad St's bike lanes shipped with 61 in 2D and none in 3D |
 
 All violations are collected and reported together rather than failing on the first, and each carries coordinates so the plan view can ring them in red where they happen. A violation at a *surveyed* OSM position (an `emergency=fire_hydrant` node inside our modelled roadway) is reported as a source conflict rather than a failure: one of the two sources is wrong, but no edit to this repo fixes it.
 
@@ -184,16 +185,68 @@ scripts/
 
 ## Treatments (`src/geometry/treatments.py`)
 
-`DesignState` is immutable-by-clone — every treatment function takes a state and returns a *new* one, so scenarios compose by chaining: `state = bump_out(state, ...)`.
+`DesignState` is immutable-by-clone — every treatment function takes a state and returns a *new* one, so scenarios compose by chaining: `state = add_curb_extension(state, ...)`.
 
-- `bump_out(state, corner, radius_ft)` — rebuilds one corner's fillet at a new radius. A curb extension and a tightened turn radius are **the same geometric operation** (shrinking the corner radius does both: shortens the crossing and slows the vehicle turn).
+- `add_curb_extension(state, leg, side, extension_ft, crossing_ft, ...)` — **the one treatment here that moves a kerb** rather than painting on it. It shifts the kerb line laterally into the roadway near the junction and tapers it back, so everything downstream that measures against the kerb follows without being told: the crossing shortens, the pavement polygon loses the corner, the kerbside paint rebuilds against the new edge, and the invariants check the result. Refused rather than clamped when the leg cannot spare the width beside a `TARGET_LANE_WIDTH_FT` lane.
+- `set_corner_radius(state, corner, radius_ft)` — re-cuts one corner's fillet. **This was called `bump_out` and its docstring claimed "the curb physically extends into the corner". It does not.** See below.
+- `add_bike_lane(state, leg, side, width_ft, buffer_ft, parking_ft, shy_ft)` — an exclusive lane with its own edge lines, optionally buffered or parking-protected. `add_lane_narrowing` cannot express this: it paints a *buffer*, saying nothing belongs in the strip, where a bike lane says a specific vehicle does. Every width is between paint faces and the stripes' own bodies come out of the buffer, not out of either lane. Refused below AASHTO's 5 ft minimum, and bounded by the leg's **narrowest traced** cross-section rather than its nominal half-width. The cross-section reads *travel lane → buffer → bike lane → hatching → kerb*: a lane is a standard width and the street's spare asphalt is hatched, the same accounting an 8 ft parking stall gets when its remainder becomes a kerb buffer. Drawn without that outer stripe, a 6 ft lane read as reaching the kerb and looked far wider than it is.
+- `add_bike_lane_bollards(state, leg, side, spacing_ft)` — flex posts down the buffer on the **traffic** side, which is what makes a lane protected; posts in the kerb-side hatching would protect nothing. Requires a buffer, and refuses without one rather than improvising: E Broad has 17.6 ft to its nearest kerb and an 11 ft lane, a 5 ft lane and their two stripes already spend 17.6 of it, so its lanes are conventional and the proposal says so. A post is an *object*, so it has to reach the 3D render as a **prop** — paint alone draws it in the plan view and nowhere else, which is how these shipped visible in 2D and absent in 3D. Its props are read off the paint (`props.bollard_props_from_paint`) rather than recomputed, because where the row starts depends on how far the crossing reaches on that side, and `post_not_in_the_render` now fails the build if a painted post has no prop.
+- `add_mountable_apron(state, corner, extent_ft)` — a flush, drivable corner surface at a fixed depth. Where an apron exists to preserve a large vehicle's swept path around a *tightened* corner its depth is not free, so `add_curb_extension` records the swept radius instead and the apron is built as the annulus between the two radii (`corner_apron_annulus`).
 - `refuge_island(state, leg_name, offset_ft, width_ft, along_road_ft)` — NACTO 6 ft minimum width enforced.
 - `raise_crossing(state, leg_name, crossing_width_ft)` — marks a crossing as a raised speed table; placed via `leg_clearance_ft()`.
 - `upgrade_crosswalk_markings(state, leg_name, style)` — repaints a crosswalk to a more visible style (`"lines"` → `"continental"` → `"ladder"`, FHWA/NACTO visibility ranking). A real, standalone low-cost treatment, not just cosmetic.
 - `set_centerline_style(state, leg_name, style)` — changes what's painted down a leg's middle (`"single_yellow_dashed"` / `"double_yellow"` / `"none"`). Not a visibility ranking like crosswalk style - just what's actually there today (`DesignState.from_model()` seeds it per leg from config.yaml's `centerline_style`, since there's no OSM tag for it) or what a proposal changes it to.
 - `build_sidewalk_pieces(state, sidewalk_width_ft)` — reuses the *same* fillet pipeline at a wider offset to get a sidewalk band that hugs the pavement exactly (12 pieces: 4 leg strips × 2 sides + 4 corner wedges).
 
-The demo scenario (`sites/broad_st_greenwood/scenarios.py:build_demo_scenario`) tightens the two corners on the confirmed West Broad St leg (20→10 ft), adds a refuge island, raises the Greenwood-south crossing, and upgrades the other 3 crosswalks to continental.
+### A corner radius is not a curb extension
+
+`bump_out` had no test and no scenario, and its claim was false. Measured on `broad_st_east × greenwood_ave_north`, 29.2 → 15.0 ft:
+
+| | before | after |
+|---|---|---|
+| arc length | 19.48 ft | 3.51 ft |
+| `trimmed_a` | 156.19 ft | 164.19 ft |
+| pavement area | 23,989.7 sq ft | 23,989.5 sq ft |
+| crossing spans | — | **unchanged to 0.00 ft on all four legs** |
+
+The arithmetic was never wrong; re-cutting an arc between two curb lines leaves both curb lines where they are, and the crossings here sit 21–42 ft out, past the corner. It is now called `set_corner_radius`, which is what it does, and `add_curb_extension` is the treatment that shortens a crossing. Both facts are pinned in `tests/test_curb_extensions.py` so a future "fix" cannot quietly go back to tightening radii.
+
+**Nominal width is not crossing length.** The 52.0 and 55.5 ft in `config.yaml` are mid-block cross-sections. The crossings are painted where the traced kerbs have already flared through the corner returns — 39.4 and 31.6 ft off the centerline on `broad_st_east` against a 26.0 ft nominal half-width — so a person crossing Broad St today walks **65.0 ft** of asphalt, not 52. An 8 ft extension per side reads as "52 → 36" on the cross-section and is really **65.0 → 35.5 ft** on the ground.
+
+### Proposals
+
+| Site | Scenario | What it does |
+|---|---|---|
+| broad_st_greenwood | `build_proposal_apron_bulbouts` | 8 ft curb extensions on both kerbs of both Broad legs. Crossings 65.0 → 35.5 and 69.5 → 39.0 ft; ~1,090 sq ft of roadway becomes corner. A 15 ft face for cars, with a mountable apron out to each corner's **own** traced radius (29.2 / 24.6 / 29.0 / 22.9 ft), so the bus swept path on CR 518 is preserved by construction. Removes **zero** parking: each footprint is 74 ft, inside the 100 ft Schedule I already prohibits. Triggers the 10 ft clause of R.S. 39:4-138(e), returning 15 ft of kerb on each of the four sides. |
+| broad_st_greenwood | `build_proposal_bike_lanes` | Buffered 6 ft lanes with a 3 ft buffer, both sides of both Broad legs. **Not** parking-protected — see below. Greenwood Ave gets none (2.3 / 4.6 ft spare per side, under AASHTO's 5 ft). |
+| ebroad_princeton | `build_proposal_bike_lanes` | Conventional 5 ft lanes with a per-leg derived shy distance (0.5–2.0 ft), both sides of both E Broad legs. Princeton Ave gets none (4.1 ft spare). No parking displaced — both E Broad legs are already `no_stopping`/`no_parking`. |
+
+**Parking-protected does not fit Broad St, and the reason is worth knowing.** The 48 ft section (8 parking + 3 buffer + 6 bike + 11 + 11 + 6 bike + 3 buffer) does fit inside 52.0 and 55.5 ft of roadway, but the total is not the constraint: every offset here is measured from the leg centerline, and the *parking side alone* needs 28.0 ft of it against 26.0 / 27.8 nominal and 22.8 / 25.9 at the narrowest traced point. Fitting it would mean shifting the travel lanes off the NJDOT alignment — a real design, but not one this pipeline can draw, since the alignment is the datum every offset, stop bar and crossing frame is measured from.
+
+**Where the ordinance is not tagged in OSM, say so rather than inferring parking.** The bulb-out proposal hatches Broad St's spare width from Schedule I rather than marking stalls from an absent tag — an earlier version marked 8 ft stalls from ~50 ft out, inside the 100 ft Schedule I prohibits, in the proposal whose central claim is that Schedule I already bans parking there. `tests/test_sites.py` pins it.
+
+## Kerbside parking varies ALONG a leg
+
+OSM records a fact that changes part way along a street by **splitting the way**, and that is how "no parking for the first 100 ft from the junction" is expressed. This project read **one way per leg** — whichever was nearest the leg's midpoint — and dropped the rest.
+
+At Broad & Greenwood, East Broad is two ways:
+
+| way | covers | says | distance to leg midpoint |
+|---|---|---|---|
+| `1547092834` | stations 0 – 79.5 ft | `parking:both:restriction=no_parking` | 5.8 ft — **dropped** |
+| `11647647` | stations 79.5 – 170 ft | `restriction=none` | 1.9 ft — **chosen** |
+
+The leg's midpoint is station 85, past the split, so the restricted way lost and the render marked parking on a kerb a mapper had just tagged as having none. **Nothing reported a problem**, which is the point: a pipeline that read one way and found no restriction is indistinguishable from one that read the restriction and threw it away.
+
+`IntersectionModel.leg_road_spans` now keeps **every** way lying along a leg with the stretch it covers (`RoadSpan`), and `DesignState.parking_restrictions` carries `ParkingRestriction(start_ft, end_ft, value, way_id)` per kerb. A mapped prohibition then becomes a `NoParkingZone` in `src/geometry/daylighting.py` exactly like a statutory one, so the existing machinery hatches it and excludes stalls from it with no special-casing. Three outcomes instead of two:
+
+- **restricted throughout** → hatched end to end, no stalls
+- **restricted in part** → marked for parking, with the restricted stretch carved back out
+- **restricted in part, but what's left is under one 22 ft stall** → hatched end to end (`e_broad_st_west` is `no_stopping` over 114.5 of its 130 ft; 15.5 ft is not a parking space)
+
+Whole-leg tags like `overtaking=no` still come from a single way — now the one covering **most** of the leg, rather than the one nearest its midpoint, which has no claim to describing the leg as a whole.
+
+**If you have just edited OSM, the test fixture is separate from the cache.** `output/.cache/borough_*.json` is what a build reads (`--refresh-osm` re-pulls it); `tests/fixtures/osm_cache/` is the committed snapshot the suite runs against, and it does not update itself. Refresh it with `cp output/.cache/borough_*.json tests/fixtures/osm_cache/` — otherwise the tests keep asserting against the street as it was.
 
 ## Crosswalk styles: real data over guessing
 

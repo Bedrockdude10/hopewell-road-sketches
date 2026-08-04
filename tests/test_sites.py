@@ -13,13 +13,17 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from src.geometry.model import build_pavement_polygon
+from src.geometry.daylighting import no_parking_zones_ft
+from src.geometry.model import (build_pavement_polygon, narrowest_half_width_ft,
+                                station_offset_many)
 from src.geometry.treatments import DesignState
 from src.render.crosswalks import (CROSSWALK_DEPTH_M, STOP_BAR_CURB_CLEARANCE_M,
                                    crosswalk_bands_ft, resolve_crosswalk_offsets,
                                    resolve_crosswalk_skews, resolve_stop_bar_offsets)
 from src.render.coords import FT_TO_M
 from src.render.props import build_props
+from src.geometry.markings import (DAYLIGHT_EDGE_LINE, DAYLIGHT_FILL, PARKING_EDGE_LINE,
+                                   STALL_DIVIDER)
 from src.geometry.paint import curbside_paint_ft
 from src.site import load_site_scenarios, run_scenario
 from src.sources.osm_context import (fetch_crossings, fetch_kerbs, fetch_stop_lines,
@@ -74,7 +78,10 @@ def scene_violations(model, state):
         # hydrants, and check_parking_is_legal then has nothing to check against - a test that
         # passes by being handed nothing.
         props = scene_props(model, state, scene)
-        return scene.check(props, scene.build_paint(props))
+        # build_paint_and_posts, not build_paint: the props come back extended with the
+        # bollards the paint places, which is what both renderers hand the check.
+        paint, props = scene.build_paint_and_posts(props)
+        return scene.check(props, paint)
 
 
 def fatal(violations):
@@ -438,10 +445,10 @@ def test_each_kerb_gets_the_paint_its_restriction_and_width_allow(site, site_mod
     records, and a 1.1 ft parking lane is not a parking lane. A leg too narrow for two
     target lanes gets no kerbside paint at all.
     """
-    from src.geometry.intersection import parking_is_restricted, parking_restriction_by_side
     from src.geometry.treatments import (MIN_MARKED_PARKING_DEPTH_FT,
                                           PARKING_STALL_DEPTH_DEFAULT_FT,
-                                          TARGET_LANE_WIDTH_FT, apply_osm_parking)
+                                          TARGET_LANE_WIDTH_FT, _restriction_summary,
+                                          apply_osm_parking)
 
     model = site_models[site]
     with contextlib.redirect_stdout(io.StringIO()):
@@ -449,9 +456,12 @@ def test_each_kerb_gets_the_paint_its_restriction_and_width_allow(site, site_mod
 
     for leg_name, leg in model.legs.items():
         allowance_ft = leg.curb_to_curb_ft / 2 - TARGET_LANE_WIDTH_FT
-        sides = parking_restriction_by_side(model.leg_osm_tags.get(leg_name, {}),
-                                            model.leg_osm_aligned.get(leg_name, True))
         for side in ("left", "right"):
+            # Per STRETCH of kerb, not one value for the leg. Reading the whole-leg tag here
+            # asked a question the street does not answer: broad_st_east's dominant way says
+            # "none" while its first 79.5 ft are tagged no_parking, so this test used to agree
+            # that stalls belonged on a kerb OSM forbids them on.
+            at = _restriction_summary(state, leg_name, side, leg.centerline.length)
             hatched = (leg_name in state.lane_narrowing
                        and side in state.lane_narrowing_sides.get(leg_name, ("left", "right")))
             stalls = (leg_name, side) in state.parking_zones
@@ -460,8 +470,17 @@ def test_each_kerb_gets_the_paint_its_restriction_and_width_allow(site, site_mod
                 assert not hatched and not stalls, (
                     f"{leg_name} is {leg.curb_to_curb_ft:.1f} ft - too narrow for two "
                     f"{TARGET_LANE_WIDTH_FT:.0f} ft lanes, so it must get no kerbside paint")
-            elif parking_is_restricted(sides[side]):
-                assert hatched and not stalls, f"{leg_name} {side} is restricted but got stalls"
+            elif at.restricted_throughout or (at.restricted_in_part and at.holds_no_stall):
+                assert hatched and not stalls, (
+                    f"{leg_name} {side}: {at.describe()}, so it must not get stalls")
+            elif at.restricted_in_part and allowance_ft >= MIN_MARKED_PARKING_DEPTH_FT:
+                # Marked for parking, with the restricted stretch carved back out as a
+                # no-parking zone rather than the whole kerb given up.
+                assert stalls and not hatched, (
+                    f"{leg_name} {side}: {at.describe()}, and {at.open_ft:.0f} ft is open - the "
+                    f"open part should be marked and the restriction carved out of it")
+                zones = [z for z in no_parking_zones_ft(state, leg_name, side, {}) if "OSM" in z.reason]
+                assert zones, "the restricted stretch must become a no-parking zone"
             elif allowance_ft >= MIN_MARKED_PARKING_DEPTH_FT:
                 assert stalls and not hatched, f"{leg_name} {side} is parkable but got hatching"
                 zone = state.parking_zones[(leg_name, side)]
@@ -495,13 +514,13 @@ def test_a_side_the_scenario_already_treated_is_left_alone(site_models):
 @pytest.mark.parametrize("site", SITES)
 def test_osm_parking_never_narrows_a_lane_below_target(site, site_models):
     """On the real geometry: every kerb this paints must leave an 11 ft lane beside it."""
-    from src.checks import check_travel_lanes
+    from src.checks import SceneContext, TravelLanesKeepTheirWidth
     from src.geometry.treatments import apply_osm_parking
 
     model = site_models[site]
     with contextlib.redirect_stdout(io.StringIO()):
         state = apply_osm_parking(DesignState.from_model(model), model)
-    violations = check_travel_lanes(state)
+    violations = TravelLanesKeepTheirWidth().run(SceneContext(state=state))
     assert not violations, "\n".join(str(v) for v in violations)
 
 
@@ -750,7 +769,7 @@ def test_the_proposal_marks_the_daylight_zone(site_models):
         paint = curbside_paint_ft(state, offsets, model.center_ft, bands, props,
                                    marked_crosswalks=marked_crosswalks(model))
 
-    daylight = [p for p in paint if p.kind.startswith("daylight")]
+    daylight = [p for p in paint if p.kind in (DAYLIGHT_FILL, DAYLIGHT_EDGE_LINE)]
     assert daylight, "no daylighting is marked anywhere at Broad & Greenwood"
     assert any(p.is_fill and p.geometry.area > 50 for p in daylight), \
         "the daylight zones are all slivers - the treatment is not actually being drawn"
@@ -758,53 +777,85 @@ def test_the_proposal_marks_the_daylight_zone(site_models):
 
 @needs_source_data
 @pytest.mark.parametrize("site", SITES)
-def test_every_kind_of_paint_reaches_both_renders(site, site_models):
-    """A marking built by paint.py that no export list claims is invisible in 3D.
+def test_every_marking_a_scenario_builds_is_declared(site, site_models):
+    """Whatever the real proposals paint, src/geometry/markings.py knows about it.
 
-    It happened twice in one sitting: renaming buffer_taper_* to daylight_taper_* orphaned
-    the taper, and adding daylight_fill never wired it up. Both were built correctly, both
-    appeared in the plan view, neither reached the render, and nothing raised. The plan view
-    is supposed to show what the render will show, so a silent divergence is the worst
-    possible failure here.
+    The rest of what this used to check is now a type. A marking used to be a bare string in
+    three hand-synced tables, and this test compared what paint.py built against what each
+    table listed - because renaming a kind orphaned it silently. It happened twice in one
+    sitting: buffer_taper_* became daylight_taper_* and the taper stopped rendering, and
+    daylight_fill was added and never wired up. Both were built, both drawn in the plan view,
+    neither in the render, nothing raised.
+
+    Now a PaintKind carries its own channel and its own role, so "built but not rendered in
+    3D" and "built but not drawn in 2D" are both refused when this package is imported - see
+    markings._kind and markings.require_every_kind, and the tests of those below. What is left
+    for a live scenario to prove is that nothing reaches the paint list from outside the
+    registry.
     """
     import contextlib as _contextlib
 
-    from src.render.export import PAINT_KIND_LISTS, PAINT_KINDS_NOT_IN_LISTS
-    from src.render.plan_view import PAINT_STYLE
+    from src.geometry.markings import KINDS
 
-    rendered_3d = set(PAINT_KINDS_NOT_IN_LISTS).union(*PAINT_KIND_LISTS.values())
-    # The 2D view had no equivalent guard, which is the same asymmetry in the other
-    # direction: a renamed kind would have vanished from the plan view while the 3D table
-    # above still listed it and this test still passed. "apron" and "bollard" are drawn by
-    # the plan view too - the apron from PAINT_STYLE, the bollard by its own branch.
-    rendered_2d = set(PAINT_STYLE) | {"bollard"}
     model = site_models[site]
     for name, builder in sorted(scenario_builders(site).items()):
         with _contextlib.redirect_stdout(io.StringIO()):
             state = run_scenario(builder, DesignState.from_model(model), model)
             paint, _bands = paint_and_bands(model, state)
-        built = {p.kind for p in paint}
-        assert not built - rendered_3d, (
-            f"{site}/{name}: paint kinds built but never rendered in 3D: "
-            f"{sorted(built - rendered_3d)} - add them to export.PAINT_KIND_LISTS")
-        assert not built - rendered_2d, (
-            f"{site}/{name}: paint kinds built but never drawn in the plan view: "
-            f"{sorted(built - rendered_2d)} - add them to plan_view.PAINT_STYLE")
+        for piece in paint:
+            assert KINDS.get(piece.kind.name) is piece.kind, (
+                f"{site}/{name}: {piece.kind} is not the marking of that name declared in "
+                f"src/geometry/markings.py, so nothing routed it to either renderer")
 
 
-def test_no_export_list_names_a_kind_paint_never_builds():
-    """The other direction: a stale name in the table renders nothing and hides a typo."""
+def test_a_marking_with_no_channel_is_refused():
+    """The 3D half of what test_every_kind_of_paint_reaches_both_renders used to catch.
+
+    A marking with no channel is drawn in the plan view and absent from the render. That is now
+    a ValueError at declaration rather than something a test has to notice afterwards.
+    """
+    from src.geometry.markings import Role, _kind
+
+    with pytest.raises(ValueError, match="no channel"):
+        _kind("invented_line", Role.LINE)
+
+
+def test_a_marking_cannot_be_routed_to_a_channel_that_draws_something_else():
+    """A fill in a channel of lines would be drawn by the wrong builder at the far end -
+    add_paint_polyline over a polygon's ring instead of the hatch strokes inside it."""
+    from src.geometry.markings import LANE_NARROWING_EDGE_LINES, Role, _kind
+
+    with pytest.raises(ValueError, match="carries lines"):
+        _kind("invented_fill", Role.FILL, LANE_NARROWING_EDGE_LINES)
+
+
+def test_a_marking_the_plan_view_has_no_style_for_is_refused():
+    """The 2D half. A marking absent from PAINT_STYLE simply is not drawn, and the plan view
+    is supposed to show what the render shows."""
+    from src.geometry.markings import BUFFER_FILL, require_every_kind
+
+    with pytest.raises(ValueError, match="is missing"):
+        require_every_kind({BUFFER_FILL: dict(color="gold")}, "a table with one entry")
+
+
+def test_every_declared_marking_is_something_paint_can_build():
+    """The other direction: a declaration nothing emits renders nothing and hides a typo.
+
+    Read off paint.py's source rather than off a scenario, because several markings are real
+    but conditional - a taper is only built where a zone tapers, and no current proposal has
+    one at these four junctions.
+    """
     import inspect
 
     from src.geometry import paint as paint_module
-    from src.render.export import PAINT_KIND_LISTS
+    from src.geometry.markings import KINDS
 
     source = inspect.getsource(paint_module)
-    for list_name, kinds in PAINT_KIND_LISTS.items():
-        for kind in kinds:
-            assert f'"{kind}"' in source, (
-                f"export.PAINT_KIND_LISTS[{list_name!r}] names {kind!r}, which "
-                f"src/geometry/paint.py never produces")
+    for name, kind in KINDS.items():
+        constant = name.upper()
+        assert constant in source, (
+            f"src/geometry/markings.py declares {name!r} but src/geometry/paint.py never "
+            f"emits {constant} - a marking nothing builds is a stale declaration")
 
 
 @needs_source_data
@@ -847,7 +898,12 @@ def test_curbside_paint_ends_against_its_crossing(site, site_models):
             band = bands.get(leg_name)
             if band is None or band.is_empty:
                 continue
-            near = [p for p in paint if p.leg == leg_name and p.is_fill]
+            # is_fill AND not a bollard: a bollard's geometry is a degenerate 1e-6 ft square
+            # standing in for a point (paint.py:_dot), so it is a Polygon by type but is not a
+            # zone that can run up to a crossing and be cut by one. check_markings_do_not_collide
+            # excludes it for the same reason.
+            near = [p for p in paint
+                    if p.leg == leg_name and p.covers_area]
             if not near:
                 continue
             on_it = [p.kind for p in near if p.geometry.intersection(band).area > 0.5]
@@ -1559,3 +1615,260 @@ def test_no_crosswalk_is_estimated_outside_the_junction(site_models):
             assert 15.0 <= offset_ft <= 50.0, (
                 f"{site}/{leg_name}: estimated crosswalk at {offset_ft:.1f} ft, outside the "
                 f"15-50 ft band every surveyed crossing at these four junctions falls in")
+
+
+# --------------------------------------------------------------------------
+# The proposals as shipped
+#
+# The primitives are tested in tests/test_curb_extensions.py. These test the scenarios a
+# reviewer would actually be shown, which is a different thing: a proposal is a set of claims,
+# and a claim that stops being true because a treatment was reordered or a leg re-measured is
+# exactly the failure that reaches a Borough council rather than a test run.
+# --------------------------------------------------------------------------
+
+@needs_source_data
+def test_the_apron_bulbout_proposal_shortens_both_broad_st_crossings(site_models):
+    """The headline claim: about 30 ft off each Broad St crossing, and Greenwood untouched."""
+    model = site_models["broad_st_greenwood"]
+    with contextlib.redirect_stdout(io.StringIO()):
+        base = DesignState.from_model(model)
+        before = resolved_scene(model, base)
+        builder = load_site_scenarios("broad_st_greenwood").build_proposal_apron_bulbouts
+        state = run_scenario(builder, DesignState.from_model(model), model)
+        after = resolved_scene(model, state)
+
+    for leg_name, most_ft in (("broad_st_east", 40.0), ("broad_st_west", 42.0)):
+        was, now = (sum(before.crosswalk_reaches[leg_name]),
+                    sum(after.crosswalk_reaches[leg_name]))
+        assert now <= most_ft, f"{leg_name} still crosses {now:.1f} ft"
+        assert was - now >= 25.0, f"{leg_name} only fell {was - now:.1f} ft"
+    # Greenwood cannot spare the width, so it gets no extension and its crossings do not move.
+    for leg_name in ("greenwood_ave_north", "greenwood_ave_south"):
+        assert sum(after.crosswalk_reaches[leg_name]) == pytest.approx(
+            sum(before.crosswalk_reaches[leg_name]), abs=0.05)
+        assert not [k for k in state.curb_extensions if k[0] == leg_name]
+
+
+@needs_source_data
+def test_the_apron_bulbout_proposal_costs_no_parking_and_keeps_the_swept_path(site_models):
+    """The two claims that make it arguable to a Borough: it removes no space, and a bus still
+    fits. Both are geometric, so both are checkable rather than assertable."""
+    from src.geometry.model import corner_apron_annulus, fillet_curb_corner
+    from tests.test_curb_extensions import SCHEDULE_I_NO_PARKING_FT
+
+    model = site_models["broad_st_greenwood"]
+    with contextlib.redirect_stdout(io.StringIO()):
+        base = DesignState.from_model(model)
+        measured = {c: p["radius_ft"] for c, p in base.corner_fillets.items()}
+        builder = load_site_scenarios("broad_st_greenwood").build_proposal_apron_bulbouts
+        state = run_scenario(builder, DesignState.from_model(model), model)
+
+    assert len(state.curb_extensions) == 4, "both kerbs of both Broad St legs"
+    for (leg_name, side), extension in sorted(state.curb_extensions.items()):
+        assert extension.footprint_ft <= SCHEDULE_I_NO_PARKING_FT, (
+            f"{leg_name} {side} runs {extension.footprint_ft:.0f} ft, past the kerb Schedule I "
+            f"already prohibits parking on - the proposal would be removing a space")
+
+    assert len(state.corner_aprons) == 4
+    for corner, apron in sorted(state.corner_aprons.items()):
+        assert apron.swept_radius_ft == pytest.approx(measured[corner]), (
+            "each apron reaches its OWN corner's traced radius, not an average of the four")
+        leg_a, leg_b = corner
+        curb_a, curb_b = state.legs[leg_a].left_curb, state.legs[leg_b].right_curb
+        annulus = corner_apron_annulus(curb_a, curb_b, apron.face_radius_ft,
+                                       apron.swept_radius_ft)
+        assert annulus is not None, f"{'/'.join(sorted(corner))} has no drawable apron"
+        _a, swept_arc, _b = fillet_curb_corner(curb_a, curb_b, apron.swept_radius_ft)
+        assert annulus.buffer(0.01).covers(swept_arc), (
+            f"a bus tracking {'/'.join(sorted(corner))}'s original arc leaves the apron")
+
+
+@needs_source_data
+def test_the_apron_bulbout_proposal_claims_the_statutory_setback_it_earned(site_models):
+    """A built extension triggers the 10 ft clause of R.S. 39:4-138(e). Declared on exactly the
+    four kerbs that got one, and nowhere else - the reduction is for an extension that exists."""
+    from src.geometry.daylighting import (CROSSWALK_SETBACK_FT, CROSSWALK_SETBACK_WITH_BULBOUT_FT,
+                                          no_parking_zones_ft)
+    from src.geometry.treatments import CURB_EXTENSION_DEVICES
+
+    model = site_models["broad_st_greenwood"]
+    with contextlib.redirect_stdout(io.StringIO()):
+        builder = load_site_scenarios("broad_st_greenwood").build_proposal_apron_bulbouts
+        state = run_scenario(builder, DesignState.from_model(model), model)
+        scene = resolved_scene(model, state)
+
+    extended = set(state.curb_extensions)
+    assert extended == {k for k, d in state.daylight_devices.items()
+                        if d["kind"] in CURB_EXTENSION_DEVICES}
+
+    # The same geometry with the declaration dropped, so what is measured is the CLAUSE's effect
+    # and not the shape of the corner. Both arms of 39:4-138(e) fall from 25 ft to 10 ft, so the
+    # zone should shorten by exactly that difference whichever arm is binding.
+    unclaimed = state.clone()
+    unclaimed.daylight_devices = {}
+    expected_gain_ft = CROSSWALK_SETBACK_FT - CROSSWALK_SETBACK_WITH_BULBOUT_FT
+    for leg_name, side in sorted(extended):
+        with_ext = no_parking_zones_ft(state, leg_name, side, scene.crosswalk_offsets)[0]
+        without = no_parking_zones_ft(unclaimed, leg_name, side, scene.crosswalk_offsets)[0]
+        assert without.end_ft - with_ext.end_ft == pytest.approx(expected_gain_ft), (
+            f"{leg_name} {side}'s no-parking zone went {without.end_ft:.1f} -> "
+            f"{with_ext.end_ft:.1f} ft; the clause is worth {expected_gain_ft:.0f}")
+        assert f"{CROSSWALK_SETBACK_WITH_BULBOUT_FT:.0f} ft" in with_ext.reason
+        assert "curb extension built" in with_ext.reason
+
+    # Which arm binds is worth knowing and is NOT the crosswalk one here: sideline_station_ft
+    # takes the corner fillet's tangent point as a deliberately conservative proxy for the
+    # intersecting street's side line, and at these corners that lands 34-42 ft out - further
+    # than the crossing at 21 ft. So the statute's own "crosswalk OR side line, whichever is
+    # further" picks the side line, and the extension's benefit arrives through that arm. The
+    # zone is therefore longer than the statute strictly requires, which is the safe direction.
+    binding = {no_parking_zones_ft(state, leg, side, scene.crosswalk_offsets)[0].reason
+               for leg, side in sorted(extended)}
+    assert all("side line" in reason for reason in binding), (
+        "the crosswalk arm now binds - the proposal's docstring says the side line does")
+
+
+@needs_source_data
+@pytest.mark.parametrize("site,treated,untreated", [
+    ("broad_st_greenwood", ("broad_st_east", "broad_st_west"),
+     ("greenwood_ave_north", "greenwood_ave_south")),
+    ("ebroad_princeton", ("e_broad_st_east", "e_broad_st_west"), ("princeton_ave_south",)),
+])
+def test_the_bike_lane_proposal_treats_only_the_legs_wide_enough(site_models, site, treated,
+                                                                 untreated):
+    """Which legs can take a bike lane is the finding, so it is the thing pinned.
+
+    Greenwood Ave (2.3 and 4.6 ft spare per side) and Princeton Ave (4.1) are all under AASHTO's
+    5 ft minimum for an exclusive lane. A narrower stripe would read as a bike lane in the
+    render while failing the standard it is meant to meet, which is the sort of thing that gets
+    waved through because the picture looks plausible.
+    """
+    from src.geometry.treatments import AASHTO_MIN_BIKE_LANE_FT
+
+    model = site_models[site]
+    with contextlib.redirect_stdout(io.StringIO()):
+        builder = load_site_scenarios(site).build_proposal_bike_lanes
+        state = run_scenario(builder, DesignState.from_model(model), model)
+
+    for leg_name in treated:
+        for side in ("left", "right"):
+            lane = state.bike_lanes.get((leg_name, side))
+            assert lane is not None, f"{leg_name} {side} has the width but got no lane"
+            assert lane.width_ft >= AASHTO_MIN_BIKE_LANE_FT
+            assert lane.total_ft <= narrowest_half_width_ft(state.legs[leg_name], side) + 0.05, (
+                f"{leg_name} {side}'s section does not fit where the leg is narrowest")
+    for leg_name in untreated:
+        assert not [k for k in state.bike_lanes if k[0] == leg_name], (
+            f"{leg_name} was given a bike lane it has no room for")
+
+
+@needs_source_data
+def test_the_apron_bulbout_proposal_marks_no_parking_where_schedule_i_forbids_it(site_models):
+    """The proposal must not draw a stall on a kerb its own argument says is already no-parking.
+
+    apply_osm_parking derives kerbside parking from the OSM tags, and neither Broad St leg
+    carries a parking:*:restriction - so on the tags alone the kerb reads as parkable, and the
+    first version of this proposal marked 8 ft stalls from about 50 ft out. Schedule I of the
+    borough code prohibits parking there for 100 ft. The drawing was proposing something the
+    ordinance forbids, inside the proposal whose central claim is that the ordinance already
+    bans parking on that kerb.
+
+    So Broad St's spare width is hatched from the ordinance rather than marked from the absent
+    tag. Greenwood Ave IS tagged and keeps its OSM-derived markings. This pins the distinction
+    because the pull is toward re-deriving everything from OSM, and OSM is under-tagged for the
+    borough's ordinance at all four sites.
+    """
+    model = site_models["broad_st_greenwood"]
+    with contextlib.redirect_stdout(io.StringIO()):
+        builder = load_site_scenarios("broad_st_greenwood").build_proposal_apron_bulbouts
+        state = run_scenario(builder, DesignState.from_model(model), model)
+        paint, _bands = paint_and_bands(model, state)
+
+    broad = ("broad_st_east", "broad_st_west")
+    assert not [k for k in state.parking_zones if k[0] in broad], (
+        "Broad St kerbs are marked for parking inside the 100 ft Schedule I prohibits")
+    stalls = [p for p in paint if p.kind in (STALL_DIVIDER, PARKING_EDGE_LINE)
+              and p.leg in broad]
+    assert not stalls, f"{len(stalls)} parking markings drawn on a Schedule I kerb"
+    # ...and the width is still accounted for rather than left blank: it is hatched.
+    assert all(leg_name in state.lane_narrowing for leg_name in broad)
+
+
+# --------------------------------------------------------------------------
+# A restriction that covers PART of a leg
+#
+# OSM records a fact that changes part way along a street by splitting the way. That is how
+# "no parking for the first 100 ft from the junction" is expressed, and reading one way per leg
+# discarded it - silently, because a pipeline that read one way and found no restriction is
+# indistinguishable from one that read the restriction and threw it away.
+# --------------------------------------------------------------------------
+
+@needs_source_data
+def test_a_split_leg_keeps_every_way_that_covers_it(site_models):
+    """East Broad at Greenwood is two OSM ways, and both have to be read.
+
+    Way 1547092834 carries parking:both:restriction=no_parking over the first 79.5 ft; way
+    11647647 carries restriction=none for the rest. The matcher used to keep whichever way was
+    nearest the leg's MIDPOINT - station 85, past the split - so the restricted way lost by
+    1.9 ft against 5.8 and the render marked parking on a kerb a mapper had just tagged as
+    having none.
+    """
+    model = site_models["broad_st_greenwood"]
+    spans = model.leg_road_spans["broad_st_east"]
+    assert len(spans) >= 2, f"only {len(spans)} way(s) matched a leg OSM has split"
+
+    covered = sorted((s.start_ft, s.end_ft) for s in spans)
+    assert covered[0][0] == pytest.approx(0.0, abs=1.0), "no way covers the junction end"
+    assert covered[-1][1] >= model.legs["broad_st_east"].centerline.length - 1.0, (
+        "the spans stop short of the far end of the leg")
+    # Contiguous: OSM splits a way at a node, so one span ends where the next begins.
+    for (_lo, hi), (next_lo, _next_hi) in zip(covered, covered[1:]):
+        assert next_lo == pytest.approx(hi, abs=1.0), f"gap in coverage at {hi:.1f} ft"
+
+    restricted = [s for s in spans if s.tags.get("parking:both:restriction") == "no_parking"]
+    assert restricted, "the no_parking way is not among the matched spans"
+    assert restricted[0].end_ft < model.legs["broad_st_east"].centerline.length, (
+        "the restriction is supposed to cover only the approach, not the whole leg")
+
+
+@needs_source_data
+def test_a_restriction_over_part_of_a_kerb_reaches_the_paint(site_models):
+    """End to end: the tag becomes a no-parking zone, hatching, and no stall inside it.
+
+    The whole point of reading the split. East Broad's first ~80 ft must be hatched and carry no
+    stall divider; beyond it, stalls. Asserted on the geometry the renderers actually draw, not
+    on the state, because "the restriction is in the state" was true of the old code too - it was
+    the paint that disagreed.
+    """
+    from src.geometry.treatments import apply_osm_parking
+
+    model = site_models["broad_st_greenwood"]
+    with contextlib.redirect_stdout(io.StringIO()):
+        state = apply_osm_parking(DesignState.from_model(model), model)
+        paint, _bands = paint_and_bands(model, state)
+        scene = resolved_scene(model, state)
+
+    leg = state.legs["broad_st_east"]
+    restricted_to_ft = max(r.end_ft for r in state.parking_restrictions[("broad_st_east", "left")]
+                           if r.prohibits)
+    assert 60.0 < restricted_to_ft < 110.0, f"expected the first ~80 ft, got {restricted_to_ft:.1f}"
+
+    # No stall marking may start inside the restricted stretch.
+    for piece in paint:
+        if piece.leg != "broad_st_east" or piece.kind not in ("stall_divider", "parking_edge_line"):
+            continue
+        stations, _offsets = station_offset_many(
+            leg.centerline, np.asarray(piece.geometry.coords, dtype=float))
+        assert stations.min() >= restricted_to_ft - 1.0, (
+            f"{piece.kind} on broad_st_east {piece.side} reaches station {stations.min():.1f} ft, "
+            f"inside the {restricted_to_ft:.0f} ft OSM tags as no_parking")
+
+    # ...and the stretch is hatched rather than left blank.
+    fills = [p for p in paint if p.leg == "broad_st_east" and p.kind is DAYLIGHT_FILL]
+    assert fills, "the restricted stretch is not hatched"
+
+    # The statutory zone and the OSM zone are both reported, each with its own citation.
+    reasons = {z.reason for z in no_parking_zones_ft(state, "broad_st_east", "left",
+                                                      scene.crosswalk_offsets)}
+    assert any("OSM parking restriction" in r for r in reasons), reasons
+    assert any("39:4-138" in r for r in reasons), reasons

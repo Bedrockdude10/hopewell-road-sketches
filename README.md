@@ -42,18 +42,19 @@ It writes the same files the phase scripts do, runs sites in parallel (`--jobs`)
 
 This runs `.venv/bin/python -m pytest` and works whether or not the venv is active. Plain `python -m pytest` only works once you've run `source .venv/bin/activate` — without it, `python` is whatever is on your PATH, and if that interpreter happens to have pytest but not geopandas the suite fails at collection. The root `conftest.py` detects that case and prints one message telling you which interpreter you're on and what to run instead, rather than five `ModuleNotFoundError` tracebacks.
 
-377 tests, ~15 s, **no network**: they run against a committed snapshot of the OSM responses in `tests/fixtures/osm_cache/`, and `HOPEWELL_OFFLINE=1` makes any un-snapshotted fetch fail loudly rather than reach Overpass. Refresh the snapshot with `cp output/.cache/borough_*.json tests/fixtures/osm_cache/` — it does NOT update itself when you re-pull, so after editing OSM you have to do both (see "Kerbside parking varies ALONG a leg" below).
+384 tests, ~15 s, **no network**: they run against a committed snapshot of the OSM responses in `tests/fixtures/osm_cache/`, and `HOPEWELL_OFFLINE=1` makes any un-snapshotted fetch fail loudly rather than reach Overpass. Refresh the snapshot with `cp output/.cache/borough_*.json tests/fixtures/osm_cache/` — it does NOT update itself when you re-pull, so after editing OSM you have to do both (see "Kerbside parking varies ALONG a leg" below).
 
-`tests/test_checks.py` covers the scene invariants (see below), `tests/test_traced_curbs.py` covers building curb lines from traced OSM kerbs, `tests/test_curb_extensions.py` covers curb extensions and bike lanes (and pins what a corner-radius change does *not* do), and `tests/test_sites.py` asserts all four real junctions and every proposal satisfy the invariants.
+`tests/test_kerbs.py` covers the raised/lowered tagging and the openings it puts in the markings, `tests/test_checks.py` covers the scene invariants (see below), `tests/test_traced_curbs.py` covers building curb lines from traced OSM kerbs, `tests/test_curb_extensions.py` covers curb extensions and bike lanes (and pins what a corner-radius change does *not* do), and `tests/test_sites.py` asserts all four real junctions and every proposal satisfy the invariants.
 
 ## What is a type here, and why
 
-Three things in this codebase used to be conventions spread across several modules, and each one generated the same class of bug: something built correctly, drawn in one view, silently missing from the other. They are now types, and the checks that used to catch the mistake afterwards happen when the package is imported.
+Four things in this codebase used to be conventions spread across several modules, and each one generated the same class of bug: something built correctly, drawn in one view, silently missing from the other. They are now types, and the checks that used to catch the mistake afterwards happen when the package is imported.
 
 | Was | Is | What that makes impossible |
 |---|---|---|
 | A paint kind: a bare string keyed into `PAINT_STYLE`, `PAINT_KIND_LISTS`, `PAINT_FILL_EDGE` and `kind == "bollard"` branches | `src/geometry/markings.py` — a `PaintKind` with a role (line/fill/surface/colour/object) and the channel it travels to the 3D render in | Declaring a marking that reaches no renderer; routing a hatched zone to a channel of lines; a plan-view style table missing an entry. All three raise on import |
 | An invariant: a function you had to remember to add to a `+` chain, with a hand-picked argument list | `src/checks.py` — a `SceneCheck` subclass, registered by being defined, reading one `SceneContext` | Writing a check that never runs; handing two checks differently-built versions of the same geometry (that shipped: 15 sq ft apart at W Broad & Louellen) |
+| A kerb: a traced OSM line, drawn as one black stroke whatever `kerb=raised`/`kerb=lowered` said about it | `src/geometry/kerbs.py` — a `KerbType`, and a `KerbOpening` where the kerb is dropped for a vehicle | A surveyor's raised/lowered tagging reaching the geometry and no renderer; kerbside paint and flex posts running unbroken across a driveway |
 | A treatment: a function writing one of 20 dicts on `DesignState` that five other modules read back, validating whatever its author remembered | `src/geometry/treatments.py` — a `Treatment` frozen dataclass with a typed target from `src/geometry/targets.py`, applied through `DesignState.apply`, and the **only** record of what a design asked for | An unvalidated treatment existing at all; a treatment aimed at a leg the junction doesn't have; a treatment that needs the model being silently skipped; a missing provenance note; a parameter a renderer reads disagreeing with the decision that set it |
 
 `Side` is a `StrEnum`, so it matches OSM's `parking:left` tag keys and the traced kerb attributes (`leg.left_curb`) unchanged, but `Side("north")` raises and the `1 if side == "left" else -1` that appeared in ten places has one home.
@@ -294,6 +295,30 @@ The arithmetic was never wrong; re-cutting an arc between two curb lines leaves 
 **Parking-protected does not fit Broad St, and the reason is worth knowing.** The 48 ft section (8 parking + 3 buffer + 6 bike + 11 + 11 + 6 bike + 3 buffer) does fit inside 52.0 and 55.5 ft of roadway, but the total is not the constraint: every offset here is measured from the leg centerline, and the *parking side alone* needs 28.0 ft of it against 26.0 / 27.8 nominal and 22.8 / 25.9 at the narrowest traced point. Fitting it would mean shifting the travel lanes off the NJDOT alignment — a real design, but not one this pipeline can draw, since the alignment is the datum every offset, stop bar and crossing frame is measured from.
 
 **Where the ordinance is not tagged in OSM, say so rather than inferring parking.** The bulb-out proposal hatches Broad St's spare width from Schedule I rather than marking stalls from an absent tag — an earlier version marked 8 ft stalls from ~50 ft out, inside the 100 ft Schedule I prohibits, in the proposal whose central claim is that Schedule I already bans parking there. `tests/test_sites.py` pins it.
+
+## Where the kerb is dropped, the markings open
+
+OSM says whether each kerb is `raised` or `lowered`, and this project read the geometry and threw the tag away: the plan view drew one black line for all 95 mapped ways, the 3D render drew **no kerb at all** (the road slab simply met the concrete band), and the kerbside paint ran unbroken past every driveway.
+
+**A dropped kerb is the opening, not the driveway way**, and the reason is worth keeping. Both are mapped, but the kerb is on the kerb — it already carries the station span the paint needs — and it is tagged in places no driveway way is drawn: only **1 of the 43 driveways** mapped in the borough reaches a kerb any of these four junctions models, because the rest are further down the block than a 130 ft leg reaches. Reading the kerbs finds 7 openings across three sites.
+
+**The surveyor's convention is read, not inferred.** A driveway here is tagged `wheelchair=no` *and* `tactile_paving=no`; a pedestrian ramp is `yes` and `yes`. Borough-wide that separates them with no overlap:
+
+| tags on a `barrier=kerb` way | n | |
+|---|---|---|
+| `kerb=lowered` `tactile_paving=no` `wheelchair=no` | 12 | driveways — the markings open |
+| `kerb=lowered` `tactile_paving=yes` `wheelchair=yes` | 14 | pedestrian ramps — the crossing band already cuts the paint |
+| `kerb=lowered`, neither tag | 1 | unspecified — does **not** open |
+| `kerb=lowered` `tactile_paving=yes` `wheelchair=no` | 1 | contradictory — does **not** open |
+| `kerb=raised` `tactile_paving=no` `wheelchair=no` | 67 | not an opening at all |
+
+So the test is positive ("the mapper said this is not a pedestrian crossing point") rather than "lowered and not obviously a ramp". `wheelchair=no` alone is not the signal — all 67 raised kerbs carry it too; it only means anything once the kerb is known to be dropped.
+
+What opens is what a vehicle drives over: the band runs from the travel lane's edge out to the real kerb, so the green surface, the outer lines, the hatching and the stalls break while the travel-lane edge line runs straight past. The ends are trimmed back and rounded by 1.5 ft so a turning vehicle has a little room and the gap reads as an entrance — kept small on purpose and pinned by a test, since every foot is a foot of bike lane given up.
+
+**The posts gap too.** `PaintContext.emit` skips clipping deliberately (a post is a point, not a stripe), so the paint broke over each driveway while the flex posts marched across it — 7 of E Broad's 26. That is worse than not breaking the paint: it draws a protected lane whose protection you are expected to drive through.
+
+Two openings overlap their leg's crossing band and are **reported rather than filtered** (`describe_kerb_openings` names the way behind every one). Overriding a surveyed tag with a geometric guess about what belongs near a corner is what this repo's core principle rules out.
 
 ## Kerbside parking varies ALONG a leg
 

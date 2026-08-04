@@ -36,6 +36,13 @@ class Role(Enum):
     FILL     a hatched area: diagonal strokes in 3D (the paint that is actually applied), a
              hatch pattern with an outline in the plan view.
     SURFACE  ground that is built rather than painted - a mountable apron. Extruded in 3D.
+    COLOUR   carriageway painted a solid colour rather than striped: a green bike lane. Distinct
+             from FILL, which is hatching and reaches the 3D render as the diagonal strokes that
+             are actually applied - a green lane has no strokes, it is the asphalt's colour, so
+             it travels as its polygon and is drawn as one. Distinct from SURFACE too, and that
+             distinction is load-bearing rather than pedantic: a SURFACE is built ground that
+             every marking is cut around (PaintContext.seal_surfaces), and colouring a bike lane
+             must not cut the lane's own edge lines out of existence.
     OBJECT   a physical thing standing on the road - a flex post. The 3D render builds objects
              only from props, so an OBJECT marking is the plan view's copy of something that
              must ALSO exist as a prop; check_bollards_are_props enforces exactly that.
@@ -43,6 +50,7 @@ class Role(Enum):
     LINE = "line"
     FILL = "fill"
     SURFACE = "surface"
+    COLOUR = "colour"
     OBJECT = "object"
 
 
@@ -88,8 +96,10 @@ class PaintKind:
 
     @property
     def covers_area(self) -> bool:
-        """Occupies ground rather than tracing a line: a hatched zone or a built surface."""
-        return self.role in (Role.FILL, Role.SURFACE)
+        """Occupies ground rather than tracing a line: a hatched zone, a built surface, or a
+        coloured stretch of carriageway. What MarkingsDoNotCollide compares, so a green bike
+        lane laid over a hatched buffer would be reported the way any doubled paint is."""
+        return self.role in (Role.FILL, Role.SURFACE, Role.COLOUR)
 
     @property
     def is_object(self) -> bool:
@@ -116,17 +126,20 @@ PARKING_BUFFER_EDGE_LINES = Channel("parking_buffer_edge_lines", Role.LINE)
 # the key and a lane-narrowing taper could be routed here.
 PARKING_BUFFER_TAPER_LINES = Channel("parking_buffer_taper_lines", Role.LINE)
 BIKE_LANE_EDGE_LINES = Channel("bike_lane_edge_lines", Role.LINE)
-# A real bike lane's green surface colour is a pavement treatment rather than a marking, and
-# nothing in scripts/blender/ paints a coloured surface yet - so the 3D render shows the
-# striping, which is what is actually being proposed, and the plan view carries the colour.
 BIKE_LANE_HATCH_LINES = Channel("bike_lane_hatch_lines", Role.FILL)
+# The lane's own asphalt, painted green. This used to be plan-view-only - the note here read
+# "nothing in scripts/blender/ paints a coloured surface yet", so the 3D render showed the
+# striping alone and the two views disagreed about what the proposal looked like. It is a real
+# treatment and a widely used one, so it now travels to the render as the polygon it is.
+BIKE_LANE_SURFACE_POLYGONS = Channel("bike_lane_surface_polygons", Role.COLOUR)
 CORNER_APRON_POLYGONS = Channel("corner_apron_polygons", Role.SURFACE)
 
 CHANNELS: tuple[Channel, ...] = (
     LANE_NARROWING_EDGE_LINES, LANE_NARROWING_TAPER_LINES, LANE_NARROWING_HATCH_LINES,
     CORNER_HATCHING_LINES, PARKING_EDGE_LINES, PARKING_STALL_DIVIDER_LINES,
     PARKING_BUFFER_HATCH_LINES, PARKING_BUFFER_EDGE_LINES, PARKING_BUFFER_TAPER_LINES,
-    BIKE_LANE_EDGE_LINES, BIKE_LANE_HATCH_LINES, CORNER_APRON_POLYGONS,
+    BIKE_LANE_EDGE_LINES, BIKE_LANE_HATCH_LINES, BIKE_LANE_SURFACE_POLYGONS,
+    CORNER_APRON_POLYGONS,
 )
 
 
@@ -185,6 +198,9 @@ ZONE_END_LINE = _kind("zone_end_line", Role.LINE, PARKING_BUFFER_EDGE_LINES)
 # An exclusive bike lane: its own edge lines, and the hatched buffer beside it.
 BIKE_LANE_EDGE_LINE = _kind("bike_lane_edge_line", Role.LINE, BIKE_LANE_EDGE_LINES)
 BIKE_BUFFER_FILL = _kind("bike_buffer_fill", Role.FILL, BIKE_LANE_HATCH_LINES)
+# The green a bike lane's asphalt is painted, between its two edge stripes - the lane itself
+# rather than anything beside it.
+BIKE_LANE_SURFACE = _kind("bike_lane_surface", Role.COLOUR, BIKE_LANE_SURFACE_POLYGONS)
 # Built ground rather than paint: a flush, drivable corner surface.
 APRON = _kind("apron", Role.SURFACE, CORNER_APRON_POLYGONS)
 # A flex-post delineator. Paint draws the plan view's marker; the render needs a prop.

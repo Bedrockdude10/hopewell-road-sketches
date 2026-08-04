@@ -218,7 +218,11 @@ def export_scenario(model: IntersectionModel, state: DesignState, name: str, out
     # straight-chord builder deviated 0.7 ft on Broad St's daylight zone.
     BY_ROLE = {Role.LINE: lambda piece: [_line(piece)],
                Role.FILL: _hatch,
-               Role.SURFACE: lambda piece: [_surface(piece)]}
+               Role.SURFACE: lambda piece: [_surface(piece)],
+               # A coloured stretch of carriageway travels as its ring, like a surface - it has
+               # no strokes to generate. The two roles serialize the same way and are still
+               # different things: only a SURFACE is built ground the markings are cut around.
+               Role.COLOUR: lambda piece: [_surface(piece)]}
 
     def channel_data(channel):
         serialize = BY_ROLE[channel.role]

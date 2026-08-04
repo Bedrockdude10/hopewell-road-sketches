@@ -674,6 +674,50 @@ def inset_line_ft(leg: "Leg", side: str, offset_ft: float,
     return LineString(_place_in_measured_frame(leg.centerline, stations, inner))
 
 
+def offset_band_polygon(leg: "Leg", side: str, inner_offset_ft: float, outer_offset_ft: float,
+                         start_ft: float, end_ft: float | None = None,
+                         keep_inside_ft: float = 0.0) -> Polygon | None:
+    """The strip of roadway between TWO lateral offsets from the centerline, on one side.
+
+    For a marking whose own two boundaries are what define it - a bike lane's green surface
+    sits between the lane's two edge stripes and is exactly as wide as the lane. Built on the
+    same station grid and with the same kerb clamping inset_line_ft uses, so the band and the
+    two stripes drawn at its edges cannot disagree about where those edges are.
+
+    NOT the difference of two curbside_strip_polygons, which is what this replaced and which
+    was subtly wrong: both of those are bounded by the stations where the TRACED KERB exists,
+    so wherever the kerb is unmapped the inner strip still reached the nominal half-width while
+    the outer one contributed nothing to subtract, and the leftover spilled past the marking's
+    own outer edge - 6.6 ft past it on broad_st_west's right bike lane, onto asphalt that is not
+    the lane. Nothing reported it, because the ground it spilled onto has no other paint on it
+    to collide with and no traced kerb to be outside of.
+
+    Returns None where there is no room or no span to draw over, like its siblings.
+    """
+    span = curb_station_span(leg, side)
+    if span is None:
+        return None
+    lo, hi = span
+    lo = max(lo, start_ft)
+    hi = min(hi, leg.centerline.length if end_ft is None else end_ft)
+    if hi - lo < STRIP_SAMPLE_FT:
+        return None
+    n = max(int(np.ceil((hi - lo) / STRIP_SAMPLE_FT)) + 1, 2)
+    stations = np.linspace(lo, hi, n)
+    curb_offsets = curb_offsets_at_stations(leg, side, stations)
+    sign = 1.0 if side == "left" else -1.0
+    room = (np.maximum(np.abs(curb_offsets) - keep_inside_ft, 0.0) if curb_offsets is not None
+            else np.full(stations.shape, abs(leg.curb_to_curb_ft) / 2 - keep_inside_ft))
+    inner = sign * np.minimum(inner_offset_ft, room)
+    outer = sign * np.minimum(outer_offset_ft, room)
+    inner_pts = _place_in_measured_frame(leg.centerline, stations, inner)
+    outer_pts = _place_in_measured_frame(leg.centerline, stations, outer)
+    band = Polygon(list(inner_pts) + list(reversed(list(outer_pts))))
+    if not band.is_valid:
+        band = band.buffer(0)
+    return band if not band.is_empty and band.area > 0 else None
+
+
 def _corner_bulge_normal(leg: "Leg", role: str) -> np.ndarray:
     """Unit normal pointing from a leg's curb toward where a real corner
     fillet's arc bulges - the same direction that role's own curb is already

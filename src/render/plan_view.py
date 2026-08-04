@@ -120,6 +120,9 @@ PAINT_STYLE = require_every_kind({
     markings.DAYLIGHT_FILL:       dict(color="orangered", alpha=0.40, hatch="xx", zorder=3),
     markings.CORNER_HATCH_FILL:   dict(color="gold", alpha=0.5, hatch="//", zorder=3),
     markings.APRON:               dict(color="peru", alpha=0.6, zorder=3),
+    # A green bike lane's asphalt. Under the stripes' zorder so the white edge lines read on
+    # top of it, exactly as they do on the street and in the render.
+    markings.BIKE_LANE_SURFACE:   dict(color="mediumseagreen", alpha=0.45, zorder=2),
     markings.LANE_EDGE_LINE:      dict(color="goldenrod", linewidth=1.5, zorder=3),
     markings.TAPER_LINE:          dict(color="goldenrod", linewidth=1.5, zorder=3),
     markings.BUFFER_EDGE_LINE:    dict(color="goldenrod", linewidth=1.5, zorder=3),

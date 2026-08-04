@@ -1279,7 +1279,7 @@ class BikeLane:
                 f"A {self.width_ft:.1f} ft bike lane is under AASHTO's {AASHTO_MIN_BIKE_LANE_FT:.0f} ft "
                 f"minimum for an exclusive lane. Draw no lane rather than one that fails the "
                 f"standard it is meant to meet.")
-        if self.buffer_ft and self.buffer_ft < 2 * _lane_line_ft():
+        if self.buffer_ft and self.buffer_ft < min_bike_lane_buffer_ft():
             raise ValueError(
                 f"A {self.buffer_ft:.2f} ft buffer cannot hold the two {_lane_line_ft():.2f} ft "
                 f"lines that bound it. Use no buffer - the lane then takes a single line against "
@@ -1346,6 +1346,22 @@ def _lane_line_ft() -> float:
     from src.geometry.paint import LANE_EDGE_LINE_WIDTH_FT
 
     return LANE_EDGE_LINE_WIDTH_FT
+
+
+def min_bike_lane_buffer_ft() -> float:
+    """The narrowest strip that is a buffer at all: one wide enough to hold its own two lines.
+
+    A PHYSICAL floor, not a design minimum like AASHTO_MIN_BIKE_LANE_FT. A buffer is bounded by
+    a stripe on each side, and two 0.82 ft stripes are 1.64 ft of paint - below that there is no
+    buffer, only a double line. It is also the figure that decides whether a lane can be
+    PROTECTED, since a flex post has to stand inside the buffer and not in either lane, and it
+    is what rules out both kerbs of e_broad_st_east (0.80 and 1.49 ft spare) while permitting
+    e_broad_st_west (2.01 and 2.14).
+
+    A function rather than a constant for the same reason _lane_line_ft is one: the stripe width
+    lives in src/geometry/paint.py, which imports this module.
+    """
+    return 2 * _lane_line_ft()
 
 
 def bike_lane_spare_ft(state: DesignState, leg_name: str, side: str, width_ft: float,
@@ -1438,10 +1454,11 @@ class AddBikeLane(Treatment):
         """An edge line each side of the lane, so it reads as a lane rather than as the spare
         asphalt a lane-narrowing buffer marks; the buffer beside it, and the parking outside it,
         hatched and ticked with the machinery already here."""
-        from src.geometry.markings import (BIKE_BUFFER_FILL, BIKE_LANE_EDGE_LINE, BUFFER_FILL,
-                                           STALL_DIVIDER)
+        from src.geometry.markings import (BIKE_BUFFER_FILL, BIKE_LANE_EDGE_LINE,
+                                           BIKE_LANE_SURFACE, BUFFER_FILL, STALL_DIVIDER)
         from src.geometry.model import (curbside_strip_polygon, inset_line_ft,
-                                        lane_narrowing_polygons_ft, parking_stall_lines_ft)
+                                        lane_narrowing_polygons_ft, offset_band_polygon,
+                                        parking_stall_lines_ft)
         from src.geometry.paint import (LANE_EDGE_LINE_WIDTH_FT, _one, end_against_crossing,
                                         parking_runs)
 
@@ -1473,6 +1490,21 @@ class AddBikeLane(Treatment):
                      inset_line_ft(leg, side, bounds[key], start_ft,
                                     keep_inside_ft=LANE_EDGE_LINE_WIDTH_FT / 2),
                      leg_name, side, beyond_ft)
+        # THE LANE'S OWN ASPHALT, PAINTED GREEN - between the two edge stripes, i.e. exactly the
+        # width a rider gets. Bounded by the stripes' faces rather than their centres, so the
+        # green stops where the white starts instead of running under it; MarkingsDoNotCollide
+        # would report the overlap if it did, since a colour covers ground like a hatch does.
+        #
+        # offset_band_polygon, because the lane's own two offsets are what define it. Built as a
+        # difference of two kerb-referenced strips instead, the green ran 6.6 ft past its outer
+        # stripe wherever the kerb is unmapped - see that function.
+        #
+        # Through ctx.add like every other marking, NOT ctx.add_surface: a surface is built
+        # ground that everything else is cut around (seal_surfaces), and colouring the lane must
+        # not cut the lane's own edge lines - or the buffer hatching beside it - back out.
+        ctx.add(BIKE_LANE_SURFACE, offset_band_polygon(
+            leg, side, bounds["bike_inner_ft"], bounds["bike_outer_ft"], start_ft,
+            keep_inside_ft=LANE_EDGE_LINE_WIDTH_FT / 2), leg_name, side, beyond_ft)
         if lane.buffer_ft:
             # The hatched buffer, between the two lines that bound it rather than under them.
             # lane_narrowing_polygons_ft measures its stripe inward from the kerb-to-kerb half,

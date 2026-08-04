@@ -11,9 +11,10 @@ measured, so treat the lane/parking dimensions below as a design study rather th
 construction drawing.
 """
 from src.geometry.targets import LegSide, LegTarget
-from src.geometry.treatments import (AddBikeLane, DesignState, LaneNarrowing, MarkedParking,
-    ProtectDaylightZone, TARGET_LANE_WIDTH_FT, UpgradeCrosswalkMarkings,
-    all_crosswalks_continental, apply_osm_parking, complete_centerlines)
+from src.geometry.treatments import (AddBikeLane, AddBikeLaneBollards, DesignState,
+    LaneNarrowing, MarkedParking, ProtectDaylightZone, TARGET_LANE_WIDTH_FT,
+    UpgradeCrosswalkMarkings, all_crosswalks_continental, apply_osm_parking,
+    bike_lane_spare_ft, complete_centerlines, min_bike_lane_buffer_ft)
 
 # TARGET_LANE_WIDTH_FT is imported from src, not redeclared here. It is a standard
 # (NACTO/AASHTO urban minimum travel lane), not a per-site choice, and four sites each
@@ -115,35 +116,66 @@ def build_proposal_daylight_bollards(baseline: DesignState, model=None) -> Desig
 
 # --- Bike lanes ----------------------------------------------------------------------------
 #
-# Conventional, not parking-protected: there is no parking here to protect a lane with. Both
-# sides of e_broad_st_east are tagged no_stopping in OSM, and e_broad_st_west is no_stopping too -
-# so the width a bike lane would use is width nobody is allowed to stand a vehicle in today.
+# Not parking-protected: there is no parking here to protect a lane with. Both sides of
+# e_broad_st_east are tagged no_stopping in OSM, and e_broad_st_west is no_stopping too - so the
+# width a bike lane would use is width nobody is allowed to stand a vehicle in today.
 #
-# AND NOT BOLLARD-PROTECTED EITHER, which is a width finding rather than a choice. Flex posts
-# protecting a bike lane belong in a buffer on the TRAFFIC side of it, and E Broad has no room
-# for one. Measured to each kerb's nearest approach to the alignment:
+# BOLLARD-PROTECTED WHERE THE WIDTH ALLOWS, WHICH IS ONE LEG OF THE TWO. Flex posts protecting a
+# bike lane belong in a buffer on the TRAFFIC side of it, so a protected lane needs a buffer, and
+# a buffer has to be at least wide enough to hold the two stripes that bound it - 1.64 ft, two
+# 0.82 ft lines. Measured to each kerb's nearest approach to the alignment, against the 16.82 ft
+# an 11 ft travel lane, a 5 ft bike lane and their inner stripes already spend:
 #
-#     e_broad_st_east  left  17.62 ft    right 18.31 ft
-#     e_broad_st_west  left  18.83 ft    right 18.96 ft
+#     e_broad_st_east  left  17.62 ft ->  0.80 ft spare   no buffer fits
+#     e_broad_st_east  right 18.31 ft ->  1.49 ft spare   no buffer fits
+#     e_broad_st_west  left  18.83 ft ->  2.01 ft spare   protected
+#     e_broad_st_west  right 18.96 ft ->  2.14 ft spare   protected
 #
-# An 11 ft travel lane, a 5 ft bike lane and the two 0.82 ft stripes bounding them already come
-# to 17.64 ft. Adding even a 2 ft buffer needs 18.82, which fits neither side of
-# e_broad_st_east. e_broad_st_west alone could take one, and a protected lane that loses its
-# posts at the junction is worse than a consistently conventional pair - so both legs stay
-# conventional and this says why. Broad & Greenwood's lanes ARE protected; it has the width.
+# So e_broad_st_west's lanes are buffered and posted and e_broad_st_east's stay conventional.
+# An earlier version of this file made both legs conventional on the reasoning that a mixed
+# pair reads worse than a consistent one. That was a presentation judgement overriding a real
+# safety treatment on the leg that can carry it, and it is the wrong way round: the finding to
+# report is that this junction can protect half its bike network and exactly why not the other
+# half. Broad & Greenwood's lanes are protected on all four kerbs; it has the width.
+#
+# The buffer is sized from what each side can actually spare rather than set to a literal - the
+# same accounting a parking stall's kerb buffer gets, and it means a re-traced kerb flows
+# straight through instead of leaving a stale number here.
 BIKE_LANE_WIDTH_FT = 5.0   # AASHTO's minimum for an exclusive lane - the floor, and all that fits
+BIKE_LANE_BOLLARD_SPACING_FT = 8.0  # matches Broad & Greenwood's pitch - reads as a continuous
+                                     # delineator rather than a row of dots
 E_BROAD_LEGS = ("e_broad_st_east", "e_broad_st_west")
 
 
-def build_proposal_bike_lanes(baseline: DesignState, model=None) -> DesignState:
-    """Conventional bike lanes both sides of both E Broad St legs. Princeton Ave gets none.
+def _spare_buffer_ft(state: DesignState, leg_name: str, side: str) -> float:
+    """The widest buffer this kerb can hold beside a standard lane pair, or 0.0 if none fits.
 
-    Per side, outward from the centerline: 11 ft travel lane, its edge stripe, a 5 ft bike lane,
-    its outer stripe, and whatever asphalt is left hatched to the kerb. On e_broad_st_east that
-    leftover is essentially nothing - the cross-section spends 17.64 of the 17.62 ft its narrowest
-    kerb offers - so its lane runs hard against the kerb rather than with the hatched margin
-    Broad & Greenwood's lanes get. That is the leg's width, not a drawing choice, and it is the
-    reason these lanes are unbuffered and unprotected: see the note above.
+    Asked of BikeLane's own accounting rather than re-derived, because the arithmetic has a trap
+    in it: a buffer REPLACES the single stripe an unbuffered lane takes against the travel lane
+    rather than adding to it (see BikeLane.offsets_from_centerline_ft), so the room available for
+    one is a whole stripe more than the spare an unbuffered section leaves. Measured the other
+    way this said no side of either leg could hold a buffer - including the two that comfortably
+    can, which is how it was caught.
+
+    So: price a section at the floor, then hand the buffer back its own width.
+    """
+    floor_ft = min_bike_lane_buffer_ft()
+    widest_ft = floor_ft + bike_lane_spare_ft(state, leg_name, side,
+                                               width_ft=BIKE_LANE_WIDTH_FT, buffer_ft=floor_ft)
+    return widest_ft if widest_ft >= floor_ft else 0.0
+
+
+def build_proposal_bike_lanes(baseline: DesignState, model=None) -> DesignState:
+    """Bike lanes both sides of both E Broad St legs - protected on the leg that can hold a
+    buffer. Princeton Ave gets none.
+
+    Per side, outward from the centerline: 11 ft travel lane, its edge stripe, a buffer where the
+    leg can spare one, a 5 ft bike lane, its outer stripe, and whatever asphalt is left hatched to
+    the kerb. On e_broad_st_east that leftover is essentially nothing - the cross-section spends
+    17.64 of the 17.62 ft its narrowest kerb offers - so its lane runs hard against the kerb rather
+    than with the hatched margin Broad & Greenwood's lanes get, and there is no room for the buffer
+    a flex post would stand in. That is the leg's width, not a drawing choice; see the note above
+    for the measurements and for why the two legs are treated differently.
 
     PRINCETON AVE IS NOT PROPOSED FOR ONE. It has 4.1 ft per side spare beside an 11 ft lane,
     under AASHTO's 5 ft minimum, so there is no lane to draw - only a narrower stripe that would
@@ -160,8 +192,20 @@ def build_proposal_bike_lanes(baseline: DesignState, model=None) -> DesignState:
     state = all_crosswalks_continental(state)
     for leg_name in E_BROAD_LEGS:
         for side in ("left", "right"):
+            buffer_ft = _spare_buffer_ft(state, leg_name, side)
             try:
-                state = state.apply(AddBikeLane(LegSide(leg_name, side), width_ft=BIKE_LANE_WIDTH_FT))
+                state = state.apply(AddBikeLane(LegSide(leg_name, side),
+                                                 width_ft=BIKE_LANE_WIDTH_FT,
+                                                 buffer_ft=buffer_ft))
             except ValueError as too_narrow:
                 print(f"  NOTE: no bike lane on {leg_name} {side} - {too_narrow}")
+                continue
+            if not buffer_ft:
+                print(f"  NOTE: {leg_name} {side}'s bike lane is conventional, not protected - "
+                      f"the kerb cannot spare the {min_bike_lane_buffer_ft():.2f} ft a buffer needs "
+                      f"to hold the two stripes bounding it, so there is nowhere to stand a flex "
+                      f"post that is not in a travel lane or in the bike lane itself.")
+                continue
+            state = state.apply(AddBikeLaneBollards(LegSide(leg_name, side),
+                                                    spacing_ft=BIKE_LANE_BOLLARD_SPACING_FT))
     return state

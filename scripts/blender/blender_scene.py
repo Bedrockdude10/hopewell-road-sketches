@@ -27,6 +27,7 @@ venv needed):
                           signals, trees - one builder function per prop type
 """
 import json
+import math
 import os
 import random
 import sys
@@ -108,6 +109,14 @@ def clear_scene():
 # Scene assembly
 # ---------------------------------------------------------------------------
 
+# How far past a leg's own far end a pavement vertex may still sit and be treated as part of
+# this junction. A traced kerb's last vertex lands a foot or two beyond the leg it bounds, and
+# the corner fillets' trimmed curbs run to their tangent points rather than to the centerline's
+# end - so this absorbs that, and nothing like the 3x overshoot a kerb drawn down the whole
+# block produces. See build_scene's framing note.
+LEG_REACH_TOLERANCE = 1.05
+
+
 def build_scene(data: dict):
     theme = data.get("theme") or {}
     asphalt_near = make_textured_material("AsphaltNear", theme.get("asphalt_near"), (0.07, 0.07, 0.08), 0.95)
@@ -120,6 +129,11 @@ def build_scene(data: dict):
     refuge_mat = make_material("Refuge", (0.22, 0.5, 0.26), roughness=0.8)
     crossing_mat = make_material("RaisedCrossing", (0.68, 0.58, 0.48), roughness=0.8)
     marking_mat = make_material("Marking", (0.9, 0.9, 0.88), roughness=0.4)
+    # A green bike lane's surface colour. Matches plan_view.py's "mediumseagreen" closely
+    # enough that the two views read as the same treatment - the plan view draws it
+    # semi-transparent over grey paper, this over black asphalt, so they cannot be identical
+    # numbers. Rough like the asphalt it is painted on rather than glossy like fresh stripes.
+    bike_surface_mat = make_material("BikeLaneSurface", (0.13, 0.45, 0.28), roughness=0.85)
     centerline_mat = make_material("Centerline", (0.85, 0.7, 0.15), roughness=0.4)
     building_mats = [make_material(f"Building{i}", c, roughness=0.75) for i, c in enumerate(BUILDING_PALETTE)]
     pole_mat = make_material("Pole", SIGN_POST_GRAY, roughness=0.5)
@@ -131,13 +145,34 @@ def build_scene(data: dict):
     all_pavement = data.get("pavement_near", []) + data.get("pavement_far", [])
     pavement_x = [x for ring in all_pavement for x, y in ring]
     pavement_y = [y for ring in all_pavement for x, y in ring]
-    cx, cy = (min(pavement_x) + max(pavement_x)) / 2, (min(pavement_y) + max(pavement_y)) / 2
     # Frame the camera on the intersection itself (the actual subject), not the
     # full building-context radius - buildings are background dressing and are
     # fine to crop at the frame edges.
-    pavement_radius = max(max(pavement_x) - min(pavement_x), max(pavement_y) - min(pavement_y)) / 2
+    #
+    # MEASURED AGAINST THE MODELLED LEGS, not against every pavement vertex. The pavement ring
+    # is stitched from the corner fillets' trimmed curbs, and those curbs are TRACED OSM
+    # barrier=kerb ways, which do not stop where our leg does: at E Broad & Princeton,
+    # e_broad_st_west's left kerb runs 425 ft from the junction off a 130 ft leg, because the
+    # mapper drew one continuous kerb down the block. That single vertex made the pavement
+    # bounding box 168 x 78 m, put its centre 41 m down that leg and framed the camera at a
+    # 100.6 m radius against ~53 m at the other three sites - a render zoomed nearly two-fold
+    # out and not even pointed at the junction.
+    #
+    # A leg's own far end IS the edge of what this project modelled, so anything past it is
+    # kerb running on down the street rather than part of this junction. All four sites have a
+    # few such vertices (1, 4, 6 and 4 of them); dropping them tightens every render and
+    # centres all four, rather than special-casing the one site where it had become glaring.
+    leg_reach = max((math.hypot(*leg["far_m"]) for leg in data.get("legs", [])), default=0.0)
+    framed = [(x, y) for x, y in zip(pavement_x, pavement_y)
+              if not leg_reach or math.hypot(x, y) <= leg_reach * LEG_REACH_TOLERANCE]
+    framed_x = [x for x, _y in framed] or pavement_x
+    framed_y = [y for _x, y in framed] or pavement_y
+    cx, cy = (min(framed_x) + max(framed_x)) / 2, (min(framed_y) + max(framed_y)) / 2
+    pavement_radius = max(max(framed_x) - min(framed_x), max(framed_y) - min(framed_y)) / 2
     scene_radius = pavement_radius * 1.2  # tight enough to actually read paint markings/signage detail
 
+    # The GROUND still covers everything, framed or not: a plane that stopped at the framed
+    # extent would leave the far end of an over-long kerb standing over blank space.
     all_x = pavement_x + [x for b in data.get("buildings", []) for x, y, *_ in
                            (b["vertices_m"] if b["mesh"] else b["coords"])]
     all_y = pavement_y + [y for b in data.get("buildings", []) for x, y, *_ in
@@ -218,6 +253,17 @@ def build_scene(data: dict):
         add_paint_polyline(f"bike_lane_edge_{i}", line, 0.25, marking_mat, z_base=marking_z)
     for i, line in enumerate(data.get("bike_lane_hatch_lines", [])):
         add_paint_line(f"bike_lane_hatch_{i}", line[0], line[-1], 0.15, marking_mat, z_base=marking_z)
+    # The lane's own asphalt, painted green. UNDER the stripe layer by one clearance gap, so the
+    # white edge lines sit on top of the green the way they do on a real street - and so that the
+    # two never end up coplanar, which is the z-fighting this file's header is mostly about. The
+    # polygons are cut to stop at the stripes' faces (src/geometry/treatments.py:AddBikeLane.paint),
+    # so this is belt and braces rather than the thing keeping them apart.
+    # Half a clearance thick, so its TOP (marking_z - 0.005) stays below the stripe layer's own
+    # base rather than landing exactly on it: a hairline of lateral overlap left by float
+    # arithmetic would otherwise be two coplanar faces, which is the one failure mode here.
+    for i, ring in enumerate(data.get("bike_lane_surface_polygons", [])):
+        extrude_polygon(f"bike_lane_surface_{i}", ring, MARKING_CLEARANCE_M / 2, bike_surface_mat,
+                         z_base=marking_z - MARKING_CLEARANCE_M)
 
     for island in data.get("refuge_islands", []):
         extrude_polygon(f"refuge_{island['name']}", island["coords"], island.get("height_m", 0.15), refuge_mat)

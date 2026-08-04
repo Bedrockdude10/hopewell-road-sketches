@@ -610,6 +610,56 @@ def test_a_bike_lane_holds_its_width_and_hatches_the_rest_to_the_kerb():
 
 
 @needs_source_data
+@pytest.mark.parametrize("site", ["broad_st_greenwood", "ebroad_princeton"])
+def test_the_green_surface_covers_the_bike_lane_and_nothing_else(site, site_models):
+    """A green bike lane is green over the LANE - between its two edge stripes, not past them.
+
+    The width is the whole content of the marking: green asphalt is how a rider is told which
+    part of the road is theirs, so green reaching 6.6 ft past the outer stripe (which the first
+    construction here did, on broad_st_west's right lane, wherever the traced kerb is unmapped)
+    claims ground the proposal is not offering. Nothing else caught it: that ground carries no
+    other paint to collide with and no traced kerb to be outside of, so both
+    MarkingsDoNotCollide and PaintInsideTheCurb were silent and correct to be.
+
+    Bounded here by the lane's own offsets, which is also what the marking is now built from
+    (src/geometry/model.py:offset_band_polygon).
+    """
+    from src.geometry.markings import BIKE_LANE_SURFACE
+    from src.geometry.model import station_offset_many
+
+    model = site_models[site]
+    with contextlib.redirect_stdout(io.StringIO()):
+        builder = load_site_scenarios(site).build_proposal_bike_lanes
+        state = run_scenario(builder, DesignState.from_model(model), model)
+        scene = resolved_scene(model, state)
+        paint = scene.build_paint(scene_props(model, state, scene))
+
+    lanes = state.treatments_of(AddBikeLane)
+    assert lanes, f"{site}'s bike lane proposal built no lanes"
+    for treatment in lanes:
+        leg_name, side = treatment.target.leg, str(treatment.target.side)
+        bounds = treatment.lane.offsets_from_centerline_ft()
+        green = [p for p in paint if p.kind is BIKE_LANE_SURFACE
+                 and p.leg == leg_name and p.side == side]
+        assert green, f"{leg_name} {side}'s bike lane has no green surface painted on it"
+        for piece in green:
+            _stations, offsets = station_offset_many(
+                state.legs[leg_name].centerline,
+                np.asarray(piece.geometry.exterior.coords, dtype=float))
+            reach_ft = float(np.abs(offsets).max())
+            # A tenth of a foot of slack: the band is placed in the leg's MEASURED frame and
+            # read back here by projection, and on a centerline that kinks (broad_st_east bends
+            # 4.5 deg 43 ft out) those two frames differ by about half an inch.
+            assert reach_ft <= bounds["bike_outer_ft"] + 0.1, (
+                f"{leg_name} {side}'s green reaches {reach_ft:.2f} ft from the centerline, past "
+                f"its own outer stripe at {bounds['bike_outer_ft']:.2f} ft - it is painting "
+                f"asphalt that is not the bike lane")
+            assert float(np.abs(offsets).min()) >= bounds["bike_inner_ft"] - 0.1, (
+                f"{leg_name} {side}'s green reaches inside its inner stripe, into the buffer "
+                f"or the travel lane")
+
+
+@needs_source_data
 def test_the_kerb_hatching_beside_a_bike_lane_is_actually_drawn(site_models):
     """...and reaches the kerb rather than stopping at the lane's outer stripe."""
     from src.geometry.model import curb_offsets_at_stations, station_offset_many

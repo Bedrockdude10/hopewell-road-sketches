@@ -1066,9 +1066,11 @@ def test_a_drawn_crosswalk_is_parallel_to_the_surveyed_one(site, site_models):
     NJDOT rounds the corner 43.1 ft out - so on the one leg where the skew mattered most it
     cancelled out exactly as much as it recovered.
 
-    Skipped where the skew was gated off by MAX_CROSSING_SKEW_DEG: those ways are not
-    depictions of the paint (louellen_st_west's runs corner to corner, 78 ft across a 42 ft
-    street), and drawing square is the deliberate answer there.
+    EVERY matched crossing is checked, including louellen_st_west's -44 deg one. That used to
+    be gated off as "not a depiction of the paint", which was the squareness assumption
+    excusing itself from the one junction that falsifies it - a 48 deg Y whose kerb ramps are
+    not opposite each other. If a surveyed way is good enough to place the crosswalk it is
+    good enough to orient it, and this test is what holds those two together.
     """
     from src.render.crosswalks import (_match_crossings_to_legs, crosswalk_axes,
                                        resolve_crosswalk_offsets, resolve_crosswalk_skews)
@@ -1081,10 +1083,13 @@ def test_a_drawn_crosswalk_is_parallel_to_the_surveyed_one(site, site_models):
         offsets = resolve_crosswalk_offsets(state, crossings)
         skews = resolve_crosswalk_skews(state, crossings)
 
+    assert matched, f"{site}: no OSM crossing matched any leg at all"
+    assert set(skews) == set(matched), (
+        f"{site}: {sorted(set(matched) - set(skews))} matched a surveyed crossing but carried "
+        f"no skew - a surveyed orientation is being dropped somewhere")
+
     checked = 0
     for leg_name, (_along, _style, _skew, line, _tags) in sorted(matched.items()):
-        if leg_name not in skews:
-            continue        # skew deliberately discarded - see the docstring
         _c, _u, across, _cos = crosswalk_axes(state.legs[leg_name], offsets[leg_name][0],
                                                skews[leg_name])
         surveyed = np.asarray(line.coords[-1], dtype=float) - np.asarray(line.coords[0], dtype=float)
@@ -1095,19 +1100,8 @@ def test_a_drawn_crosswalk_is_parallel_to_the_surveyed_one(site, site_models):
             f"{site}/{leg_name}: the crosswalk is drawn {off_deg:.2f} deg off the OSM way it "
             f"took its skew from")
         checked += 1
-    if not checked:
-        # Louellen has exactly one crossing and its skew is gated off. That is the right
-        # answer there, but "nothing to check" must not be indistinguishable from a plumbing
-        # failure that quietly drops every skew - so say WHY nothing was checked.
-        from src.render.crosswalks import MAX_CROSSING_SKEW_DEG
-
-        assert matched, f"{site}: no OSM crossing matched any leg at all"
-        gated = {name: entry[2] for name, entry in matched.items()
-                 if abs(entry[2]) > MAX_CROSSING_SKEW_DEG}
-        assert len(gated) == len(matched), (
-            f"{site}: no crossing carried a skew, but only {sorted(gated)} of "
-            f"{sorted(matched)} exceed the {MAX_CROSSING_SKEW_DEG:.0f} deg limit - the rest "
-            f"lost theirs somewhere else")
+    assert checked == len(matched), (
+        f"{site}: only {checked} of {len(matched)} matched crossings were checked")
 
 
 @needs_source_data
@@ -1224,9 +1218,11 @@ def test_the_stop_bar_reaches_the_centreline_and_the_lane_edge(site, site_models
     MUTCD's stop line runs across the approach lanes; both ends meet what they run to.
     """
     from src.geometry.model import station_offset_many
-    from src.render.crosswalks import (entering_lane_width_ft, resolve_crosswalk_offsets,
-                                       resolve_crosswalk_skews, resolve_stop_bar_offsets,
-                                       stop_bar_bands_ft)
+    import math
+
+    from src.render.crosswalks import (STOP_BAR_PLAN_DEPTH_FT, entering_lane_width_ft,
+                                       resolve_crosswalk_offsets, resolve_crosswalk_skews,
+                                       resolve_stop_bar_offsets, stop_bar_bands_ft)
     from src.sources.osm_context import fetch_stop_lines
 
     model = site_models[site]
@@ -1238,7 +1234,8 @@ def test_the_stop_bar_reaches_the_centreline_and_the_lane_edge(site, site_models
         offsets = resolve_crosswalk_offsets(state, crossings)
         bars_at = resolve_stop_bar_offsets(
             state, offsets, fetch_stop_lines(model.center_wgs84, radius_m=130))
-        bands = stop_bar_bands_ft(state, bars_at, resolve_crosswalk_skews(state, crossings))
+        skews = resolve_crosswalk_skews(state, crossings)
+        bands = stop_bar_bands_ft(state, bars_at, skews)
 
     assert bands, f"{site} is signalized but drew no stop bars"
     for leg_name, band in sorted(bands.items()):
@@ -1249,12 +1246,19 @@ def test_the_stop_bar_reaches_the_centreline_and_the_lane_edge(site, site_models
         edge_ft = entering_ft if entering_ft is not None else leg.curb_to_curb_ft / 2
         inner = min(abs(off.min()), abs(off.max()))
         outer = max(abs(off.min()), abs(off.max()))
-        assert inner < 0.25, (
+        # A SKEWED bar is a rotated rectangle, so its two centerline-side corners straddle the
+        # centerline by half the depth's rotated projection - one inboard, one outboard, and
+        # no placement puts both on it. That is the bar meeting the centerline correctly, not
+        # a gap. Louellen's -44 deg crossing leaves 1.5 * sin(44) / 2 = 0.52 ft. Square bars
+        # get the flat 0.25 ft this always used, because sin(0) is 0.
+        skew_slack = STOP_BAR_PLAN_DEPTH_FT * abs(math.sin(math.radians(skews.get(leg_name, 0.0)))) / 2
+        assert inner < 0.25 + skew_slack, (
             f"{site}/{leg_name}: the stop bar stands {inner:.2f} ft off the road centerline, "
             f"which is a gap with nothing on the other side of it")
         # Where the lane was narrowed the bar meets its own edge line; where the far end is
         # the kerb it is held back deliberately, so allow the clearance there.
         allowed = 0.25 if entering_ft is not None else STOP_BAR_CURB_CLEARANCE_M / FT_TO_M + 0.25
+        allowed += skew_slack
         assert edge_ft - outer < allowed, (
             f"{site}/{leg_name}: the stop bar stops {edge_ft - outer:.2f} ft short of the "
             f"{'lane edge line' if entering_ft is not None else 'kerb'} at {edge_ft:.1f} ft")
@@ -1496,3 +1500,71 @@ def test_how_far_a_leg_is_drawn_does_not_change_how_wide_it_is_measured(site_mod
     assert uncapped < capped - 1.0, (
         "this test is not testing anything: with the window free to follow the 170 ft curb "
         "line the width should drop by ~2 ft, and it did not")
+
+
+@needs_source_data
+def test_the_crosswalk_estimate_reproduces_the_surveyed_crossings(site_models):
+    """The estimator has to predict the crossings we DIDN'T give it.
+
+    Eleven of the fourteen legs across the four sites have an OSM-surveyed crossing. Those are
+    the only ground truth there is for where a crosswalk belongs, so a rule for the other
+    three is worth exactly what it scores against them. Two earlier candidates failed here and
+    were dropped: the fillet tangent point (leg_clearance_ft) scattered -31.5 to +41.7 ft, and
+    projecting the cross street's kerb lines onto the leg centerline scattered -38.0 to -2.3
+    and returned 119.7 ft for w_broad_st_northeast.
+
+    Held to the spread that justified the constant. A change that widens it is a worse rule
+    however reasonable it looks, and CROSSWALK_SETBACK_FT stops being a measurement.
+    """
+    from src.geometry.model import crosswalk_estimate_ft
+    from src.render.crosswalks import resolve_crosswalk_offsets
+    from src.sources.osm_context import fetch_crossings
+
+    errors = {}
+    for site, model in sorted(site_models.items()):
+        state = DesignState.from_model(model)
+        with contextlib.redirect_stdout(io.StringIO()):
+            offsets = resolve_crosswalk_offsets(
+                state, fetch_crossings(model.center_wgs84, radius_m=130))
+        for leg_name, (surveyed_ft, source) in offsets.items():
+            if source != "osm_survey":
+                continue
+            errors[f"{site}/{leg_name}"] = (
+                crosswalk_estimate_ft(leg_name, model.legs) - surveyed_ft)
+
+    assert len(errors) == 11, f"expected 11 surveyed crossings to score against, got {len(errors)}"
+    spread = max(errors.values()) - min(errors.values())
+    worst = max(errors, key=lambda k: abs(errors[k]))
+    assert spread <= 10.0, (
+        f"the estimate's error spread across the surveyed crossings is {spread:.1f} ft "
+        f"(worst {worst} {errors[worst]:+.1f}) - it was 8.8 ft when CROSSWALK_SETBACK_FT was "
+        f"fitted. {errors}")
+    assert abs(np.mean(list(errors.values()))) <= 1.0, (
+        f"the estimate is biased {np.mean(list(errors.values())):+.1f} ft against the surveyed "
+        f"crossings - refit CROSSWALK_SETBACK_FT")
+
+
+@needs_source_data
+def test_no_crosswalk_is_estimated_outside_the_junction(site_models):
+    """An estimated crossing has to land where a real one plausibly could.
+
+    The rule this replaced put w_broad_st_southwest's crossing 67.8 ft from the node - past
+    the cross street's far kerb, out in the middle of the block - and w_broad_st_northeast's
+    at 11.5 ft, inside a corner return still 25.4 ft off the centerline against a 17.6 ft
+    half-width. Both at the same junction, from the same rule, in opposite directions. The
+    bound is the surveyed range (19.5-41.7 ft) with a little room either side.
+    """
+    from src.render.crosswalks import resolve_crosswalk_offsets
+    from src.sources.osm_context import fetch_crossings
+
+    for site, model in sorted(site_models.items()):
+        state = DesignState.from_model(model)
+        with contextlib.redirect_stdout(io.StringIO()):
+            offsets = resolve_crosswalk_offsets(
+                state, fetch_crossings(model.center_wgs84, radius_m=130))
+        for leg_name, (offset_ft, source) in sorted(offsets.items()):
+            if source == "osm_survey":
+                continue
+            assert 15.0 <= offset_ft <= 50.0, (
+                f"{site}/{leg_name}: estimated crosswalk at {offset_ft:.1f} ft, outside the "
+                f"15-50 ft band every surveyed crossing at these four junctions falls in")

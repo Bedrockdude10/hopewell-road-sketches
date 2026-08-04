@@ -11,7 +11,7 @@ from shapely.ops import unary_union
 from shapely.geometry import LineString, Polygon
 
 from src.render.coords import FT_TO_M, wgs84_to_state_plane
-from src.geometry.model import leg_clearance_ft
+from src.geometry.model import crosswalk_estimate_ft, leg_clearance_ft
 from src.geometry.treatments import DesignState
 
 # OSM crossing:markings values -> our 3 rendered styles. "lines" (two simple
@@ -131,11 +131,15 @@ def stop_bar_width_ft(state: DesignState, leg_name: str) -> float:
 # 30 deg sits well clear of both clusters and keeps that real-but-skewed case.
 MIN_CROSSING_ANGLE_DEG = 30.0
 
-# The most a crosswalk may be drawn off square to the road it crosses. Real skews at
-# these four sites run 0.2-7.7 deg. The one value past this limit is W Broad & Louellen's
-# crossing at -47.8 deg - the same OSM way that is 78 ft end-to-end across a ~33 ft road,
-# i.e. loosely drawn rather than genuinely diagonal (see that site's config.yaml).
-MAX_CROSSING_SKEW_DEG = 20.0
+# Past this, a surveyed crossing's angle is worth REPORTING - it is not a reason to discard
+# it. It used to be a discard, and that was the assumption talking: skews at the other three
+# sites run 0.2-7.7 deg, so W Broad & Louellen's -44 deg looked like a loosely drawn way and
+# got replaced with a square crosswalk. It is not loosely drawn. That junction is a Y with a
+# 48 deg gore, the kerb ramps a crossing has to join are not opposite each other, and a
+# crossing between them is genuinely diagonal. Squareness is our assumption; the traced line
+# is the survey, and where the two disagree at a skewed junction it is the assumption that is
+# wrong. Drawn as surveyed now, and said out loud so a real tracing error still surfaces.
+REPORT_CROSSING_SKEW_DEG = 20.0
 
 
 def _crossing_angle_deg(crossing_line: LineString, centerline: LineString) -> float:
@@ -271,7 +275,7 @@ def resolve_crosswalk_offsets(state: DesignState, crossings: list[dict]) -> dict
         if leg_name in matched:
             offset_ft, source = matched[leg_name][0], "osm_survey"
         else:
-            offset_ft = leg_clearance_ft(leg_name, state.legs, state.corner_fillets)
+            offset_ft = crosswalk_estimate_ft(leg_name, state.legs)
             source = "geometric_estimate"
         delta_ft = state.crosswalk_offset_overrides.get(leg_name)
         if delta_ft:
@@ -289,19 +293,21 @@ def resolve_crosswalk_skews(state: DesignState, crossings: list[dict]) -> dict[s
     geometric estimate has no surveyed orientation to copy, so it stays square to the
     road - inventing a skew for it would be a guess dressed up as survey data.
 
-    Skews beyond MAX_CROSSING_SKEW_DEG are discarded rather than drawn. Genuine skews
-    here run 0.2-7.7 degrees; a much larger one means the OSM way is drawn loosely
-    rather than that the paint is really at that angle, and honouring it would both
-    rotate the marking absurdly and inflate its span by 1/cos(skew).
+    A surveyed skew is USED, however large. This used to discard anything past 20 deg on the
+    grounds that real crossings are square, which threw away the one crossing at W Broad &
+    Louellen (-44 deg) and drew a square crosswalk in its place - at the one junction in the
+    set whose legs meet at 48 deg, where a crossing joining the actual kerb ramps has to run
+    diagonally. The squareness rule was fitted to three ordinary junctions and then applied
+    to the one it does not describe. Where our assumption and the surveyor's line disagree,
+    the line wins; see REPORT_CROSSING_SKEW_DEG.
     """
     matched = _match_crossings_to_legs(state.legs, crossings)
     skews = {}
     for leg_name, (_along, _style, skew, _line, _tags) in matched.items():
-        if abs(skew) > MAX_CROSSING_SKEW_DEG:
-            print(f"  NOTE: {leg_name}'s OSM crossing sits {skew:+.1f} deg off square, beyond the "
-                  f"{MAX_CROSSING_SKEW_DEG:.0f} deg plausible limit - drawing it square instead. "
-                  f"The crossing way's own geometry here is suspect.")
-            continue
+        if abs(skew) > REPORT_CROSSING_SKEW_DEG:
+            print(f"  NOTE: {leg_name}'s crossing is drawn {skew:+.1f} deg off square, as surveyed. "
+                  f"Its span is {1 / math.cos(math.radians(abs(skew))):.2f}x the roadway width "
+                  f"because of it. Worth an eye on the traced way if that looks wrong.")
         skews[leg_name] = skew
     return skews
 
@@ -725,6 +731,17 @@ def stop_bar_bands_ft(state, stop_bar_offsets: dict, skews: dict) -> dict:
             continue
         span_ft, lateral_ft = stop_bar_band_geometry_ft(
             stop_bar_width_ft(state, name), entering_lane_width_ft(state, name) is None)
+        # The band runs from lateral_offset - half to lateral_offset + half along the SKEWED
+        # across-axis, and crosswalk_band_ft already stretches the half-span by 1/cos(skew) so
+        # a rotated bar still reaches the lane edge. It does not stretch the offset, so the two
+        # stop agreeing the moment the skew is non-zero: the near end lands at
+        # lateral_offset - span/(2 cos) instead of on the centerline. At zero skew they are
+        # equal and it never showed. Honouring Louellen's -44 deg crossing put the bar 2.1 ft
+        # off the centerline - the exact gap-with-nothing-behind-it that
+        # stop_bar_band_geometry_ft exists to prevent. Both ends live in the same rotated
+        # frame, so the offset takes the same stretch the span already got.
+        stretch = 1.0 / max(math.cos(math.radians(abs(skews.get(name, 0.0)))), 0.2)
         bands[name] = crosswalk_band_ft(leg, offset_ft, STOP_BAR_PLAN_DEPTH_FT, skews.get(name, 0.0),
-                                         span_ft=span_ft, lateral_offset_ft=lateral_ft)
+                                         span_ft=span_ft,
+                                         lateral_offset_ft=lateral_ft * stretch)
     return bands

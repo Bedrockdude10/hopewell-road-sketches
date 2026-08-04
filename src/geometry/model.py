@@ -298,6 +298,63 @@ def build_corner_fillets(legs: dict, radius_ft, corner_radii: dict | None = None
     return results
 
 
+# A leg whose bearing is within this of the reverse of another's is that leg's continuation
+# across the junction, not a street crossing it. Broad St's two legs do not make each other's
+# crosswalk longer; Greenwood's do. Same threshold THROUGH_STREET_ANGLE_DEG uses, and for the
+# same reason - see _through_street.
+CROSS_STREET_MAX_ANGLE_DEG = 150.0
+# How far beyond the cross street's kerb line a crosswalk actually sits. MEASURED, not chosen:
+# fitted against the 11 OSM-surveyed crossings at the four sites, which give a mean setback of
+# 8.3 ft with a standard deviation of 2.4 ft (range 5.1-13.9). See
+# tests/test_sites.py:test_the_crosswalk_estimate_reproduces_the_surveyed_crossings.
+CROSSWALK_SETBACK_FT = 8.3
+
+
+def crosswalk_estimate_ft(leg_name: str, legs: dict) -> float:
+    """Where a crosswalk goes on a leg with no surveyed crossing to copy.
+
+    The controlling dimension is the CROSS street's half-width, not this leg's own kerb: a
+    crosswalk sits just outside the box the intersecting roadway occupies, and the corner
+    return it also has to clear scales with that same roadway. Two other candidate rules were
+    tried against the 11 surveyed crossings first and both failed - the fillet tangent point
+    this replaces (leg_clearance_ft, which is what a crossing used to be placed on) scattered
+    -31.5 to +41.7 ft, and projecting the cross street's kerb lines onto this leg's centerline
+    scattered -38.0 to -2.3 ft and returned 119.7 ft for W Broad's northeast leg, where the
+    near-parallel through street's kerbs meet it at a shallow angle far up the road.
+
+    This rule reproduces all 11 to a standard deviation of 2.4 ft.
+
+    The failure it fixes is not subtle. At W Broad & Louellen the fillet-tangent rule put the
+    southwest leg's crossing 67.8 ft out - past the far kerb of the cross street, into the
+    middle of the block - and the northeast leg's 11.5 ft out, inside a corner return whose
+    kerb is still 25.4 ft off the centerline against a 17.6 ft half-width. One crossing too
+    far out and its opposite too far in, at the same junction, from the same rule.
+    """
+    leg = legs[leg_name]
+    bearing = _leg_bearing_deg(leg)
+    widest_cross_half_ft = 0.0
+    for other_name, other in legs.items():
+        if other_name == leg_name:
+            continue
+        apart = abs(_leg_bearing_deg(other) - bearing) % 360
+        apart = min(apart, 360 - apart)
+        if apart > CROSS_STREET_MAX_ANGLE_DEG:
+            continue        # this leg's own continuation across the junction
+        widest_cross_half_ft = max(widest_cross_half_ft, other.curb_to_curb_ft / 2)
+    return widest_cross_half_ft + CROSSWALK_SETBACK_FT
+
+
+def _leg_bearing_deg(leg) -> float:
+    """Compass bearing from the junction outward along a leg, from its chord.
+
+    The chord and not the first segment: a bent leg's opening segment points somewhere the
+    leg as a whole does not, which is the error that put a crosswalk 29.4 deg off square at
+    Louellen (see crosswalk_axes).
+    """
+    (x0, y0), (x1, y1) = leg.centerline.coords[0], leg.centerline.coords[-1]
+    return float(np.degrees(np.arctan2(x1 - x0, y1 - y0)) % 360)
+
+
 def leg_clearance_ft(leg_name: str, legs: dict, corner_fillets: dict, buffer_ft: float = 3.0,
                      side: str | None = None) -> float:
     """

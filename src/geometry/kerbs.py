@@ -212,6 +212,13 @@ def kerb_openings_from_model(model) -> dict:
             KerbOpening(start_ft=start_ft, end_ft=end_ft, source=OpeningSource.DROPPED_KERB,
                         kerb=KerbType.from_tags(tags), way_id=way_id))
     for leg_name, side, station_ft, way_id in _driveway_meetings(model):
+        # THE SURVEYED WIDTH WINS. Where a dropped kerb is already tagged across this mouth, its
+        # own extent is the width of the opening - measured, where a driveway centreline carries
+        # none and has to be assumed. Adding a second assumed-width opening inside a surveyed one
+        # would put a narrower guess on top of a measurement and double-count it in the report.
+        if any(o.source is OpeningSource.DROPPED_KERB and o.start_ft <= station_ft <= o.end_ft
+               for o in openings.get((leg_name, side), ())):
+            continue
         openings.setdefault((leg_name, side), []).append(
             KerbOpening(start_ft=max(station_ft - DRIVEWAY_WIDTH_FT / 2, 0.0),
                         end_ft=station_ft + DRIVEWAY_WIDTH_FT / 2,
@@ -322,9 +329,12 @@ def describe_kerb_openings(state) -> list[str]:
                            if o is not opening
                            and o.start_ft < opening.end_ft and opening.start_ft < o.end_ft]
             if opening.source is OpeningSource.DRIVEWAY and overlapping:
-                agreement = (" Corroborated by the dropped kerb tagged over "
+                # Should not arise - a driveway inside a tagged dropped kerb is skipped above, in
+                # favour of the surveyed extent. Kept as a statement rather than removed, so a
+                # future change that lets both through says so instead of silently doubling up.
+                agreement = (" Overlaps the dropped kerb tagged over "
                              f"{overlapping[0].start_ft:.0f}-{overlapping[0].end_ft:.0f} ft, whose "
-                             f"surveyed extent is the one that governs the gap.")
+                             f"surveyed extent should have governed this gap.")
             elif opening.source is OpeningSource.DRIVEWAY:
                 agreement = (" NO dropped kerb is tagged at this mouth, so the width is assumed "
                              "rather than surveyed - tagging the kerb here would settle it.")

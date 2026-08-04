@@ -19,7 +19,7 @@ from src.render.crosswalks import (CROSSWALK_DEPTH_M, STOP_BAR_CURB_CLEARANCE_M,
                                    stop_bar_band_geometry_ft, stop_bar_width_ft)
 from src.geometry.model import hatch_lines_ft
 from src.geometry.intersection import IntersectionModel, kerb_lines_with_tags_ft
-from src.geometry.kerbs import DRIVEWAY_WIDTH_FT, KerbType
+from src.geometry.kerbs import KerbType
 from src.geometry.markings import CHANNELS, KINDS, Role, kinds_in
 from src.geometry.paint import in_channel
 from src.render.mesh_utils import build_decimated_building_mesh
@@ -404,14 +404,12 @@ def export_scenario(model: IntersectionModel, state: DesignState, name: str, out
         # The driveways the kerb openings exist for. Drawn as a narrow strip of the same asphalt
         # rather than as a marking: it is a minor carriageway, and its job in the render is to
         # explain why the kerbside markings stop where they do.
+        # The strip POLYGON, not the centreline plus a width for Blender to re-widen: the plan
+        # view draws this same polygon, so neither view can disagree about where a driveway is.
         "driveways": [
-            {"coords": ring_to_local_m(drive.line.coords, center_ft)}
-            for drive in model.driveways
+            {"coords": ring_to_local_m(drive.surface.exterior.coords, center_ft)}
+            for drive in model.driveways if drive.surface is not None
         ],
-        # The SAME width the assumed driveway mouth uses (src/geometry/kerbs.py:
-        # DRIVEWAY_WIDTH_FT), so the strip the render draws and the gap it explains cannot end up
-        # different sizes. Travels as a number for the usual reason: Blender cannot import src.
-        "driveway_width_m": DRIVEWAY_WIDTH_FT * FT_TO_M,
         "corner_parcels": [
             {"name": str(row["quadrant"]), "coords": ring_to_local_m(row.geometry.exterior.coords, center_ft)}
             for _, row in model.corner_parcels.iterrows()

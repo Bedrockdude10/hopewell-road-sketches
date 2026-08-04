@@ -120,11 +120,7 @@ LEG_REACH_TOLERANCE = 1.05
 # edge at the camera distance, and the height is what carries the raised/lowered distinction.
 KERB_WIDTH_M = 0.15
 
-# Fallback width for a driveway strip. The real figure comes from the geometry JSON
-# ("driveway_width_m"), single-sourced against the assumed mouth width the kerb openings use
-# (src/geometry/kerbs.py:DRIVEWAY_WIDTH_FT) so the strip and the gap it explains match. This only
-# applies to a geometry file written before that key existed.
-DRIVEWAY_WIDTH_M = 3.0
+
 
 
 def build_scene(data: dict):
@@ -215,16 +211,15 @@ def build_scene(data: dict):
     for i, ring in enumerate(data.get("sidewalks_far", [])):
         extrude_polygon(f"sidewalk_far_{i}", ring, 0.03, concrete_far)
 
-    # The driveways each kerb opening exists for. A thin strip of the same asphalt, laid just
-    # under the pavement's own top so it reads as connected to the road rather than floating over
-    # the grass - it runs from the kerb back onto private ground, which this project does not
-    # model, so only the part near the road is meaningful.
-    driveway_width_m = data.get("driveway_width_m", DRIVEWAY_WIDTH_M)
+    # The driveways each kerb opening exists for, as the strip POLYGON src/ built - the same one
+    # the plan view fills, so the two views cannot disagree about a driveway's position or width.
+    # Extruded to the pavement's own height so it reads as connected paving where it meets the
+    # road. A driveway running off past the modelled legs is drawn where it really is; that it
+    # ends in grass is our road model stopping, not the driveway being wrong.
     for i, drive in enumerate(data.get("driveways", [])):
         coords = drive.get("coords") or []
-        if len(coords) >= 2:
-            add_paint_polyline(f"driveway_{i}", coords, driveway_width_m, asphalt_far,
-                               height_m=PAVEMENT_HEIGHT_M, z_base=0.0)
+        if len(coords) >= 3:
+            extrude_polygon(f"driveway_{i}", coords, PAVEMENT_HEIGHT_M, asphalt_far)
 
     # The traced kerbs, at the height their OSM kerb= tag calls for (src/render/export.py:
     # KERB_HEIGHT_M). There was no kerb in this scene before - the road slab simply met the

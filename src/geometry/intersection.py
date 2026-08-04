@@ -8,7 +8,7 @@ from pathlib import Path
 import geopandas as gpd
 import numpy as np
 from shapely import affinity
-from shapely.geometry import LineString, Point
+from shapely.geometry import LineString, Point, Polygon
 from shapely.ops import substring
 
 from src.sources.data_loader import load_parcels_near, load_road_network
@@ -179,6 +179,10 @@ def _assign_leg_pieces(pieces: list, leg_names: list[str], legs_cfg: dict, cente
 # context radius the renderers use, so a driveway drawn in a view is a driveway the openings were
 # derived from - the divergence Driveway's docstring is about.
 DRIVEWAY_CONTEXT_RADIUS_M = 130
+# How wide a driveway is DRAWN. An assumption, and flagged as one wherever it surfaces - see
+# Driveway.width_ft. About a residential driveway; the surveyed figure this is NOT is the width of
+# the opening the driveway makes in the kerb.
+DRIVEWAY_DRAWN_WIDTH_FT = 10.0
 
 
 def _driveways_ft(center_wgs84: Point) -> tuple:
@@ -191,8 +195,12 @@ def _driveways_ft(center_wgs84: Point) -> tuple:
         if len(coords) < 2:
             continue
         xs, ys = wgs84_to_state_plane.transform([c[0] for c in coords], [c[1] for c in coords])
-        out.append(Driveway(line=LineString(zip(xs, ys)), way_id=drive.get("id"),
-                            tags=drive.get("tags", {})))
+        line = LineString(zip(xs, ys))
+        # Flat caps: a round cap would put a half-disc on the end of every driveway, out in the
+        # garden it leads to.
+        surface = line.buffer(DRIVEWAY_DRAWN_WIDTH_FT / 2, cap_style=2)
+        out.append(Driveway(line=line, way_id=drive.get("id"), tags=drive.get("tags", {}),
+                            surface=surface if surface.geom_type == "Polygon" else None))
     return tuple(out)
 
 
@@ -835,6 +843,22 @@ class Driveway:
     line: LineString
     way_id: int | None = None
     tags: dict = field(default_factory=dict)
+    #: The paved strip itself, built from the centreline once so the plan view and the 3D render
+    #: draw the SAME polygon rather than each widening the line their own way.
+    surface: Polygon | None = None
+
+    @property
+    def width_ft(self) -> float:
+        """How wide the strip is drawn. ASSUMED - and the one number here that is not surveyed.
+
+        OSM maps a driveway as a centreline; not one of the 43 in this borough carries a `width`
+        tag. What IS surveyed is the width of the OPENING it makes in the kerb - the extent of the
+        `kerb=lowered` section - and that is what the gap in the markings uses
+        (src/geometry/kerbs.py). The two are different measurements and must not be swapped: at
+        E Broad the dropped kerb runs 37 ft while the driveway centreline enters near one end of
+        it, so that section is a frontage the driveway opens onto, not the driveway's own width.
+        """
+        return DRIVEWAY_DRAWN_WIDTH_FT
 
 
 @dataclass(frozen=True)

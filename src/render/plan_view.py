@@ -118,18 +118,21 @@ KERB_STYLE = {
 }
 
 
-# A driveway is vehicle access, so it is drawn like the minor carriageway it is rather than as
-# another kerbside marking - a thin brown-grey centreline, under everything else, and unlabelled.
-# It exists in the drawing to explain the gap in the markings at its mouth: a break in a bike
-# lane with nothing leading away from it reads as a striping error.
-DRIVEWAY_STYLE = dict(color="#6f5b4b", linewidth=1.3, linestyle=(0, (5, 2)), zorder=2)
+# A driveway is PAVING, so it is drawn as paving: a filled strip under everything else, in a
+# browner grey than the roadway so it reads as private access rather than carriageway. It was a
+# thin dashed centreline, which on a drawing already carrying parcel lines, sidewalk centrelines
+# and leg centrelines was indistinguishable from them - the thing it exists to explain (the gap in
+# the markings at its mouth) needs to be visibly a surface a car drives on.
+DRIVEWAY_STYLE = dict(color="#8a7a68", alpha=0.55, zorder=2)
+DRIVEWAY_EDGE = dict(color="#5d5044", linewidth=0.8, zorder=2)
 
 
 def _draw_driveways(ax, driveways) -> None:
-    """The junction's mapped driveways, off the MODEL - already projected, and the same set the
-    kerb openings were derived from. This used to fetch and project them itself; see
-    src/geometry/intersection.py:Driveway for why three copies of that was the bug."""
-    _draw(ax, [drive.line for drive in driveways or ()], **DRIVEWAY_STYLE)
+    """The junction's mapped driveways, off the MODEL - already projected and already widened into
+    the strip both views draw, so the plan view and the 3D render cannot disagree about where a
+    driveway is or how wide it is. See src/geometry/intersection.py:Driveway."""
+    _draw(ax, [drive.surface for drive in driveways or () if drive.surface is not None],
+          boundary=DRIVEWAY_EDGE, **DRIVEWAY_STYLE)
 
 
 def _draw_kerbs(ax, kerb_lines) -> None:
@@ -730,8 +733,8 @@ def legend_handles():
         Line2D([0], [0], color="black", lw=2.2, label="Traced kerb - RAISED (OSM kerb=raised)"),
         Line2D([0], [0], color="black", lw=1.1, ls="--",
                label="Traced kerb - LOWERED: a vehicle crosses, so the paint opens"),
-        Line2D([0], [0], color="#6f5b4b", lw=1.3, ls=(0,(5,2)),
-               label="Driveway (OSM service=driveway) - what an opening is for"),
+        Patch(facecolor="#8a7a68", alpha=0.55, edgecolor="#5d5044",
+               label="Driveway (OSM service=driveway) - width DRAWN is assumed"),
         Line2D([0], [0], color="steelblue", lw=1, ls=(0,(4,2)), label="OSM sidewalk centerline"),
         Line2D([0], [0], color="#3b6ea5", lw=0.9, ls=(0,(7,3,1,3)), label="Leg centerline (widths measured from this)"),
         Line2D([0], [0], color="gold", lw=1.2, label="Centerline paint (double yellow / dashed)"),

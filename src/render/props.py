@@ -5,7 +5,7 @@ from config.yaml. Every function here only decides WHERE a prop goes and WHY
 actually draws it. See sites/README.md for the `signals`/`props.extra`
 config schema this reads from."""
 import numpy as np
-from shapely.geometry import LineString, Point
+from shapely.geometry import LineString, Point, Polygon
 
 from src.geometry.intersection import IntersectionModel
 from src.geometry.model import bollard_points_ft, build_pavement_polygon, leg_clearance_ft
@@ -65,6 +65,10 @@ CROSSING_NODE_MATCH_FT = 20.0
 # geometry must agree on that number or pads end up in the carriageway (they have, twice).
 TACTILE_PAD_DEPTH_FT = 2.0
 TACTILE_PAD_WIDTH_FT = 3.0
+PAD_MAX_STEP_FT = 12.0   # past this, the modelled pavement has swallowed the footway
+PAD_NEAR_JUNCTION_FT = 90.0  # a ramp belonging to THIS junction; crossings/kerbs are fetched
+                              # over a much wider radius for context, and three of Columbia &
+                              # Princeton's 'ramps' were 350+ ft away at a different junction
 
 
 def _merged_crossing_tags(line, crossing_tags: dict, nodes_ft: list[dict]) -> dict:
@@ -151,9 +155,7 @@ def _step_clear_of_roadway(point, end_a, end_b, pavement):
     """
     if pavement is None:
         return point
-    from shapely.geometry import Point as _P
-
-    if not pavement.contains(_P(*point)):
+    if not pavement.contains(Point(*point)):
         return point
     mid = ((end_a[0] + end_b[0]) / 2.0, (end_a[1] + end_b[1]) / 2.0)
     out_x, out_y = point[0] - mid[0], point[1] - mid[1]
@@ -164,21 +166,28 @@ def _step_clear_of_roadway(point, end_a, end_b, pavement):
     step = PUSHBUTTON_CLEARANCE_FT
     while step <= PUSHBUTTON_MAX_STEP_FT:
         candidate = (point[0] + out_x * step, point[1] + out_y * step)
-        if not pavement.contains(_P(*candidate)):
+        if not pavement.contains(Point(*candidate)):
             return candidate
         step += 0.5
     return None
 
 
-def _pad_polygon(x: float, y: float, heading_deg: float):
+def pad_polygon(x: float, y: float, heading_deg: float,
+                  depth_ft: float = TACTILE_PAD_DEPTH_FT,
+                  width_ft: float = TACTILE_PAD_WIDTH_FT) -> Polygon:
     """The rectangle a tactile pad occupies - depth along the crossing, width across it.
-    Shared by placement and by src/render/plan_view.py so both draw the same pad."""
-    from shapely.geometry import Polygon
 
+    Genuinely shared now: this function's docstring already claimed to be what
+    src/render/plan_view.py draws, but that module had its own copy of the arithmetic, with
+    3x5 ft fallbacks against the 2x3 ft this uses. So a pad whose prop dict was missing its
+    dimensions would have been CHECKED at one size (src/checks.py calls this) and DRAWN at
+    another - the 2D/3D-style divergence this project exists to avoid, in a pair of functions
+    one of which said it was preventing it.
+    """
     angle = np.radians(heading_deg)
     ux, uy = np.cos(angle), np.sin(angle)
     nx, ny = -uy, ux
-    half_d, half_w = TACTILE_PAD_DEPTH_FT / 2, TACTILE_PAD_WIDTH_FT / 2
+    half_d, half_w = depth_ft / 2, width_ft / 2
     return Polygon([
         (x + ux * half_d + nx * half_w, y + uy * half_d + ny * half_w),
         (x - ux * half_d + nx * half_w, y - uy * half_d + ny * half_w),
@@ -281,7 +290,7 @@ def _pad_orientation(x: float, y: float, kerb_line, pavement):
         step = TACTILE_PAD_DEPTH_FT / 2
         while step <= PAD_MAX_STEP_FT:
             centre = node + direction * step
-            pad = _pad_polygon(centre[0], centre[1], heading)
+            pad = pad_polygon(centre[0], centre[1], heading)
             if pavement is None or not pad.intersects(pavement):
                 return heading, (float(centre[0]), float(centre[1]))
             step += 0.5
@@ -332,7 +341,7 @@ def _tactile_pad_props(line, pavement, leg_name: str, heading: float) -> list[di
         step = TACTILE_PAD_DEPTH_FT / 2
         while step <= TACTILE_PAD_DEPTH_FT * 3:
             cx, cy = edge.x + out_x * step, edge.y + out_y * step
-            if not _pad_polygon(cx, cy, heading).intersects(pavement):
+            if not pad_polygon(cx, cy, heading).intersects(pavement):
                 placed = (cx, cy)
                 break
             step += 0.5
@@ -369,8 +378,6 @@ def _osm_crossing_hardware_props(state: DesignState, crossings: list[dict], node
     """
     from src.render.crosswalks import match_crossing_lines_to_legs  # local: avoids an import cycle
 
-    from src.geometry.model import build_pavement_polygon
-
     try:
         pavement = build_pavement_polygon(state.corner_fillets)
     except (ValueError, KeyError, StopIteration):
@@ -387,29 +394,38 @@ def _osm_crossing_hardware_props(state: DesignState, crossings: list[dict], node
     # are tagged tactile_paving=yes. Traced kerbs still win wherever they exist - they're
     # the more specific statement - but an untraced corner falls back to inference rather
     # than silently losing its ramp.
+    # Centroids for the whole crossing layer once, rather than re-projecting every crossing
+    # way for every matched leg.
+    centroids = _crossing_centroids_ft(crossings)
     props = list(kerb_pads)
     for leg_name, (line, crossing_tags) in match_crossing_lines_to_legs(state.legs, crossings).items():
         tags = _merged_crossing_tags(line, crossing_tags, nodes_ft)
-        if _crossing_is_covered(crossings, covered_ways, line):
+        if _crossing_is_covered(centroids, covered_ways, line):
             tags = {k: v for k, v in tags.items() if k != "tactile_paving"}
         props += _crossing_endpoint_props(line, state.legs[leg_name], tags, leg_name, pavement)
     return props
 
 
-def _crossing_is_covered(crossings: list[dict], covered_ways: set, line) -> bool:
-    """Whether the crossing matching `line` already had pads placed from a traced kerb."""
-    target = line.interpolate(0.5, normalized=True)
-    best, best_d = None, None
+def _crossing_centroids_ft(crossings: list[dict]) -> list[tuple]:
+    """[(crossing, (x, y))] - each crossing way's mean vertex, in state-plane feet."""
+    out = []
     for crossing in crossings:
         coords = crossing.get("coords_wgs84") or []
         if len(coords) < 2:
             continue
         xs, ys = wgs84_to_state_plane.transform([c[0] for c in coords], [c[1] for c in coords])
-        cx, cy = float(np.mean(xs)), float(np.mean(ys))
-        d = np.hypot(cx - target.x, cy - target.y)
-        if best_d is None or d < best_d:
-            best, best_d = crossing, d
-    return best is not None and id(best) in covered_ways
+        out.append((crossing, (float(np.mean(xs)), float(np.mean(ys)))))
+    return out
+
+
+def _crossing_is_covered(centroids: list[tuple], covered_ways: set, line) -> bool:
+    """Whether the crossing matching `line` already had pads placed from a traced kerb."""
+    if not centroids:
+        return False
+    target = line.interpolate(0.5, normalized=True)
+    nearest = min(centroids, key=lambda entry: np.hypot(entry[1][0] - target.x,
+                                                         entry[1][1] - target.y))[0]
+    return id(nearest) in covered_ways
 
 
 def osm_tree_points_ft(nodes_ft: list[dict]) -> list[tuple[float, float]]:
@@ -488,7 +504,6 @@ def _leg_sign_position_ft(leg, offset_ft: float, side: str,
     curb = getattr(leg, f"{side}_curb", None)
     to_curb = curb.distance(p) if curb is not None and not curb.is_empty else leg.curb_to_curb_ft / 2
     lateral = to_curb + SIGN_SIDEWALK_SETBACK_FT
-    pos = base + n * lateral
     pos = _step_outward_clear(base, n, lateral, pavement, extra_ft=SIGN_SIDEWALK_SETBACK_FT)
     return (tuple(pos) if pos is not None else None), heading
 
@@ -715,7 +730,7 @@ def _no_turn_on_red_props(model: IntersectionModel, state: DesignState, offsets_
         leg = state.legs.get(leg_name)
         if leg is None:
             continue
-        offset_ft = offsets_ft[leg_name][0]
+        offset_ft = offsets_ft[leg_name].offset_ft
         pos, heading = _leg_sign_position_ft(leg, _sign_offset_ft(state, leg_name, offset_ft),
                                               side=APPROACHING_DRIVER_RIGHT, pavement=pavement)
         if pos is None:
@@ -731,28 +746,49 @@ def _no_turn_on_red_props(model: IntersectionModel, state: DesignState, offsets_
     return props
 
 
+# Where to put a sign on a leg whose crosswalk offset was never resolved. A leg always gets
+# one (src/render/crosswalks.py:resolve_crosswalk_offsets covers every leg in the state), so
+# this is only reached for an entry naming a leg that is in the config but not in the model -
+# and _sign_offset_ft pushes it out past the corner return regardless.
+UNRESOLVED_SIGN_OFFSET_FT = 10.0
+
+
+def _extra_prop(state: DesignState, entry: dict, offsets_ft: dict, source: str,
+                 pavement=None) -> dict | None:
+    """One `props.extra`-shaped sign placed on its leg, or None if it can't be placed.
+
+    Shared by the site-config and the scenario-level extras: the two differed only in where
+    the entry came from and what its `source` string says, but had separate copies of the
+    offset fallback and the placement retry. `offset_ft` may legitimately be absent OR
+    explicitly None (see treatments.add_extra_prop - None means "at this leg's real crossing"),
+    so both fall through to the resolved crosswalk offset rather than to a literal.
+    """
+    leg = state.legs.get(entry["leg"])
+    if leg is None:
+        return None
+    offset = offsets_ft.get(entry["leg"])
+    offset_ft = entry.get("offset_ft")
+    if offset_ft is None:
+        offset_ft = offset.offset_ft if offset is not None else UNRESOLVED_SIGN_OFFSET_FT
+    pos, heading = _leg_sign_position_ft(leg, _sign_offset_ft(state, entry["leg"], offset_ft),
+                                          side=entry.get("side", "right"), pavement=pavement)
+    if pos is None:
+        print(f"  NOTE: the configured {entry['type']} on {entry['leg']} can't be placed clear of the "
+              f"modelled roadway. Not drawn.")
+        return None
+    return {"type": entry["type"], "position_ft": pos, "heading_deg": heading, "source": source}
+
+
 def _extra_props_from_config(model: IntersectionModel, state: DesignState, offsets_ft: dict,
                               pavement=None) -> list[dict]:
     """User-specified extra signage (e.g. a school zone sign) from the site's
     config.yaml `props.extra` list - explicitly site-specific knowledge that
     doesn't belong in the general pipeline. See sites/README.md."""
-    props = []
-    for entry in model.config.get("props", {}).get("extra", []):
-        leg = state.legs.get(entry["leg"])
-        if leg is None:
-            continue
-        offset_ft = entry.get("offset_ft", offsets_ft.get(entry["leg"], (10, ""))[0])
-        pos, heading = _leg_sign_position_ft(leg, _sign_offset_ft(state, entry["leg"], offset_ft),
-                                              side=entry.get("side", "right"), pavement=pavement)
-        if pos is None:
-            print(f"  NOTE: the configured {entry['type']} on {entry['leg']} can't be placed clear of the "
-                  f"modelled roadway. Not drawn.")
-            continue
-        props.append({
-            "type": entry["type"], "position_ft": pos, "heading_deg": heading,
-            "source": f"user-specified in site config.yaml (props.extra): {entry.get('note', 'no note given')}",
-        })
-    return props
+    placed = (_extra_prop(state, entry, offsets_ft, pavement=pavement,
+                           source="user-specified in site config.yaml (props.extra): "
+                                  f"{entry.get('note') or 'no note given'}")
+              for entry in model.config.get("props", {}).get("extra", []))
+    return [p for p in placed if p is not None]
 
 
 def _extra_props_from_state(state: DesignState, offsets_ft: dict, pavement=None) -> list[dict]:
@@ -761,25 +797,11 @@ def _extra_props_from_state(state: DesignState, offsets_ft: dict, pavement=None)
     school-zone sign that only exists in one particular proposal, not the
     site's baseline config (see _extra_props_from_config for the site-wide
     equivalent)."""
-    props = []
-    for entry in state.extra_props:
-        leg = state.legs.get(entry["leg"])
-        if leg is None:
-            continue
-        # offset_ft may be explicitly None (see add_extra_prop) - `or` (not .get's
-        # default) is required to fall through to the real crosswalk offset in that case.
-        offset_ft = entry.get("offset_ft") or offsets_ft.get(entry["leg"], (10, ""))[0]
-        pos, heading = _leg_sign_position_ft(leg, _sign_offset_ft(state, entry["leg"], offset_ft),
-                                              side=entry.get("side", "right"), pavement=pavement)
-        if pos is None:
-            print(f"  NOTE: the configured {entry['type']} on {entry['leg']} can't be placed clear of the "
-                  f"modelled roadway. Not drawn.")
-            continue
-        props.append({
-            "type": entry["type"], "position_ft": pos, "heading_deg": heading,
-            "source": f"scenario-specified (treatment-level prop, not site config): {entry.get('note') or 'no note given'}",
-        })
-    return props
+    placed = (_extra_prop(state, entry, offsets_ft, pavement=pavement,
+                           source="scenario-specified (treatment-level prop, not site config): "
+                                  f"{entry.get('note') or 'no note given'}")
+              for entry in state.extra_props)
+    return [p for p in placed if p is not None]
 
 
 # Bollards the TREATMENT layer already draws for itself. The plan view builds its markings
@@ -825,10 +847,8 @@ def _daylight_device_props(state: DesignState, offsets_ft: dict, so_far: list[di
     `so_far` is the props already built, because the span depends on them: a hydrant or a
     stop sign carries its own setback (R.S. 39:4-138(h),(i)) and lengthens the zone.
     """
-    import numpy as np
-
     from src.geometry.daylighting import merged_no_parking_spans_ft, no_parking_zones_ft
-    from src.geometry.model import _point_at, leg_clearance_ft
+    from src.geometry.model import _point_at
     from src.geometry.paint import LANE_EDGE_LINE_WIDTH_FT
     from src.geometry.treatments import TARGET_LANE_WIDTH_FT
 
@@ -908,7 +928,6 @@ def build_props(model: IntersectionModel, state: DesignState, offsets_ft: dict, 
     still have a stop sign on a minor approach, and OSM will say so if it does. What the
     code no longer does is invent an all-way stop just because no signals were configured.
     """
-    signalized = bool(model.config.get("signals"))
     furniture_ft = control_nodes_ft(street_furniture)  # same lon/lat -> point_ft conversion
     control_ft = control_nodes_ft(traffic_control)
     # The real modelled roadway, so every sign can be placed clear of IT rather than clear
@@ -934,28 +953,12 @@ def build_props(model: IntersectionModel, state: DesignState, offsets_ft: dict, 
     return props + _daylight_device_props(state, offsets_ft, props)
 
 
-# The pad/furniture-in-the-roadway invariant moved to src/checks.py, where it runs
-# alongside every other scene invariant and reports all violations at once instead of
-# stopping at the first. Re-exported so existing imports keep working.
-from src.checks import (  # noqa: E402
-    MAX_PAD_ROADWAY_OVERLAP,
-    PedestrianFurnitureInRoadwayError,
-    TactilePadInRoadwayError,
-    check_furniture_off_roadway,
-)
-
-PAD_MAX_STEP_FT = 12.0   # past this, the modelled pavement has swallowed the footway
-PAD_NEAR_JUNCTION_FT = 90.0  # a ramp belonging to THIS junction; crossings/kerbs are fetched
-                              # over a much wider radius for context, and three of Columbia &
-                              # Princeton's 'ramps' were 350+ ft away at a different junction
-
-
-def assert_pads_off_roadway(props: list[dict], pavement) -> None:
-    """Back-compat shim for the narrower original check. Prefer checks.assert_scene_valid."""
-    violations = check_furniture_off_roadway(props, pavement)
-    if violations:
-        raise PedestrianFurnitureInRoadwayError(
-            "\n  ".join(["pedestrian furniture in the modelled roadway:"] + [str(v) for v in violations]))
+# The pad/furniture-in-the-roadway invariant lives in src/checks.py, where it runs alongside
+# every other scene invariant and reports all violations at once instead of stopping at the
+# first. There used to be a re-export of it here, plus an assert_pads_off_roadway shim wrapping
+# it - a module-level import at the BOTTOM of the file, for callers that no longer exist.
+# Nothing in the repo imported either; the one thing that still reaches back the other way is
+# checks.py asking this module for pad_polygon, which it does locally to avoid the cycle.
 
 
 def data_gaps(traffic_control: list[dict] | None, street_furniture: list[dict] | None,

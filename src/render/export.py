@@ -14,24 +14,21 @@ from shapely.geometry import Point, Polygon
 from src.render.coords import FT_TO_M, building_footprint_ft, pt_to_local_m, ring_to_local_m, wgs84_ring_to_local_m
 from src.render.crosswalks import (CROSSWALK_DEPTH_M, STOP_BAR_CURB_CLEARANCE_M,
                                    continental_bar_count, crosswalk_axes,
-                                   centerline_start_ft, crosswalk_bands_ft, crosswalk_reaches_ft,
-                                   stop_bar_bands_ft,
-                                   resolve_crosswalk_offsets, resolve_crosswalk_skews,
-                                   entering_lane_width_ft, resolve_stop_bar_offsets,
+                                   centerline_start_ft,
+                                   entering_lane_width_ft,
                                    stop_bar_band_geometry_ft, stop_bar_width_ft)
-from src.geometry.model import build_pavement_polygon, hatch_lines_ft
+from src.geometry.model import hatch_lines_ft
 from src.geometry.intersection import IntersectionModel
-from src.geometry.paint import curbside_paint_ft, of_kind
+from src.geometry.paint import of_kind
 from src.render.mesh_utils import build_decimated_building_mesh
+from src.render.scene import SceneGeometry
 from src.sources.osm_context import (fetch_buildings, fetch_crossings, fetch_kerbs,
-                                     fetch_stop_lines, fetch_street_furniture, fetch_traffic_control)
-from src.checks import assert_scene_valid
+                                     fetch_street_furniture, fetch_traffic_control)
 from src.render.props import build_props, control_nodes_ft, osm_tree_points_ft
 from src.geometry.treatments import DEFAULT_CENTERLINE_STYLE, DesignState, build_sidewalk_pieces
 
 BUILDING_CONTEXT_RADIUS_M = 130
 KERB_RADIUS_M = 120
-STOP_LINE_RADIUS_M = 130  # a bar governing this junction sits 33-67 ft out; this is generous
 TRAFFIC_CONTROL_RADIUS_M = 60  # control nodes govern THIS junction; a wider net just pulls in neighbours
 SIDEWALK_WIDTH_FT = 6
 NEAR_ZONE_BUFFER_FT = 10  # how far past the farthest crosswalk the "near" (4k texture) pavement zone extends
@@ -151,8 +148,6 @@ def export_scenario(model: IntersectionModel, state: DesignState, name: str, out
     if theme is None:
         from src.render.theme import build_default_theme
         theme = build_default_theme()
-    pavement = build_pavement_polygon(state.corner_fillets)
-    sidewalk_pieces = build_sidewalk_pieces(state, sidewalk_width_ft=SIDEWALK_WIDTH_FT)
     if buildings is None:
         buildings = fetch_buildings(model.center_wgs84, radius_m=BUILDING_CONTEXT_RADIUS_M)
     if crossings is None:
@@ -161,25 +156,27 @@ def export_scenario(model: IntersectionModel, state: DesignState, name: str, out
         traffic_control = fetch_traffic_control(model.center_wgs84, radius_m=TRAFFIC_CONTROL_RADIUS_M)
     if street_furniture is None:
         street_furniture = fetch_street_furniture(model.center_wgs84, radius_m=BUILDING_CONTEXT_RADIUS_M)
-    crosswalk_offsets = resolve_crosswalk_offsets(state, crossings)
-    crosswalk_skews = resolve_crosswalk_skews(state, crossings)
-    marked_crosswalks = set(model.config["intersection"].get("existing_marked_crosswalks", []))
-    crosswalk_reaches = crosswalk_reaches_ft(state, crosswalk_offsets, crosswalk_skews,
-                                              pavement, marked_crosswalks)
-    # Crosswalks outrank every other marking here, so the paint below is cut around them
-    # geometrically rather than merely started far enough out - a skewed crossing reaches
-    # further along one kerb than its centre offset implies.
-    crosswalk_band_polys = crosswalk_bands_ft(state, crosswalk_offsets, crosswalk_skews,
-                                                CROSSWALK_DEPTH_M / FT_TO_M, pavement,
-                                                crosswalk_reaches)
-    # Stop bars only make sense at a signalized intersection (this site's
-    # config.yaml `signals` block is what "signalized" means - see
-    # src/render/props.py's _traffic_signal_props/_no_turn_on_red_props, which gate
-    # the same way).
-    stop_bar_offsets = (resolve_stop_bar_offsets(
-        state, crosswalk_offsets,
-        fetch_stop_lines(model.center_wgs84, radius_m=STOP_LINE_RADIUS_M))
-        if model.config.get("signals") else {})
+
+    # Every marking position this scenario implies, resolved once (src/render/scene.py) and
+    # shared with the plan view and the invariants. Crosswalks outrank every other marking,
+    # so the paint below is cut around the bands geometrically rather than merely started far
+    # enough out - a skewed crossing reaches further along one kerb than its centre offset
+    # implies. Stop bars are resolved only at a signalized junction, the same gate
+    # src/render/props.py's _traffic_signal_props/_no_turn_on_red_props use.
+    scene = SceneGeometry.resolve(model, state, crossings)
+    pavement = scene.pavement
+    if pavement is None:
+        # export_scenario has always required a closed ring (build_pavement_polygon raised
+        # here before the scene resolved it), and everything below - the near/far texture
+        # split, the building filter, the sidewalk band - is measured against it.
+        raise ValueError("Can't export this scenario - the pavement ring did not close. "
+                         "See src/geometry/model.py:build_pavement_polygon.")
+    crosswalk_offsets = scene.crosswalk_offsets
+    crosswalk_skews = scene.crosswalk_skews
+    crosswalk_reaches = scene.crosswalk_reaches
+    stop_bar_offsets = scene.stop_bar_offsets
+    marked_crosswalks = scene.marked_crosswalks
+    sidewalk_pieces = build_sidewalk_pieces(state, sidewalk_width_ft=SIDEWALK_WIDTH_FT)
 
     # OSM building footprints are independent of (and coarser than) our SLD/field-measured
     # curb geometry - a few end up drawn overlapping the actual pavement. Drop those rather
@@ -197,17 +194,12 @@ def export_scenario(model: IntersectionModel, state: DesignState, name: str, out
 
     props = build_props(model, state, crosswalk_offsets, center_ft, traffic_control, street_furniture,
                          crossings, fetch_kerbs(model.center_wgs84, radius_m=KERB_RADIUS_M))
-    paint = curbside_paint_ft(state, crosswalk_offsets, center_ft, crosswalk_band_polys, props,
-                           marked_crosswalks=marked_crosswalks)
+    paint = scene.build_paint(props)
     # Invariants, not warnings: a pad in the carriageway is a false claim about an
     # accessibility feature, and a curb drawn across the intersection is a false claim
     # about the street. Checked on the same shared band geometry the plan view checks, so
     # the two views can't diverge on what they consider valid. See src/checks.py.
-    assert_scene_valid(
-        model, state, props, pavement,
-        crosswalk_bands=crosswalk_band_polys,
-        stop_bars=stop_bar_bands_ft(state, stop_bar_offsets, crosswalk_skews),
-        paint=paint, crosswalk_offsets=crosswalk_offsets, scenario=name)
+    scene.assert_valid(props, paint, scenario=name)
 
     # Paint-only / no-curb-change proposal treatments - lane-narrowing buffers, marked
     # parking, corner hatching, aprons. All of it is built by src/geometry/paint.py, which
@@ -316,7 +308,7 @@ def export_scenario(model: IntersectionModel, state: DesignState, name: str, out
                           (leg.centerline.coords[-1][1] - center_ft.y) * FT_TO_M],
                 "width_m": leg.curb_to_curb_ft * FT_TO_M,
                 "confirmed": model.config["legs"][leg_name].get("confirmed", False),
-                "crosswalk_offset_m": crosswalk_offsets[leg_name][0] * FT_TO_M,
+                "crosswalk_offset_m": crosswalk_offsets[leg_name].offset_ft * FT_TO_M,
                 "crosswalk_offset_source": crosswalk_offsets[leg_name][1],
                 # How far the surveyed crossing is rotated off square to this leg
                 # (src/render/crosswalks.py:_crossing_skew_deg). 0 for a leg with no
@@ -341,7 +333,7 @@ def export_scenario(model: IntersectionModel, state: DesignState, name: str, out
                 # 12.6 ft of paint the plan view had correctly cleared. Unskewed - the
                 # renderer still applies crosswalk_skew_deg itself, because the span factor
                 # that keeps a rotated crossing reaching both kerbs lives with it.
-                **_marking_frame_m("crosswalk", leg, crosswalk_offsets[leg_name][0], center_ft),
+                **_marking_frame_m("crosswalk", leg, crosswalk_offsets[leg_name].offset_ft, center_ft),
                 # Same for the stop bar, which is a second marking at a second station and
                 # inherited the same chord.
                 **_marking_frame_m("stop_bar", leg, stop_bar_offsets.get(leg_name), center_ft),
@@ -376,7 +368,7 @@ def export_scenario(model: IntersectionModel, state: DesignState, name: str, out
                 # rule ("stop at the stop bar") lives with the geometry and is testable -
                 # see src/render/crosswalks.py:centerline_start_ft.
                 "centerline_start_m": centerline_start_ft(
-                    crosswalk_offsets[leg_name][0],
+                    crosswalk_offsets[leg_name].offset_ft,
                     stop_bar_offsets.get(leg_name),
                     leg_name in marked_crosswalks) * FT_TO_M,
             }

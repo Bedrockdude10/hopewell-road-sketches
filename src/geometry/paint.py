@@ -19,15 +19,17 @@ a third copy free to drift from the other two; checking THIS list is checking wh
 """
 from dataclasses import dataclass
 
+import numpy as np
 from shapely.geometry import LineString, Polygon
 from shapely.ops import unary_union
 
-from src.geometry.model import (bollard_points_ft, clip_paint_clear_of, corner_overlay_polygon,
+from src.geometry.model import (_point_at, bollard_points_ft, clip_paint_clear_of,
+                                corner_overlay_polygon, curb_offsets_at_stations,
                                 inset_line_ft, lane_narrowing_edge_lines_ft,
                                 lane_narrowing_polygons_ft, lane_narrowing_taper_ft,
                                 lane_narrowing_taper_polygons_ft, leg_clearance_ft,
                                 parking_lane_edge_line_ft, parking_stall_lines_ft,
-                                through_street_sides)
+                                station_offset_many, through_street_sides)
 from src.geometry.daylighting import (merged_no_parking_spans_ft, no_parking_zones_ft,
                                       parkable_runs_ft)
 from src.render.coords import FT_TO_M
@@ -105,7 +107,7 @@ def leg_anchors(state, leg_name: str, side: str, crosswalk_offsets: dict,
         # Marked, but no band geometry to measure against - fall back to this leg's crossing
         # centre offset. Half the crossing depth is inside CROSSWALK_CLEARANCE_FT, so this is
         # the old behaviour, and it is right for a square crossing.
-        reach_ft = crosswalk_offsets[leg_name][0]
+        reach_ft = crosswalk_offsets[leg_name].offset_ft
     target_ft = reach_ft + CROSSWALK_CLEARANCE_FT
     return LegAnchors(anchor_ft=max(clearance_ft, target_ft), target_ft=target_ft,
                        crossing_ft=reach_ft, clearance_ft=clearance_ft)
@@ -213,10 +215,6 @@ def zone_end_line_ft(leg, side: str, start_ft: float, inner_offset_ft: float):
     Returns None where the kerb has come inside the zone's own lane edge, which leaves
     nothing to draw a line across.
     """
-    import numpy as np
-
-    from src.geometry.model import _point_at, curb_offsets_at_stations
-
     sign = 1 if side == "left" else -1
     curb = curb_offsets_at_stations(leg, side, np.asarray([start_ft], dtype=float))
     outer_ft = float(curb[0]) if curb is not None else sign * leg.curb_to_curb_ft / 2
@@ -230,10 +228,6 @@ def zone_end_line_ft(leg, side: str, start_ft: float, inner_offset_ft: float):
 def _station_of(leg, geometry) -> float:
     """A piece's mean station along its leg - enough to tell which side of a crossing it
     fell on after being cut."""
-    import numpy as np
-
-    from src.geometry.model import station_offset_many
-
     coords = (geometry.exterior.coords if geometry.geom_type == "Polygon" else geometry.coords)
     stations, _offsets = station_offset_many(leg.centerline, np.asarray(coords, dtype=float))
     return float(stations.mean())

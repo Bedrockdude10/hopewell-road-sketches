@@ -204,6 +204,25 @@ def kerb_lines_with_tags_ft(center_wgs84: Point, center_ft: Point, legs: dict | 
     the widths are settled and the extra ways can only lengthen a curb, never redefine one.
     See tests/test_leg_frame.py.
     """
+    return [(line, tags) for line, tags in _projected_kerbs(center_wgs84)
+            if (_runs_along_a_leg(line, legs) if legs
+                else line.distance(center_ft) <= KERB_NEAR_JUNCTION_FT)]
+
+
+# Every traced kerb way at one junction, projected into state-plane feet once. The projection
+# is a fact about the fetched ways, and the ways are read four times over per model load (the
+# radius fit, the width fit, the far-tracing pass, the plan view) plus once per scenario. Held
+# alongside the fetched list and served only while that is still the list fetch_kerbs returns,
+# the same identity rule src/sources/osm_context.py:_LAYER_VIEWS uses - so a re-pulled snapshot
+# cannot be served a projection of the old one.
+_PROJECTED_KERBS: dict[tuple, tuple] = {}
+
+
+def _projected_kerbs(center_wgs84: Point) -> list[tuple]:
+    """[(LineString in feet, tags)] for every traced kerb WAY near the junction.
+
+    Lone `barrier=kerb` NODES are dropped: they carry no arc to fit and no line to draw.
+    """
     try:
         kerbs = fetch_kerbs(center_wgs84, radius_m=KERB_CONTEXT_RADIUS_M)
     except RuntimeError as e:
@@ -217,18 +236,20 @@ def kerb_lines_with_tags_ft(center_wgs84: Point, center_ft: Point, legs: dict | 
             "to placeholders, and the render would look finished while being wrong. Retry when "
             "Overpass is reachable."
         ) from e
-    out = []
+
+    key = (round(center_wgs84.x, 7), round(center_wgs84.y, 7))
+    cached = _PROJECTED_KERBS.get(key)
+    if cached is not None and cached[0] is kerbs:
+        return cached[1]
+    projected = []
     for kerb in kerbs:
         coords = kerb.get("coords_wgs84")
         if not coords:
             continue
         xs, ys = wgs84_to_state_plane.transform([c[0] for c in coords], [c[1] for c in coords])
-        line = LineString(zip(xs, ys))
-        keep = (_runs_along_a_leg(line, legs) if legs
-                else line.distance(center_ft) <= KERB_NEAR_JUNCTION_FT)
-        if keep:
-            out.append((line, kerb.get("tags", {})))
-    return out
+        projected.append((LineString(zip(xs, ys)), kerb.get("tags", {})))
+    _PROJECTED_KERBS[key] = (kerbs, projected)
+    return projected
 
 
 def _kerb_lines_ft(center_wgs84: Point, center_ft: Point) -> list[LineString]:
@@ -239,19 +260,13 @@ def _kerb_lines_ft(center_wgs84: Point, center_ft: Point) -> list[LineString]:
     kerbs belonging to NEIGHBOURING junctions - and those were being assigned to this
     junction's corners, producing a nonsense 7.9-30.2 ft spread at Columbia & Princeton.
     A corner return sits within a few tens of feet of the junction it belongs to.
-    """
-    kerbs = fetch_kerbs(center_wgs84, radius_m=KERB_CONTEXT_RADIUS_M)
 
-    lines = []
-    for kerb in kerbs:
-        coords = kerb.get("coords_wgs84")
-        if not coords:
-            continue  # a lone barrier=kerb node has no arc to fit
-        xs, ys = wgs84_to_state_plane.transform([c[0] for c in coords], [c[1] for c in coords])
-        line = LineString(zip(xs, ys))
-        if line.distance(center_ft) <= KERB_NEAR_JUNCTION_FT:
-            lines.append(line)
-    return lines
+    The near set of kerb_lines_with_tags_ft without the tags. It used to be a second copy of
+    that function's fetch-and-project loop, which meant an Overpass outage reached this one
+    first and came out as a bare RuntimeError rather than the OSMDataUnavailableError written
+    to explain it.
+    """
+    return [line for line, _tags in kerb_lines_with_tags_ft(center_wgs84, center_ft)]
 
 
 def _widths_from_traced_kerbs(legs: dict, kerb_lines: list, legs_cfg: dict) -> dict:
@@ -565,8 +580,8 @@ def _extend_curbs_with_far_tracing(legs: dict, center_wgs84: Point, center_ft: P
               f"{KERB_NEAR_JUNCTION_FT:.0f} ft junction radius the fit is restricted to.")
 
 
-def _fit_legs_to_traced_kerbs(legs: dict, kerb_ways: list, center_ft: Point,
-                               legs_cfg: dict) -> None:
+def _fit_legs_to_traced_kerbs(legs: dict, kerb_ways: list, center_ft: Point, legs_cfg: dict
+                               ) -> dict[tuple[str, str], tuple[float, float]]:
     """Iterate assignment and measurement until they agree, then report the result.
 
     These two steps each need the other's answer. A traced vertex is assigned to the leg
@@ -705,35 +720,45 @@ def _match_legs_to_osm_roads(legs: dict, center_wgs84: Point, center_ft: Point) 
               f"fall back to the site config.")
         return {}
 
+    # Projected once, outside the leg loop. Each candidate way was re-transformed for every
+    # leg, so a 4-leg junction did the same coordinate transform four times per way.
+    carriageways = [
+        (road, LineString(zip(*wgs84_to_state_plane.transform(
+            [c[0] for c in road["coords_wgs84"]], [c[1] for c in road["coords_wgs84"]]))))
+        for road in roads
+        if road["tags"].get("highway") in ROAD_MATCH_HIGHWAY_CLASSES
+    ]
+
     out = {}
     for name, leg in legs.items():
         leg_dir = _line_direction(leg.centerline)
+        midpoint = leg.centerline.interpolate(leg.centerline.length / 2)
         best = None
-        for road in roads:
-            if road["tags"].get("highway") not in ROAD_MATCH_HIGHWAY_CLASSES:
-                continue
-            xs, ys = wgs84_to_state_plane.transform([c[0] for c in road["coords_wgs84"]],
-                                                     [c[1] for c in road["coords_wgs84"]])
-            line = LineString(zip(xs, ys))
-            offset = line.distance(leg.centerline.interpolate(leg.centerline.length / 2))
+        for road, line in carriageways:
+            offset = line.distance(midpoint)
             if offset > ROAD_MATCH_MAX_OFFSET_FT:
                 continue
-            angle = np.degrees(np.arccos(np.clip(abs(np.dot(_line_direction(line), leg_dir)), -1, 1)))
+            along = np.dot(_line_direction(line), leg_dir)
+            angle = np.degrees(np.arccos(np.clip(abs(along), -1, 1)))
             if angle > ROAD_MATCH_MAX_ANGLE_DEG:
                 continue
             if best is None or offset < best[0]:
-                best = (offset, road, line)
+                best = (offset, road, along)
         if best is not None:
-            _offset, road, line = best
-            out[name] = (road["tags"],
-                          bool(np.dot(_line_direction(line), leg_dir) >= 0))
+            _offset, road, along = best
+            out[name] = (road["tags"], bool(along >= 0))
     return out
 
 
 def _apply_traced_curb_lines(legs: dict, kerb_ways: list, center_ft: Point,
                               quiet: bool = False,
-                              ratio_bounds: tuple[float, float] | None = None) -> None:
+                              ratio_bounds: tuple[float, float] | None = None
+                              ) -> dict[tuple[str, str], tuple[float, float]]:
     """Replace a leg's derived curb lines with the surveyor's traced kerbs.
+
+    Returns {(leg, side): (near_ft, far_ft)} - the station span of each side that a traced
+    kerb actually covers, which is what the phase output reports as "how much of this curb is
+    real" and what _extend_curbs_with_far_tracing corrects where it lengthens one.
 
     This is the last place NJDOT's alignment was still leaking into the geometry. Position
     was fixed earlier by snapping the centerline to the OSM junction node, but the BEARING

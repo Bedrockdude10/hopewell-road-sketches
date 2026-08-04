@@ -1,10 +1,10 @@
 """Build everything - all sites, all scenarios - with one command.
 
 Rebuilding by hand meant ~30 separate `python scripts/phaseN_*.py` runs, each waited on in
-turn. Measured, almost none of that time is this project's geometry (~0.25 s per site);
-it's matplotlib rasterizing the plan views, and Blender. Both parallelise cleanly, because
-sites share nothing but a read-only cache, so this runs `--jobs` of them at once. Four
-sites, 27 scenarios: ~215 s serial, ~110 s at --jobs 4.
+turn. Measured, almost none of that time is this project's geometry; it's matplotlib building
+and rasterizing the plan views, and Blender. Both parallelise cleanly, because sites share
+nothing but a read-only cache, so this runs `--jobs` of them at once. Four sites, 11
+scenarios: ~9 s for the 2D at --jobs 4, ~110 s with --render-3d (Blender dominates).
 
     python scripts/build_all.py                     # 2D for every site and scenario
     python scripts/build_all.py --render-3d         # ...and the Blender renders too
@@ -40,8 +40,6 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from shapely.geometry import Point
-
 import matplotlib
 matplotlib.use("Agg")   # no GUI backend: this is a batch build
 import matplotlib.pyplot as plt
@@ -49,10 +47,11 @@ import matplotlib.pyplot as plt
 from src.checks import SceneInvariantError
 from src.geometry.intersection import load_intersection_model
 from src.geometry.treatments import DesignState
-from src.render.export import BUILDING_CONTEXT_RADIUS_M, KERB_RADIUS_M, TRAFFIC_CONTROL_RADIUS_M, export_scenario
+from src.render.export import BUILDING_CONTEXT_RADIUS_M, export_scenario
 from src.render.plan_view import legend_handles, plot_design_state
 from src.render.theme import build_default_theme
-from src.site import list_sites, load_site_config, load_site_scenarios, scenario_label, site_output_dir, run_scenario
+from src.site import (list_sites, load_site_scenarios, run_scenario, scenario_label,
+                      site_output_dir)
 from src.sources.osm_context import (REFRESH_ENV, cache_summary, fetch_borough_osm,
                                      fetch_buildings, fetch_crossings)
 
@@ -66,9 +65,14 @@ DEFAULT_SCENARIOS = ("build_proposal_1_continental",
                      "build_proposal_3_continental_parking_narrowing_bulbouts")
 
 
-def scenarios_for(site: str) -> list[str]:
-    """Every proposal a site actually defines, in declaration order where possible."""
-    module = load_site_scenarios(site)
+def scenarios_for(site: str, module=None) -> list[str]:
+    """Every proposal a site actually defines, in declaration order where possible.
+
+    `module` lets a caller that has already imported the site's scenarios.py pass it in.
+    load_site_scenarios executes the file, so calling this and then looking each name up
+    separately re-executed it once per scenario.
+    """
+    module = module or load_site_scenarios(site)
     named = [name for name in DEFAULT_SCENARIOS if hasattr(module, name)]
     extra = [name for name in dir(module)
              if name.startswith("build_") and name not in named and callable(getattr(module, name))]
@@ -105,7 +109,7 @@ def draw_before_after(model, baseline, state, scenario_name: str, out_path: Path
     return violations
 
 
-def refresh_osm_serially(sites: list[str], render_3d: bool) -> None:
+def refresh_osm_serially() -> None:
     """Re-pull the borough snapshot - one request, in THIS process, before the pool starts.
 
     It used to be one request per layer per site (20-24 of them), fanned out across the
@@ -162,10 +166,11 @@ def build_site(site: str, render_3d: bool = False, dpi: int = 150,
         crossings = fetch_crossings(model.center_wgs84, radius_m=BUILDING_CONTEXT_RADIUS_M)
 
     states = [("existing", "Existing Conditions", baseline)]
-    for name in scenarios_for(site):
-        with contextlib.redirect_stdout(quiet):
+    with contextlib.redirect_stdout(quiet):
+        scenarios = load_site_scenarios(site)
+        for name in scenarios_for(site, scenarios):
             states.append((scenario_label(name), name,
-                            run_scenario(getattr(load_site_scenarios(site), name),
+                            run_scenario(getattr(scenarios, name),
                                           DesignState.from_model(model), model)))
 
     theme = buildings = None
@@ -227,7 +232,7 @@ def main():
           f"{' + re-pulling OSM' if args.refresh_osm else ''}")
 
     if args.refresh_osm:
-        refresh_osm_serially(sites, args.render_3d)
+        refresh_osm_serially()
 
     blender_jobs: list = []
     failures: list[str] = []

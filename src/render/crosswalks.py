@@ -4,6 +4,7 @@ matched, else a geometric estimate (needed for hypothetical/proposed
 crossings that don't exist yet). See README.md "Crosswalk styles: real data
 over guessing"."""
 import math
+from typing import NamedTuple
 
 import numpy as np
 import shapely
@@ -193,7 +194,41 @@ def _crossing_skew_deg(crossing_line: LineString, centerline: LineString,
     return diff
 
 
+# One match per (legs, crossings). The matcher is asked the same question three times per
+# scenario - resolve_crosswalk_offsets, resolve_crosswalk_skews and match_crossing_lines_to_legs
+# each start by calling it - and it projects every crossing way and scores it against every leg.
+_CROSSING_MATCHES: dict[tuple, tuple] = {}
+_CROSSING_MATCH_LIMIT = 64
+
+
+def _match_key(legs: dict):
+    """Exactly what the matcher reads off each leg: its name, its centerline and its width.
+
+    Spelled out rather than keyed on the Leg objects' identity, because a Leg is mutable - the
+    curb lines and traced_sides are assigned in place while the widths are being fitted
+    (src/geometry/intersection.py:_apply_traced_curb_lines). The matcher does not read those
+    today, but a cache whose correctness rests on that staying true is a trap. Centerlines are
+    shapely geometries, which hash by value.
+    """
+    return tuple((name, leg.centerline, leg.curb_to_curb_ft) for name, leg in sorted(legs.items()))
+
+
 def _match_crossings_to_legs(legs: dict, crossings: list[dict]) -> dict:
+    # `crossings` by identity: it is the list src/sources/osm_context.py's layer cache returns,
+    # so it is the same object for the same (centre, radius) until the snapshot is re-pulled -
+    # and hashing every crossing dict to key on the contents would cost more than the match.
+    key = _match_key(legs)
+    cached = _CROSSING_MATCHES.get(key)
+    if cached is not None and cached[0] is crossings:
+        return cached[1]
+    match = _matched_crossings(legs, crossings)
+    if len(_CROSSING_MATCHES) >= _CROSSING_MATCH_LIMIT:
+        _CROSSING_MATCHES.clear()   # a batch build walks many scenarios; don't grow forever
+    _CROSSING_MATCHES[key] = (crossings, match)
+    return match
+
+
+def _matched_crossings(legs: dict, crossings: list[dict]) -> dict:
     """
     Match each OSM-mapped crossing way to whichever leg it actually crosses -
     real surveyed geometry beats a geometric estimate of where a crosswalk
@@ -263,8 +298,30 @@ def match_crossing_lines_to_legs(legs: dict, crossings: list[dict]) -> dict:
             in _match_crossings_to_legs(legs, crossings).items()}
 
 
-def resolve_crosswalk_offsets(state: DesignState, crossings: list[dict]) -> dict[str, tuple[float, str]]:
-    """{leg_name: (offset_ft, source)} - real OSM survey position if matched, else
+class CrosswalkOffset(NamedTuple):
+    """Where a leg's crossing sits, and how well that position is sourced.
+
+    A NamedTuple rather than a bare (float, str): this travels through the paint builder,
+    the props, the daylighting rules, the invariants and the export, and every one of them
+    reached into it as `offsets[leg][0]`. Half of those were placing statutory setbacks and
+    kerbside paint, where "the first element of a tuple" is not what the reader needs to know
+    about the number. Still a tuple, so unpacking (`offset_ft, source = ...`) reads the same.
+
+    `source` is one of "osm_survey" (a real surveyed crossing way was matched to this leg) or
+    "geometric_estimate" (nothing surveyed here - see crosswalk_estimate_ft), either of which
+    may carry a "+scenario_shift(...)" suffix from shift_crosswalk_offset. It is written into
+    the exported JSON, so a render always says which of the two it is showing.
+    """
+    offset_ft: float
+    source: str
+
+    @property
+    def is_surveyed(self) -> bool:
+        return self.source.startswith("osm_survey")
+
+
+def resolve_crosswalk_offsets(state: DesignState, crossings: list[dict]) -> dict[str, CrosswalkOffset]:
+    """{leg_name: CrosswalkOffset} - real OSM survey position if matched, else
     the geometric past-the-curve estimate (needed for hypothetical/proposed
     crossings). A scenario's shift_crosswalk_offset() override (if any) is
     applied on top and noted in the source string, rather than silently
@@ -281,7 +338,7 @@ def resolve_crosswalk_offsets(state: DesignState, crossings: list[dict]) -> dict
         if delta_ft:
             offset_ft += delta_ft
             source += f"+scenario_shift({delta_ft:+g}ft)"
-        out[leg_name] = (offset_ft, source)
+        out[leg_name] = CrosswalkOffset(offset_ft, source)
     return out
 
 
@@ -375,7 +432,7 @@ def resolve_stop_bar_offsets(state: DesignState, crosswalk_offsets: dict[str, tu
     clamped to leg_clearance_ft() so a short leg or tight corner never pushes the bar back
     into the curb return.
     """
-    surveyed = match_stop_lines_to_legs(state.legs, stop_lines or {})
+    surveyed = match_stop_lines_to_legs(state.legs, stop_lines or [])
     out = {}
     for leg_name, (crosswalk_offset_ft, _source) in crosswalk_offsets.items():
         min_offset_ft = leg_clearance_ft(leg_name, state.legs, state.corner_fillets)
@@ -491,7 +548,7 @@ def crosswalk_reaches_ft(state, offsets: dict, skews: dict, roadway=None,
     footway.
     """
     def measure(name, leg, allowed):
-        centre, u, normal, _cos = crosswalk_axes(leg, offsets[name][0], skews.get(name, 0.0))
+        centre, u, normal, _cos = crosswalk_axes(leg, offsets[name].offset_ft, skews.get(name, 0.0))
         return crosswalk_reach_to_curbs_ft(leg, centre, normal, u, CROSSWALK_DEPTH_FT, allowed)
 
     legs = {name: leg for name, leg in state.legs.items() if name in offsets}
@@ -500,7 +557,7 @@ def crosswalk_reaches_ft(state, offsets: dict, skews: dict, roadway=None,
         return provisional
 
     depth_ft = CROSSWALK_DEPTH_FT
-    bands = {name: crosswalk_band_ft(legs[name], offsets[name][0], depth_ft,
+    bands = {name: crosswalk_band_ft(legs[name], offsets[name].offset_ft, depth_ft,
                                       skews.get(name, 0.0), reach=provisional[name])
              for name in legs if marked is None or name in marked}
     reaches = {}
@@ -716,7 +773,7 @@ def crosswalk_bands_ft(state, offsets: dict, skews: dict, depth_ft: float, roadw
     """{leg_name: band polygon} for every leg - the footprints the 2D view draws, the 3D
     render stripes, and src/checks.py validates. One definition, so a check that passes in
     one path can't be checking different geometry from the other."""
-    return {name: crosswalk_band_ft(leg, offsets[name][0], depth_ft, skews.get(name, 0.0),
+    return {name: crosswalk_band_ft(leg, offsets[name].offset_ft, depth_ft, skews.get(name, 0.0),
                                      roadway=roadway,
                                      reach=(reaches or {}).get(name))
             for name, leg in state.legs.items() if name in offsets}

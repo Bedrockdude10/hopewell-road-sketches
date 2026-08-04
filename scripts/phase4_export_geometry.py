@@ -14,7 +14,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from src.render.export import BUILDING_CONTEXT_RADIUS_M, export_scenario
 from src.geometry.intersection import load_intersection_model
 from src.sources.osm_context import fetch_buildings, fetch_crossings
-from src.site import add_scenario_arg, add_site_arg, load_site_scenarios, scenario_label, site_output_dir
+from src.site import (add_scenario_arg, add_site_arg, load_site_scenarios, run_scenario,
+                       scenario_label, site_output_dir)
 from src.render.theme import build_default_theme
 from src.geometry.treatments import DesignState
 
@@ -27,7 +28,12 @@ def main():
     model = load_intersection_model(site=args.site)
     baseline = DesignState.from_model(model)
     build_scenario = getattr(load_site_scenarios(args.site), args.scenario)
-    scenario = build_scenario(baseline)
+    # run_scenario, not build_scenario(baseline): every site's builders take (baseline, model)
+    # so they can read the OSM parking restrictions and road tags off the model. Calling with
+    # one argument leaves model=None, apply_osm_parking then sees no tags, and the exported
+    # "proposal" quietly loses its kerbside paint - the exact failure run_scenario exists to
+    # prevent (src/site.py). This was the last call site still bypassing it.
+    scenario = run_scenario(build_scenario, baseline, model)
     buildings = fetch_buildings(model.center_wgs84, radius_m=BUILDING_CONTEXT_RADIUS_M)
     crossings = fetch_crossings(model.center_wgs84, radius_m=BUILDING_CONTEXT_RADIUS_M)
     theme = build_default_theme()

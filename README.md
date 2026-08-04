@@ -17,7 +17,7 @@ python scripts/phase4_render_3d.py --site broad_st_greenwood   # export geometry
 To rebuild **everything** — all sites, all proposals — in one command instead of ~30:
 
 ```bash
-python scripts/build_all.py                  # 2D for every site and scenario (~110s)
+python scripts/build_all.py                  # 2D for every site and scenario (~9s)
 python scripts/build_all.py --render-3d      # ...and the Blender renders
 python scripts/build_all.py --dpi 90         # faster pictures while iterating on geometry
 python scripts/build_all.py --refresh-osm    # re-pull OSM after tracing kerbs/crossings
@@ -25,14 +25,14 @@ python scripts/build_all.py --refresh-osm    # re-pull OSM after tracing kerbs/c
 
 It writes the same files the phase scripts do, runs sites in parallel (`--jobs`), and checks every scenario against the scene invariants.
 
-**If you just traced something in OSM, use `--refresh-osm`.** The Overpass cache in `output/.cache/` is keyed by (centre, radius) and never expires, so a kerb, crossing or `tactile_paving=yes` pad you mapped this morning stays invisible to the build until it's re-pulled — ground truth present, but never reaching the render, which is exactly the failure this project keeps guarding against. So every build prints how old the layers it read are:
+**If you just traced something in OSM, use `--refresh-osm`.** The cached borough snapshot in `output/.cache/borough_*.json` never expires, so a kerb, crossing or `tactile_paving=yes` pad you mapped this morning stays invisible to the build until it's re-pulled — ground truth present, but never reaching the render, which is exactly the failure this project keeps guarding against. So every build prints how old the layers it read are:
 
 ```
-  columbia_princeton     4 scenario(s)    6.9s  ok
-                         OSM cache: 3 layer(s), oldest 3 days old (--refresh-osm to re-pull)
+  columbia_princeton     2 scenario(s)    3.4s  ok
+                         OSM cache: 1 layer(s), oldest 3 days old (--refresh-osm to re-pull)
 ```
 
-`--refresh-osm` re-pulls each layer once per site (not once per scenario) and rewrites the cache; the line then reports what was pulled fresh. It is ignored under `HOPEWELL_OFFLINE`, so it can never make the test suite reach the network.
+`--refresh-osm` re-pulls the whole borough in **one** request, in the parent process before the worker pool starts, and rewrites the cache; the line then reports what was pulled fresh. Every layer at every site is a view over that one download, so it is one visible round trip rather than 20-24 fanned out across four concurrent workers against shared volunteer infrastructure. It is ignored under `HOPEWELL_OFFLINE`, so it can never make the test suite reach the network.
 
 ## Tests
 
@@ -42,7 +42,7 @@ It writes the same files the phase scripts do, runs sites in parallel (`--jobs`)
 
 This runs `.venv/bin/python -m pytest` and works whether or not the venv is active. Plain `python -m pytest` only works once you've run `source .venv/bin/activate` — without it, `python` is whatever is on your PATH, and if that interpreter happens to have pytest but not geopandas the suite fails at collection. The root `conftest.py` detects that case and prints one message telling you which interpreter you're on and what to run instead, rather than five `ModuleNotFoundError` tracebacks.
 
-84 tests, ~1.5 s, **no network**: they run against a committed snapshot of the OSM responses in `tests/fixtures/osm_cache/`, and `HOPEWELL_OFFLINE=1` makes any un-snapshotted fetch fail loudly rather than reach Overpass. Refresh the snapshot with `cp output/.cache/*.json tests/fixtures/osm_cache/`.
+296 tests, ~11 s, **no network**: they run against a committed snapshot of the OSM responses in `tests/fixtures/osm_cache/`, and `HOPEWELL_OFFLINE=1` makes any un-snapshotted fetch fail loudly rather than reach Overpass. Refresh the snapshot with `cp output/.cache/*.json tests/fixtures/osm_cache/`.
 
 `tests/test_checks.py` covers the scene invariants (see below), `tests/test_traced_curbs.py` covers building curb lines from traced OSM kerbs, and `tests/test_sites.py` asserts all four real junctions and their proposals satisfy the invariants.
 
@@ -61,6 +61,16 @@ This runs `.venv/bin/python -m pytest` and works whether or not the venv is acti
 | `stop_bar_crosses_centerline` | a stop bar painted across the opposing lanes |
 
 All violations are collected and reported together rather than failing on the first, and each carries coordinates so the plan view can ring them in red where they happen. A violation at a *surveyed* OSM position (an `emergency=fire_hydrant` node inside our modelled roadway) is reported as a source conflict rather than a failure: one of the two sources is wrong, but no edit to this repo fixes it.
+
+### One resolution, three consumers (`src/render/scene.py`)
+
+Checking both paths is necessary but not sufficient: the two paths also have to be looking at the **same geometry**, and for a while they weren't. `SceneGeometry.resolve(model, state, crossings)` now resolves the pavement, the crosswalk offsets/skews/reaches/bands and the stop bars once, and the plan view, the 3D export and the invariants all read that one object. Before it, each of them assembled the sequence itself, and they had already diverged three ways:
+
+- The plan view resolved offsets, skews and stop bars **three times per figure** and built the crossing bands twice with different arguments — with the two-pass mutual-exclusion reaches for the paint it drew, without them for the invariants it checked. At W Broad & Louellen those two bands differ by **15 sq ft**, so the 2D check was validating a crossing neither the 2D view nor the 3D render used.
+- The plan view's stop bar was built without the skew stretch factor `stop_bar_bands_ft` applies, drawing it **3.8 ft** from the checked one on Louellen's -44° crossing.
+- `tests/test_sites.py`'s helper made the same bands-without-reaches substitution while its docstring claimed to check "exactly what `export.py` and the plan view check".
+
+None of the three was visible from any one call site — each looked locally reasonable, and they only disagreed side by side. That is the argument for resolving once rather than agreeing to follow a convention in four places.
 
 If you edit `sites/<site>/config.yaml` (widths, corner radius, crosswalks, treatments, props), rerun from Phase 2 onward — Phase 1 doesn't depend on it.
 
@@ -147,6 +157,8 @@ src/                              General-purpose library - no data specific to 
     assets.py        Poly Haven texture/model fetch + disk-cache to output/.textures/ (Phase 4 fidelity)
     theme.py         Resolves the specific texture/model slugs this project uses into local file paths
     mesh_utils.py    trimesh-based building mesh decimation (Phase 4 fidelity)
+    scene.py         SceneGeometry: every marking position a DesignState implies, resolved ONCE and
+                       shared by the plan view, the export and the invariants - see below
     export.py        Orchestrator: assembles a DesignState + theme into local-meters JSON for Blender
 scripts/
   phase1_audit.py         Load/clip/audit the road network for a site (or a brand-new one via --street1/2/--anchor)
@@ -218,7 +230,7 @@ Unlike crosswalks, OSM has no tag for what's painted down the middle of a road, 
 - **Blender's multi-object edit mode re-extrudes every *selected* mesh, not just the active one.** Always `bpy.ops.object.select_all(action='DESELECT')` before entering edit mode on a single object, or previously-created objects (e.g. the ground plane) silently accumulate extra height every time something else gets extruded.
 - OSM building footprints don't reconcile with our precise curb geometry — a few end up overlapping the pavement. `export.py` filters any building whose footprint intersects the pavement polygon. (Buildings that just look close to the road in the render are legitimate — small-town buildings really do sit near the curb; verify with a numeric intersects check before assuming a rendering bug.)
 - `scripts/blender/blender_scene.py` accepts any number of `<geometry.json> <output.png>` pairs and renders them all in **one Blender process** — each launch has ~1–1.5s fixed startup overhead, not worth paying per-render. `phase4_render_3d.py` uses this to do both scenarios in one shot.
-- `fetch_buildings()`/`fetch_crossings()` cache to `output/.cache/`, `assets.py`'s texture/model fetches cache to `output/.textures/` - both keyed by (center, radius) or (slug, resolution) respectively. Delete the relevant directory to force a refetch.
+- Every OSM layer is a view over one cached borough snapshot in `output/.cache/` (see "The borough snapshot" in `src/sources/osm_context.py`); `assets.py`'s texture/model fetches cache to `output/.textures/`, keyed by (slug, resolution). Delete the relevant directory to force a refetch. Each layer view is also memoized in-process against the snapshot it came from, so the eight fetchers stop rescanning 2.9 MB of OSM on every call - and a re-pull cannot be served a view of the old snapshot, because an entry is only used while the snapshot object it was built from is still the one in hand.
 - Overpass's public instances are flaky (504s are common) — `src/sources/data_loader.py:query_overpass()` retries across 3 mirrors (`overpass-api.de`, `kumi.systems`, `openstreetmap.ru`) before giving up.
 - EEVEE samples: 64 (dropped from 128 - visually indistinguishable for this flat-shaded scene, ~30% faster). Current full render (both scenarios, all fidelity features, warm caches): ~13s total.
 

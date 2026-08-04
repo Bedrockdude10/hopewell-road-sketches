@@ -1,6 +1,7 @@
 """Geometry operations: WGS84 buffering, radius clipping, CRS reprojection, and
 curb-line / corner-fillet construction from centerlines + widths."""
 from dataclasses import dataclass, field
+from functools import lru_cache
 
 import geopandas as gpd
 import numpy as np
@@ -12,20 +13,47 @@ WGS84 = "EPSG:4326"
 NJ_STATE_PLANE_FT = "EPSG:3424"  # NAD83(HARN) / New Jersey (ftUS)
 
 
-def buffer_point_wgs84(point: Point, radius_m: float) -> tuple[float, float, float, float]:
-    """Buffer a WGS84 point by radius_m meters (via a local UTM projection) and
-    return a WGS84 bbox as (minx, miny, maxx, maxy)."""
-    point_gs = gpd.GeoSeries([point], crs=WGS84)
-    utm_crs = point_gs.estimate_utm_crs()
+@lru_cache(maxsize=64)
+def _utm_crs_at(lon: float, lat: float):
+    """The local UTM CRS for a WGS84 point.
+
+    Cached because geopandas' estimate_utm_crs() is the single most expensive call in this
+    pipeline and it is asked the same question over and over: it queries the PROJ database for
+    every candidate CRS and takes ~38 ms, and a scenario export made 43 of those - 1.67 s out
+    of a 2.76 s export, all of them about one intersection. The answer depends only on the
+    point, and UTM zones are 6 degrees wide, so this is a pure function being called with a
+    handful of distinct arguments.
+
+    Keyed on (lon, lat) rather than the Point, because a Point is unhashable and two Points at
+    the same place are different objects.
+    """
+    return gpd.GeoSeries([Point(lon, lat)], crs=WGS84).estimate_utm_crs()
+
+
+@lru_cache(maxsize=256)
+def _buffer_bounds_wgs84(lon: float, lat: float, radius_m: float) -> tuple[float, float, float, float]:
+    utm_crs = _utm_crs_at(lon, lat)
+    point_gs = gpd.GeoSeries([Point(lon, lat)], crs=WGS84)
     buffered = point_gs.to_crs(utm_crs).buffer(radius_m).to_crs(WGS84)
     return tuple(buffered.total_bounds)
+
+
+def buffer_point_wgs84(point: Point, radius_m: float) -> tuple[float, float, float, float]:
+    """Buffer a WGS84 point by radius_m meters (via a local UTM projection) and
+    return a WGS84 bbox as (minx, miny, maxx, maxy).
+
+    Memoized on (lon, lat, radius): src/sources/osm_context.py calls this twice per OSM fetch
+    (once to bound the layer, once in assert_within_snapshot) and there are eight fetchers
+    called repeatedly per site, all about the same centre. See _utm_crs_at.
+    """
+    return _buffer_bounds_wgs84(point.x, point.y, float(radius_m))
 
 
 def clip_to_radius(gdf: gpd.GeoDataFrame, center: Point, radius_m: float) -> gpd.GeoDataFrame:
     """Clip a WGS84 GeoDataFrame to a circular radius (meters) around center,
     trimming feature geometry (not just filtering by bbox)."""
     center_gs = gpd.GeoSeries([center], crs=WGS84)
-    utm_crs = center_gs.estimate_utm_crs()
+    utm_crs = _utm_crs_at(center.x, center.y)
     center_utm = center_gs.to_crs(utm_crs).iloc[0]
     circle_wgs84 = gpd.GeoSeries([center_utm.buffer(radius_m)], crs=utm_crs).to_crs(WGS84).iloc[0]
 
@@ -409,19 +437,47 @@ def leg_clearance_ft(leg_name: str, legs: dict, corner_fillets: dict, buffer_ft:
 STRIP_SAMPLE_FT = 2.0
 
 
+@lru_cache(maxsize=256)
+def _curb_in_leg_frame(centerline: LineString, curb: LineString):
+    """A curb's own vertices as (stations, offsets) in the leg's frame, sorted by station.
+
+    Cached on the two geometries, for the same reason and with the same safety as
+    _polyline_frame: this is a fact about a pair of immutable lines, and everything that
+    measures against a real kerb needs it. Uncached it was recomputed from scratch on every
+    query - once per bollard, once per parking-stall divider, once per zone end line - each
+    time re-projecting every traced vertex (a traced kerb can carry 30+) to answer about one
+    station.
+
+    Sorted here rather than by each caller, because np.interp requires it and two callers
+    were each doing their own argsort of the same array.
+    """
+    stations, offsets = station_offset_many(centerline, np.asarray(curb.coords, dtype=float))
+    order = np.argsort(stations)
+    stations, offsets = stations[order], offsets[order]
+    stations.flags.writeable = False
+    offsets.flags.writeable = False
+    return stations, offsets
+
+
+def _traced_curb_frame(leg: "Leg", side: str):
+    """(stations, offsets) for a side's real curb, or None where that side has none."""
+    curb = getattr(leg, f"{side}_curb", None)
+    if curb is None or curb.is_empty:
+        return None
+    return _curb_in_leg_frame(leg.centerline, curb)
+
+
 def curb_offsets_at_stations(leg: "Leg", side: str, stations: np.ndarray) -> np.ndarray | None:
     """Signed offsets of a side's real curb at the given CENTERLINE stations.
 
     The vectorized form of curb_point_at_station's interpolation - see that function for why
     a curb cannot be addressed by its own arc length.
     """
-    curb = getattr(leg, f"{side}_curb", None)
-    if curb is None or curb.is_empty:
+    frame = _traced_curb_frame(leg, side)
+    if frame is None:
         return None
-    coords = np.asarray(curb.coords, dtype=float)
-    curb_stations, curb_offsets = station_offset_many(leg.centerline, coords)
-    order = np.argsort(curb_stations)
-    return np.interp(stations, curb_stations[order], curb_offsets[order])
+    curb_stations, curb_offsets = frame
+    return np.interp(stations, curb_stations, curb_offsets)
 
 
 def curb_station_span(leg: "Leg", side: str) -> tuple[float, float] | None:
@@ -433,12 +489,12 @@ def curb_station_span(leg: "Leg", side: str) -> tuple[float, float] | None:
     the tracing continues down the block. Paint has to be built inside that span - outside it
     there is no curb to measure from, only extrapolation.
     """
-    curb = getattr(leg, f"{side}_curb", None)
-    if curb is None or curb.is_empty:
+    frame = _traced_curb_frame(leg, side)
+    if frame is None:
         return None
-    stations, _offsets = station_offset_many(leg.centerline, np.asarray(curb.coords, dtype=float))
-    lo = max(float(stations.min()), 0.0)
-    hi = min(float(stations.max()), leg.centerline.length)
+    stations, _offsets = frame
+    lo = max(float(stations[0]), 0.0)      # sorted by _curb_in_leg_frame
+    hi = min(float(stations[-1]), leg.centerline.length)
     return (lo, hi) if hi > lo else None
 
 
@@ -607,14 +663,10 @@ def curb_point_at_station(leg: "Leg", side: str, station_ft: float) -> np.ndarra
     traced kerbs neither holds - they start 14-47 ft out and run at their own bearing - and
     asking for station 40 landed anywhere from 51 to 86 ft down the leg.
     """
-    curb = getattr(leg, f"{side}_curb", None)
-    if curb is None or curb.is_empty:
+    offsets = curb_offsets_at_stations(leg, side, np.asarray([station_ft], dtype=float))
+    if offsets is None:
         return None
-    coords = np.asarray(curb.coords, dtype=float)
-    stations, offsets = station_offset_many(leg.centerline, coords)
-    order = np.argsort(stations)
-    offset_ft = float(np.interp(station_ft, stations[order], offsets[order]))
-    return np.asarray(_point_at(leg.centerline, station_ft, offset_ft), dtype=float)
+    return np.asarray(_point_at(leg.centerline, station_ft, float(offsets[0])), dtype=float)
 
 
 def inset_point_at_station(leg: "Leg", station_ft: float, offset_ft: float) -> np.ndarray:
@@ -622,6 +674,47 @@ def inset_point_at_station(leg: "Leg", station_ft: float, offset_ft: float) -> n
     leg frame, rather than by interpolating along an offset_curve whose own arc length
     differs from the centerline's."""
     return np.asarray(_point_at(leg.centerline, station_ft, offset_ft), dtype=float)
+
+
+def _taper_arc_points(leg: "Leg", role: str, sign: int, inner_half_ft: float,
+                       anchor_ft: float, target_ft: float, n_points: int) -> list[tuple] | None:
+    """The taper arc on ONE side of a leg, as a list of points, or None where there is none.
+
+    Tangent to the straight inset line at anchor_ft and passing exactly through the real curb
+    at target_ft. Tangent-at-one-point + passes-through-another-point + a common circle centre
+    uniquely determines the radius - solved directly, not guessed or borrowed from elsewhere:
+    for chord d = target - anchor and outward unit normal n, R = |d|^2 / (2 * dot(d, n)).
+
+    Extracted because lane_narrowing_taper_ft and lane_narrowing_taper_polygons_ft each carried
+    a verbatim copy of it - the LINE and the FILL either side of one seam, solved twice. Two
+    copies of the arc that the fill's whole purpose is to sit inside is the drift this project
+    keeps paying for; they cannot disagree now.
+    """
+    p1 = inset_point_at_station(leg, anchor_ft, sign * inner_half_ft)
+    p2 = curb_point_at_station(leg, role, target_ft)
+    if p2 is None:
+        return None
+    normal = _corner_bulge_normal(leg, role)
+    d = p2 - p1
+    denom = 2 * np.dot(d, normal)
+    if abs(denom) < 1e-6:
+        return None     # p2 already (near enough) on the tangent line - no taper needed
+    radius_ft = np.dot(d, d) / denom
+    center = p1 + radius_ft * normal
+    a1 = np.arctan2(p1[1] - center[1], p1[0] - center[0])
+    a2 = np.arctan2(p2[1] - center[1], p2[0] - center[0])
+    delta = (a2 - a1 + np.pi) % (2 * np.pi) - np.pi
+    angles = a1 + np.linspace(0, delta, n_points)
+    return [(center[0] + radius_ft * np.cos(t), center[1] + radius_ft * np.sin(t)) for t in angles]
+
+
+# A taper runs from the straight run's start INWARD to the curb. When target_ft is further out
+# than anchor_ft there is no room between the corner return and the crosswalk for one, and
+# solving the arc anyway sweeps it backwards - which is what mangled the hatching on Princeton
+# Ave's north leg (anchor 27.5 ft, target 28.6 ft) while the south leg, whose target sits
+# properly inside its anchor, looked fine.
+def _taper_fits(anchor_ft: float, target_ft: float) -> bool:
+    return target_ft < anchor_ft
 
 
 def lane_narrowing_taper_ft(leg: "Leg", stripe_width_ft: float, anchor_ft: float, target_ft: float,
@@ -650,36 +743,16 @@ def lane_narrowing_taper_ft(leg: "Leg", stripe_width_ft: float, anchor_ft: float
     dot(d, n)). (For this site this R lands within ~1 ft of the real corner's
     own 20 ft radius anyway, for what it's worth - not a coincidence, just
     two ways of describing similarly-scaled curves at the same corner.)"""
-    half = leg.curb_to_curb_ft / 2
-    inner_half = max(half - stripe_width_ft, 0.5)
-    # A taper runs from the straight run's start INWARD to the curb. When target_ft is
-    # further out than anchor_ft there is no room between the corner return and the
-    # crosswalk for one, and solving the arc anyway sweeps it backwards - which is what
-    # mangled the hatching on Princeton Ave's north leg (anchor 27.5 ft, target 28.6 ft)
-    # while the south leg, whose target sits properly inside its anchor, looked fine.
-    if target_ft >= anchor_ft:
+    inner_half = max(leg.curb_to_curb_ft / 2 - stripe_width_ft, 0.5)
+    if not _taper_fits(anchor_ft, target_ft):
         return []
     tapers = []
-    for curb, sign, role in ((leg.left_curb, 1, "left"), (leg.right_curb, -1, "right")):
+    for sign, role in ((1, "left"), (-1, "right")):
         if role not in sides:
             continue
-        p1 = inset_point_at_station(leg, anchor_ft, sign * inner_half)
-        p2 = curb_point_at_station(leg, role, target_ft)
-        if p2 is None:
-            continue
-        n = _corner_bulge_normal(leg, role)
-        d = p2 - p1
-        denom = 2 * np.dot(d, n)
-        if abs(denom) < 1e-6:
-            continue  # p2 already (near enough) on the tangent line - no taper needed
-        radius_ft = np.dot(d, d) / denom
-        center = p1 + radius_ft * n
-        a1 = np.arctan2(p1[1] - center[1], p1[0] - center[0])
-        a2 = np.arctan2(p2[1] - center[1], p2[0] - center[0])
-        delta = (a2 - a1 + np.pi) % (2 * np.pi) - np.pi
-        angles = a1 + np.linspace(0, delta, n_points)
-        tapers.append(LineString([(center[0] + radius_ft * np.cos(t), center[1] + radius_ft * np.sin(t))
-                                   for t in angles]))
+        arc = _taper_arc_points(leg, role, sign, inner_half, anchor_ft, target_ft, n_points)
+        if arc is not None:
+            tapers.append(LineString(arc))
     return tapers
 
 
@@ -696,35 +769,19 @@ def lane_narrowing_taper_polygons_ft(leg: "Leg", stripe_width_ft: float, anchor_
     lane_narrowing_polygons_ft uses for the straight run, just curved instead
     of straight, so hatch_lines_ft can fill it with the identical pattern and
     the two zones read as one continuous stripe with no visible seam."""
-    half = leg.curb_to_curb_ft / 2
-    inner_half = max(half - stripe_width_ft, 0.5)
-    # A taper runs from the straight run's start INWARD to the curb. When target_ft is
-    # further out than anchor_ft there is no room between the corner return and the
-    # crosswalk for one, and solving the arc anyway sweeps it backwards - which is what
-    # mangled the hatching on Princeton Ave's north leg (anchor 27.5 ft, target 28.6 ft)
-    # while the south leg, whose target sits properly inside its anchor, looked fine.
-    if target_ft >= anchor_ft:
+    inner_half = max(leg.curb_to_curb_ft / 2 - stripe_width_ft, 0.5)
+    if not _taper_fits(anchor_ft, target_ft):
         return []
     polys = []
-    for curb, sign, role in ((leg.left_curb, 1, "left"), (leg.right_curb, -1, "right")):
+    for sign, role in ((1, "left"), (-1, "right")):
         if role not in sides:
             continue
-        p1 = inset_point_at_station(leg, anchor_ft, sign * inner_half)
-        p2 = curb_point_at_station(leg, role, target_ft)
-        if p2 is None:
-            continue
-        n = _corner_bulge_normal(leg, role)
-        d = p2 - p1
-        denom = 2 * np.dot(d, n)
-        if abs(denom) < 1e-6:
-            continue  # no taper (see lane_narrowing_taper_ft) - nothing extra to fill
-        radius_ft = np.dot(d, d) / denom
-        center = p1 + radius_ft * n
-        a1 = np.arctan2(p1[1] - center[1], p1[0] - center[0])
-        a2 = np.arctan2(p2[1] - center[1], p2[0] - center[0])
-        delta = (a2 - a1 + np.pi) % (2 * np.pi) - np.pi
-        angles = a1 + np.linspace(0, delta, n_points)
-        arc_pts = [(center[0] + radius_ft * np.cos(t), center[1] + radius_ft * np.sin(t)) for t in angles]
+        # The SAME arc lane_narrowing_taper_ft draws as the line - see _taper_arc_points. The
+        # fill's entire job is to sit inside that line, so solving it twice was asking for the
+        # two to disagree.
+        arc_pts = _taper_arc_points(leg, role, sign, inner_half, anchor_ft, target_ft, n_points)
+        if arc_pts is None:
+            continue    # no taper (see lane_narrowing_taper_ft) - nothing extra to fill
         # The curb run back from target_ft to anchor_ft, sampled by STATION. `substring(curb,
         # target_ft, anchor_ft)` was arc length along the traced kerb from the kerb's own
         # start - the same confusion curb_point_at_station exists to avoid - which put this
@@ -775,17 +832,21 @@ def bollard_points_ft(leg: "Leg", stripe_width_ft: float, start_ft: float,
         if side not in sides:
             continue
         span = curb_station_span(leg, side)
-        if span is None:
+        if span is None or span[1] < start_ft:
             continue
-        station = start_ft
-        while station <= span[1]:
-            # Centered between the strip's two real boundaries at THIS station, so a bollard
-            # sits in the buffer that is actually painted even where the traced kerb comes
-            # inside the nominal half-width (see curbside_strip_polygon).
-            curb_off = abs(float(curb_offsets_at_stations(leg, side, np.array([station]))[0]))
-            lateral = (curb_off + min(inner_half, curb_off)) / 2
-            points.append(tuple(_point_at(leg.centerline, station, sign * lateral)))
-            station += spacing_ft
+        # Every station at once. The kerb was previously read one bollard at a time, and each
+        # read re-projected the whole traced kerb into the leg frame to answer about a single
+        # station. Counted rather than accumulated with +=, so the last bollard's station is
+        # start + n*spacing exactly instead of the sum of n additions.
+        n = int((span[1] - start_ft) // spacing_ft) + 1
+        stations = start_ft + np.arange(n) * spacing_ft
+        curb_off = np.abs(curb_offsets_at_stations(leg, side, stations))
+        # Centered between the strip's two real boundaries at EACH station, so a bollard sits
+        # in the buffer that is actually painted even where the traced kerb comes inside the
+        # nominal half-width (see curbside_strip_polygon).
+        lateral = (curb_off + np.minimum(inner_half, curb_off)) / 2
+        points.extend(tuple(_point_at(leg.centerline, float(s), sign * float(o)))
+                      for s, o in zip(stations, lateral))
     return points
 
 
@@ -850,17 +911,16 @@ def parking_stall_lines_ft(leg: "Leg", side: str, depth_ft: float, stall_length_
         return []
     end_ft = min(span[1], leg.centerline.length if end_ft is None else end_ft)
     n_stalls = parking_stall_count_ft(leg, stall_length_ft, start_ft, end_ft)
-    lines = []
-    for i in range(n_stalls + 1):
-        # Station, not distance along an offset curve - see inset_line_ft. A divider is a
-        # cross-section of the parking lane, so both ends have to be at the same station.
-        station = start_ft + i * stall_length_ft
-        curb_off = abs(float(curb_offsets_at_stations(leg, side, np.array([station]))[0]))
-        lines.append(LineString([
-            _point_at(leg.centerline, station, sign * min(outer_off, curb_off)),
-            _point_at(leg.centerline, station, sign * min(inner_off, curb_off)),
-        ]))
-    return lines
+    # Station, not distance along an offset curve - see inset_line_ft. A divider is a
+    # cross-section of the parking lane, so both ends have to be at the same station. All the
+    # stations are read from the kerb in one pass rather than one per divider.
+    stations = start_ft + np.arange(n_stalls + 1) * stall_length_ft
+    curb_off = np.abs(curb_offsets_at_stations(leg, side, stations))
+    return [LineString([
+                _point_at(leg.centerline, float(station), sign * min(outer_off, float(off))),
+                _point_at(leg.centerline, float(station), sign * min(inner_off, float(off))),
+            ])
+            for station, off in zip(stations, curb_off)]
 
 
 def corner_overlay_polygon(pieces: dict, center_ft: Point, depth_ft: float) -> Polygon:
@@ -1409,18 +1469,33 @@ def _line_direction(line: LineString) -> np.ndarray:
     return vec / norm if norm else np.array([1.0, 0.0])
 
 
+@lru_cache(maxsize=512)
 def _polyline_frame(centerline: LineString):
     """(vertices, unit segment directions, segment lengths, station at each vertex).
 
     The one description of a leg's frame. Both directions of the transform read it, so
     station_offset(_point_at(...)) round-trips exactly - it did not when the forward
     direction used segment tangents and the inverse estimated one from a +/-2 ft window.
+
+    Cached on the centerline itself. Every point this project places goes through the frame -
+    a scenario resolves it ~6,000 times per site - and a leg centerline is a 2-3 vertex line,
+    so rebuilding the four arrays each time cost more than the projection it exists to serve.
+    Shapely geometries hash by value and are immutable, so the key is exactly the input: a leg
+    whose centerline is replaced (which is how the width fit re-centres one) gets a new entry
+    rather than a stale frame.
+
+    The returned arrays are shared, so callers must not write to them. Nothing here does -
+    every consumer indexes or does arithmetic producing new arrays - and marking them
+    read-only is what keeps that true rather than conventional.
     """
     verts = np.asarray(centerline.coords, dtype=float)
     seg_vec = verts[1:] - verts[:-1]
     seg_len = np.hypot(seg_vec[:, 0], seg_vec[:, 1])
     seg_dir = seg_vec / np.where(seg_len > 0, seg_len, 1.0)[:, None]
-    return verts, seg_dir, seg_len, np.concatenate(([0.0], np.cumsum(seg_len)))
+    cumulative = np.concatenate(([0.0], np.cumsum(seg_len)))
+    for array in (verts, seg_dir, seg_len, cumulative):
+        array.flags.writeable = False
+    return verts, seg_dir, seg_len, cumulative
 
 
 def _frame_at(centerline: LineString, station: float) -> tuple[np.ndarray, np.ndarray]:

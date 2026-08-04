@@ -22,6 +22,16 @@ from src.geometry.model import (curb_offsets_at_stations, curb_station_span,
                                 lane_narrowing_polygons_ft, parking_stall_lines_ft,
                                 station_offset_many)
 from src.geometry.paint import PaintPiece
+from src.render.crosswalks import CrosswalkOffset
+
+
+def crossing_at(station_ft, source="geometric_estimate"):
+    """The resolved-crosswalk-offsets dict for a one-leg fixture.
+
+    The real type rather than a bare tuple, so these tests exercise what
+    resolve_crosswalk_offsets actually hands the paint builder.
+    """
+    return {"east": CrosswalkOffset(station_ft, source)}
 
 
 def a_leg(length_ft=130.0, width_ft=30.0):
@@ -381,8 +391,8 @@ def test_the_taper_aims_past_a_skewed_crossing_on_the_side_it_reaches_furthest()
     # Skewed: its far edge runs from (30, 15) at the left kerb to (20, -15) at the right.
     skewed = Polygon([(24, 15), (30, 15), (20, -15), (14, -15)])
 
-    left = leg_anchors(state, "east", "left", {"east": (25.0,)}, skewed, inner_offset_ft=11.0)
-    right = leg_anchors(state, "east", "right", {"east": (25.0,)}, skewed, inner_offset_ft=11.0)
+    left = leg_anchors(state, "east", "left", crossing_at(25.0), skewed, inner_offset_ft=11.0)
+    right = leg_anchors(state, "east", "right", crossing_at(25.0), skewed, inner_offset_ft=11.0)
     assert left.target_ft == pytest.approx(30.0 + CROSSWALK_CLEARANCE_FT, abs=0.5)
     assert right.target_ft == pytest.approx(21.3 + CROSSWALK_CLEARANCE_FT, abs=0.5)
     assert left.target_ft > right.target_ft + 8, "the two sides cannot share one target"
@@ -421,8 +431,8 @@ def test_the_taper_also_clears_the_cross_streets_crossing():
     # The cross street's crossing, lying across this leg's left side further out.
     cross = Polygon([(35, 8), (45, 8), (45, 15), (35, 15)])
 
-    own_only = leg_anchors(state, "east", "left", {"east": (25.0,)}, own, inner_offset_ft=4.0)
-    both = leg_anchors(state, "east", "left", {"east": (25.0,)}, own.union(cross),
+    own_only = leg_anchors(state, "east", "left", crossing_at(25.0), own, inner_offset_ft=4.0)
+    both = leg_anchors(state, "east", "left", crossing_at(25.0), own.union(cross),
                         inner_offset_ft=4.0)
     assert both.target_ft > own_only.target_ft
     assert both.target_ft >= 45.0, "it has to clear the far edge of the cross crossing"
@@ -435,7 +445,7 @@ def test_no_crossing_geometry_falls_back_to_the_offset():
     leg = traced(a_leg(), "left", [(10, 15), (130, 15)])
     state = FakeState({"east": leg})
     state.corner_fillets = {}
-    at = leg_anchors(state, "east", "left", {"east": (25.0,)}, None)
+    at = leg_anchors(state, "east", "left", crossing_at(25.0), None)
     assert at.target_ft == pytest.approx(25.0 + CROSSWALK_CLEARANCE_FT)
 
 
@@ -576,7 +586,7 @@ def test_a_daylight_zone_is_square_ended():
     state.parking_zones = {("east", "left"): {"depth_ft": 8.0, "stall_length_ft": 22.0,
                                                 "curb_offset_ft": 1.0}}
 
-    paint = curbside_paint_ft(state, {"east": (20.0,)}, None)
+    paint = curbside_paint_ft(state, crossing_at(20.0), None)
     fills = [p for p in paint if p.kind == "daylight_fill"]
     assert fills, "the daylight zone has to be drawn at all"
     assert not [p for p in paint if "taper" in p.kind], "a keep-clear zone has no taper"
@@ -608,7 +618,7 @@ def test_a_fill_cut_by_a_crossing_gets_a_line_along_the_cut():
                                                 "curb_offset_ft": 1.0}}
     band = box(18, -20, 24, 20)
 
-    paint = curbside_paint_ft(state, {"east": (21.0,)}, None, {"east": band},
+    paint = curbside_paint_ft(state, crossing_at(21.0), None, {"east": band},
                                marked_crosswalks={"east"})
     rims = [p for p in paint if p.kind == "crossing_rim_line"]
     assert rims, "no line drawn where the zone meets the crossing"
@@ -629,7 +639,7 @@ def test_no_rim_where_there_is_no_crossing_to_cut_against():
     state.corner_hatching, state.corner_aprons = {}, {}
     state.parking_zones = {("east", "left"): {"depth_ft": 8.0, "stall_length_ft": 22.0,
                                                 "curb_offset_ft": 1.0}}
-    paint = curbside_paint_ft(state, {"east": (21.0,)}, None)
+    paint = curbside_paint_ft(state, crossing_at(21.0), None)
     assert not [p for p in paint if p.kind == "crossing_rim_line"]
 
 

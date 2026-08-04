@@ -13,12 +13,11 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from src.checks import check_scene
 from src.geometry.model import build_pavement_polygon
 from src.geometry.treatments import DesignState
 from src.render.crosswalks import (CROSSWALK_DEPTH_M, STOP_BAR_CURB_CLEARANCE_M,
                                    crosswalk_bands_ft, resolve_crosswalk_offsets,
-                                   resolve_crosswalk_skews, resolve_stop_bar_offsets, stop_bar_bands_ft)
+                                   resolve_crosswalk_skews, resolve_stop_bar_offsets)
 from src.render.coords import FT_TO_M
 from src.render.props import build_props
 from src.geometry.paint import curbside_paint_ft
@@ -44,34 +43,38 @@ def marked_crosswalks(model):
     return set(model.config["intersection"].get("existing_marked_crosswalks", []))
 
 
+def resolved_scene(model, state):
+    """The scene geometry both renderers resolve, via the same code path they use.
+
+    Through SceneGeometry.resolve rather than open-coded here, which is the whole point: this
+    helper used to rebuild the crossing bands WITHOUT the two-pass mutual-exclusion reaches
+    while claiming in its docstring to check "exactly what export.py and the plan view check".
+    At W Broad & Louellen that was a 15 sq ft difference, so the test guarding every invariant
+    at every site was guarding geometry no renderer built.
+    """
+    from src.render.scene import SceneGeometry
+
+    return SceneGeometry.resolve(model, state, fetch_crossings(model.center_wgs84, radius_m=130))
+
+
+def scene_props(model, state, scene):
+    """The street furniture both renderers place, from the same fetched OSM layers."""
+    return build_props(model, state, scene.crosswalk_offsets, model.center_ft,
+                        fetch_traffic_control(model.center_wgs84, radius_m=60),
+                        fetch_street_furniture(model.center_wgs84, radius_m=130),
+                        fetch_crossings(model.center_wgs84, radius_m=130),
+                        fetch_kerbs(model.center_wgs84, radius_m=120))
+
+
 def scene_violations(model, state):
     """Exactly what src/render/export.py and the plan view check, on the same shared geometry."""
     with contextlib.redirect_stdout(io.StringIO()):
-        crossings = fetch_crossings(model.center_wgs84, radius_m=130)
-        traffic_control = fetch_traffic_control(model.center_wgs84, radius_m=60)
-        street_furniture = fetch_street_furniture(model.center_wgs84, radius_m=130)
-        kerbs = fetch_kerbs(model.center_wgs84, radius_m=120)
-
-        try:
-            pavement = build_pavement_polygon(state.corner_fillets)
-        except ValueError:
-            pavement = None
-        offsets = resolve_crosswalk_offsets(state, crossings)
-        skews = resolve_crosswalk_skews(state, crossings)
-        props = build_props(model, state, offsets, model.center_ft, traffic_control,
-                             street_furniture, crossings, kerbs)
-        stop_lines = fetch_stop_lines(model.center_wgs84, radius_m=130)
-        stop_offsets = (resolve_stop_bar_offsets(state, offsets, stop_lines)
-                        if model.config.get("signals") else {})
-        bands = crosswalk_bands_ft(state, offsets, skews, CROSSWALK_DEPTH_M / FT_TO_M, pavement)
-        # props and offsets both go in: without them the paint is built with no knowledge of
-        # the stop signs and hydrants, and check_parking_is_legal then has nothing to check
-        # against - a test that passes by being handed nothing.
-        paint = curbside_paint_ft(state, offsets, model.center_ft, bands, props,
-                                   marked_crosswalks=marked_crosswalks(model))
-        return check_scene(model, state, props, pavement, crosswalk_bands=bands,
-                            stop_bars=stop_bar_bands_ft(state, stop_offsets, skews),
-                            paint=paint, crosswalk_offsets=offsets)
+        scene = resolved_scene(model, state)
+        # props go in: without them the paint is built with no knowledge of the stop signs and
+        # hydrants, and check_parking_is_legal then has nothing to check against - a test that
+        # passes by being handed nothing.
+        props = scene_props(model, state, scene)
+        return scene.check(props, scene.build_paint(props))
 
 
 def fatal(violations):
@@ -755,7 +758,7 @@ def test_the_proposal_marks_the_daylight_zone(site_models):
 
 @needs_source_data
 @pytest.mark.parametrize("site", SITES)
-def test_every_kind_of_paint_reaches_the_3d_render(site, site_models):
+def test_every_kind_of_paint_reaches_both_renders(site, site_models):
     """A marking built by paint.py that no export list claims is invisible in 3D.
 
     It happened twice in one sitting: renaming buffer_taper_* to daylight_taper_* orphaned
@@ -767,29 +770,26 @@ def test_every_kind_of_paint_reaches_the_3d_render(site, site_models):
     import contextlib as _contextlib
 
     from src.render.export import PAINT_KIND_LISTS, PAINT_KINDS_NOT_IN_LISTS
+    from src.render.plan_view import PAINT_STYLE
 
-    rendered = set(PAINT_KINDS_NOT_IN_LISTS).union(*PAINT_KIND_LISTS.values())
+    rendered_3d = set(PAINT_KINDS_NOT_IN_LISTS).union(*PAINT_KIND_LISTS.values())
+    # The 2D view had no equivalent guard, which is the same asymmetry in the other
+    # direction: a renamed kind would have vanished from the plan view while the 3D table
+    # above still listed it and this test still passed. "apron" and "bollard" are drawn by
+    # the plan view too - the apron from PAINT_STYLE, the bollard by its own branch.
+    rendered_2d = set(PAINT_STYLE) | {"bollard"}
     model = site_models[site]
     for name, builder in sorted(scenario_builders(site).items()):
         with _contextlib.redirect_stdout(io.StringIO()):
             state = run_scenario(builder, DesignState.from_model(model), model)
-            crossings = fetch_crossings(model.center_wgs84, radius_m=130)
-            offsets = resolve_crosswalk_offsets(state, crossings)
-            skews = resolve_crosswalk_skews(state, crossings)
-            props = build_props(model, state, offsets, model.center_ft,
-                                 fetch_traffic_control(model.center_wgs84, radius_m=60),
-                                 fetch_street_furniture(model.center_wgs84, radius_m=130),
-                                 crossings, fetch_kerbs(model.center_wgs84, radius_m=120))
-            try:
-                pavement = build_pavement_polygon(state.corner_fillets)
-            except ValueError:
-                pavement = None
-            bands = crosswalk_bands_ft(state, offsets, skews, CROSSWALK_DEPTH_M / FT_TO_M, pavement)
-            paint = curbside_paint_ft(state, offsets, model.center_ft, bands, props,
-                                   marked_crosswalks=marked_crosswalks(model))
-        orphaned = {p.kind for p in paint} - rendered
-        assert not orphaned, (f"{site}/{name}: paint kinds built but never rendered in 3D: "
-                              f"{sorted(orphaned)} - add them to export.PAINT_KIND_LISTS")
+            paint, _bands = paint_and_bands(model, state)
+        built = {p.kind for p in paint}
+        assert not built - rendered_3d, (
+            f"{site}/{name}: paint kinds built but never rendered in 3D: "
+            f"{sorted(built - rendered_3d)} - add them to export.PAINT_KIND_LISTS")
+        assert not built - rendered_2d, (
+            f"{site}/{name}: paint kinds built but never drawn in the plan view: "
+            f"{sorted(built - rendered_2d)} - add them to plan_view.PAINT_STYLE")
 
 
 def test_no_export_list_names_a_kind_paint_never_builds():
@@ -862,22 +862,13 @@ def test_curbside_paint_ends_against_its_crossing(site, site_models):
 
 
 def paint_and_bands(model, state):
-    """The paint and the crossing bands for one state, exactly as the renderers build them."""
-    crossings = fetch_crossings(model.center_wgs84, radius_m=130)
-    offsets = resolve_crosswalk_offsets(state, crossings)
-    skews = resolve_crosswalk_skews(state, crossings)
-    props = build_props(model, state, offsets, model.center_ft,
-                         fetch_traffic_control(model.center_wgs84, radius_m=60),
-                         fetch_street_furniture(model.center_wgs84, radius_m=130),
-                         crossings, fetch_kerbs(model.center_wgs84, radius_m=120))
-    try:
-        pavement = build_pavement_polygon(state.corner_fillets)
-    except ValueError:
-        pavement = None
-    bands = crosswalk_bands_ft(state, offsets, skews, CROSSWALK_DEPTH_M / FT_TO_M, pavement)
-    paint = curbside_paint_ft(state, offsets, model.center_ft, bands, props,
-                               marked_crosswalks=marked_crosswalks(model))
-    return paint, bands
+    """The paint and the crossing bands for one state, exactly as the renderers build them.
+
+    Both come off SceneGeometry, so "exactly" is now structural rather than a claim - see
+    resolved_scene.
+    """
+    scene = resolved_scene(model, state)
+    return scene.build_paint(scene_props(model, state, scene)), scene.crosswalk_bands
 
 
 @needs_source_data

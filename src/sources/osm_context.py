@@ -25,10 +25,12 @@ CACHE_DIR = Path(os.environ.get(
 
 REFRESH_ENV = "HOPEWELL_REFRESH_OSM"
 
-# Second-level cache, in memory. The disk cache already avoids the network, but a batch
-# build asks for the same junction's kerbs and crossings once per scenario - 27 times over
-# for the four sites - and re-reading and re-parsing the same JSON each time is pure waste.
-# Keyed by the same cache key the disk layer uses, so it can never disagree with it.
+# Second-level cache, in memory: the raw borough snapshot and its parsed form. The disk cache
+# already avoids the network, but a batch build asks for the same junction's kerbs and
+# crossings once per scenario - 27 times over for the four sites - and re-reading and
+# re-parsing the same 2.9 MB of JSON each time is pure waste. Keyed by the same cache key the
+# disk layer uses, so it can never disagree with it. The per-layer VIEWS over the parsed
+# snapshot are cached separately - see _LAYER_VIEWS.
 _MEMO: dict[str, list] = {}
 
 # Cache files this process fetched and wrote itself, and which a refresh therefore has no
@@ -75,20 +77,11 @@ def _warn_once(message: str) -> None:
         print(f"  {message}")
 
 
-def _cache_path(kind: str, center_wgs84: Point, radius_m: float, version: str = "") -> Path:
-    """Disk cache filename for one layer at one (centre, radius).
-
-    `version` bumps a layer's key when its Overpass query widens - an entry written by the
-    older, narrower query would otherwise be served forever and silently under-report.
-    """
-    # buildings' key carries no kind prefix: it was the first fetcher and its key predates
-    # the convention. Spelling it the tidy way now would orphan every cached response and
-    # every committed fixture for no gain.
-    parts = [] if kind == "buildings" else [kind]
-    if version:
-        parts.append(version)
-    signature = ",".join(parts + [f"{center_wgs84.x:.6f}", f"{center_wgs84.y:.6f}", f"{radius_m}"])
-    return CACHE_DIR / f"{kind}_{hashlib.sha1(signature.encode()).hexdigest()[:16]}.json"
+# There is no longer a per-layer disk cache path to compute: every layer is a view over the
+# one borough snapshot (see below), so the only cached file is _snapshot_path(). The old
+# _cache_path() built a (kind, centre, radius) filename per layer and is gone with the 20-24
+# bbox queries it keyed. Existing per-layer files in output/.cache are simply unread; the
+# committed fixtures the test suite needs are the borough_*.json ones.
 
 
 def _cache_hit(cache_path: Path) -> bool:
@@ -263,6 +256,32 @@ def assert_within_snapshot(center_wgs84: Point, radius_m: float) -> None:
             f"BOROUGH_BBOX in src/sources/osm_context.py and delete the cached snapshot.")
 
 
+# One resolved layer per (layer, centre, radius), for as long as the snapshot it came from is
+# still the one being read. Every _ways_near / _nodes_near call walks the WHOLE borough -
+# 2.9 MB, thousands of elements - and the fetchers below are called repeatedly per site: the
+# kerbs alone are asked for by the intersection model (twice), the plan view and the export,
+# and every scenario repeats the lot.
+#
+# Each entry stores the snapshot it was built from and is only served while that is still the
+# snapshot in hand. That, rather than remembering to clear the cache, is what makes a re-pull
+# reach the render - which is this project's worst failure mode, so it should not depend on an
+# invalidation call somebody could forget or a test could bypass. Holding the reference is also
+# what makes the identity test sound: the object cannot be freed and its id reused while the
+# entry that names it is alive.
+_LAYER_VIEWS: dict[tuple, tuple] = {}
+
+
+def _layer(kind: str, center_wgs84: Point, radius_m: float, build):
+    snapshot = fetch_borough_osm()
+    key = (kind, round(center_wgs84.x, 7), round(center_wgs84.y, 7), float(radius_m))
+    cached = _LAYER_VIEWS.get(key)
+    if cached is not None and cached[0] is snapshot:
+        return cached[1]
+    view = build()
+    _LAYER_VIEWS[key] = (snapshot, view)
+    return view
+
+
 def _in_bbox(bbox, lon: float, lat: float) -> bool:
     west, south, east, north = bbox
     return west <= lon <= east and south <= lat <= north
@@ -300,28 +319,30 @@ def _nodes_near(center_wgs84: Point, radius_m: float, predicate) -> list[dict]:
             if predicate(n.get("tags") or {}) and _in_bbox(bbox, n["lon"], n["lat"])]
 
 
-def fetch_buildings(center_wgs84: Point, radius_m: float, use_cache: bool = True) -> list[dict]:
+def fetch_buildings(center_wgs84: Point, radius_m: float) -> list[dict]:
     """OSM building footprints near a point.
     Returns [{"coords_wgs84": [(lon, lat), ...], "height_m": float}, ...]."""
-    out = []
-    for way, coords in _ways_near(center_wgs84, radius_m, lambda t: "building" in t):
-        if len(coords) < 3:
-            continue
-        out.append({"coords_wgs84": coords, "height_m": _estimate_height(way.get("tags") or {})})
-    return out
+    def build():
+        return [{"coords_wgs84": coords, "height_m": _estimate_height(way.get("tags") or {})}
+                for way, coords in _ways_near(center_wgs84, radius_m, lambda t: "building" in t)
+                if len(coords) >= 3]
+    return _layer("buildings", center_wgs84, radius_m, build)
 
 
-def fetch_crossings(center_wgs84: Point, radius_m: float, use_cache: bool = True) -> list[dict]:
+def fetch_crossings(center_wgs84: Point, radius_m: float) -> list[dict]:
     """OSM-mapped pedestrian crossings (footway=crossing ways) - real surveyed crosswalk
     lines rather than a geometric estimate of where one probably is.
     Returns [{"coords_wgs84": [...], "tags": {...}, "node_ids": [...]}, ...]."""
-    return [{"coords_wgs84": coords, "tags": way.get("tags", {}), "node_ids": way.get("nodes", [])}
-            for way, coords in _ways_near(center_wgs84, radius_m,
-                                           lambda t: t.get("footway") == "crossing")
-            if len(coords) >= 2]
+    def build():
+        return [{"coords_wgs84": coords, "tags": way.get("tags", {}),
+                 "node_ids": way.get("nodes", [])}
+                for way, coords in _ways_near(center_wgs84, radius_m,
+                                               lambda t: t.get("footway") == "crossing")
+                if len(coords) >= 2]
+    return _layer("crossings", center_wgs84, radius_m, build)
 
 
-def fetch_sidewalks(center_wgs84: Point, radius_m: float, use_cache: bool = True) -> list[dict]:
+def fetch_sidewalks(center_wgs84: Point, radius_m: float) -> list[dict]:
     """OSM-mapped sidewalk centerlines (footway=sidewalk ways).
 
     Real surveyed geometry, and what OSM's crossing ways actually connect to - a crossing
@@ -330,13 +351,15 @@ def fetch_sidewalks(center_wgs84: Point, radius_m: float, use_cache: bool = True
     a measurement of it: the centerline-to-curb gap measured 11.8 ft/side on one
     field-measured leg and 4.0 ft/side on another, on the same street 100 ft apart.
     """
-    return [{"coords_wgs84": coords, "tags": way.get("tags", {})}
-            for way, coords in _ways_near(center_wgs84, radius_m,
-                                           lambda t: t.get("footway") == "sidewalk")
-            if len(coords) >= 2]
+    def build():
+        return [{"coords_wgs84": coords, "tags": way.get("tags", {})}
+                for way, coords in _ways_near(center_wgs84, radius_m,
+                                               lambda t: t.get("footway") == "sidewalk")
+                if len(coords) >= 2]
+    return _layer("sidewalks", center_wgs84, radius_m, build)
 
 
-def fetch_traffic_control(center_wgs84: Point, radius_m: float, use_cache: bool = True) -> list[dict]:
+def fetch_traffic_control(center_wgs84: Point, radius_m: float) -> list[dict]:
     """OSM traffic control nodes: highway=traffic_signals / stop / give_way / crossing.
     Returns [{"lon": float, "lat": float, "tags": {...}}, ...].
 
@@ -351,11 +374,14 @@ def fetch_traffic_control(center_wgs84: Point, radius_m: float, use_cache: bool 
     tactile_paving=yes.
     """
     wanted = ("traffic_signals", "stop", "give_way", "crossing")
-    return [{"lon": n["lon"], "lat": n["lat"], "tags": n.get("tags", {})}
-            for n in _nodes_near(center_wgs84, radius_m, lambda t: t.get("highway") in wanted)]
+
+    def build():
+        return [{"lon": n["lon"], "lat": n["lat"], "tags": n.get("tags", {})}
+                for n in _nodes_near(center_wgs84, radius_m, lambda t: t.get("highway") in wanted)]
+    return _layer("traffic_control", center_wgs84, radius_m, build)
 
 
-def fetch_street_furniture(center_wgs84: Point, radius_m: float, use_cache: bool = True) -> list[dict]:
+def fetch_street_furniture(center_wgs84: Point, radius_m: float) -> list[dict]:
     """OSM street furniture: highway=street_lamp, emergency=fire_hydrant, natural=tree.
     Returns [{"lon": float, "lat": float, "tags": {...}}, ...].
 
@@ -366,11 +392,14 @@ def fetch_street_furniture(center_wgs84: Point, radius_m: float, use_cache: bool
     def wanted(t):
         return (t.get("highway") == "street_lamp" or t.get("emergency") == "fire_hydrant"
                 or t.get("natural") == "tree")
-    return [{"lon": n["lon"], "lat": n["lat"], "tags": n.get("tags", {})}
-            for n in _nodes_near(center_wgs84, radius_m, wanted)]
+
+    def build():
+        return [{"lon": n["lon"], "lat": n["lat"], "tags": n.get("tags", {})}
+                for n in _nodes_near(center_wgs84, radius_m, wanted)]
+    return _layer("street_furniture", center_wgs84, radius_m, build)
 
 
-def fetch_kerbs(center_wgs84: Point, radius_m: float, use_cache: bool = True) -> list[dict]:
+def fetch_kerbs(center_wgs84: Point, radius_m: float) -> list[dict]:
     """OSM-mapped kerb lines and kerb nodes (barrier=kerb).
     Returns [{"coords_wgs84": [...] | None, "lon"/"lat" for nodes, "tags", "id", "node_ids"}].
 
@@ -382,15 +411,18 @@ def fetch_kerbs(center_wgs84: Point, radius_m: float, use_cache: bool = True) ->
     old circle-fitting precondition applied at the wrong layer) threw away 12 of the 23
     traced ways at two of these sites.
     """
-    kerbs = [{"coords_wgs84": coords, "tags": way.get("tags", {}), "id": way["id"],
-              "node_ids": way.get("nodes", [])}
-             for way, coords in _ways_near(center_wgs84, radius_m,
-                                            lambda t: t.get("barrier") == "kerb")
-             if len(coords) >= 2]
-    kerbs += [{"coords_wgs84": None, "lon": n["lon"], "lat": n["lat"],
-               "tags": n.get("tags", {}), "id": n["id"]}
-              for n in _nodes_near(center_wgs84, radius_m, lambda t: t.get("barrier") == "kerb")]
-    return kerbs
+    def build():
+        kerbs = [{"coords_wgs84": coords, "tags": way.get("tags", {}), "id": way["id"],
+                  "node_ids": way.get("nodes", [])}
+                 for way, coords in _ways_near(center_wgs84, radius_m,
+                                                lambda t: t.get("barrier") == "kerb")
+                 if len(coords) >= 2]
+        kerbs += [{"coords_wgs84": None, "lon": n["lon"], "lat": n["lat"],
+                   "tags": n.get("tags", {}), "id": n["id"]}
+                  for n in _nodes_near(center_wgs84, radius_m,
+                                        lambda t: t.get("barrier") == "kerb")]
+        return kerbs
+    return _layer("kerbs", center_wgs84, radius_m, build)
 
 
 def _estimate_height(tags: dict) -> float:
@@ -407,7 +439,7 @@ def _estimate_height(tags: dict) -> float:
     return DEFAULT_BUILDING_HEIGHT_M
 
 
-def fetch_roads(center_wgs84: Point, radius_m: float, use_cache: bool = True) -> list[dict]:
+def fetch_roads(center_wgs84: Point, radius_m: float) -> list[dict]:
     """OSM highway ways near a point, with their tags and geometry.
 
     The road ways themselves, not the furniture on them - this is where OSM records facts
@@ -416,12 +448,14 @@ def fetch_roads(center_wgs84: Point, radius_m: float, use_cache: bool = True) ->
     Hopewell carry it (both Broad Streets, both Greenwood Avenues, Princeton Avenue).
     Returns [{"coords_wgs84": [...], "tags": {...}, "id": int}, ...].
     """
-    return [{"coords_wgs84": coords, "tags": way.get("tags", {}), "id": way["id"]}
-            for way, coords in _ways_near(center_wgs84, radius_m, lambda t: "highway" in t)
-            if len(coords) >= 2]
+    def build():
+        return [{"coords_wgs84": coords, "tags": way.get("tags", {}), "id": way["id"]}
+                for way, coords in _ways_near(center_wgs84, radius_m, lambda t: "highway" in t)
+                if len(coords) >= 2]
+    return _layer("roads", center_wgs84, radius_m, build)
 
 
-def fetch_stop_lines(center_wgs84: Point, radius_m: float, use_cache: bool = True) -> list[dict]:
+def fetch_stop_lines(center_wgs84: Point, radius_m: float) -> list[dict]:
     """OSM-mapped stop bars (road_marking=stop_line ways) near a point.
 
     A surveyed stop bar gives all three things this project was previously deriving: how far
@@ -429,7 +463,9 @@ def fetch_stop_lines(center_wgs84: Point, radius_m: float, use_cache: bool = Tru
     The derived version could only ever place it a fixed setback behind the crosswalk.
     Returns [{"coords_wgs84": [...], "tags": {...}, "id": int}, ...].
     """
-    return [{"coords_wgs84": coords, "tags": way.get("tags", {}), "id": way["id"]}
-            for way, coords in _ways_near(center_wgs84, radius_m,
-                                           lambda t: t.get("road_marking") == "stop_line")
-            if len(coords) >= 2]
+    def build():
+        return [{"coords_wgs84": coords, "tags": way.get("tags", {}), "id": way["id"]}
+                for way, coords in _ways_near(center_wgs84, radius_m,
+                                               lambda t: t.get("road_marking") == "stop_line")
+                if len(coords) >= 2]
+    return _layer("stop_lines", center_wgs84, radius_m, build)

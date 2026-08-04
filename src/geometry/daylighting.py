@@ -159,7 +159,11 @@ def no_parking_zones_ft(state, leg_name: str, side: str, crosswalk_offsets: dict
 
     # (e) - the junction end of the leg. Both arms are measured, and the further one wins:
     # the crosswalk governs where one is marked, the side line governs where none is.
-    crossing_ft = crosswalk_offsets.get(leg_name, (None,))[0]
+    # Indexed rather than read as .offset_ft (src/render/crosswalks.py:CrosswalkOffset) so a
+    # caller may hand this a plain (station, source) pair - the statutory rules below need the
+    # station only, and this module deliberately depends on nothing in src/render.
+    crossing = crosswalk_offsets.get(leg_name)
+    crossing_ft = crossing[0] if crossing is not None else None
     sideline_ft = sideline_station_ft(leg_name, side, state.legs, state.corner_fillets)
     junction = [(sideline_ft + sideline_setback,
                  f"R.S. 39:4-138(e), {sideline_setback:.0f} ft from the side line of the "

@@ -113,7 +113,7 @@ def check_furniture_off_roadway(props: list[dict], pavement) -> list[Violation]:
     asserting something false about an accessibility feature - but a stop sign in the
     middle of the street is just as wrong and had no check at all before.
     """
-    from src.render.props import _pad_polygon  # local: props imports geometry, avoid a cycle
+    from src.render.props import pad_polygon  # local: props imports geometry, avoid a cycle
 
     if pavement is None or pavement.is_empty:
         return []
@@ -126,7 +126,7 @@ def check_furniture_off_roadway(props: list[dict], pavement) -> list[Violation]:
         if position is None:
             continue
         if kind == "tactile_paving_pad":
-            pad = _pad_polygon(*position, prop.get("heading_deg", 0.0))
+            pad = pad_polygon(*position, prop.get("heading_deg", 0.0))
             if pad.is_empty or pad.area <= 0:
                 continue
             overlap = pad.intersection(pavement).area / pad.area
@@ -373,16 +373,25 @@ def check_markings_do_not_collide(paint) -> list[Violation]:
     roadway, the crosswalk - and none checked paint against other paint.
     """
     violations = []
-    fills = [p for p in paint if p.is_fill]
+    # A bollard's geometry is a degenerate 1e-6 ft square standing in for a point
+    # (src/geometry/paint.py:_dot), so it is a Polygon by type but has no area to collide.
+    fills = [p for p in paint if p.is_fill and p.kind != "bollard"]
+    # Bounding boxes first: two markings can only share ground if their extents do, and an
+    # envelope test is arithmetic against a GEOS overlay. This is O(n^2) either way, and a
+    # proposal carries a few hundred pieces, so the pairs that reach GEOS should be the pairs
+    # that might actually overlap.
+    fill_bounds = [p.geometry.bounds for p in fills]
     for i, a in enumerate(fills):
-        for b in fills[i + 1:]:
-            overlap = a.geometry.intersection(b.geometry).area
-            if overlap <= MARKING_OVERLAP_TOLERANCE_SQ_FT:
+        for j in range(i + 1, len(fills)):
+            if _boxes_apart(fill_bounds[i], fill_bounds[j]):
                 continue
-            where = a.geometry.intersection(b.geometry).centroid
+            shared = a.geometry.intersection(fills[j].geometry)
+            if shared.area <= MARKING_OVERLAP_TOLERANCE_SQ_FT:
+                continue
+            where = shared.centroid
             violations.append(Violation(
                 "markings_collide",
-                f"{a.kind} and {b.kind} overlap by {overlap:.0f} sq ft"
+                f"{a.kind} and {fills[j].kind} overlap by {shared.area:.0f} sq ft"
                 + (f" on {a.leg} {a.side}" if a.leg else "")
                 + " - that ground would be painted twice",
                 (where.x, where.y)))
@@ -393,18 +402,30 @@ def check_markings_do_not_collide(paint) -> list[Violation]:
     # painted down the same stretch of road: the daylight zone's edge line and the parking
     # lane's sit at the same offset and are kept apart only by their station ranges.
     lines = [p for p in paint if not p.is_fill and p.kind != "bollard"]
+    # Buffered once each, not once per comparison: buffering is the expensive half of this
+    # test and it was inside the inner loop, so each line was re-buffered for every line
+    # after it.
+    fattened = [p.geometry.buffer(COLLINEAR_PAINT_TOLERANCE_FT) for p in lines]
+    line_bounds = [g.bounds for g in fattened]
     for i, a in enumerate(lines):
-        for b in lines[i + 1:]:
-            shared = a.geometry.buffer(COLLINEAR_PAINT_TOLERANCE_FT).intersection(b.geometry)
+        for j in range(i + 1, len(lines)):
+            if _boxes_apart(line_bounds[i], line_bounds[j]):
+                continue
+            shared = fattened[i].intersection(lines[j].geometry)
             if shared.length <= MIN_COLLINEAR_OVERLAP_FT:
                 continue
             violations.append(Violation(
                 "markings_collide",
-                f"{a.kind} and {b.kind} run along each other for {shared.length:.1f} ft"
+                f"{a.kind} and {lines[j].kind} run along each other for {shared.length:.1f} ft"
                 + (f" on {a.leg} {a.side}" if a.leg else "")
                 + " - two lines painted down the same stretch of road",
                 (shared.centroid.x, shared.centroid.y)))
     return violations
+
+
+def _boxes_apart(a: tuple, b: tuple) -> bool:
+    """True when two (minx, miny, maxx, maxy) extents cannot possibly overlap."""
+    return a[2] < b[0] or b[2] < a[0] or a[3] < b[1] or b[3] < a[1]
 
 
 def check_paint_clear_of_the_travel_lane(state, paint) -> list[Violation]:

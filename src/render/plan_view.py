@@ -3,28 +3,21 @@ import geopandas as gpd
 import numpy as np
 from matplotlib.lines import Line2D
 from matplotlib.patches import Patch
-from shapely.geometry import LineString, Polygon
+from shapely.geometry import LineString
 
 from shapely.ops import substring
 
-from src.geometry.model import (build_pavement_polygon, inset_point_at_station,
-                                trimmed_curb_lines)
-from src.geometry.paint import curbside_paint_ft
+from src.geometry.model import inset_point_at_station, trimmed_curb_lines
 from src.geometry.intersection import IntersectionModel, kerb_lines_with_tags_ft
 from src.geometry.treatments import DEFAULT_CENTERLINE_STYLE, DesignState
 from src.provenance import PLOT_STYLE, built_width_provenance
-from src.render.props import DRAWN_BY_PAINT, build_props, signalization_conflicts
+from src.render.props import (DRAWN_BY_PAINT, TACTILE_PAD_DEPTH_FT, TACTILE_PAD_WIDTH_FT,
+                               build_props, pad_polygon, signalization_conflicts)
 from src.render.coords import FT_TO_M, wgs84_to_state_plane
-from src.render.crosswalks import (CROSSWALK_DEPTH_M, STOP_BAR_PLAN_DEPTH_FT, centerline_start_ft,
-                                   crosswalk_reaches_ft,
-                                   crosswalk_band_ft, crosswalk_bands_ft, stop_bar_bands_ft,
-                                   resolve_crosswalk_offsets,
-                                   resolve_crosswalk_skews, resolve_stop_bar_offsets,
-                                   entering_lane_width_ft, stop_bar_band_geometry_ft,
-                                   stop_bar_width_ft)
+from src.render.crosswalks import centerline_start_ft
+from src.render.scene import SceneGeometry
 from src.sources.osm_context import (fetch_crossings, fetch_kerbs, fetch_sidewalks,
-                                     fetch_stop_lines, fetch_street_furniture,
-                                     fetch_traffic_control)
+                                     fetch_street_furniture, fetch_traffic_control)
 
 # Matches TACTILE_PAD_RED in scripts/blender/blender_props.py - the plan view and the 3D
 # render must not disagree about what a detectable warning surface looks like.
@@ -45,11 +38,95 @@ def sidewalk_lines_ft(sidewalks: list[dict] | None) -> list[LineString]:
     return lines
 
 
+def _draw(ax, geometries, boundary=None, **style) -> None:
+    """Draw a group of same-styled geometries as ONE matplotlib collection.
+
+    Every draw in this module used to be `gpd.GeoSeries([one_geometry]).plot(...)`, which
+    makes a collection per geometry, and the cost of adding a collection grows with how many
+    are already on the axes. A plan view of a proposal builds ~170 of them, and measured on
+    this repo's own figures that is 2.44 s against 0.016 s for the same geometry drawn as one
+    collection per style - 156x, and it was the single largest cost in a 2D build.
+
+    `boundary` is the kwargs for outlining filled shapes, drawn from the same series, so a
+    fill and its outline stay one pair rather than two independent draws.
+    """
+    geometries = [g for g in geometries if g is not None and not g.is_empty]
+    if not geometries:
+        return
+    series = gpd.GeoSeries(geometries)
+    series.plot(ax=ax, **style)
+    if boundary is not None:
+        series.boundary.plot(ax=ax, **boundary)
+
+
+def _scatter_groups(ax, points_by_style: dict) -> None:
+    """One ax.scatter per marker style rather than one per prop, for the same reason."""
+    for style, points in points_by_style.items():
+        if not points:
+            continue
+        xs, ys = zip(*points)
+        ax.scatter(xs, ys, **dict(style))
+
 
 # One colour for a flex-post wherever it is drawn from - the treatment layer's own bollard
 # pieces, the daylight-zone props, and legend_handles(). Named so a test can count markers of
 # this colour rather than trusting that the dispatch has a branch for them at all.
 BOLLARD_PLAN_COLOR = "darkorange"
+
+# How each prop type is marked in plan. Data rather than an if/elif chain, so every marker
+# style is one dict entry and every prop of a type can be scattered in one call - and so a
+# new prop type is a row here instead of another branch that might be forgotten (a
+# daylight-zone bollard once fell through to the generic case and came out as a goldenrod
+# triangle, drawn but not as the thing the legend said it was).
+PROP_MARKERS = {
+    "traffic_signal_pole":    (dict(color="black", marker="o", s=46, zorder=7),
+                               dict(color="limegreen", marker="o", s=16, zorder=7)),
+    "pedestrian_signal_head": (dict(color="limegreen", marker="s", s=22, edgecolors="black",
+                                    linewidths=0.6, zorder=7),),
+    "stop_sign":              (dict(color="red", marker="H", s=44, edgecolors="white",
+                                    linewidths=0.6, zorder=7),),
+    "pedestrian_pushbutton":  (dict(color="gold", marker="P", s=30, edgecolors="black",
+                                    linewidths=0.5, zorder=8),),
+    "rrfb":                   (dict(color="gold", marker="D", s=30, edgecolors="black",
+                                    linewidths=0.6, zorder=8),),
+    "fire_hydrant":           (dict(color="firebrick", marker="P", s=34, zorder=7),),
+    "yield_sign":             (dict(color="white", marker="v", s=40, edgecolors="red",
+                                    linewidths=1.2, zorder=7),),
+    "no_turn_on_red_sign":    (dict(color="white", marker="s", s=26, edgecolors="red",
+                                    linewidths=1.2, zorder=7),),
+    "streetlight":            (dict(color="dimgrey", marker="*", s=34, zorder=6),),
+    "bollard":                (dict(color=BOLLARD_PLAN_COLOR, marker="o", s=14,
+                                    edgecolors="black", linewidths=0.4, zorder=7),),
+}
+# Site- or scenario-specific extras (school zone signs, RRFB relocations, ...) have no
+# dedicated marker: they are whatever a config or a proposal named.
+EXTRA_PROP_MARKER = dict(color="darkgoldenrod", marker="^", s=30, zorder=7)
+
+# How each src/geometry/paint.py piece kind is drawn. A kind absent here is not drawn at all -
+# tests/test_paint.py asserts every kind the builder emits appears in this table or in
+# src/render/export.py's PAINT_KIND_LISTS, so a renamed kind can't silently vanish from one view.
+PAINT_STYLE = {
+    "lane_narrowing_fill":  dict(color="gold", alpha=0.5, hatch="//", zorder=3),
+    "taper_fill":           dict(color="gold", alpha=0.5, hatch="//", zorder=3),
+    "buffer_fill":          dict(color="gold", alpha=0.5, hatch="//", zorder=3),
+    # The statutory no-parking zone at the corner (R.S. 39:4-138). Drawn in a distinct
+    # colour from the ordinary buffer hatch because it is a different claim: not "this
+    # asphalt is spare", but "parking here is illegal and this proposal marks it".
+    "daylight_fill":        dict(color="orangered", alpha=0.40, hatch="xx", zorder=3),
+    "corner_hatch_fill":    dict(color="gold", alpha=0.5, hatch="//", zorder=3),
+    "apron":                dict(color="peru", alpha=0.6, zorder=3),
+    "lane_edge_line":       dict(color="goldenrod", linewidth=1.5, zorder=3),
+    "taper_line":           dict(color="goldenrod", linewidth=1.5, zorder=3),
+    "buffer_edge_line":     dict(color="goldenrod", linewidth=1.5, zorder=3),
+    "daylight_edge_line":   dict(color="orangered", linewidth=1.5, zorder=3),
+    "crossing_rim_line":    dict(color="orangered", linewidth=1.5, zorder=3),
+    # The square end of a zone with no crossing to be cut by and no room to taper.
+    "zone_end_line":        dict(color="goldenrod", linewidth=1.5, zorder=3),
+    "parking_edge_line":    dict(color="steelblue", linewidth=1.5, zorder=3),
+    "stall_divider":        dict(color="steelblue", linewidth=1, zorder=3),
+}
+# Outline colour for each filled zone's own fill colour.
+PAINT_FILL_EDGE = {"gold": "goldenrod", "peru": "saddlebrown", "orangered": "orangered"}
 
 
 def _draw_props(ax, model: IntersectionModel, state: DesignState, crosswalk_offsets: dict,
@@ -74,68 +151,42 @@ def _draw_props(ax, model: IntersectionModel, state: DesignState, crosswalk_offs
     kerb_lines = kerb_lines_with_tags_ft(model.center_wgs84, model.center_ft)
     props = build_props(model, state, crosswalk_offsets, model.center_ft, traffic_control,
                          street_furniture, crossings, fetch_kerbs(model.center_wgs84, radius_m=120))
-    for line, _tags in kerb_lines:
-        gpd.GeoSeries([line]).plot(ax=ax, color='black', linewidth=2.2, zorder=6)
+    _draw(ax, [line for line, _tags in kerb_lines], color="black", linewidth=2.2, zorder=6)
+
+    # Grouped, then drawn once per group. See _draw / _scatter_groups.
+    marker_points: dict[tuple, list] = {}
+    pads, arms = [], []
     signal_count = 0
     for prop in props:
         kind = prop["type"]
         if kind == "bollard" and prop.get(DRAWN_BY_PAINT):
             continue
         x, y = prop["position_ft"]
+        if kind == "tactile_paving_pad":
+            # Drawn at its true size and orientation, not as a marker: whether the pad
+            # sits wholly on the footway or spills into the roadway is exactly the kind
+            # of thing the plan view exists to make checkable.
+            pads.append(pad_polygon(x, y, prop["heading_deg"],
+                                      depth_ft=prop.get("pad_depth_ft", TACTILE_PAD_DEPTH_FT),
+                                      width_ft=prop.get("pad_width_ft", TACTILE_PAD_WIDTH_FT)))
+            continue
         if kind == "traffic_signal_pole":
             signal_count += 1
-            ax.scatter([x], [y], color="black", marker="o", s=46, zorder=7)
-            ax.scatter([x], [y], color="limegreen", marker="o", s=16, zorder=7)
             # The mast arm is the part that reaches out over the roadway, and its length
             # is derived from a real leg width - worth seeing in plan, since it's the
             # most visually dominant thing in the 3D render.
             arm_deg, arm_ft = prop.get("arm_heading_deg"), prop.get("arm_length_ft")
             if arm_deg is not None and arm_ft:
-                ax.plot([x, x + np.cos(np.radians(arm_deg)) * arm_ft],
-                        [y, y + np.sin(np.radians(arm_deg)) * arm_ft],
-                        color="black", linewidth=1.6, solid_capstyle="round", zorder=7)
-        elif kind == "pedestrian_signal_head":
-            ax.scatter([x], [y], color="limegreen", marker="s", s=22, edgecolors="black",
-                        linewidths=0.6, zorder=7)
-        elif kind == "stop_sign":
-            ax.scatter([x], [y], color="red", marker="H", s=44, edgecolors="white", linewidths=0.6, zorder=7)
-        elif kind == "pedestrian_pushbutton":
-            ax.scatter([x], [y], color="gold", marker="P", s=30, edgecolors="black", linewidths=0.5, zorder=8)
-        elif kind == "tactile_paving_pad":
-            # Drawn at its true size and orientation, not as a marker: whether the pad
-            # sits wholly on the footway or spills into the roadway is exactly the kind
-            # of thing the plan view exists to make checkable.
-            depth, width = prop.get("pad_depth_ft", 3.0), prop.get("pad_width_ft", 5.0)
-            ang = np.radians(prop["heading_deg"])
-            ux, uy = np.cos(ang), np.sin(ang)          # along the crossing = pad depth
-            nx, ny = -uy, ux                            # along the curb = pad width
-            pad = Polygon([
-                (x + ux * depth / 2 + nx * width / 2, y + uy * depth / 2 + ny * width / 2),
-                (x - ux * depth / 2 + nx * width / 2, y - uy * depth / 2 + ny * width / 2),
-                (x - ux * depth / 2 - nx * width / 2, y - uy * depth / 2 - ny * width / 2),
-                (x + ux * depth / 2 - nx * width / 2, y + uy * depth / 2 - ny * width / 2),
-            ])
-            gpd.GeoSeries([pad]).plot(ax=ax, color=TACTILE_PAD_COLOR, alpha=0.85, zorder=8)
-            gpd.GeoSeries([pad]).boundary.plot(ax=ax, color="black", linewidth=0.5, zorder=8)
-        elif kind == "rrfb":
-            ax.scatter([x], [y], color="gold", marker="D", s=30, edgecolors="black", linewidths=0.6, zorder=8)
-        elif kind == "fire_hydrant":
-            ax.scatter([x], [y], color="firebrick", marker="P", s=34, zorder=7)
-        elif kind == "yield_sign":
-            ax.scatter([x], [y], color="white", marker="v", s=40, edgecolors="red", linewidths=1.2, zorder=7)
-        elif kind == "no_turn_on_red_sign":
-            ax.scatter([x], [y], color="white", marker="s", s=26, edgecolors="red", linewidths=1.2, zorder=7)
-        elif kind == "streetlight":
-            ax.scatter([x], [y], color="dimgrey", marker="*", s=34, zorder=6)
-        elif kind == "bollard":
-            # Same marker the treatment layer uses for a bollard it drew itself, and the one
-            # legend_handles() advertises. Without this branch a daylight-zone post fell
-            # through to the generic "extras" case below and came out as a goldenrod
-            # TRIANGLE - drawn, but not as the thing the legend says it is.
-            ax.scatter([x], [y], color=BOLLARD_PLAN_COLOR, marker="o", s=14,
-                        edgecolors="black", linewidths=0.4, zorder=7)
-        else:  # site- or scenario-specific extras (school zone signs, etc.)
-            ax.scatter([x], [y], color="darkgoldenrod", marker="^", s=30, zorder=7)
+                arms.append(LineString([(x, y),
+                                        (x + np.cos(np.radians(arm_deg)) * arm_ft,
+                                         y + np.sin(np.radians(arm_deg)) * arm_ft)]))
+        for style in PROP_MARKERS.get(kind, (EXTRA_PROP_MARKER,)):
+            marker_points.setdefault(tuple(sorted(style.items())), []).append((x, y))
+
+    _draw(ax, arms, color="black", linewidth=1.6, capstyle="round", zorder=7)
+    _draw(ax, pads, color=TACTILE_PAD_COLOR, alpha=0.85, zorder=8,
+          boundary=dict(color="black", linewidth=0.5, zorder=8))
+    _scatter_groups(ax, marker_points)
 
     if dimension_labels:
         control = (f"SIGNALIZED - {signal_count} signal pole(s)" if signal_count
@@ -160,14 +211,14 @@ def _draw_surveyed_crossings(ax, crossings: list[dict] | None):
     leg's configured width is too big - which is precisely the failure that was
     previously only arguable from the 3D render.
     """
-    for line in sidewalk_lines_ft(crossings):
-        gpd.GeoSeries([line]).plot(ax=ax, color="darkviolet", linewidth=1.0, linestyle=":", alpha=0.8, zorder=5)
-        for end in (line.coords[0], line.coords[-1]):
-            ax.scatter([end[0]], [end[1]], color="darkviolet", s=8, marker="o", zorder=5)
+    lines = sidewalk_lines_ft(crossings)
+    _draw(ax, lines, color="darkviolet", linewidth=1.0, linestyle=":", alpha=0.8, zorder=5)
+    ends = [line.coords[i] for line in lines for i in (0, -1)]
+    if ends:
+        ax.scatter(*zip(*ends), color="darkviolet", s=8, marker="o", zorder=5)
 
 
-def _draw_crosswalks(ax, model: IntersectionModel, state: DesignState, crosswalk_offsets: dict,
-                      crosswalk_skews: dict, dimension_labels: bool, pavement=None):
+def _draw_crosswalks(ax, scene: SceneGeometry, dimension_labels: bool):
     """Draw each leg's crosswalk and stop bar exactly where the 3D export puts them.
 
     Gating mirrors scripts/blender/blender_scene.py precisely - a crosswalk is painted
@@ -180,52 +231,55 @@ def _draw_crosswalks(ax, model: IntersectionModel, state: DesignState, crosswalk
 
     Surveyed (OSM) and estimated positions are drawn differently, following the same
     convention this view already uses for confirmed vs. estimated curb widths.
+
+    Both footprints come from `scene`, which is the point. This used to rebuild them: the
+    crossing band without the two-pass reaches the paint and the invariants use (15 sq ft
+    out at W Broad & Louellen), and the stop bar without the skew stretch
+    stop_bar_bands_ft applies (3.8 ft out on Louellen's -44 deg crossing). Both were drawn
+    in a place neither the render nor the checks agreed with, which is the one failure this
+    view exists to catch rather than commit.
     """
-    depth_ft = CROSSWALK_DEPTH_M / FT_TO_M
-    marked = set(model.config["intersection"].get("existing_marked_crosswalks", []))
+    state = scene.state
     raised = set(state.raised_crossings)
+    # Grouped by how each band gets drawn, which turns on two independent facts: whether it is
+    # painted at all, and whether its position is surveyed or estimated.
+    painted_surveyed, painted_estimated, unpainted = [], [], []
 
-    for leg_name, leg in state.legs.items():
-        offset_ft, source = crosswalk_offsets[leg_name]
-        surveyed = source.startswith("osm_survey")
-        painted = leg_name in marked and leg_name not in raised
-        band = crosswalk_band_ft(leg, offset_ft, depth_ft, crosswalk_skews.get(leg_name, 0.0),
-                                  roadway=pavement)
-        edge = "darkviolet" if surveyed else "crimson"
-
-        if painted:
-            gpd.GeoSeries([band]).plot(ax=ax, color="white", alpha=0.95, zorder=4)
-            gpd.GeoSeries([band]).boundary.plot(
-                ax=ax, color=edge, linewidth=1.4, linestyle="-" if surveyed else "--", zorder=4)
+    for leg_name in state.legs:
+        offset = scene.crosswalk_offsets[leg_name]
+        painted = leg_name in scene.marked_crosswalks and leg_name not in raised
+        band = scene.crosswalk_bands[leg_name]
+        if not painted:
+            unpainted.append(band)
+        elif offset.is_surveyed:
+            painted_surveyed.append(band)
         else:
-            gpd.GeoSeries([band]).boundary.plot(ax=ax, color="grey", linewidth=0.7, linestyle=":", zorder=4)
+            painted_estimated.append(band)
 
         if dimension_labels:
             centroid = band.centroid
             note = "" if painted else "\n(unmarked)"
-            ax.annotate(f"{offset_ft:.0f} ft\n{'OSM' if surveyed else 'est.'}{note}",
+            edge = "darkviolet" if offset.is_surveyed else "crimson"
+            ax.annotate(f"{offset.offset_ft:.0f} ft\n{'OSM' if offset.is_surveyed else 'est.'}{note}",
                         (centroid.x, centroid.y), fontsize=5.5,
                         color=edge if painted else "grey", ha="center", va="center", fontweight="bold",
                         bbox=dict(boxstyle="round,pad=0.12", fc="white", ec="none", alpha=0.7))
 
-    # Stop bars, on the same terms the export uses: signalized sites only.
-    if model.config.get("signals"):
-        stop_lines = fetch_stop_lines(model.center_wgs84, radius_m=BUILDING_CONTEXT_RADIUS_M)
-        for leg_name, stop_offset_ft in resolve_stop_bar_offsets(
-                state, crosswalk_offsets, stop_lines).items():
-            # A stop bar covers only the ENTERING half of the roadway - a driver stops
-            # in their own lanes, never across the opposing ones. Sized and positioned
-            # from the same shared rule blender_crosswalks.add_stop_bar uses, so the 2D
-            # bar is the bar that gets rendered. It also inherits the crosswalk's
-            # surveyed skew, being painted parallel to it.
-            leg = state.legs[leg_name]
-            span_ft, lateral_ft = stop_bar_band_geometry_ft(
-                stop_bar_width_ft(state, leg_name),
-                entering_lane_width_ft(state, leg_name) is None)
-            bar = crosswalk_band_ft(leg, stop_offset_ft, STOP_BAR_PLAN_DEPTH_FT,
-                                    crosswalk_skews.get(leg_name, 0.0),
-                                   span_ft=span_ft, lateral_offset_ft=lateral_ft)
-            gpd.GeoSeries([bar]).plot(ax=ax, color="dimgrey", alpha=0.9, zorder=4)
+    for bands, edge, dash in ((painted_surveyed, "darkviolet", "-"),
+                              (painted_estimated, "crimson", "--")):
+        _draw(ax, bands, color="white", alpha=0.95, zorder=4,
+              boundary=dict(color=edge, linewidth=1.4, linestyle=dash, zorder=4))
+    # Unpainted legs get the outline only - "this leg has no marked crossing" is itself a
+    # finding, and a wrong offset on one is a latent error until a proposal marks it.
+    if unpainted:
+        gpd.GeoSeries(unpainted).boundary.plot(ax=ax, color="grey", linewidth=0.7,
+                                                linestyle=":", zorder=4)
+
+    # Stop bars, on the same terms the export uses: signalized sites only, which is what
+    # leaves scene.stop_bar_bands empty everywhere else. A bar covers only the ENTERING half
+    # of the roadway - a driver stops in their own lanes, never across the opposing ones -
+    # and inherits the crossing's surveyed skew, being painted parallel to it.
+    _draw(ax, scene.stop_bar_bands.values(), color="dimgrey", alpha=0.9, zorder=4)
 
 
 def plot_design_state(ax, model: IntersectionModel, state: DesignState, title: str, dimension_labels: bool = True,
@@ -252,74 +306,12 @@ def plot_design_state(ax, model: IntersectionModel, state: DesignState, title: s
     for note in signalization_conflicts(model, traffic_control):
         print(f"  NOTE: {note}")
 
-    model.parcels.boundary.plot(ax=ax, color="tan", linewidth=0.6, zorder=1)
-    model.corner_parcels.boundary.plot(ax=ax, color="saddlebrown", linewidth=1.5, zorder=1)
-
-    try:
-        pavement = build_pavement_polygon(state.corner_fillets)
-        gpd.GeoSeries([pavement]).plot(ax=ax, color="#d9d9d9", zorder=2)
-    except ValueError:
-        pavement = None
-
-    # Real OSM sidewalk centerlines, drawn behind everything else. These are what the
-    # crossing ways actually connect to, and they bound where the curb can possibly be
-    # (src/geometry/model.py:sidewalk_span_ft) - so having them on the plot is what makes
-    # an over-wide leg visible instead of merely arguable.
-    for walk in sidewalk_lines_ft(sidewalks):
-        gpd.GeoSeries([walk]).plot(ax=ax, color="steelblue", linewidth=1.0, linestyle=(0, (4, 2)),
-                                    alpha=0.65, zorder=2)
-
-    # Curb lines as the corners trim them. The raw lines overshoot into the junction on
-    # purpose (fillet material), so drawing them raw would draw curb across the middle of
-    # the intersection - marking a curb that isn't there and isn't in the 3D render.
-    curbs_by_leg = trimmed_curb_lines(state.legs, state.corner_fillets)
-    for name, leg in state.legs.items():
-        tier = built_width_provenance(leg, model.config["legs"][name])
-        style_kw = PLOT_STYLE[tier]
-        color = style_kw["color"]
-        for curb in curbs_by_leg[name].values():
-            gpd.GeoSeries([curb]).plot(ax=ax, linewidth=2, zorder=3, **style_kw)
-        if dimension_labels:
-            mid = leg.centerline.interpolate(min(leg.centerline.length * 0.85, leg.centerline.length - 5))
-            ax.annotate(f"{leg.curb_to_curb_ft:.1f} ft", (mid.x, mid.y), fontsize=7, color=color,
-                        ha="center", bbox=dict(boxstyle="round,pad=0.15", fc="white", ec="none", alpha=0.75))
-
-    for corner, pieces in state.corner_fillets.items():
-        if "error" in pieces:
-            continue
-        gpd.GeoSeries([pieces["arc"]]).plot(ax=ax, color="darkorange", linewidth=2.5, zorder=4)
-        # `is not None` as well as `in`: a corner that is not a corner - two legs of one street
-        # running through the junction - has no radius, and reaching for one crashed the build.
-        if dimension_labels and pieces.get("radius_ft") is not None:
-            mid = pieces["arc"].interpolate(0.5, normalized=True)
-            ax.annotate(f"R={pieces['radius_ft']:.0f} ft", (mid.x, mid.y), fontsize=7, color="darkorange",
-                        fontweight="bold", ha="center",
-                        bbox=dict(boxstyle="round,pad=0.15", fc="white", ec="none", alpha=0.85))
-
-    for name, island in state.refuge_islands.items():
-        poly = island["polygon"]
-        gpd.GeoSeries([poly]).plot(ax=ax, color="seagreen", alpha=0.6, zorder=5)
-        gpd.GeoSeries([poly]).boundary.plot(ax=ax, color="darkgreen", linewidth=1, zorder=5)
-        if dimension_labels:
-            c = poly.centroid
-            ax.annotate(f"refuge\n{island['width_ft']:.0f} ft", (c.x, c.y), fontsize=6.5, color="darkgreen",
-                        ha="center", va="center", fontweight="bold")
-
-    for name, poly in state.raised_crossings.items():
-        gpd.GeoSeries([poly]).plot(ax=ax, color="slateblue", alpha=0.35, hatch="//", zorder=2)
-        gpd.GeoSeries([poly]).boundary.plot(ax=ax, color="slateblue", linewidth=1, zorder=2)
-        if dimension_labels:
-            c = poly.centroid
-            ax.annotate("raised\ncrossing", (c.x, c.y), fontsize=6.5, color="indigo",
-                        ha="center", va="center", fontweight="bold")
-
-    # Always resolved now, not just when a treatment needs them: the crosswalks ARE the
-    # subject of this project, so a plan view that omits them isn't a reconstruction you
-    # can check the 3D render against. Leaving them out is what let a mis-matched OSM
-    # crossing (see src/render/crosswalks.py:_match_crossings_to_legs) sit at the dead
-    # centre of E Broad & Princeton unnoticed - it was only visible in the 3D render.
-    # fetch_crossings is disk-cached per (center, radius) in output/.cache, so the network
-    # round-trip happens once per site, not once per run.
+    # Always resolved, not just when a treatment needs them: the crosswalks ARE the subject
+    # of this project, so a plan view that omits them isn't a reconstruction you can check
+    # the 3D render against. Leaving them out is what let a mis-matched OSM crossing (see
+    # src/render/crosswalks.py:_match_crossings_to_legs) sit at the dead centre of E Broad &
+    # Princeton unnoticed - it was only visible in the 3D render. fetch_crossings is
+    # disk-cached per (center, radius), so the network round-trip happens once per site.
     if crossings is None:
         try:
             crossings = fetch_crossings(model.center_wgs84, radius_m=BUILDING_CONTEXT_RADIUS_M)
@@ -331,74 +323,116 @@ def plot_design_state(ax, model: IntersectionModel, state: DesignState, title: s
             print(f"  WARNING: could not fetch OSM crossings ({e}) - crosswalk positions "
                   f"shown are geometric estimates, not surveyed.")
             crossings = []
-    crosswalk_offsets = resolve_crosswalk_offsets(state, crossings)
+    # Once, for the whole figure: the pavement, every crossing and stop bar footprint, and
+    # the offsets/skews everything else is measured from. This function used to resolve them
+    # three times over and build the crossing bands twice from different arguments - see
+    # src/render/scene.py for what that cost.
+    scene = SceneGeometry.resolve(model, state, crossings)
+    pavement = scene.pavement
 
-    crosswalk_skews = resolve_crosswalk_skews(state, crossings)
+    model.parcels.boundary.plot(ax=ax, color="tan", linewidth=0.6, zorder=1)
+    model.corner_parcels.boundary.plot(ax=ax, color="saddlebrown", linewidth=1.5, zorder=1)
+
+    _draw(ax, [pavement], color="#d9d9d9", zorder=2)
+
+    # Real OSM sidewalk centerlines, drawn behind everything else. These are what the
+    # crossing ways actually connect to, and they bound where the curb can possibly be
+    # (src/geometry/model.py:sidewalk_span_ft) - so having them on the plot is what makes
+    # an over-wide leg visible instead of merely arguable.
+    _draw(ax, sidewalk_lines_ft(sidewalks), color="steelblue", linewidth=1.0,
+          linestyle=(0, (4, 2)), alpha=0.65, zorder=2)
+
+    # Curb lines as the corners trim them. The raw lines overshoot into the junction on
+    # purpose (fillet material), so drawing them raw would draw curb across the middle of
+    # the intersection - marking a curb that isn't there and isn't in the 3D render.
+    # Grouped by provenance tier, since that is what decides the style.
+    curbs_by_leg = trimmed_curb_lines(state.legs, state.corner_fillets)
+    curbs_by_tier: dict[str, list] = {}
+    for name, leg in state.legs.items():
+        tier = built_width_provenance(leg, model.config["legs"][name])
+        curbs_by_tier.setdefault(tier, []).extend(curbs_by_leg[name].values())
+        if dimension_labels:
+            mid = leg.centerline.interpolate(min(leg.centerline.length * 0.85, leg.centerline.length - 5))
+            ax.annotate(f"{leg.curb_to_curb_ft:.1f} ft", (mid.x, mid.y), fontsize=7,
+                        color=PLOT_STYLE[tier]["color"], ha="center",
+                        bbox=dict(boxstyle="round,pad=0.15", fc="white", ec="none", alpha=0.75))
+    for tier, curbs in curbs_by_tier.items():
+        _draw(ax, curbs, linewidth=2, zorder=3, **PLOT_STYLE[tier])
+
+    arcs = []
+    for corner, pieces in state.corner_fillets.items():
+        if "error" in pieces:
+            continue
+        arcs.append(pieces["arc"])
+        # `is not None` as well as `in`: a corner that is not a corner - two legs of one street
+        # running through the junction - has no radius, and reaching for one crashed the build.
+        if dimension_labels and pieces.get("radius_ft") is not None:
+            mid = pieces["arc"].interpolate(0.5, normalized=True)
+            ax.annotate(f"R={pieces['radius_ft']:.0f} ft", (mid.x, mid.y), fontsize=7, color="darkorange",
+                        fontweight="bold", ha="center",
+                        bbox=dict(boxstyle="round,pad=0.15", fc="white", ec="none", alpha=0.85))
+    _draw(ax, arcs, color="darkorange", linewidth=2.5, zorder=4)
+
+    _draw(ax, [island["polygon"] for island in state.refuge_islands.values()],
+          color="seagreen", alpha=0.6, zorder=5,
+          boundary=dict(color="darkgreen", linewidth=1, zorder=5))
+    if dimension_labels:
+        for island in state.refuge_islands.values():
+            c = island["polygon"].centroid
+            ax.annotate(f"refuge\n{island['width_ft']:.0f} ft", (c.x, c.y), fontsize=6.5, color="darkgreen",
+                        ha="center", va="center", fontweight="bold")
+
+    _draw(ax, state.raised_crossings.values(), color="slateblue", alpha=0.35, hatch="//", zorder=2,
+          boundary=dict(color="slateblue", linewidth=1, zorder=2))
+    if dimension_labels:
+        for poly in state.raised_crossings.values():
+            c = poly.centroid
+            ax.annotate("raised\ncrossing", (c.x, c.y), fontsize=6.5, color="indigo",
+                        ha="center", va="center", fontweight="bold")
 
     _draw_surveyed_crossings(ax, crossings)
-    _draw_crosswalks(ax, model, state, crosswalk_offsets, crosswalk_skews, dimension_labels,
-                      pavement)
-    props = _draw_props(ax, model, state, crosswalk_offsets, traffic_control, street_furniture,
-                         crossings, dimension_labels)
+    _draw_crosswalks(ax, scene, dimension_labels)
+    props = _draw_props(ax, model, state, scene.crosswalk_offsets, traffic_control,
+                         street_furniture, crossings, dimension_labels)
 
     # Every painted marking comes from src/geometry/paint.py - the same builder the 3D
     # export draws from and src/checks.py inspects. This block used to assemble the paint
     # itself, in parallel with export.py doing the same, and the two had already drifted on
     # where a parking buffer's taper starts and on whether taper fill is cut around a
     # crossing. Both views now show the same geometry because it IS the same geometry.
-    marked = set(model.config["intersection"].get("existing_marked_crosswalks", []))
-    bands = crosswalk_bands_ft(state, crosswalk_offsets, crosswalk_skews,
-                                CROSSWALK_DEPTH_M / FT_TO_M, pavement,
-                                crosswalk_reaches_ft(state, crosswalk_offsets, crosswalk_skews,
-                                                      pavement, marked))
-    paint = curbside_paint_ft(state, crosswalk_offsets, model.center_ft, bands, props,
-                               marked_crosswalks=marked)
+    paint = scene.build_paint(props)
 
-    STYLE = {   # kind -> (matplotlib kwargs, whether it's a filled/hatched zone)
-        "lane_narrowing_fill":  dict(color="gold", alpha=0.5, hatch="//", zorder=3),
-        "taper_fill":           dict(color="gold", alpha=0.5, hatch="//", zorder=3),
-        "buffer_fill":          dict(color="gold", alpha=0.5, hatch="//", zorder=3),
-        # The statutory no-parking zone at the corner (R.S. 39:4-138). Drawn in a distinct
-        # colour from the ordinary buffer hatch because it is a different claim: not "this
-        # asphalt is spare", but "parking here is illegal and this proposal marks it".
-        "daylight_fill":        dict(color="orangered", alpha=0.40, hatch="xx", zorder=3),
-        "corner_hatch_fill":    dict(color="gold", alpha=0.5, hatch="//", zorder=3),
-        "apron":                dict(color="peru", alpha=0.6, zorder=3),
-        "lane_edge_line":       dict(color="goldenrod", linewidth=1.5, zorder=3),
-        "taper_line":           dict(color="goldenrod", linewidth=1.5, zorder=3),
-        "buffer_edge_line":     dict(color="goldenrod", linewidth=1.5, zorder=3),
-        "daylight_edge_line":   dict(color="orangered", linewidth=1.5, zorder=3),
-        "crossing_rim_line":    dict(color="orangered", linewidth=1.5, zorder=3),
-        # The square end of a zone with no crossing to be cut by and no room to taper.
-        "zone_end_line":        dict(color="goldenrod", linewidth=1.5, zorder=3),
-        "parking_edge_line":    dict(color="steelblue", linewidth=1.5, zorder=3),
-        "stall_divider":        dict(color="steelblue", linewidth=1, zorder=3),
-    }
-    EDGE = {"gold": "goldenrod", "peru": "saddlebrown", "orangered": "orangered"}
-
+    # All pieces of one kind in one collection. A proposal builds well over a hundred, and
+    # adding a matplotlib collection costs more the more are already there - drawn one at a
+    # time this was the single most expensive thing in a 2D build. See _draw.
+    by_kind: dict[str, list] = {}
+    bollards = []
     for piece in paint:
         if piece.kind == "bollard":
-            c = piece.geometry.centroid
-            ax.scatter([c.x], [c.y], color=BOLLARD_PLAN_COLOR, marker="o", s=10, zorder=6)
-            continue
-        style = STYLE.get(piece.kind)
-        if style is None:
-            continue
-        series = gpd.GeoSeries([piece.geometry])
-        series.plot(ax=ax, **style)
-        if piece.is_fill:
-            series.boundary.plot(ax=ax, color=EDGE[style["color"]], linewidth=1, zorder=3)
+            bollards.append(piece.geometry.centroid)
+        elif piece.kind in PAINT_STYLE:
+            by_kind.setdefault(piece.kind, []).append(piece.geometry)
+    for kind, geometries in by_kind.items():
+        style = PAINT_STYLE[kind]
+        # A filled zone gets its outline drawn too; a line has no boundary. Read off the
+        # geometry, the same test PaintPiece.is_fill makes - every piece of one kind comes
+        # from one builder, so a group is homogeneous.
+        edge = (dict(color=PAINT_FILL_EDGE[style["color"]], linewidth=1, zorder=3)
+                if geometries[0].geom_type == "Polygon" else None)
+        _draw(ax, geometries, boundary=edge, **style)
+    if bollards:
+        ax.scatter([p.x for p in bollards], [p.y for p in bollards],
+                   color=BOLLARD_PLAN_COLOR, marker="o", s=10, zorder=6)
 
     if dimension_labels:
-        _label_paint(ax, state, paint, crosswalk_offsets)
+        _label_paint(ax, state, paint)
         _label_parking_legality(ax, model, state)
 
     ax.scatter([model.center_ft.x], [model.center_ft.y], color="blue", zorder=6, s=40)
 
-    _draw_centerlines(ax, state, crosswalk_offsets,
-                       stop_bar_offsets_for(model, state, crossings), marked)
+    _draw_centerlines(ax, scene)
 
-    violations = _mark_violations(ax, model, state, crossings, props, paint, pavement)
+    violations = _mark_violations(ax, scene, props, paint)
 
     ax.set_title(title, fontsize=11)
     ax.set_aspect("equal")
@@ -414,7 +448,7 @@ def plot_design_state(ax, model: IntersectionModel, state: DesignState, title: s
 DOUBLE_YELLOW_GAP_FT = 0.1 / FT_TO_M
 
 
-def _draw_centerlines(ax, state, crosswalk_offsets, stop_bar_offsets, marked):
+def _draw_centerlines(ax, scene: SceneGeometry):
     """The leg centerline (the measurement datum) and the painted centerline on top of it.
 
     Both were missing. The datum matters because every width in this drawing - the 11 ft
@@ -426,6 +460,7 @@ def _draw_centerlines(ax, state, crosswalk_offsets, stop_bar_offsets, marked):
     The paint starts where src/render/crosswalks.py:centerline_start_ft says, which is at the
     stop bar - the same rule the export uses, not a second copy of it.
     """
+    state = scene.state
     for leg_name, leg in state.legs.items():
         # The datum: thin, grey, dotted, the full length of the leg. Deliberately
         # unobtrusive - it is a construction line, not a marking on the road.
@@ -433,11 +468,11 @@ def _draw_centerlines(ax, state, crosswalk_offsets, stop_bar_offsets, marked):
                 zorder=4)
 
         style = state.centerline_styles.get(leg_name, DEFAULT_CENTERLINE_STYLE)
-        if style == "none" or leg_name not in crosswalk_offsets:
+        if style == "none" or leg_name not in scene.crosswalk_offsets:
             continue
-        start_ft = centerline_start_ft(crosswalk_offsets[leg_name][0],
-                                        stop_bar_offsets.get(leg_name),
-                                        leg_name in marked)
+        start_ft = centerline_start_ft(scene.crosswalk_offsets[leg_name].offset_ft,
+                                        scene.stop_bar_offsets.get(leg_name),
+                                        leg_name in scene.marked_crosswalks)
         if start_ft >= leg.centerline.length:
             continue
         painted = substring(leg.centerline, start_ft, leg.centerline.length)
@@ -518,7 +553,7 @@ def _offset_of(leg, point):
     return float(offsets[0])
 
 
-def _label_paint(ax, state, paint, crosswalk_offsets):
+def _label_paint(ax, state, paint):
     """Dimension labels for the curbside paint: what each treatment actually measures.
 
     One lane label PER SIDE narrowed, offset into that lane - not a single label on the
@@ -551,38 +586,20 @@ def _label_paint(ax, state, paint, crosswalk_offsets):
                     bbox=dict(boxstyle="round,pad=0.15", fc="white", ec="none", alpha=0.75))
 
 
-def stop_bar_offsets_for(model, state, crossings):
-    """{leg: offset} for a signalized junction, else {} - the same resolution the export and
-    the invariant check use, so all three agree on where the bar is."""
-    if not model.config.get("signals"):
-        return {}
-    return resolve_stop_bar_offsets(
-        state, resolve_crosswalk_offsets(state, crossings),
-        fetch_stop_lines(model.center_wgs84, radius_m=BUILDING_CONTEXT_RADIUS_M))
-
-
-def _mark_violations(ax, model, state, crossings, props, paint, pavement=None):
+def _mark_violations(ax, scene: SceneGeometry, props, paint):
     """Run the scene invariants and draw whatever failed, right where it failed.
 
     The plan view reports rather than raises, and the phase script asserts after saving -
     so a failure always arrives with a picture of itself. Reading "tactile pad 40% in the
     roadway at (419160, 566742)" next to a red ring around that exact pad is the difference
     between one round trip and several.
+
+    Checked against `scene`, so this validates the geometry the figure above actually drew.
+    It used to re-resolve everything from `crossings` and rebuild the crossing bands without
+    the mutual-exclusion reaches, which made it a check on a third set of geometry that
+    neither the 2D view nor the 3D render used.
     """
-    from src.checks import check_scene
-
-    offsets = resolve_crosswalk_offsets(state, crossings)
-    skews = resolve_crosswalk_skews(state, crossings)
-    stop_offsets = (resolve_stop_bar_offsets(
-        state, offsets, fetch_stop_lines(model.center_wgs84, radius_m=BUILDING_CONTEXT_RADIUS_M))
-        if model.config.get("signals") else {})
-
-    violations = check_scene(
-        model, state, props, pavement,
-        crosswalk_bands=crosswalk_bands_ft(state, offsets, skews, CROSSWALK_DEPTH_M / FT_TO_M,
-                                            pavement),
-        stop_bars=stop_bar_bands_ft(state, stop_offsets, skews),
-        paint=paint, crosswalk_offsets=offsets)
+    violations = scene.check(props, paint)
 
     located = [v for v in violations if v.where]
     if located:

@@ -4,9 +4,42 @@ without mutating the baseline (existing-conditions) model."""
 from copy import deepcopy
 from dataclasses import dataclass, field
 
+import numpy as np
 from shapely.geometry import Polygon
 
-from src.geometry.model import Leg, build_pavement_polygon, fillet_curb_corner, leg_clearance_ft
+from src.geometry.model import build_pavement_polygon, fillet_curb_corner, leg_clearance_ft
+
+
+def _band_across_the_road(centerline, from_ft: float, to_ft: float, half_width_ft: float,
+                           what: str) -> Polygon:
+    """The rectangle spanning `half_width_ft` either side of a leg, between two stations.
+
+    Shared by refuge_island and raise_crossing, which built the same shape from the same
+    three interpolations and the same normal - and divided by the length of (p_far - p_near)
+    without checking it. That vector collapses whenever both stations clamp to the same point,
+    which is not hypothetical: leg_clearance_ft returns 133 ft on W Broad & Louellen's 130 ft
+    southwest leg (its acute Y makes the corner return eat the whole leg), so raise_crossing
+    there interpolated both ends to the leg's far end and divided by zero. A ZeroDivisionError
+    out of a treatment function says nothing about the junction; the error below does.
+    """
+    near = centerline.interpolate(max(min(from_ft, centerline.length), 0.0))
+    far = centerline.interpolate(max(min(to_ft, centerline.length), 0.0))
+    dx, dy = far.x - near.x, far.y - near.y
+    length = np.hypot(dx, dy)
+    if length < 1e-9:
+        raise ValueError(
+            f"Can't place a {what} between {from_ft:.1f} ft and {to_ft:.1f} ft along a "
+            f"{centerline.length:.1f} ft leg - both ends land on the same point, so the shape "
+            f"has no extent along the road. The leg is too short for it (usually a corner "
+            f"return consuming the whole leg - see leg_clearance_ft).")
+    ux, uy = dx / length, dy / length
+    nx, ny = -uy, ux            # unit normal, across the road
+    return Polygon([
+        (near.x + nx * half_width_ft, near.y + ny * half_width_ft),
+        (far.x + nx * half_width_ft, far.y + ny * half_width_ft),
+        (far.x - nx * half_width_ft, far.y - ny * half_width_ft),
+        (near.x - nx * half_width_ft, near.y - ny * half_width_ft),
+    ])
 
 NACTO_MIN_REFUGE_ISLAND_WIDTH_FT = 6
 LANE_NARROWING_DEFAULT_STRIPE_FT = 5.0  # common low-cost NACTO paint buffer/shoulder-stripe width
@@ -170,25 +203,11 @@ def refuge_island(state: DesignState, leg_name: str, offset_ft: float, width_ft:
         )
     new_state = state.clone()
     leg = new_state.legs[leg_name]
-    centerline = leg.centerline
-
-    p0 = centerline.interpolate(max(offset_ft - along_road_ft / 2, 0))
-    p1 = centerline.interpolate(offset_ft)
-    p2 = centerline.interpolate(min(offset_ft + along_road_ft / 2, centerline.length))
-    dx, dy = p2.x - p0.x, p2.y - p0.y
-    length = (dx**2 + dy**2) ** 0.5
-    ux, uy = dx / length, dy / length          # unit vector along the road
-    nx, ny = -uy, ux                            # unit normal (perpendicular)
-
-    half_w = width_ft / 2
-    corners = [
-        (p0.x + nx * half_w, p0.y + ny * half_w),
-        (p2.x + nx * half_w, p2.y + ny * half_w),
-        (p2.x - nx * half_w, p2.y - ny * half_w),
-        (p0.x - nx * half_w, p0.y - ny * half_w),
-    ]
+    polygon = _band_across_the_road(leg.centerline, offset_ft - along_road_ft / 2,
+                                     offset_ft + along_road_ft / 2, width_ft / 2,
+                                     f"{width_ft:.0f} ft refuge island")
     island_name = name or f"{leg_name}_refuge_{int(offset_ft)}ft"
-    new_state.refuge_islands[island_name] = {"polygon": Polygon(corners), "width_ft": width_ft}
+    new_state.refuge_islands[island_name] = {"polygon": polygon, "width_ft": width_ft}
     new_state.notes.append(f"refuge_island({leg_name}, offset_ft={offset_ft}, width_ft={width_ft})")
     return new_state
 
@@ -204,27 +223,14 @@ def raise_crossing(state: DesignState, leg_name: str, crossing_width_ft: float =
     if leg.left_curb is None or leg.right_curb is None:
         raise ValueError(f"Leg {leg_name!r} has no curb lines (width unknown) - can't place a crossing on it.")
 
-    centerline = leg.centerline
     # Start beyond the curve of this leg's corner fillets, not at the
     # intersection point itself - a crossing placed right at the corner point
     # lands inside the curb-return curve rather than on the straight section
     # of roadway where a real crosswalk would sit.
     start = leg_clearance_ft(leg_name, new_state.legs, new_state.corner_fillets)
-    p0 = centerline.interpolate(min(start, centerline.length))
-    p1 = centerline.interpolate(min(start + crossing_width_ft, centerline.length))
-    dx, dy = p1.x - p0.x, p1.y - p0.y
-    length = (dx**2 + dy**2) ** 0.5
-    ux, uy = dx / length, dy / length
-
-    half_w = leg.curb_to_curb_ft / 2
-    nx, ny = -uy, ux
-    corners = [
-        (p0.x + nx * half_w, p0.y + ny * half_w),
-        (p1.x + nx * half_w, p1.y + ny * half_w),
-        (p1.x - nx * half_w, p1.y - ny * half_w),
-        (p0.x - nx * half_w, p0.y - ny * half_w),
-    ]
-    new_state.raised_crossings[leg_name] = Polygon(corners)
+    new_state.raised_crossings[leg_name] = _band_across_the_road(
+        leg.centerline, start, start + crossing_width_ft, leg.curb_to_curb_ft / 2,
+        f"{crossing_width_ft:.0f} ft raised crossing on {leg_name!r}")
     new_state.notes.append(f"raise_crossing({leg_name}, crossing_width_ft={crossing_width_ft})")
     return new_state
 
@@ -502,25 +508,6 @@ def build_sidewalk_pieces(state: DesignState, sidewalk_width_ft: float = 6) -> l
             pieces.extend(g for g in getattr(band, "geoms", [band])
                           if g.geom_type == "Polygon" and g.is_valid and not g.is_empty)
     return pieces
-
-
-def _append_band(pieces: list, inner_line, outer_line) -> None:
-    """Append the quad between an inner and outer curb/arc line, skipping the pair
-    if together they can't form a ring.
-
-    Where two legs meet at a nearly straight angle - the "corner" opposite the stem
-    of a T or Y junction, e.g. w_broad_st_northeast/w_broad_st_southwest at 170.9
-    degrees - the fillet's tangent points can consume essentially the whole curb
-    segment, leaving a trimmed line of one or even zero coordinates. A ring needs 4,
-    so building a Polygon from such a pair raises instead of just producing a
-    degenerate shape the `is_valid` filter would drop. Skip it: this band is
-    explicitly visual context for the Phase 4 render, not survey-grade geometry, and
-    a sliver of sidewalk across the far side of a T is not worth failing the export.
-    """
-    coords = list(inner_line.coords) + list(reversed(outer_line.coords))
-    if len(coords) < 4:
-        return
-    pieces.append(Polygon(coords))
 
 
 # Spacing by device. A flex-post line reads as a delineator at 8 ft.

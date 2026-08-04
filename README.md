@@ -141,6 +141,75 @@ Everything specific to one intersection lives under `sites/<name>/` - `src/` is 
 3. Create `sites/<name>/scenarios.py` exposing `build_demo_scenario(baseline) -> DesignState` (copy `sites/broad_st_greenwood/scenarios.py` as a template).
 4. Run the Quick start commands with `--site <name>`.
 
+## Adding something new to the street
+
+Kerbs, driveways, bike lanes, green surfacing, flex posts and raised crossings all went in the same way, and each of them shipped the same handful of bugs on the way. They are not coincidences — they are the seams of this pipeline, and every one of them is a place where two pieces of code have to agree about the same shape. The checklists below exist so the next element pays for those mistakes once rather than again.
+
+### First decide which of three things it is
+
+| It is… | so it lives… | seeded/applied by |
+|---|---|---|
+| **a fact about the street as it exists** (a kerb, a driveway, a parking prohibition, a crossing) | on `IntersectionModel`, resolved **once** at load | `load_intersection_model()`, then read onto the state by `DesignState.from_model()` |
+| **a decision a proposal makes** (narrow this lane, protect this kerb) | as a `Treatment` subclass, with its derived geometry as a *method* | `state.apply(...)` |
+| **a way of drawing something already decided** (green asphalt, a dashed kerb, a taller kerb) | as a `PaintKind` in `src/geometry/markings.py`, or a prop | the treatment's `paint`, or `src/render/props.py` |
+
+Getting this wrong is the single most expensive mistake available here. A fact modelled as a treatment cannot be read by anything that has only a model; a decision materialised at apply time freezes a snapshot the rest of the design then moves out from under (see "The design is the list of treatments"); and geometry built inside a renderer is geometry the *other* renderer will build differently.
+
+### A real-world fact belongs on the model, fetched once
+
+Driveways were fetched and projected in **three** places — the plan view, the export, and the opening logic — each with its own radius constant. That is precisely the divergence `SceneGeometry` was built to stop, committed again one layer down, and it is invisible from any one call site because each fetch looks locally reasonable. If a new element comes from OSM:
+
+1. Add the fetcher to `src/sources/osm_context.py` (it will be a view over the same cached borough snapshot — no new network call).
+2. Project it to feet **in `src/geometry/intersection.py`**, store it as a frozen dataclass on the model, and give that dataclass the derived geometry every consumer wants (`Driveway.surface`, not `driveway_width_m` for each renderer to re-widen).
+3. If `DesignState.from_model()` reads it, guard the attribute — the test doubles are deliberately partial models. `kerbs.py:kerb_openings_from_model` checks `hasattr(model, …)` for exactly this reason.
+4. **Refresh the test fixture separately from the cache.** `output/.cache/borough_*.json` is what a build reads; `tests/fixtures/osm_cache/` is what the suite reads, and it does not update itself.
+
+### A new marking touches six places, and five of them are checked
+
+| Where | What | What happens if you forget |
+|---|---|---|
+| `src/geometry/markings.py` | `_kind(name, Role, Channel)` — the declaration | nothing else works; this is the registry |
+| `plan_view.PAINT_STYLE` | how the 2D view draws it | `require_every_kind` raises **at import** |
+| `plan_view.legend_handles()` | its swatch | `test_every_marking_the_plan_view_draws_is_in_its_legend` fails |
+| `src/render/export.py` | serialisation | automatic from `CHANNELS` — *unless* the marking needs a new `Role`, which needs a new branch |
+| `scripts/blender/blender_scene.py` | how the 3D render draws that channel | **nothing catches this.** Blender runs under its own Python and cannot import `src`, so `markings.CHANNELS` is a data contract with no type behind it |
+| `src/render/props.py` | only for `Role.OBJECT` | `post_not_in_the_render` fails the build |
+
+That fifth row is the one unguarded seam in the project, and it is where the bike lane's bollards shipped visible in 2D and absent in 3D. **After adding a channel, look at the render**, not just the JSON.
+
+### Build derived geometry once, from the thing that bounds it
+
+The green bike-lane surface was first built by differencing two kerbside strips. Where the traced kerb is unmapped that difference **overshot its own outer stripe by 6.6 ft**, and neither `MarkingsDoNotCollide` nor `PaintInsideTheCurb` fired — correctly, since there was no other paint there and no traced kerb to be outside of. `model.offset_band_polygon(leg, side, inner, outer, start, end)` builds a band from the two offsets that actually define it, on the same station grid and with the same kerb clamping `inset_line_ft` uses, so a band and the stripes drawn at its edges cannot disagree.
+
+The corollary is a habit, not an API: **measure the geometry you just built.** Print its extent, its area, its distance to the thing it is supposed to touch. Every geometry bug in this repo's history was found by measuring and missed by looking.
+
+### Anything drivable has to break where the kerb opens
+
+`PaintContext.add` clips new paint against surfaces, keep-clear zones and kerb openings, in that order. `PaintContext.emit` deliberately does **not** — a post is a point, not a stripe — so a new element routed through `emit`, or built directly in a prop builder, will happily stand in a driveway. Seven of E Broad's 26 flex posts did. That is worse than not breaking the paint at all: it draws a protected lane whose protection you are expected to drive through. Any new object placed along a kerb needs `stands_in_an_opening(state.kerb_openings, geometry)` applied to it.
+
+### Keep surveyed and assumed numbers separate, and name the assumption
+
+A driveway's mouth is surveyed (the extent of the `kerb=lowered` way); a driveway's own *width* is not — not one of the 43 mapped here carries a `width` tag. Both are "how wide the driveway is" in English and they are 10 ft vs 37 ft on E Broad. So the assumed one is named for what it is (`DRIVEWAY_DRAWN_WIDTH_FT`), documented on `Driveway.width_ft` as the only assumed number in the driveway path, labelled in the legend ("width DRAWN is assumed"), and **loses** to the surveyed extent wherever both exist. When a new element mixes the two, make the constant's name say which it is.
+
+### A new element also has to be *distinguishable*
+
+Driveways were drawn from the day they were modelled, as a thin dashed brown-grey centreline — on a drawing that already carries parcel lines, sidewalk centrelines and leg centrelines at similar weights. They were indistinguishable from three other things, which for review purposes is the same as absent. A new element that is one more line among the lines needs a fill, a weight or a hatch, not just another colour.
+
+### The verification loop
+
+In this order, because each step is cheaper than the next:
+
+1. **Write the test first, and confirm it fails against the pre-change code** (`git stash`, or a worktree — if you use a worktree, symlink the gitignored `data/` into it, or every run crashes in 0.6 s and you will read that as a result).
+2. `scripts/export_all_scenarios.py /tmp/before` → change → `/tmp/after` → `scripts/diff_exports.py`. Thirteen scenes, ~2 s, key by key. This runs `export_scenario`, so it resolves the scene, builds the paint and the props and asserts every invariant.
+3. `scripts/test.sh` and `pyflakes $(git ls-files '*.py')`.
+4. `scripts/build_all.py --render-3d`, and then **look at the PNGs** — the only check on the Blender seam.
+
+### Small gotchas that cost real time
+
+- **geopandas rejects dash-tuple linestyles** (`ValueError: inhomogeneous shape`). Use named linestyles (`"--"`, `":"`, `"-."`) in any style dict a GeoSeries plot will see.
+- **Place an OSM way as a whole, not vertex by vertex.** Filtering a kerb way's vertices by offset collapsed 4 of 6 openings to 0.0 ft, because a dropped kerb across a driveway mouth is drawn *across* the leg, not along it. `kerbs.py:_place_on_a_leg_side` takes the median offset and station of the way, then measures its span from all of its vertices.
+- **Height ordering in 3D is manual.** Pavement extrudes 0.05 m and anything on top of it must be taller. Nothing checks this; sidewalks are currently 0.03 and therefore sit *below* the road.
+
 ## The core design principle
 
 **Never trust a generic/geometric guess when real, sourced data exists.** This project repeatedly found that "obvious" defaults (a road network's own width attribute, a geocoder's address match, an assumed corner radius, OSM's map style tag, a CC0 asset's fitness for a specific use) were wrong, missing, or the wrong tool for the job, and the fix was always to go find the authoritative source instead. Concretely:
@@ -392,4 +461,8 @@ Unlike crosswalks, OSM has no tag for what's painted down the middle of a road, 
 - ~~Asset-library question (Poly Haven PBR textures, free low-poly prop packs)~~ **Resolved** - real Poly Haven textures (asphalt/concrete) and a real streetlight model are wired in; procedural fallbacks (flagged, not hidden) cover what has no viable CC0 source (signage, low-poly trees). See "Phase 4 fidelity" above.
 - Only one demo treatment scenario exists per site (`build_demo_scenario`). Additional scenarios would just be new functions in that site's `scenarios.py` composing the same treatment primitives.
 - Prop placement (streetlights, stop signs, the school zone sign) is grounded in real corner/leg geometry but the *exact* setback/offset distances are approximations, not a surveyed signage inventory - flagged via each prop's `"source"` field in the exported JSON.
+- **A driveway strip is not clipped at the kerb.** An OSM driveway way runs to the road's *centreline*, so widening it into a strip paints over the carriageway. Measured across all four sites (ten driveway/site pairs, eight distinct ways — the two at E Broad fall inside Columbia & Princeton's context radius as well), exactly one does this: way `772378207` at E Broad, 187 of its 1,577 sq ft (12%) inside the modelled roadway, visible in the plan view as a tan band over the travel lane. Every other pair overlaps 0%, because they connect beyond where the modelled legs stop.
+- **Only one mapped driveway reaches a modelled kerb** (`772378207`). The rest are 21.7–352 ft from one, so they render as strips ending in grass — the legs stop at ~130 ft, not the driveways being wrong. Conversely most dropped kerbs near these junctions have no driveway way mapped at all (nearest 200–500 ft), so most openings are surveyed kerb with nothing visible behind them.
+- Sidewalks extrude 0.03 m against pavement's 0.05, so a footway sits *below* the road surface in the 3D render.
+- The bike lane's 2 ft buffer, with this project's 0.82 ft (10 in) edge stripes, leaves 0.36 ft of visible asphalt between them, so the buffer's diagonal hatching no longer reads in 3D. Three ways out: widen the buffer, narrow `LANE_EDGE_LINE_WIDTH_FT` toward a real 6 in, or stop hatching a buffer that narrow. Not chosen yet.
 - Building mesh decimation is implemented but currently a no-op for this site (its OSM footprints are all simple enough to stay under the 40-face threshold) - it'll matter once/if a site uses richer building data.

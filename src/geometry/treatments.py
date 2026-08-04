@@ -262,8 +262,6 @@ class DesignState:
     chains cleanly and the original scenario is never touched."""
     legs: dict
     corner_fillets: dict
-    refuge_islands: dict = field(default_factory=dict)   # name -> {"polygon": Polygon, "width_ft": float}
-    raised_crossings: dict = field(default_factory=dict)  # leg name -> Polygon
     # leg name -> what is painted down that leg's middle TODAY, one of VALID_CENTERLINE_STYLES.
     # An OBSERVED FACT and not a treatment's parameter, which is why it survived the collapse
     # alongside parking_restrictions: from_model seeds it from config.yaml (street-view
@@ -525,14 +523,31 @@ class RefugeIsland(Treatment):
         return (f"RefugeIsland({self.target}, offset_ft={self.offset_ft}, "
                 f"width_ft={self.width_ft})")
 
-    def apply_to(self, state: "DesignState", model=None) -> None:
+    @property
+    def island_name(self) -> str:
+        """What this island is called in the exported geometry. Defaults to its leg and station,
+        so two islands on one leg are distinguishable without either being named by hand."""
+        return self.name or f"{self.target.leg}_refuge_{int(self.offset_ft)}ft"
+
+    def polygon(self, state: "DesignState") -> Polygon:
+        """The ground this island occupies, measured against the design it is asked about.
+
+        Resolved here rather than frozen into state.refuge_islands when the treatment was
+        applied. Both raise_crossing and this one used to build their polygon in apply_to, which
+        made the shape depend on WHEN in a scenario the treatment ran - a design is a set of
+        decisions, not a sequence of snapshots, and every marking in this project is already
+        resolved against the final street for exactly that reason.
+        """
         leg = state.legs[self.target.leg]
-        polygon = _band_across_the_road(leg.centerline, self.offset_ft - self.along_road_ft / 2,
-                                         self.offset_ft + self.along_road_ft / 2,
-                                         self.width_ft / 2,
-                                         f"{self.width_ft:.0f} ft refuge island")
-        island_name = self.name or f"{self.target.leg}_refuge_{int(self.offset_ft)}ft"
-        state.refuge_islands[island_name] = {"polygon": polygon, "width_ft": self.width_ft}
+        return _band_across_the_road(leg.centerline, self.offset_ft - self.along_road_ft / 2,
+                                      self.offset_ft + self.along_road_ft / 2,
+                                      self.width_ft / 2,
+                                      f"{self.width_ft:.0f} ft refuge island")
+
+    def apply_to(self, state: "DesignState", model=None) -> None:
+        # Built and discarded, for the refusal only: a leg too short to hold the band says so
+        # here, where the scenario that asked for it is on the stack, rather than in a renderer.
+        self.polygon(state)
 
 
 @dataclass(frozen=True)
@@ -549,7 +564,15 @@ class RaiseCrossing(Treatment):
     def describe(self) -> str:
         return f"RaiseCrossing({self.target}, crossing_width_ft={self.crossing_width_ft})"
 
-    def apply_to(self, state: "DesignState", model=None) -> None:
+    def polygon(self, state: "DesignState") -> Polygon:
+        """The speed table's footprint, measured against the design it is asked about.
+
+        Resolved here rather than frozen into state.raised_crossings at apply time, and for this
+        treatment that is not merely tidier: the start station comes from leg_clearance_ft, which
+        reads the corner fillets, and AddCurbExtension re-cuts them. Applied before an extension
+        on the same leg, this used to keep the corner it happened to be measured against while
+        every other marking followed the kerb that moved.
+        """
         leg = state.legs[self.target.leg]
         if leg.left_curb is None or leg.right_curb is None:
             raise ValueError(f"Leg {self.target.leg!r} has no curb lines (width unknown) - "
@@ -559,9 +582,15 @@ class RaiseCrossing(Treatment):
         # lands inside the curb-return curve rather than on the straight section
         # of roadway where a real crosswalk would sit.
         start = leg_clearance_ft(self.target.leg, state.legs, state.corner_fillets)
-        state.raised_crossings[self.target.leg] = _band_across_the_road(
+        return _band_across_the_road(
             leg.centerline, start, start + self.crossing_width_ft, leg.curb_to_curb_ft / 2,
             f"{self.crossing_width_ft:.0f} ft raised crossing on {self.target.leg!r}")
+
+    def apply_to(self, state: "DesignState", model=None) -> None:
+        # Built and discarded, for the refusals only - a leg with no traced kerbs, or one whose
+        # corner return consumes its whole length (W Broad & Louellen's southwest leg: 133 ft of
+        # clearance on 130 ft of leg). Both are things the scenario author needs told.
+        self.polygon(state)
 
 
 VALID_CROSSWALK_STYLES = ("lines", "continental", "ladder")

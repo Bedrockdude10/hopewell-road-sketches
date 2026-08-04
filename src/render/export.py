@@ -26,7 +26,8 @@ from src.render.scene import SceneGeometry
 from src.sources.osm_context import (fetch_buildings, fetch_crossings, fetch_kerbs,
                                      fetch_street_furniture, fetch_traffic_control)
 from src.render.props import build_props, control_nodes_ft, osm_tree_points_ft
-from src.geometry.treatments import DesignState, build_sidewalk_pieces
+from src.geometry.treatments import (DesignState, RaiseCrossing, RefugeIsland,
+                                      build_sidewalk_pieces)
 
 BUILDING_CONTEXT_RADIUS_M = 130
 KERB_RADIUS_M = 120
@@ -351,17 +352,24 @@ def export_scenario(model: IntersectionModel, state: DesignState, name: str, out
             }
             for leg_name, leg in state.legs.items()
         ],
+        # Both of these are DERIVED GEOMETRY rather than parameters: the treatment builds the
+        # polygon, against this design, at the moment it is asked (RefugeIsland.polygon /
+        # RaiseCrossing.polygon). They used to be materialised onto the state at apply time,
+        # which made a raised crossing's footprint depend on where in a scenario it was applied -
+        # its start station reads the corner fillets, and AddCurbExtension re-cuts them.
         "refuge_islands": [
             {
-                "name": island_name,
-                "coords": ring_to_local_m(island["polygon"].exterior.coords, center_ft),
+                "name": island.island_name,
+                "coords": ring_to_local_m(island.polygon(state).exterior.coords, center_ft),
                 "height_m": 0.15,
             }
-            for island_name, island in state.refuge_islands.items()
+            for island in state.treatments_of(RefugeIsland)
         ],
         "raised_crossings": [
-            {"name": leg_name, "coords": ring_to_local_m(poly.exterior.coords, center_ft), "height_m": 0.10}
-            for leg_name, poly in state.raised_crossings.items()
+            {"name": raised.target.leg,
+             "coords": ring_to_local_m(raised.polygon(state).exterior.coords, center_ft),
+             "height_m": 0.10}
+            for raised in state.treatments_of(RaiseCrossing)
         ],
         "corner_parcels": [
             {"name": str(row["quadrant"]), "coords": ring_to_local_m(row.geometry.exterior.coords, center_ft)}

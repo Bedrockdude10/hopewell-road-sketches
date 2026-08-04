@@ -9,7 +9,7 @@ from shapely.ops import substring
 
 from src.geometry.model import inset_point_at_station, trimmed_curb_lines
 from src.geometry.intersection import IntersectionModel, kerb_lines_with_tags_ft
-from src.geometry.treatments import DesignState
+from src.geometry.treatments import DesignState, RaiseCrossing, RefugeIsland
 from src.provenance import PLOT_STYLE, built_width_provenance
 from src.geometry import markings
 from src.geometry.markings import require_every_kind
@@ -252,7 +252,7 @@ def _draw_crosswalks(ax, scene: SceneGeometry, dimension_labels: bool):
     view exists to catch rather than commit.
     """
     state = scene.state
-    raised = set(state.raised_crossings)
+    raised = {t.target.leg for t in state.treatments_of(RaiseCrossing)}
     # Grouped by how each band gets drawn, which turns on two independent facts: whether it is
     # painted at all, and whether its position is surveyed or estimated.
     painted_surveyed, painted_estimated, unpainted = [], [], []
@@ -385,19 +385,23 @@ def plot_design_state(ax, model: IntersectionModel, state: DesignState, title: s
                         bbox=dict(boxstyle="round,pad=0.15", fc="white", ec="none", alpha=0.85))
     _draw(ax, arcs, color="darkorange", linewidth=2.5, zorder=4)
 
-    _draw(ax, [island["polygon"] for island in state.refuge_islands.values()],
+    # Asked of the treatments, which build their polygon against this design - see
+    # src/render/export.py's note on why these two are not materialised onto the state.
+    islands = [(island, island.polygon(state)) for island in state.treatments_of(RefugeIsland)]
+    _draw(ax, [polygon for _island, polygon in islands],
           color="seagreen", alpha=0.6, zorder=5,
           boundary=dict(color="darkgreen", linewidth=1, zorder=5))
     if dimension_labels:
-        for island in state.refuge_islands.values():
-            c = island["polygon"].centroid
-            ax.annotate(f"refuge\n{island['width_ft']:.0f} ft", (c.x, c.y), fontsize=6.5, color="darkgreen",
+        for island, polygon in islands:
+            c = polygon.centroid
+            ax.annotate(f"refuge\n{island.width_ft:.0f} ft", (c.x, c.y), fontsize=6.5, color="darkgreen",
                         ha="center", va="center", fontweight="bold")
 
-    _draw(ax, state.raised_crossings.values(), color="slateblue", alpha=0.35, hatch="//", zorder=2,
+    raised_bands = [t.polygon(state) for t in state.treatments_of(RaiseCrossing)]
+    _draw(ax, raised_bands, color="slateblue", alpha=0.35, hatch="//", zorder=2,
           boundary=dict(color="slateblue", linewidth=1, zorder=2))
     if dimension_labels:
-        for poly in state.raised_crossings.values():
+        for poly in raised_bands:
             c = poly.centroid
             ax.annotate("raised\ncrossing", (c.x, c.y), fontsize=6.5, color="indigo",
                         ha="center", va="center", fontweight="bold")

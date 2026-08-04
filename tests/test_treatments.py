@@ -74,18 +74,58 @@ def test_a_refuge_island_below_the_nacto_minimum_is_refused():
 
 def test_a_refuge_island_spans_its_stated_width_across_the_road():
     state = a_state().apply(RefugeIsland(LegTarget("east"), offset_ft=60.0, width_ft=8.0, along_road_ft=20.0))
-    island = next(iter(state.refuge_islands.values()))
-    minx, miny, maxx, maxy = island["polygon"].bounds
+    island = next(iter(state.treatments_of(RefugeIsland)))
+    minx, miny, maxx, maxy = island.polygon(state).bounds
     assert (maxy - miny) == pytest.approx(8.0)    # across the road: the stated width
     assert (maxx - minx) == pytest.approx(20.0)   # along the road: along_road_ft
-    assert island["width_ft"] == 8.0
+    assert island.width_ft == 8.0
+    assert island.island_name == "east_refuge_60ft"
 
 
 def test_a_raised_crossing_spans_curb_to_curb():
     state = a_state(width_ft=34.0).apply(RaiseCrossing(LegTarget("east"), crossing_width_ft=12.0))
-    minx, miny, maxx, maxy = state.raised_crossings["east"].bounds
+    raised = state.treatment_for(RaiseCrossing, LegTarget("east"))
+    minx, miny, maxx, maxy = raised.polygon(state).bounds
     assert (maxy - miny) == pytest.approx(34.0)    # the full roadway
     assert (maxx - minx) == pytest.approx(12.0)
+
+
+def test_a_raised_crossing_follows_a_kerb_that_moves_under_it():
+    """Its footprint is resolved against the design, not frozen when it was applied.
+
+    The start station comes from leg_clearance_ft, which reads the corner fillets, and
+    AddCurbExtension re-cuts the corner the kerb it moves feeds. Built at apply time, a raised
+    crossing applied BEFORE the extension kept the corner it happened to be measured against
+    while every other marking followed the kerb - two orderings of the same two decisions
+    producing two different designs, which is not what a design is.
+    """
+    from src.geometry.treatments import AddCurbExtension
+
+    def a_junction():
+        leg = a_leg(length_ft=170.0, width_ft=52.0)
+        for side, sign in (("left", 1), ("right", -1)):
+            setattr(leg, f"{side}_curb", LineString([(0.0, sign * 26.0), (170.0, sign * 26.0)]))
+        other = a_leg("north", 170.0, 34.0)
+        other.centerline = LineString([(0, 0), (0, 170.0)])
+        for side, sign in (("left", 1), ("right", -1)):
+            setattr(other, f"{side}_curb", LineString([(sign * -17.0, 0.0), (sign * -17.0, 170.0)]))
+        state = DesignState(legs={"east": leg, "north": other}, corner_fillets={})
+        state.corner_fillets[("east", "north")] = {
+            "trimmed_a": LineString([(40.0, 26.0), (170.0, 26.0)]),
+            "arc": LineString([(20.0, 20.0), (40.0, 26.0)]),
+            "trimmed_b": LineString([(17.0, 40.0), (17.0, 170.0)]),
+            "radius_ft": 20.0, "source": "traced"}
+        return state
+
+    raised_first = a_junction().apply(
+        RaiseCrossing(LegTarget("east"), crossing_width_ft=12.0),
+        AddCurbExtension(LegSide("east", "left"), extension_ft=8.0, crossing_ft=30.0))
+    extension_first = a_junction().apply(
+        AddCurbExtension(LegSide("east", "left"), extension_ft=8.0, crossing_ft=30.0),
+        RaiseCrossing(LegTarget("east"), crossing_width_ft=12.0))
+    both = [s.treatment_for(RaiseCrossing, LegTarget("east")).polygon(s).bounds
+            for s in (raised_first, extension_first)]
+    assert both[0] == both[1], "the raised crossing depends on when it was applied"
 
 
 def test_a_leg_with_no_width_cannot_take_a_crossing():

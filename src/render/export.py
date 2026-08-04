@@ -24,8 +24,8 @@ from src.geometry.markings import CHANNELS, KINDS, Role, kinds_in
 from src.geometry.paint import in_channel
 from src.render.mesh_utils import build_decimated_building_mesh
 from src.render.scene import SceneGeometry
-from src.sources.osm_context import (fetch_buildings, fetch_crossings, fetch_driveways,
-                                     fetch_kerbs, fetch_street_furniture, fetch_traffic_control)
+from src.sources.osm_context import (fetch_buildings, fetch_crossings, fetch_kerbs,
+                                     fetch_street_furniture, fetch_traffic_control)
 from src.render.props import build_props, control_nodes_ft, osm_tree_points_ft
 from src.geometry.treatments import (DesignState, RaiseCrossing, RefugeIsland,
                                       build_sidewalk_pieces)
@@ -405,9 +405,8 @@ def export_scenario(model: IntersectionModel, state: DesignState, name: str, out
         # rather than as a marking: it is a minor carriageway, and its job in the render is to
         # explain why the kerbside markings stop where they do.
         "driveways": [
-            {"coords": wgs84_ring_to_local_m(drive["coords_wgs84"], center_ft)}
-            for drive in fetch_driveways(model.center_wgs84, radius_m=BUILDING_CONTEXT_RADIUS_M)
-            if len(drive.get("coords_wgs84") or []) >= 2
+            {"coords": ring_to_local_m(drive.line.coords, center_ft)}
+            for drive in model.driveways
         ],
         # The SAME width the assumed driveway mouth uses (src/geometry/kerbs.py:
         # DRIVEWAY_WIDTH_FT), so the strip the render draws and the gap it explains cannot end up

@@ -14210,6 +14210,7 @@
       ]
     }
   ],
+  "driveway_width_m": 3.048,
   "corner_parcels": [
     {
       "name": "NE",

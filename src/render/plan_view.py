@@ -19,9 +19,8 @@ from src.render.props import (DRAWN_BY_PAINT, TACTILE_PAD_DEPTH_FT, TACTILE_PAD_
 from src.render.coords import FT_TO_M, wgs84_to_state_plane
 from src.render.crosswalks import centerline_start_ft
 from src.render.scene import SceneGeometry
-from src.sources.osm_context import (fetch_crossings, fetch_driveways, fetch_kerbs,
-                                     fetch_sidewalks, fetch_street_furniture,
-                                     fetch_traffic_control)
+from src.sources.osm_context import (fetch_crossings, fetch_kerbs, fetch_sidewalks,
+                                     fetch_street_furniture, fetch_traffic_control)
 
 # Matches TACTILE_PAD_RED in scripts/blender/blender_props.py - the plan view and the 3D
 # render must not disagree about what a detectable warning surface looks like.
@@ -127,15 +126,10 @@ DRIVEWAY_STYLE = dict(color="#6f5b4b", linewidth=1.3, linestyle=(0, (5, 2)), zor
 
 
 def _draw_driveways(ax, driveways) -> None:
-    """OSM-mapped driveways, projected into state-plane feet."""
-    lines = []
-    for drive in driveways or []:
-        coords = drive.get("coords_wgs84") or []
-        if len(coords) < 2:
-            continue
-        xs, ys = wgs84_to_state_plane.transform([c[0] for c in coords], [c[1] for c in coords])
-        lines.append(LineString(zip(xs, ys)))
-    _draw(ax, lines, **DRIVEWAY_STYLE)
+    """The junction's mapped driveways, off the MODEL - already projected, and the same set the
+    kerb openings were derived from. This used to fetch and project them itself; see
+    src/geometry/intersection.py:Driveway for why three copies of that was the bug."""
+    _draw(ax, [drive.line for drive in driveways or ()], **DRIVEWAY_STYLE)
 
 
 def _draw_kerbs(ax, kerb_lines) -> None:
@@ -220,7 +214,7 @@ def _draw_props(ax, model: IntersectionModel, state: DesignState, crosswalk_offs
     kerb_lines = kerb_lines_with_tags_ft(model.center_wgs84, model.center_ft)
     props = build_props(model, state, crosswalk_offsets, model.center_ft, traffic_control,
                          street_furniture, crossings, fetch_kerbs(model.center_wgs84, radius_m=120))
-    _draw_driveways(ax, fetch_driveways(model.center_wgs84, radius_m=BUILDING_CONTEXT_RADIUS_M))
+    _draw_driveways(ax, model.driveways)
     _draw_kerbs(ax, kerb_lines)
 
     # Grouped, then drawn once per group. See _draw / _scatter_groups.

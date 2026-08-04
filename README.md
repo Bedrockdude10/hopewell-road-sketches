@@ -200,6 +200,7 @@ src/                              General-purpose library - no data specific to 
   geometry/                       Core domain model - pure geometry, no I/O
     model.py         CRS/clipping utilities, Leg dataclass, corner fillets, pavement polygon, leg_clearance_ft
     intersection.py  load_intersection_model() - THE entry point every phase script uses
+    kerbs.py         KerbType + KerbOpening: what OSM says a kerb is, and where vehicles cross it
     treatments.py    DesignState + composable treatment functions (see below)
   sources/                        External data fetching - real-world inputs, nothing rendering-specific
     data_loader.py   Road network/parcel loading (paths passed in, not hardcoded), Overpass retry, geocoding
@@ -300,7 +301,9 @@ The arithmetic was never wrong; re-cutting an arc between two curb lines leaves 
 
 OSM says whether each kerb is `raised` or `lowered`, and this project read the geometry and threw the tag away: the plan view drew one black line for all 95 mapped ways, the 3D render drew **no kerb at all** (the road slab simply met the concrete band), and the kerbside paint ran unbroken past every driveway.
 
-**A dropped kerb is the opening, not the driveway way**, and the reason is worth keeping. Both are mapped, but the kerb is on the kerb — it already carries the station span the paint needs — and it is tagged in places no driveway way is drawn: only **1 of the 43 driveways** mapped in the borough reaches a kerb any of these four junctions models, because the rest are further down the block than a 130 ft leg reaches. Reading the kerbs finds 7 openings across three sites.
+**Both signals are read.** A driveway is mapped twice over — as a `service=driveway` way running up to the road, and as the stretch of kerb it crosses being tagged `kerb=lowered` — and each opens the markings. The kerb is the better evidence, for one specific reason: its extent is *surveyed*, where a driveway centreline carries no width at all and its mouth has to be assumed. Every opening records which source produced it so the citation says so. Reading only the kerb (which an earlier version did, arguing the mismatch would be visible — nothing was comparing them) meant a driveway drawn without its kerb tagged produced no opening and the markings ran across it.
+
+**A driveway is street geometry, so it lives on the model.** `IntersectionModel.driveways`, resolved once at load beside `corner_parcels` and `leg_road_spans`. It was previously fetched and projected three separate times — by the plan view, by the export, and by the opening logic, each with its own radius constant — which is exactly the divergence `SceneGeometry` was built to stop, committed again one layer down.
 
 **The surveyor's convention is read, not inferred.** A driveway here is tagged `wheelchair=no` *and* `tactile_paving=no`; a pedestrian ramp is `yes` and `yes`. Borough-wide that separates them with no overlap:
 

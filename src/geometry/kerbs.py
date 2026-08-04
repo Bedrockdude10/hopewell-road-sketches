@@ -60,7 +60,6 @@ from dataclasses import dataclass
 from enum import StrEnum
 
 import numpy as np
-from shapely.geometry import LineString
 
 from src.geometry.model import station_offset_many
 
@@ -180,9 +179,6 @@ DRIVEWAY_WIDTH_FT = 10.0
 # away and belong to kerbs further down the block than these legs reach, so this sits well clear
 # of both and cannot drag in a neighbour's driveway.
 DRIVEWAY_REACH_FT = 5.0
-# Matches src/render/plan_view.py and src/render/export.py's own driveway fetch, so an opening is
-# derived from the same set of driveways both views draw.
-DRIVEWAY_CONTEXT_RADIUS_M = 130
 
 
 def kerb_openings_from_model(model) -> dict:
@@ -240,16 +236,9 @@ def _driveway_meetings(model) -> list[tuple[str, str, float, int | None]]:
     """
     from shapely.ops import nearest_points
 
-    from src.render.coords import wgs84_to_state_plane
-    from src.sources.osm_context import fetch_driveways
-
     meetings = []
-    for drive in fetch_driveways(model.center_wgs84, radius_m=DRIVEWAY_CONTEXT_RADIUS_M):
-        coords = drive.get("coords_wgs84") or []
-        if len(coords) < 2:
-            continue
-        xs, ys = wgs84_to_state_plane.transform([c[0] for c in coords], [c[1] for c in coords])
-        line = LineString(zip(xs, ys))
+    for drive in getattr(model, "driveways", ()):
+        line = drive.line
         best = None
         for leg_name, leg in model.legs.items():
             for side in ("left", "right"):
@@ -267,7 +256,7 @@ def _driveway_meetings(model) -> list[tuple[str, str, float, int | None]]:
                     best = (gap_ft, leg_name, side, station_ft)
         if best is not None:
             _gap, leg_name, side, station_ft = best
-            meetings.append((leg_name, side, station_ft, drive.get("id")))
+            meetings.append((leg_name, side, station_ft, drive.way_id))
     return meetings
 
 

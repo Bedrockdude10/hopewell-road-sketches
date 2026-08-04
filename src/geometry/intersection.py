@@ -65,6 +65,11 @@ class IntersectionModel:
     # Where they disagree the sides swap. Per span in leg_road_spans, since two ways covering
     # one leg can be drawn in opposite directions.
     leg_osm_aligned: dict = field(default_factory=dict)
+    # [Driveway] - every mapped driveway near this junction, projected once. Where vehicles cross
+    # the kerb, so it is both drawn (both views) and read as an opening signal
+    # (src/geometry/kerbs.py). See Driveway for why it lives on the model rather than being
+    # fetched three times.
+    driveways: tuple = ()
 
     def parking_restriction_spans(self, leg_name: str) -> list[tuple]:
         """[(start_ft, end_ft, {"left": value, "right": value}, way_id)] in the LEG's frame.
@@ -168,6 +173,27 @@ def _assign_leg_pieces(pieces: list, leg_names: list[str], legs_cfg: dict, cente
         assigned[best_name] = piece
         remaining_names.remove(best_name)
     return assigned
+
+
+# One radius for driveways, here rather than in each consumer. Matches the building/crossing
+# context radius the renderers use, so a driveway drawn in a view is a driveway the openings were
+# derived from - the divergence Driveway's docstring is about.
+DRIVEWAY_CONTEXT_RADIUS_M = 130
+
+
+def _driveways_ft(center_wgs84: Point) -> tuple:
+    """Every mapped driveway near this junction, projected into state-plane feet once."""
+    from src.sources.osm_context import fetch_driveways
+
+    out = []
+    for drive in fetch_driveways(center_wgs84, radius_m=DRIVEWAY_CONTEXT_RADIUS_M):
+        coords = drive.get("coords_wgs84") or []
+        if len(coords) < 2:
+            continue
+        xs, ys = wgs84_to_state_plane.transform([c[0] for c in coords], [c[1] for c in coords])
+        out.append(Driveway(line=LineString(zip(xs, ys)), way_id=drive.get("id"),
+                            tags=drive.get("tags", {})))
+    return tuple(out)
 
 
 def _runs_along_a_leg(line: LineString, legs: dict) -> bool:
@@ -791,6 +817,27 @@ MIN_ROAD_SPAN_FT = 5.0
 
 
 @dataclass(frozen=True)
+class Driveway:
+    """One OSM-mapped driveway (`highway=service` + `service=driveway`), in state-plane feet.
+
+    PART OF THE MODELLED STREET, and it took a correction to put it here. A driveway was added as
+    render dressing, fetched and projected independently by the plan view and by the export; then
+    it became a signal for where the kerbside markings open and got a THIRD independent fetch in
+    src/geometry/kerbs.py, each with its own radius constant. That is the exact shape of the bug
+    src/render/scene.py exists to prevent - three consumers each assembling the same geometry, free
+    to diverge - committed again one layer down.
+
+    So it is resolved once, at load, beside corner_parcels and leg_road_spans: a surveyed fact
+    about this junction's street network, not something each renderer looks up for itself. A
+    driveway IS street geometry - it is where vehicles cross the kerb, and it is the reason a
+    marking stops.
+    """
+    line: LineString
+    way_id: int | None = None
+    tags: dict = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
 class RoadSpan:
     """One OSM highway way, and the stretch of one leg it covers.
 
@@ -1052,6 +1099,7 @@ def load_intersection_model(config: dict | None = None, site: str | None = None)
         leg_osm_aligned=leg_osm_aligned,
         parcels=parcels,
         corner_parcels=corner_parcels,
+        driveways=_driveways_ft(center),
     )
 
 

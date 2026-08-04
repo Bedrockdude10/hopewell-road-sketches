@@ -41,6 +41,13 @@
     "e_broad_st_west",
     "princeton_ave_south"
   ],
+  "frame": {
+    "center_m": [
+      0.3439948245305568,
+      -2.6325066149775873
+    ],
+    "radius_m": 41.68196916513403
+  },
   "pavement_near": [
     [
       [

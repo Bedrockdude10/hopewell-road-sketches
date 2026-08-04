@@ -40,6 +40,13 @@
   "existing_marked_crosswalks": [
     "louellen_st_west"
   ],
+  "frame": {
+    "center_m": [
+      -3.7619190040184187,
+      -0.5559229869788513
+    ],
+    "radius_m": 38.40522573170141
+  },
   "pavement_near": [
     [
       [

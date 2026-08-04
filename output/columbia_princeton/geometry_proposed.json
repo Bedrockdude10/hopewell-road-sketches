@@ -58,6 +58,13 @@
     "princeton_ave_north",
     "princeton_ave_south"
   ],
+  "frame": {
+    "center_m": [
+      -1.9903588358622977,
+      -0.08630066332435236
+    ],
+    "radius_m": 46.10354882125357
+  },
   "pavement_near": [
     [
       [

@@ -43,6 +43,13 @@
     "greenwood_ave_north",
     "greenwood_ave_south"
   ],
+  "frame": {
+    "center_m": [
+      0.439115268321801,
+      3.4039294004950675
+    ],
+    "radius_m": 52.567075407003244
+  },
   "pavement_near": [
     [
       [

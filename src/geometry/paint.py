@@ -26,7 +26,8 @@ from src.geometry.model import (bollard_points_ft, clip_paint_clear_of, corner_o
                                 inset_line_ft, lane_narrowing_edge_lines_ft,
                                 lane_narrowing_polygons_ft, lane_narrowing_taper_ft,
                                 lane_narrowing_taper_polygons_ft, leg_clearance_ft,
-                                parking_lane_edge_line_ft, parking_stall_lines_ft)
+                                parking_lane_edge_line_ft, parking_stall_lines_ft,
+                                through_street_sides)
 from src.geometry.daylighting import (merged_no_parking_spans_ft, no_parking_zones_ft,
                                       parkable_runs_ft)
 from src.render.coords import FT_TO_M
@@ -75,23 +76,39 @@ class LegAnchors:
     anchor_ft: float
     target_ft: float
     crossing_ft: float = 0.0     # where the crossing's paint actually reaches on this side
+    clearance_ft: float = 0.0    # past THIS SIDE's corner return, if it has one
 
 
 def leg_anchors(state, leg_name: str, side: str, crosswalk_offsets: dict,
-                 keep_clear=None, inner_offset_ft: float = 0.0) -> LegAnchors:
+                 keep_clear=None, inner_offset_ft: float = 0.0,
+                 crosswalk_is_marked: bool = True) -> LegAnchors:
     """inner_offset_ft is how far from the centerline this treatment's paint starts - the
-    lane edge. Only the crossing inside that strip can get in its way."""
-    clearance_ft = leg_clearance_ft(leg_name, state.legs, state.corner_fillets)
+    lane edge. Only the crossing inside that strip can get in its way.
+
+    Clearance is asked PER SIDE. This paint belongs to one kerb, and a corner return belongs
+    to one side of each leg it touches, so a per-leg maximum holds the paint back for a curve
+    that may be on the opposite kerb. See leg_clearance_ft.
+
+    With no painted crossing on this leg there is nothing to keep clear OF, so the only limit
+    is that same corner return. The nominal crossing station an unmarked leg still carries is
+    the geometric estimate - itself the per-leg corner clearance - and reserving room around
+    it held the north side of E Broad's kerbside paint 37 ft out for a crossing that is not
+    painted, on a kerb with no corner. Same mistake centerline_start_ft was making.
+    """
+    clearance_ft = leg_clearance_ft(leg_name, state.legs, state.corner_fillets, side=side)
     reach_ft = crosswalk_reach_on_leg_side_ft(state.legs[leg_name], side, keep_clear,
                                                inner_offset_ft)
+    if not crosswalk_is_marked:
+        return LegAnchors(anchor_ft=clearance_ft, target_ft=clearance_ft,
+                           crossing_ft=reach_ft or 0.0, clearance_ft=clearance_ft)
     if not reach_ft:
-        # No crossing geometry to measure against - fall back to this leg's crossing centre
-        # offset. Half the crossing depth is inside CROSSWALK_CLEARANCE_FT, so this is the
-        # old behaviour, and it is right for a square crossing.
+        # Marked, but no band geometry to measure against - fall back to this leg's crossing
+        # centre offset. Half the crossing depth is inside CROSSWALK_CLEARANCE_FT, so this is
+        # the old behaviour, and it is right for a square crossing.
         reach_ft = crosswalk_offsets[leg_name][0]
     target_ft = reach_ft + CROSSWALK_CLEARANCE_FT
     return LegAnchors(anchor_ft=max(clearance_ft, target_ft), target_ft=target_ft,
-                       crossing_ft=reach_ft)
+                       crossing_ft=reach_ft, clearance_ft=clearance_ft)
 
 
 # A run of kerb shorter than one stall cannot hold a parked car, so marking it would be
@@ -163,6 +180,18 @@ def end_against_crossing(at: LegAnchors, zone_start_ft: float = 0.0) -> tuple[fl
 
     Deliberately starting inside the crossing is what makes the trim do the work. It leaves
     an offcut on the junction side, hence the second return value.
+
+    TRIED AND REVERTED: reaching the paint back to this side's own corner clearance instead,
+    and discarding against that, so a side with no corner return keeps the offcut. The north
+    side of E Broad at Princeton is one unbroken kerb under one continuous no-stopping
+    restriction, and ~20 ft of it between the crossing and the junction node is bare. It did
+    not fix that - the shared kerb way covering that stretch has two vertices, one claimed by
+    each of the two collinear legs, so neither has the two points curb_line_from_points needs -
+    and it put paint over a kerb and through a crossing at W Broad & Louellen, whose acute Y
+    and partial tracing make the reach-back land outside the roadway. The real fix is to let
+    the two legs SHARE that endpoint vertex, which is what a shared OSM node is; that means
+    relaxing assign_curb_points_to_legs' one-vertex-one-leg rule, deliberately rather than in
+    passing.
     """
     return max(zone_start_ft, at.crossing_ft - CROSSWALK_DEPTH_FT), at.crossing_ft
 
@@ -241,28 +270,49 @@ def curbside_paint_ft(state, crosswalk_offsets: dict, center_ft,
     # gets a resolved offset, including ones with no marking today - cutting paint around
     # those was reserving room for a crossing that isn't there.
     marked = set(marked_crosswalks) if marked_crosswalks is not None else set(state.legs)
+    # Kerbs with no corner return at the junction: the kerb runs straight through, so the
+    # crossing cuts the zone in two and BOTH halves are paint. Everywhere else the piece on
+    # the junction side of a crossing sits in the corner throat and is discarded.
+    straight_through = through_street_sides(state.legs)
     bands = {name: band for name, band in (crosswalk_bands or {}).items()
              if band is not None and not band.is_empty and name in marked}
     keep_clear = (unary_union(list(bands.values())).buffer(PAINT_TO_CROSSWALK_GAP_FT)
                    if bands else None)
     pieces: list[PaintPiece] = []
 
-    def add(kind, geometry, leg=None, side=None, beyond_ft=None):
+    # Zones already placed on a kerb that runs straight through. The two legs sharing such a
+    # kerb both paint up to the junction node, and where they meet at an angle their strips
+    # overlap in the wedge between the two frames - 5.6 sq ft at W Broad & Louellen, whose
+    # legs are 17.3 deg off collinear. The same ground painted twice is a markings_collide
+    # violation and, on asphalt, doubled ink. Whichever zone is built first keeps the wedge
+    # and the second takes the remainder, so they butt instead of overlapping and no gap
+    # opens between them.
+    through_painted: list = []
+
+    def add(kind, geometry, leg=None, side=None, beyond_ft=None, shares_a_kerb=False):
         """Clip `geometry` clear of the crossings, keep what survives, return those pieces.
 
         beyond_ft drops any surviving piece that fell on the JUNCTION side of the crossing.
         A zone drawn deliberately through a crossing (so the crossing cuts its end into a
         clean diagonal) leaves an offcut back at the corner, and that offcut is not paint.
+
+        shares_a_kerb dedupes against the other zones on the same through-running kerb.
         """
         added = []
         if geometry is None or geometry.is_empty:
             return added
+        if shares_a_kerb and through_painted:
+            geometry = geometry.difference(unary_union(through_painted))
+            if geometry.is_empty:
+                return added
         for part in clip_paint_clear_of(geometry, keep_clear):
             if beyond_ft is not None and _station_of(state.legs[leg], part) < beyond_ft:
                 continue
             piece = PaintPiece(kind, part, leg, side)
             pieces.append(piece)
             added.append(piece)
+        if shares_a_kerb:
+            through_painted.extend(p.geometry for p in added)
         return added
 
     def rim(fills):
@@ -290,11 +340,21 @@ def curbside_paint_ft(state, crosswalk_offsets: dict, center_ft,
 
         for side in sides:
             at = leg_anchors(state, leg_name, side, crosswalk_offsets, keep_clear,
-                              inner_offset_ft=leg.curb_to_curb_ft / 2 - stripe_width_ft)
+                              inner_offset_ft=leg.curb_to_curb_ft / 2 - stripe_width_ft,
+                              crosswalk_is_marked=leg_name in marked)
             # A crossing is something to end against: run into it and let it cut the end.
             # Only where there is none does the paint have to resolve itself back to the
             # kerb, and only then is a taper the right way to do it.
-            if leg_name in marked:
+            if (leg_name, side) in straight_through:
+                # One unbroken kerb under one restriction, with no corner return at either
+                # end of it: run from the junction NODE and let any crossing cut it, keeping
+                # both halves. Tested before the marked/unmarked split because it applies to
+                # both - the two E Broad legs' north kerbs are one kerb, and the zones on
+                # them have to meet at the node rather than each stopping a few feet short of
+                # it. Discarding the junction-side half left ~20 ft of a no-stopping kerb
+                # bare between the crossing and the node, with no corner there to justify it.
+                start_ft, beyond_ft, curved = 0.0, None, False
+            elif leg_name in marked:
                 start_ft, beyond_ft = end_against_crossing(at)
                 curved = False
             else:
@@ -310,12 +370,17 @@ def curbside_paint_ft(state, crosswalk_offsets: dict, center_ft,
             if fill:
                 rim(add("lane_narrowing_fill", _one(lane_narrowing_polygons_ft(
                     leg, fill_ft, start_left_ft=start_ft, start_right_ft=start_ft,
-                    sides=(side,))), leg_name, side, beyond_ft))
+                    sides=(side,))), leg_name, side, beyond_ft,
+                    shares_a_kerb=(leg_name, side) in straight_through))
                 if curved:
                     add("taper_fill", _one(lane_narrowing_taper_polygons_ft(
                         leg, fill_ft, at.anchor_ft, at.target_ft, sides=(side,))),
                         leg_name, side)
-                elif leg_name not in marked:
+                elif leg_name not in marked and (leg_name, side) not in straight_through:
+                    # Not on a kerb that runs straight through: the zone does not END at the
+                    # junction node, it continues into the adjoining leg's zone on the same
+                    # unbroken kerb. Closing it off drew a line across the hatching in the
+                    # middle of the intersection.
                     add("zone_end_line", zone_end_line_ft(
                         leg, side, start_ft, leg.curb_to_curb_ft / 2 - fill_ft),
                         leg_name, side)
@@ -332,7 +397,8 @@ def curbside_paint_ft(state, crosswalk_offsets: dict, center_ft,
         depth_ft, stall_length_ft = zone["depth_ft"], zone["stall_length_ft"]
         curb_offset_ft = zone["curb_offset_ft"]
         at = leg_anchors(state, leg_name, side, crosswalk_offsets, keep_clear,
-                          inner_offset_ft=leg.curb_to_curb_ft / 2 - depth_ft - curb_offset_ft)
+                          inner_offset_ft=leg.curb_to_curb_ft / 2 - depth_ft - curb_offset_ft,
+                          crosswalk_is_marked=leg_name in marked)
         runs = parking_runs(state, leg_name, side, crosswalk_offsets, props)
 
         # DAYLIGHTING. Every stretch where R.S. 39:4-138 forbids parking is hatched across
@@ -354,13 +420,16 @@ def curbside_paint_ft(state, crosswalk_offsets: dict, center_ft,
         lane_edge_offset_ft = leg.curb_to_curb_ft / 2 - daylight_line_ft
         for zone_start_ft, zone_end_ft in merged_no_parking_spans_ft(
                 no_parking_zones_ft(state, leg_name, side, crosswalk_offsets, props)):
-            if leg_name in marked:
+            if leg_name in marked and (leg_name, side) in straight_through:
+                start_ft, beyond_ft = zone_start_ft, None
+            elif leg_name in marked:
                 start_ft, beyond_ft = end_against_crossing(at, zone_start_ft)
             else:
                 start_ft, beyond_ft = max(zone_start_ft, at.target_ft), None
             rim(add("daylight_fill", _one(lane_narrowing_polygons_ft(
                 leg, daylight_fill_ft, start_left_ft=start_ft, start_right_ft=start_ft,
-                sides=(side,), end_ft=zone_end_ft)), leg_name, side, beyond_ft))
+                sides=(side,), end_ft=zone_end_ft)), leg_name, side, beyond_ft,
+                shares_a_kerb=(leg_name, side) in straight_through))
             # A solid line wherever hatching meets the travel lane, so the lane reads as a
             # lane. The buffer beside the stalls already has one; the daylight zone runs the
             # full depth of the parking lane, so ITS inner edge is the lane edge, and without
@@ -370,8 +439,9 @@ def curbside_paint_ft(state, crosswalk_offsets: dict, center_ft,
                                keep_inside_ft=LANE_EDGE_LINE_WIDTH_FT / 2),
                 leg_name, side, beyond_ft)
             # Nothing to end against and no taper available: close the square end. See
-            # zone_end_line_ft.
-            if leg_name not in marked:
+            # zone_end_line_ft. Not where the kerb runs straight through - the zone carries
+            # on into the next leg there.
+            if leg_name not in marked and (leg_name, side) not in straight_through:
                 add("zone_end_line", zone_end_line_ft(
                     leg, side, start_ft, leg.curb_to_curb_ft / 2 - daylight_fill_ft),
                     leg_name, side)

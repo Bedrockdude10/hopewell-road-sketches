@@ -168,7 +168,8 @@ def add_crosswalk(name: str, near, u, n, width_m: float, material, offset_m: flo
 
 
 def add_stop_bar(name: str, near, u, n, width_m: float, material, offset_m: float, line_width_m: float = 0.5,
-                  skew_deg: float = 0.0, curb_clearance_m: float = 0.5):
+                  skew_deg: float = 0.0, curb_clearance_m: float = 0.5,
+                  span_m: float = None, lateral_offset_m: float = None):
     """Stop bar: a single transverse line telling drivers where to stop for the
     signal, drawn just behind (intersection side of) the leg's crosswalk.
     Spans only the entering half of the road - `n` is the leg's own 'left'
@@ -180,11 +181,21 @@ def add_stop_bar(name: str, near, u, n, width_m: float, material, offset_m: floa
     the full width."""
     centre = near + u * offset_m
     u_s, n_s, span_factor = _skewed_axes(u, n, skew_deg)
-    half_width = width_m * span_factor / 2
-    # Clearance comes from src/render/crosswalks.py:STOP_BAR_CURB_CLEARANCE_M via the JSON,
-    # so src/render/plan_view.py draws an identically-sized bar.
-    lane_span = max(half_width - curb_clearance_m, curb_clearance_m)
-    lane_center = centre + n_s * (half_width / 2)  # centered within the entering half only
+    if span_m is not None and lateral_offset_m is not None:
+        # Resolved by src/render/crosswalks.py:stop_bar_band_geometry_ft and carried in the
+        # geometry JSON, so the plan view and this render cannot disagree about where the bar
+        # begins and ends. They twice did: this copy centred the bar on the middle of the
+        # entering half, leaving it standing 0.8 ft off the centerline with nothing on the far
+        # side of the gap; and it scaled the LATERAL OFFSET by the skew's span factor as well
+        # as the span, which the plan view does not.
+        lane_span = span_m * span_factor
+        lane_center = centre + n_s * lateral_offset_m
+    else:
+        half_width = width_m * span_factor / 2
+        # Clearance comes from src/render/crosswalks.py:STOP_BAR_CURB_CLEARANCE_M via the JSON,
+        # so src/render/plan_view.py draws an identically-sized bar.
+        lane_span = max(half_width - curb_clearance_m, curb_clearance_m)
+        lane_center = centre + n_s * (half_width / 2)  # centered within the entering half only
     add_stripe_rect(f"{name}_bar", lane_center, n_s, u_s, lane_span, line_width_m, EXISTING_MARKING_THICKNESS_M,
                      material, z_base=EXISTING_MARKING_Z_BASE)
 

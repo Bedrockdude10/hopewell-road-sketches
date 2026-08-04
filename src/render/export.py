@@ -13,11 +13,12 @@ from shapely.geometry import Point, Polygon
 
 from src.render.coords import FT_TO_M, building_footprint_ft, pt_to_local_m, ring_to_local_m, wgs84_ring_to_local_m
 from src.render.crosswalks import (CROSSWALK_DEPTH_M, STOP_BAR_CURB_CLEARANCE_M,
-                                   continental_bar_count,
+                                   continental_bar_count, crosswalk_axes,
                                    centerline_start_ft, crosswalk_bands_ft, crosswalk_reaches_ft,
                                    stop_bar_bands_ft,
                                    resolve_crosswalk_offsets, resolve_crosswalk_skews,
-                                   resolve_stop_bar_offsets, stop_bar_width_ft)
+                                   entering_lane_width_ft, resolve_stop_bar_offsets,
+                                   stop_bar_band_geometry_ft, stop_bar_width_ft)
 from src.geometry.model import build_pavement_polygon, hatch_lines_ft
 from src.geometry.intersection import IntersectionModel
 from src.geometry.paint import curbside_paint_ft, of_kind
@@ -73,6 +74,44 @@ PAINT_KIND_LISTS = {
 # Handled outside PAINT_KIND_LISTS: an apron is a textured surface rather than paint, and a
 # bollard is a 3D prop the export builds from state directly.
 PAINT_KINDS_NOT_IN_LISTS = frozenset({"apron", "bollard"})
+
+
+def _marking_frame_m(prefix: str, leg, station_ft, center_ft) -> dict:
+    """{prefix}_centre_m and {prefix}_axis for a marking at `station_ft` along `leg`.
+
+    The crossing frame is defined once, in src/render/crosswalks.py:crosswalk_axes, and
+    Blender cannot import it - so like crosswalk_reach_*_m and crosswalk_bar_count it has to
+    travel as numbers. blender_scene.py was rebuilding it instead, from near_m and far_m,
+    which is the leg's CHORD: identical on a straight centerline, and 4.54 deg out on
+    broad_st_east, whose centerline kinks 4.5 deg where NJDOT rounds the corner 43.1 ft from
+    the junction. That put the 3D bars somewhere the 2D bands were not, and the plan view
+    then cleared paint from a footprint the render did not use.
+
+    The axis is a unit vector and the export frame is a translate-and-scale of state-plane
+    feet, so it needs no conversion - only the centre does. Returns {} for a marking this leg
+    does not have, so the key is absent rather than null and the renderer's fallback is
+    reached the same way it is for older geometry files.
+    """
+    if station_ft is None:
+        return {}
+    centre_ft, (ux, uy), _n, _cos = crosswalk_axes(leg, station_ft, 0.0)
+    return {f"{prefix}_centre_m": pt_to_local_m(centre_ft[0], centre_ft[1], center_ft),
+            f"{prefix}_axis": [ux, uy]}
+
+
+def _stop_bar_span_m(state: DesignState, leg_name: str, has_bar: bool) -> dict:
+    """The stop bar's resolved span and lateral offset, in metres, or {} for a leg with none.
+
+    A dict rather than two values so an absent bar leaves the keys out entirely and
+    blender_crosswalks.add_stop_bar falls back to its own arithmetic, the same way the
+    crossing frame does.
+    """
+    if not has_bar:
+        return {}
+    span_ft, lateral_ft = stop_bar_band_geometry_ft(
+        stop_bar_width_ft(state, leg_name), entering_lane_width_ft(state, leg_name) is None)
+    return {"stop_bar_span_m": span_ft * FT_TO_M,
+            "stop_bar_lateral_offset_m": lateral_ft * FT_TO_M}
 
 
 def _leg_heading_deg(leg) -> float:
@@ -293,6 +332,19 @@ def export_scenario(model: IntersectionModel, state: DesignState, name: str, out
                     if leg_name in crosswalk_reaches else None,
                 "crosswalk_reach_right_m": crosswalk_reaches.get(leg_name, (None, None))[1] * FT_TO_M
                     if leg_name in crosswalk_reaches else None,
+                # WHERE the crossing sits and WHICH WAY it faces, resolved here rather than
+                # re-derived in Blender. blender_scene.py was taking the leg's axis as the
+                # near->far CHORD and stepping the offset along it, which is a different
+                # answer from crosswalk_axes' on any leg whose centerline bends: on
+                # broad_st_east (3 vertices, 4.5 deg kink 43.1 ft out) it rotated the bars
+                # 4.54 deg away from where the plan view puts them, and swung them into
+                # 12.6 ft of paint the plan view had correctly cleared. Unskewed - the
+                # renderer still applies crosswalk_skew_deg itself, because the span factor
+                # that keeps a rotated crossing reaching both kerbs lives with it.
+                **_marking_frame_m("crosswalk", leg, crosswalk_offsets[leg_name][0], center_ft),
+                # Same for the stop bar, which is a second marking at a second station and
+                # inherited the same chord.
+                **_marking_frame_m("stop_bar", leg, stop_bar_offsets.get(leg_name), center_ft),
                 # A treatment (e.g. upgrade_crosswalk_markings) can override the style;
                 # otherwise default to what OSM says exists today ("lines" if unmapped).
                 "crosswalk_style": state.crosswalk_styles.get(leg_name, "lines"),
@@ -309,6 +361,14 @@ def export_scenario(model: IntersectionModel, state: DesignState, name: str, out
                 # src/render/crosswalks.py:entering_lane_width_ft, shared with the 2D plan view,
                 # i.e. unchanged behavior for any leg that hasn't been narrowed on its entering side.
                 "stop_bar_width_m": stop_bar_width_ft(state, leg_name) * FT_TO_M,
+                # ...and the resolved span and lateral offset that width produces, so
+                # blender_crosswalks.add_stop_bar draws the bar this module measured rather
+                # than repeating its arithmetic. The two copies had already diverged twice
+                # over: on where the bar starts across the road, and on whether the skew's
+                # span factor applies to the lateral offset as well as the span (Blender
+                # applied it to both, the plan view to the span only). See
+                # src/render/crosswalks.py:stop_bar_band_geometry_ft.
+                **_stop_bar_span_m(state, leg_name, leg_name in stop_bar_offsets),
                 # Real per-leg fact from config.yaml (street-view confirmed), not an OSM tag - see
                 # src/geometry/treatments.py:set_centerline_style / DEFAULT_CENTERLINE_STYLE.
                 "centerline_style": state.centerline_styles.get(leg_name, DEFAULT_CENTERLINE_STYLE),
@@ -317,7 +377,8 @@ def export_scenario(model: IntersectionModel, state: DesignState, name: str, out
                 # see src/render/crosswalks.py:centerline_start_ft.
                 "centerline_start_m": centerline_start_ft(
                     crosswalk_offsets[leg_name][0],
-                    stop_bar_offsets.get(leg_name)) * FT_TO_M,
+                    stop_bar_offsets.get(leg_name),
+                    leg_name in marked_crosswalks) * FT_TO_M,
             }
             for leg_name, leg in state.legs.items()
         ],

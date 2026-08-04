@@ -238,10 +238,34 @@ def build_scene(data: dict):
         u = direction / direction.length
         n = mathutils.Vector((-u.y, u.x, 0))
         offset_m = leg.get("crosswalk_offset_m", 3.0)
+
+        def marking_frame(prefix, fallback_offset_m):
+            """(centre, u, n) for a marking, from the geometry JSON where it says.
+
+            `u` above is the leg's near->far CHORD, and stepping an offset along it is only
+            the same point crosswalk_axes picks while the centerline is straight. Two of
+            these legs are not: broad_st_east kinks 4.5 deg 43.1 ft out where NJDOT rounds
+            the corner, and louellen_st_west 29.4 deg 15.4 ft out. On broad_st_east the chord
+            rotated the crosswalk bars 4.54 deg off the plan view's and drove them through
+            12.6 ft of paint the plan view had cleared - a 2D/3D disagreement of exactly the
+            kind the shared geometry is supposed to make impossible. src/render/export.py
+            resolves the frame now; this is the fallback for a geometry file written before
+            it did.
+            """
+            centre_m = leg.get(f"{prefix}_centre_m")
+            axis = leg.get(f"{prefix}_axis")
+            if centre_m is None or axis is None:
+                return near + u * fallback_offset_m, u, n
+            axis_u = mathutils.Vector((axis[0], axis[1], 0.0))
+            return (mathutils.Vector((*centre_m, 0.0)), axis_u,
+                    mathutils.Vector((-axis_u.y, axis_u.x, 0.0)))
+
         if leg["name"] in marked_leg_names and leg["name"] not in raised_leg_names:
             style = leg.get("crosswalk_style", "lines")
-            add_crosswalk(f"crosswalk_{leg['name']}", near, u, n, leg["width_m"], marking_mat,
-                           offset_m=offset_m, style=style, depth_m=crosswalk_depth_m,
+            cw_centre, cw_u, cw_n = marking_frame("crosswalk", offset_m)
+            add_crosswalk(f"crosswalk_{leg['name']}", cw_centre, cw_u, cw_n, leg["width_m"],
+                           marking_mat,
+                           offset_m=0.0, style=style, depth_m=crosswalk_depth_m,
                            skew_deg=leg.get("crosswalk_skew_deg", 0.0),
                            reach_left_m=leg.get("crosswalk_reach_left_m"),
                            reach_right_m=leg.get("crosswalk_reach_right_m"),
@@ -251,9 +275,13 @@ def build_scene(data: dict):
             stop_bar_width_m = leg.get("stop_bar_width_m") or leg["width_m"]
             # A stop bar is painted parallel to the crosswalk ahead of it, so it takes
             # the same surveyed skew.
-            add_stop_bar(f"stop_bar_{leg['name']}", near, u, n, stop_bar_width_m, marking_mat,
-                         offset_m=stop_bar_offset_m, skew_deg=leg.get("crosswalk_skew_deg", 0.0),
-                         curb_clearance_m=stop_bar_curb_clearance_m)
+            sb_centre, sb_u, sb_n = marking_frame("stop_bar", stop_bar_offset_m)
+            add_stop_bar(f"stop_bar_{leg['name']}", sb_centre, sb_u, sb_n, stop_bar_width_m,
+                         marking_mat,
+                         offset_m=0.0, skew_deg=leg.get("crosswalk_skew_deg", 0.0),
+                         curb_clearance_m=stop_bar_curb_clearance_m,
+                         span_m=leg.get("stop_bar_span_m"),
+                         lateral_offset_m=leg.get("stop_bar_lateral_offset_m"))
         # Real per-leg fact (confirmed via street-view, see src/geometry/treatments.py
         # DEFAULT_CENTERLINE_STYLE) - some legs get no centerline paint at all, so this
         # is NOT drawn unconditionally the way it used to be.

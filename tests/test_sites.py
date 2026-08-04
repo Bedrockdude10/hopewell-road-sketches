@@ -7,6 +7,8 @@ this repo's geometry changes, not when someone re-traces a kerb in OSM.
 """
 import contextlib
 import io
+import json
+from pathlib import Path
 
 import numpy as np
 import pytest
@@ -14,7 +16,8 @@ import pytest
 from src.checks import check_scene
 from src.geometry.model import build_pavement_polygon
 from src.geometry.treatments import DesignState
-from src.render.crosswalks import (CROSSWALK_DEPTH_M, crosswalk_bands_ft, resolve_crosswalk_offsets,
+from src.render.crosswalks import (CROSSWALK_DEPTH_M, STOP_BAR_CURB_CLEARANCE_M,
+                                   crosswalk_bands_ft, resolve_crosswalk_offsets,
                                    resolve_crosswalk_skews, resolve_stop_bar_offsets, stop_bar_bands_ft)
 from src.render.coords import FT_TO_M
 from src.render.props import build_props
@@ -73,6 +76,18 @@ def scene_violations(model, state):
 
 def fatal(violations):
     return [v for v in violations if v.fatal]
+
+
+def demo_paint(site):
+    """(model, state, paint) for one site's default scenario, as both renderers build it."""
+    from src.geometry.intersection import load_intersection_model
+
+    with contextlib.redirect_stdout(io.StringIO()):
+        model = load_intersection_model(site=site)
+        builder = load_site_scenarios(site).build_demo_scenario
+        state = run_scenario(builder, DesignState.from_model(model), model)
+        paint, _bands = paint_and_bands(model, state)
+    return model, state, paint
 
 
 @needs_source_data
@@ -664,9 +679,20 @@ def test_no_painted_marking_overlaps_a_crosswalk(site, site_models):
     with contextlib.redirect_stdout(io.StringIO()):
         pavement = build_pavement_polygon(state.corner_fillets)
     marked = marked_crosswalks(model)
-    bands = unary_union(list(crosswalk_bands_ft(
+    # Only the bands of legs that actually CARRY a painted crossing. The rest are the
+    # footprint a crossing would occupy if one were ever added, and every leg has one because
+    # every leg needs a resolved station for a hypothetical - but reserving room around a
+    # crossing that is not painted is what held the north side of E Broad's hatching 37 ft
+    # out from a kerb with no corner on it. curbside_paint_ft has always clipped against the
+    # marked set only; this check was grading against the full set, so it passed by accident
+    # while the anchors were conservative and failed the moment they stopped being. The check
+    # against the bars Blender really draws is
+    # test_no_rendered_paint_runs_through_a_rendered_crosswalk.
+    all_bands = crosswalk_bands_ft(
         state, offsets, skews, CROSSWALK_DEPTH_M / FT_TO_M, pavement,
-        crosswalk_reaches_ft(state, offsets, skews, pavement, marked)).values()))
+        crosswalk_reaches_ft(state, offsets, skews, pavement, marked))
+    bands = unary_union([band for name, band in all_bands.items()
+                         if name in marked and band is not None and not band.is_empty])
 
     def to_ft(points):
         return LineString([(model.center_ft.x + x / FT_TO_M, model.center_ft.y + y / FT_TO_M)
@@ -936,3 +962,478 @@ def test_the_bollard_proposals_show_their_bollards_in_the_plan_view(site, site_m
     assert drawn == expected, (
         f"{expected} bollard props but {drawn} bollard markers in the plan view - they are "
         f"either being skipped or drawn as something else")
+
+
+# --------------------------------------------------------------------------
+# The 2D and the 3D have to agree about where a marking IS
+# --------------------------------------------------------------------------
+
+def crosswalk_bars_as_blender_draws_them(leg_json: dict, depth_m: float):
+    """The crosswalk bar rectangles scripts/blender/blender_crosswalks.py will build.
+
+    Replicated from the geometry JSON rather than driven through Blender, because the test
+    suite cannot run Blender - and the thing being checked is precisely whether the numbers
+    in that file put the bars where the 2D said they were.
+    """
+    import math
+
+    from shapely.geometry import Polygon
+
+    stripe_m = 0.5              # blender_crosswalks: CONTINENTAL_BAR_WIDTH
+    axis, centre_m = leg_json.get("crosswalk_axis"), leg_json.get("crosswalk_centre_m")
+    if axis is None or centre_m is None:
+        pytest.fail("the geometry JSON carries no resolved crosswalk frame, so Blender falls "
+                    "back to the near->far chord - see src/render/export.py:_marking_frame_m")
+    u = np.asarray(axis, dtype=float)
+    n = np.asarray([-u[1], u[0]])
+    centre = np.asarray(centre_m, dtype=float)
+
+    skew = math.radians(leg_json.get("crosswalk_skew_deg", 0.0))
+    cos_s, sin_s = math.cos(skew), math.sin(skew)
+    u_s = np.asarray([u[0] * cos_s - u[1] * sin_s, u[0] * sin_s + u[1] * cos_s])
+    n_s = np.asarray([n[0] * cos_s - n[1] * sin_s, n[0] * sin_s + n[1] * cos_s])
+
+    left_m, right_m = leg_json["crosswalk_reach_left_m"], leg_json["crosswalk_reach_right_m"]
+    centre = centre + n_s * ((left_m - right_m) / 2)
+    span_m = left_m + right_m
+    count = leg_json["crosswalk_bar_count"]
+    span = max(span_m - stripe_m, 0.0)
+    pitch = span / (count - 1) if count > 1 else 0.0
+    bars = []
+    for i in range(count):
+        c = centre + n_s * (-span / 2 + i * pitch)
+        bars.append(Polygon([c + u_s * (depth_m / 2) + n_s * (stripe_m / 2),
+                             c + u_s * (depth_m / 2) - n_s * (stripe_m / 2),
+                             c - u_s * (depth_m / 2) - n_s * (stripe_m / 2),
+                             c - u_s * (depth_m / 2) + n_s * (stripe_m / 2)]))
+    return bars
+
+
+@needs_source_data
+@pytest.mark.parametrize("site", SITES)
+def test_no_rendered_paint_runs_through_a_rendered_crosswalk(site, site_models, tmp_path):
+    """Checked on the EXPORTED numbers, which is the only place the two views can drift.
+
+    curbside_paint_ft clears its markings of the crosswalk bands the plan view draws, so the
+    2D is self-consistent by construction and a 2D check cannot catch this. blender_scene.py
+    was rebuilding the crossing's frame from the leg's near->far CHORD instead of reading the
+    one src/render/crosswalks.py resolved - identical while a centerline is straight, 4.54 deg
+    out on broad_st_east, which kinks 4.5 deg 43.1 ft from the junction where NJDOT rounds the
+    corner. That rotated the bars off the cleared footprint and drove them through 11.5 ft of
+    lane-edge line and 1.1 ft of hatching at the NE corner: correct in the plan view, wrong in
+    the render, no check anywhere between them.
+    """
+    from shapely.geometry import LineString
+    from shapely.ops import unary_union
+
+    from src.render.export import PAINT_KIND_LISTS, export_scenario
+
+    model = site_models[site]
+    for name, builder in sorted(scenario_builders(site).items()):
+        with contextlib.redirect_stdout(io.StringIO()):
+            state = run_scenario(builder, DesignState.from_model(model), model)
+            path = export_scenario(model, state, name, tmp_path / f"{site}_{name}.json",
+                                   buildings=[], crossings=fetch_crossings(model.center_wgs84,
+                                                                           radius_m=130))
+        data = json.loads(Path(path).read_text())
+
+        marked = set(data.get("existing_marked_crosswalks", []))
+        bars = [bar for leg in data["legs"] if leg["name"] in marked
+                for bar in crosswalk_bars_as_blender_draws_them(leg, data["crosswalk_depth_m"])]
+        if not bars:
+            continue
+        crossings = unary_union(bars)
+
+        worst = []
+        for key in PAINT_KIND_LISTS:
+            for line in data.get(key, []):
+                hit = LineString([(p[0], p[1]) for p in line]).intersection(crossings)
+                if not hit.is_empty and hit.length / FT_TO_M > 0.1:
+                    worst.append(f"{hit.length / FT_TO_M:.2f} ft of {key}")
+        assert not worst, (f"{site}/{name}: rendered paint runs through the rendered "
+                           f"crosswalk bars:\n  " + "\n  ".join(sorted(worst, reverse=True)))
+
+
+@needs_source_data
+@pytest.mark.parametrize("site", SITES)
+def test_a_drawn_crosswalk_is_parallel_to_the_surveyed_one(site, site_models):
+    """The whole point of carrying the skew is that the marking lines up with the way OSM
+    traced. It has to be measured in the frame it gets applied in.
+
+    _crossing_skew_deg took "square" from the leg's whole-length chord while crosswalk_axes
+    applies it against the local segment at the crossing's own station. Identical on a
+    straight centerline; 4.54 deg apart on broad_st_east, whose alignment kinks 4.5 deg where
+    NJDOT rounds the corner 43.1 ft out - so on the one leg where the skew mattered most it
+    cancelled out exactly as much as it recovered.
+
+    Skipped where the skew was gated off by MAX_CROSSING_SKEW_DEG: those ways are not
+    depictions of the paint (louellen_st_west's runs corner to corner, 78 ft across a 42 ft
+    street), and drawing square is the deliberate answer there.
+    """
+    from src.render.crosswalks import (_match_crossings_to_legs, crosswalk_axes,
+                                       resolve_crosswalk_offsets, resolve_crosswalk_skews)
+
+    model = site_models[site]
+    state = DesignState.from_model(model)
+    with contextlib.redirect_stdout(io.StringIO()):
+        crossings = fetch_crossings(model.center_wgs84, radius_m=130)
+        matched = _match_crossings_to_legs(state.legs, crossings)
+        offsets = resolve_crosswalk_offsets(state, crossings)
+        skews = resolve_crosswalk_skews(state, crossings)
+
+    checked = 0
+    for leg_name, (_along, _style, _skew, line, _tags) in sorted(matched.items()):
+        if leg_name not in skews:
+            continue        # skew deliberately discarded - see the docstring
+        _c, _u, across, _cos = crosswalk_axes(state.legs[leg_name], offsets[leg_name][0],
+                                               skews[leg_name])
+        surveyed = np.asarray(line.coords[-1], dtype=float) - np.asarray(line.coords[0], dtype=float)
+        surveyed /= np.linalg.norm(surveyed)
+        cosine = abs(float(np.clip(np.dot(surveyed, np.asarray(across, dtype=float)), -1, 1)))
+        off_deg = np.degrees(np.arccos(cosine))
+        assert off_deg < 0.01, (
+            f"{site}/{leg_name}: the crosswalk is drawn {off_deg:.2f} deg off the OSM way it "
+            f"took its skew from")
+        checked += 1
+    if not checked:
+        # Louellen has exactly one crossing and its skew is gated off. That is the right
+        # answer there, but "nothing to check" must not be indistinguishable from a plumbing
+        # failure that quietly drops every skew - so say WHY nothing was checked.
+        from src.render.crosswalks import MAX_CROSSING_SKEW_DEG
+
+        assert matched, f"{site}: no OSM crossing matched any leg at all"
+        gated = {name: entry[2] for name, entry in matched.items()
+                 if abs(entry[2]) > MAX_CROSSING_SKEW_DEG}
+        assert len(gated) == len(matched), (
+            f"{site}: no crossing carried a skew, but only {sorted(gated)} of "
+            f"{sorted(matched)} exceed the {MAX_CROSSING_SKEW_DEG:.0f} deg limit - the rest "
+            f"lost theirs somewhere else")
+
+
+@needs_source_data
+@pytest.mark.parametrize("site", SITES)
+def test_the_centreline_runs_up_to_the_stop_bar(site, site_models):
+    """A double yellow stops at the bar drivers stop on - it does not stop short of it.
+
+    centerline_start_ft holds the paint back behind whichever is further out, the bar or the
+    crosswalk. On a leg with no marked crossing that second term is the geometric estimate,
+    which at e_broad_st_east is this junction's modelled 70.1 ft corner return - a number the
+    phase output already reports as contradicted by the surveyed stop bar 17 ft inside it. The
+    yellow stopped 23.8 ft short of the bar to clear a crossing that is not painted.
+    """
+    from src.render.crosswalks import (centerline_start_ft, resolve_crosswalk_offsets,
+                                       resolve_stop_bar_offsets)
+    from src.sources.osm_context import fetch_stop_lines
+
+    model = site_models[site]
+    if not model.config.get("signals"):
+        pytest.skip(f"{site} is unsignalized - no surveyed stop bars")
+    state = DesignState.from_model(model)
+    marked = marked_crosswalks(model)
+    with contextlib.redirect_stdout(io.StringIO()):
+        crossings = fetch_crossings(model.center_wgs84, radius_m=130)
+        offsets = resolve_crosswalk_offsets(state, crossings)
+        stop_offsets = resolve_stop_bar_offsets(
+            state, offsets, fetch_stop_lines(model.center_wgs84, radius_m=130))
+
+    checked = 0
+    for leg_name, bar_ft in sorted(stop_offsets.items()):
+        start_ft = centerline_start_ft(offsets[leg_name][0], bar_ft, leg_name in marked)
+        assert start_ft <= bar_ft + 0.01, (
+            f"{site}/{leg_name}: centreline paint starts {start_ft - bar_ft:.1f} ft beyond its "
+            f"own stop bar, leaving a gap where the road has no centreline at all")
+        checked += 1
+    assert checked, f"{site}: no leg had a surveyed stop bar, so this test checked nothing"
+
+
+@needs_source_data
+@pytest.mark.parametrize("site", SITES)
+def test_no_leg_is_held_back_by_a_through_street_join(site, site_models):
+    """On the real junctions: dropping the through-street joins changes no leg's clearance.
+
+    leg_clearance_ft is what decides how close to the junction a crossing, a hatched zone or a
+    stall may start, so a join that is not a corner return must not appear in it. The one pair
+    this fires on is e_broad_st_east/e_broad_st_west at 179.9 deg, where it was worth 38 ft of
+    clearance on e_broad_st_east - enough to hold that leg's hatching 22 ft short of its own
+    surveyed stop bar.
+    """
+    from src.geometry.model import leg_clearance_ft
+
+    model = site_models[site]
+    state = DesignState.from_model(model)
+    real_corners = {key: pieces for key, pieces in state.corner_fillets.items()
+                    if not pieces.get("through_street")}
+    for leg_name in state.legs:
+        with_joins = leg_clearance_ft(leg_name, state.legs, state.corner_fillets)
+        without = leg_clearance_ft(leg_name, state.legs, real_corners)
+        assert with_joins == pytest.approx(without), (
+            f"{site}/{leg_name}: a through-street join adds "
+            f"{with_joins - without:.1f} ft of corner clearance it has no business adding")
+
+
+@needs_source_data
+def test_e_broad_east_hatching_reaches_its_stop_bar():
+    """The leg the through-street join was holding back, by its own numbers.
+
+    Its right kerb is traced from 23 ft out, so there IS curb to build a strip against inside
+    the stop bar at 52.9 ft - and the hatching now starts at 37 ft, 16 ft past the bar. Its
+    LEFT kerb is only traced from 59 ft, so that side still starts at 59: a gap in the OSM
+    tracing, which the phase output reports by name, not something geometry can recover.
+    """
+    from src.geometry.model import curb_station_span, station_offset_many
+    from src.render.crosswalks import resolve_crosswalk_offsets, resolve_stop_bar_offsets
+    from src.sources.osm_context import fetch_stop_lines
+
+    model, state, paint = demo_paint("ebroad_princeton")
+    leg_name = "e_broad_st_east"
+    leg = state.legs[leg_name]
+    with contextlib.redirect_stdout(io.StringIO()):
+        crossings = fetch_crossings(model.center_wgs84, radius_m=130)
+        bars = resolve_stop_bar_offsets(state, resolve_crosswalk_offsets(state, crossings),
+                                        fetch_stop_lines(model.center_wgs84, radius_m=130))
+    bar_ft = bars[leg_name]
+
+    for side in ("left", "right"):
+        fills = [p for p in paint if p.leg == leg_name and p.side == side and p.is_fill]
+        assert fills, f"{leg_name} {side} has no hatched zone at all"
+        start_ft = min(station_offset_many(leg.centerline,
+                                           np.asarray(f.geometry.exterior.coords, dtype=float))[0].min()
+                       for f in fills)
+        traced_from_ft = curb_station_span(leg, side)[0]
+        if traced_from_ft > bar_ft:
+            assert start_ft == pytest.approx(traced_from_ft, abs=1.0), (
+                f"{side}: kerb traced only from {traced_from_ft:.0f} ft, so the zone should "
+                f"begin there, not at {start_ft:.0f}")
+            continue
+        assert start_ft <= bar_ft, (
+            f"{side}: hatching starts {start_ft - bar_ft:.1f} ft short of the stop bar at "
+            f"{bar_ft:.0f} ft, leaving bare full-width asphalt where the lane most needs "
+            f"narrowing")
+
+
+@needs_source_data
+@pytest.mark.parametrize("site", SITES)
+def test_the_stop_bar_reaches_the_centreline_and_the_lane_edge(site, site_models):
+    """It spans the approach lane: centerline to lane edge, nothing standing off either.
+
+    stop_bar_band_geometry_ft subtracted the kerb clearance from the SPAN while centring the
+    bar on the middle of the entering half, so half the clearance landed at the centerline
+    end - leaving the bar 0.7-0.8 ft off the centerline with nothing on the far side of the
+    gap. And where a treatment had narrowed the lane, the "kerb" clearance was being applied
+    against a painted edge line 1.6 ft away, so the bar stopped short at that end too.
+    MUTCD's stop line runs across the approach lanes; both ends meet what they run to.
+    """
+    from src.geometry.model import station_offset_many
+    from src.render.crosswalks import (entering_lane_width_ft, resolve_crosswalk_offsets,
+                                       resolve_crosswalk_skews, resolve_stop_bar_offsets,
+                                       stop_bar_bands_ft)
+    from src.sources.osm_context import fetch_stop_lines
+
+    model = site_models[site]
+    if not model.config.get("signals"):
+        pytest.skip(f"{site} is unsignalized - no surveyed stop bars")
+    _m, state, _paint = demo_paint(site)
+    with contextlib.redirect_stdout(io.StringIO()):
+        crossings = fetch_crossings(model.center_wgs84, radius_m=130)
+        offsets = resolve_crosswalk_offsets(state, crossings)
+        bars_at = resolve_stop_bar_offsets(
+            state, offsets, fetch_stop_lines(model.center_wgs84, radius_m=130))
+        bands = stop_bar_bands_ft(state, bars_at, resolve_crosswalk_skews(state, crossings))
+
+    assert bands, f"{site} is signalized but drew no stop bars"
+    for leg_name, band in sorted(bands.items()):
+        leg = state.legs[leg_name]
+        _st, off = station_offset_many(leg.centerline,
+                                       np.asarray(band.exterior.coords, dtype=float))
+        entering_ft = entering_lane_width_ft(state, leg_name)
+        edge_ft = entering_ft if entering_ft is not None else leg.curb_to_curb_ft / 2
+        inner = min(abs(off.min()), abs(off.max()))
+        outer = max(abs(off.min()), abs(off.max()))
+        assert inner < 0.25, (
+            f"{site}/{leg_name}: the stop bar stands {inner:.2f} ft off the road centerline, "
+            f"which is a gap with nothing on the other side of it")
+        # Where the lane was narrowed the bar meets its own edge line; where the far end is
+        # the kerb it is held back deliberately, so allow the clearance there.
+        allowed = 0.25 if entering_ft is not None else STOP_BAR_CURB_CLEARANCE_M / FT_TO_M + 0.25
+        assert edge_ft - outer < allowed, (
+            f"{site}/{leg_name}: the stop bar stops {edge_ft - outer:.2f} ft short of the "
+            f"{'lane edge line' if entering_ft is not None else 'kerb'} at {edge_ft:.1f} ft")
+
+
+@needs_source_data
+@pytest.mark.parametrize("site", SITES)
+def test_the_plan_view_draws_without_raising(site, site_models):
+    """Actually draw it, for existing conditions and every scenario.
+
+    Nothing in this suite drew the plan view before, and that is how a crash reached the
+    user: the through-street join carried "radius_ft": None, plot_design_state labels a
+    corner's radius wherever that key is PRESENT, and `f"{None:.0f}"` is a TypeError. Every
+    other check passed, the 3D render was verified, and the 2D build died on the one site
+    with a through-street pair.
+
+    A smoke test, deliberately: it asserts no exception and that something was drawn, not what
+    it looks like. The geometry itself is checked by the invariants; what was missing was
+    anyone running the drawing code at all.
+    """
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
+    from src.render.plan_view import legend_handles, plot_design_state
+
+    model = site_models[site]
+    states = {"existing": DesignState.from_model(model)}
+    for name, builder in sorted(scenario_builders(site).items()):
+        with contextlib.redirect_stdout(io.StringIO()):
+            states[name] = run_scenario(builder, DesignState.from_model(model), model)
+
+    with contextlib.redirect_stdout(io.StringIO()):
+        crossings = fetch_crossings(model.center_wgs84, radius_m=130)
+        for label, state in states.items():
+            fig, ax = plt.subplots(figsize=(6, 6))
+            try:
+                plot_design_state(ax, model, state, f"{site} {label}", crossings=crossings)
+                assert ax.collections or ax.lines, f"{site}/{label}: nothing was drawn"
+            finally:
+                plt.close(fig)
+    assert legend_handles(), "the legend is empty"
+
+
+@needs_source_data
+@pytest.mark.parametrize("site", SITES)
+def test_each_leg_reads_its_tags_off_a_carriageway(site, site_models):
+    """A leg's operational tags have to come from the street, not from something parked on it.
+
+    Geometry alone cannot tell them apart. East of Princeton Ave, OSM has a
+    `highway=service, service=parking_aisle` way (772378208) running 0.5 ft from East Broad
+    Street's centerline at 0.2 deg to it - closer on neither count, and it won the
+    nearest-way tie. So e_broad_st_east read its restrictions off a parking aisle, which has
+    none, and East Broad Street's own `parking:both:restriction=no_stopping` (way 1546878992)
+    was never seen. The kerb still came out hatched, for having 7.5 ft spare rather than for
+    being no-stopping, and the plan view reported it as untagged.
+    """
+    from src.geometry.intersection import ROAD_MATCH_HIGHWAY_CLASSES
+
+    model = site_models[site]
+    for leg_name in sorted(model.legs):
+        tags = model.leg_osm_tags.get(leg_name)
+        if tags is None:
+            continue        # no match at all is reported and defaults are used - see the matcher
+        assert tags.get("highway") in ROAD_MATCH_HIGHWAY_CLASSES, (
+            f"{site}/{leg_name} took its tags from a highway={tags.get('highway')!r} "
+            f"(service={tags.get('service')!r}, name={tags.get('name')!r}) - not a carriageway")
+        assert "service" not in tags, (
+            f"{site}/{leg_name} matched a service way: {tags.get('service')!r}")
+
+
+@needs_source_data
+def test_east_broad_reads_the_no_stopping_the_surveyor_tagged():
+    """The specific restriction the parking aisle was masking, on the leg it was masked on."""
+    from src.geometry.intersection import parking_restriction_by_side
+
+    model, _state, _paint = demo_paint("ebroad_princeton")
+    tags = model.leg_osm_tags["e_broad_st_east"]
+    assert tags.get("name") == "East Broad Street", f"matched {tags.get('name')!r} instead"
+    sides = parking_restriction_by_side(tags, model.leg_osm_aligned["e_broad_st_east"])
+    assert sides["left"] == "no_stopping" and sides["right"] == "no_stopping", (
+        f"East Broad east is tagged no_stopping on both sides in OSM; this read {sides}")
+
+
+# --------------------------------------------------------------------------
+# Data accounting: fetched source data must be USED, or accounted for
+# --------------------------------------------------------------------------
+
+@needs_source_data
+@pytest.mark.parametrize("site", SITES)
+def test_every_leg_side_is_built_from_traced_kerb(site, site_models):
+    """All 24 leg sides across the four junctions come from OSM tracing, not an offset.
+
+    The strongest single statement of "we are using what we have", and the one that three
+    separate discard bugs each violated: the width fit judging vertices against a width it
+    was about to measure from them, the parallelism gap, and a leg claiming a vertex from
+    behind its own junction node. Every one of them showed up here first as a side quietly
+    falling back to a centerline offset.
+    """
+    model = site_models[site]
+    fallen_back = [f"{name} {side}" for name, leg in sorted(model.legs.items())
+                   for side in ("left", "right") if side not in leg.traced_sides]
+    assert not fallen_back, (
+        f"{site}: these sides are drawn as centerline offsets, not from the traced kerb: "
+        f"{fallen_back}")
+
+
+@needs_source_data
+@pytest.mark.parametrize("site", SITES)
+def test_no_traced_kerb_vertex_is_silently_unclaimed(site, site_models):
+    """Every vertex of every kerb way this junction accepts must be claimable by some leg.
+
+    An unclaimable vertex is either a real exclusion - a median, a driveway apron, a
+    neighbouring street - or ground truth going in the bin. The tolerated count is stated per
+    site so that a NEW one fails here rather than disappearing into a total. W Broad &
+    Louellen's five are its two stub ways behind the junction node running across it, not
+    along any leg.
+    """
+    import numpy as np
+
+    from src.geometry.intersection import kerb_lines_with_tags_ft
+    from src.geometry.model import (CURB_POINT_BEHIND_TOLERANCE_FT, CURB_POINT_CORNER_ZONE_FT,
+                                    CURB_POINT_MAX_SKEW_DEG, CURB_POINT_MAX_WIDTH_RATIO,
+                                    CURB_POINT_MIN_WIDTH_RATIO, _line_direction,
+                                    _vertex_tangents, station_offset_many)
+
+    TOLERATED = {"broad_st_greenwood": 0, "ebroad_princeton": 0,
+                 "columbia_princeton": 0, "wbroad_louellen": 5}
+
+    model = site_models[site]
+    with contextlib.redirect_stdout(io.StringIO()):
+        ways = [line for line, _tags in kerb_lines_with_tags_ft(model.center_wgs84,
+                                                                 model.center_ft)]
+    points = np.concatenate([np.asarray(w.coords, dtype=float) for w in ways])
+    tangents = np.concatenate([_vertex_tangents(w) for w in ways])
+    min_cosine = np.cos(np.radians(CURB_POINT_MAX_SKEW_DEG))
+
+    unclaimable = 0
+    for i, point in enumerate(points):
+        for leg in model.legs.values():
+            stations, offsets = station_offset_many(leg.centerline, point[None, :])
+            ratio = abs(offsets[0]) / (leg.curb_to_curb_ft / 2)
+            skewed = abs(float(tangents[i] @ _line_direction(leg.centerline))) < min_cosine
+            if (stations[0] >= -CURB_POINT_BEHIND_TOLERANCE_FT
+                    and CURB_POINT_MIN_WIDTH_RATIO <= ratio <= CURB_POINT_MAX_WIDTH_RATIO
+                    and not (skewed and stations[0] > CURB_POINT_CORNER_ZONE_FT)):
+                break
+        else:
+            unclaimable += 1
+    assert unclaimable <= TOLERATED[site], (
+        f"{site}: {unclaimable} traced kerb vertices can be claimed by no leg "
+        f"({TOLERATED[site]} known). A new one means kerb the surveyor drew is being discarded")
+
+
+@needs_source_data
+@pytest.mark.parametrize("site", SITES)
+def test_every_matched_crossing_and_stop_bar_is_used(site, site_models):
+    """A crossing or stop bar that matched a leg has to reach the drawing.
+
+    Not "was fetched" - the fetch radius deliberately pulls in neighbouring junctions. Once
+    the matcher has credited one to a leg, though, dropping it is a discard.
+    """
+    from src.render.crosswalks import (_match_crossings_to_legs, resolve_crosswalk_offsets,
+                                       resolve_stop_bar_offsets)
+    from src.sources.osm_context import fetch_stop_lines
+
+    model = site_models[site]
+    state = DesignState.from_model(model)
+    with contextlib.redirect_stdout(io.StringIO()):
+        crossings = fetch_crossings(model.center_wgs84, radius_m=130)
+        matched = _match_crossings_to_legs(state.legs, crossings)
+        offsets = resolve_crosswalk_offsets(state, crossings)
+        bars = resolve_stop_bar_offsets(
+            state, offsets, fetch_stop_lines(model.center_wgs84, radius_m=130))
+
+    for leg_name in matched:
+        assert offsets[leg_name][1].startswith("osm_survey"), (
+            f"{site}/{leg_name}: a matched OSM crossing was not used for the crossing's "
+            f"position - source says {offsets[leg_name][1]!r}")
+    # A stop bar the matcher credited to a leg must be drawn on it, signalized or not.
+    for leg_name, station_ft in bars.items():
+        assert station_ft > 0, f"{site}/{leg_name}: stop bar resolved to {station_ft}"

@@ -114,7 +114,13 @@ def _unit(v: np.ndarray) -> np.ndarray:
 # that their crossing point lands 47 ft up the street, dragging the fillet's tangent points
 # and the whole pavement ring with it. These are old streets; a through road that bends a
 # few degrees at a side street is the normal case, not a corner.
-THROUGH_STREET_ANGLE_DEG = 165.0
+THROUGH_STREET_ANGLE_DEG = 160.0
+# 160 rather than 165 so that W Broad, which kinks 17.3 deg at Louellen (162.7 deg between
+# the legs), counts as one street passing through - which is what it is. Its outer kerb runs
+# unbroken past the junction and carries no crossing. Raising the tolerance meant the two
+# legs' zones met at an angle and overlapped by 5.6 sq ft in the wedge between their frames;
+# curbside_paint_ft's `shares_a_kerb` now has them butt instead. At E Broad & Princeton the
+# pair is 179.9 deg apart, where the wedge is negligible and neither issue arises.
 
 
 def fillet_curb_corner(
@@ -185,6 +191,23 @@ def _leg_bearing(leg: "Leg") -> float:
     return np.arctan2(d[1], d[0])
 
 
+def _through_street(leg_a, leg_b) -> bool:
+    """Whether these two legs are one street running through the junction rather than two
+    streets meeting at a corner.
+
+    Measured between the leg CENTERLINES, not between the first segments of their traced
+    curbs. The curbs' first segments are wherever the surveyor's tracing happens to begin,
+    which on a partially-traced side is somewhere up the block; and using each leg's chord
+    rather than its near end matters at W Broad & Louellen, where louellen_st_west leaves the
+    junction on a 15 ft stub bearing 239 deg before settling onto 269. By the stub it reads as
+    178.6 deg from w_broad_st_northeast - a through street - and by the chord as 149.2, which
+    is the truth: the route turns there, and the traced kerbs show a real 14 ft return.
+    """
+    theta = np.arccos(np.clip(np.dot(_line_direction(leg_a.centerline),
+                                     _line_direction(leg_b.centerline)), -1, 1))
+    return np.degrees(theta) > THROUGH_STREET_ANGLE_DEG
+
+
 def build_corner_fillets(legs: dict, radius_ft, corner_radii: dict | None = None,
                           corner_arcs: dict | None = None) -> dict:
     """
@@ -207,6 +230,29 @@ def build_corner_fillets(legs: dict, radius_ft, corner_radii: dict | None = None
         name_a, leg_a = ordered[i]
         name_b, leg_b = ordered[(i + 1) % n]
         corner_key = frozenset((name_a, name_b))
+
+        # A pair of legs that are the same street running THROUGH the junction has no corner
+        # between them, so neither branch below applies: there is no return to trace and
+        # nothing to round. Tested first because both of them would otherwise happily invent
+        # one. e_broad_st_east and e_broad_st_west are 179.9 deg apart - the continuous north
+        # edge of E Broad St, opposite the stem of the T - and traced_corner_join drew a
+        # diagonal from one curb to the other whose start sat 67.1 ft up the leg. That became
+        # the leg's corner-return "tangent point", which held the kerbside hatching 75 ft out
+        # from a junction whose surveyed stop bar is at 52.9 ft. fillet_curb_corner has had
+        # this test since the fitted path was the only path; it just never ran for a traced
+        # corner, because the traced branches return before reaching it.
+        if _through_street(leg_a, leg_b):
+            results[(name_a, name_b)] = {
+                "trimmed_a": leg_a.left_curb,
+                "arc": LineString([leg_a.left_curb.coords[0], leg_b.right_curb.coords[0]]),
+                "trimmed_b": leg_b.right_curb,
+                # No radius key at all, rather than a None one: there is no corner here to
+                # have a radius, and the plan view labels a corner's radius wherever the key
+                # is present. A None slipped straight past that guard and crashed the 2D
+                # build on an f-string.
+                "source": "through_street", "through_street": True,
+            }
+            continue
 
         # Both sides traced means the corner between them is traced too - the return's own
         # vertices are already the inner ends of these two curbs. Nothing to fit: walk from
@@ -252,7 +298,8 @@ def build_corner_fillets(legs: dict, radius_ft, corner_radii: dict | None = None
     return results
 
 
-def leg_clearance_ft(leg_name: str, legs: dict, corner_fillets: dict, buffer_ft: float = 3.0) -> float:
+def leg_clearance_ft(leg_name: str, legs: dict, corner_fillets: dict, buffer_ft: float = 3.0,
+                     side: str | None = None) -> float:
     """
     Distance from a leg's near point out past BOTH of its corner fillets'
     tangent points, plus a small buffer - the point beyond which the leg's
@@ -260,6 +307,20 @@ def leg_clearance_ft(leg_name: str, legs: dict, corner_fillets: dict, buffer_ft:
     to place crosswalks / raised crossings outside the curve, not inside it -
     a fixed small offset from the intersection center lands inside the curve
     for any leg wide enough or with a generous enough corner radius.
+
+    `side` narrows it to the corners that constrain THAT KERB. A corner return belongs to one
+    side of each leg it touches - build_corner_fillets pairs leg A's LEFT curb with leg B's
+    RIGHT curb - so a per-leg maximum holds one kerb back for a curve that is on the other.
+    At E Broad & Princeton the stem runs south, so both corners constrain the south curbs and
+    the north side of E Broad has no return on it at all; the per-leg figure held its kerbside
+    paint 28-32 ft out from a curve that is not there:
+
+        e_broad_st_east  left  (north)   per-side  3.0 ft   per-leg 32.1 ft
+        e_broad_st_east  right (south)   per-side 32.1 ft   per-leg 32.1 ft
+
+    Without `side` the answer is the per-leg maximum, which is what a CROSSWALK wants - it
+    spans kerb to kerb, so it has to clear the returns on both sides. Only paint that belongs
+    to one kerb should ask per side.
     """
     # Project onto the centerline (not raw Euclidean distance from the near
     # point) - the tangent point lives on the CURB line, laterally offset from
@@ -270,11 +331,16 @@ def leg_clearance_ft(leg_name: str, legs: dict, corner_fillets: dict, buffer_ft:
     centerline = legs[leg_name].centerline
     max_along_dist = 0.0
     for (leg_a, leg_b), pieces in corner_fillets.items():
-        if "error" in pieces:
+        if "error" in pieces or pieces.get("through_street"):
+            # A through-street join is not a corner return: the curb does not curve there, so
+            # it constrains nothing. Its "tangent points" are just wherever the two curb lines
+            # happen to start, which on a partially-traced side is far up the leg.
             continue
-        if leg_a == leg_name:
+        # trimmed_a is leg_a's LEFT curb, trimmed_b is leg_b's RIGHT curb - see
+        # build_corner_fillets. That is what makes a corner side-specific.
+        if leg_a == leg_name and side in (None, "left"):
             max_along_dist = max(max_along_dist, centerline.project(Point(pieces["trimmed_a"].coords[0])))
-        if leg_b == leg_name:
+        if leg_b == leg_name and side in (None, "right"):
             max_along_dist = max(max_along_dist, centerline.project(Point(pieces["trimmed_b"].coords[0])))
     return max_along_dist + buffer_ft
 
@@ -1237,6 +1303,20 @@ def _corner_pairs(legs: dict) -> list[tuple[str, str]]:
 CURB_POINT_MAX_WIDTH_RATIO = 2.6   # |offset| / half-width; corner returns flare to ~2.3x
 CURB_POINT_MIN_WIDTH_RATIO = 0.45  # below this it's a median or a driveway, not this curb
 CURB_POINT_BEHIND_TOLERANCE_FT = 3.0
+# A vertex a little behind a leg's junction node is still claimable - a corner return's own
+# geometry straddles station 0, and dropping those vertices loses the corner. But a leg must
+# never outbid one the vertex lies IN FRONT of, and unpenalised it can: at E Broad & Princeton
+# the two legs are 179.9 deg apart, and the vertex where East Broad's north kerb changes from
+# the corner return to the straight run sits 0.8 ft ahead of e_broad_st_east and 0.8 ft BEHIND
+# e_broad_st_west - on the far side of the intersection from it. The west leg's half-width
+# happened to match a shade better (0.995 vs 1.010), so it took the vertex; the 58.3 ft way it
+# was the near end of then had one point left, curb_line_from_points needs two, and the whole
+# stretch was discarded. That left e_broad_st_east's north kerb "traced only from 59 ft out"
+# and 58 ft of a surveyed no-stopping kerb unhatched.
+#
+# Larger than any ratio the window admits (2.6), so forward always beats behind and the ratio
+# only ever breaks ties among legs that all have the vertex ahead of them.
+CURB_POINT_BEHIND_PENALTY = 10.0
 # Out along a leg, past its corner returns, a kerb that IS that leg's kerb runs along it.
 # Offset alone can't tell the difference: at W Broad & Louellen a kerb swinging from 16 ft
 # to 37 ft off Louellen's alignment over 60 ft - a driveway apron running away from the
@@ -1394,10 +1474,13 @@ def assign_curb_points_to_legs(legs: dict, kerb_lines: list[LineString],
         disqualified = ((leg_stations < -CURB_POINT_BEHIND_TOLERANCE_FT)
                         | (ratio < low) | (ratio > high)
                         | (skewed & (leg_stations > CURB_POINT_CORNER_ZONE_FT)))
+        # Still claimable behind the node, but only if nobody has it in front - see
+        # CURB_POINT_BEHIND_PENALTY.
+        score = ratio + np.where(leg_stations < 0, CURB_POINT_BEHIND_PENALTY, 0.0)
         names.append(name)
         stations.append(leg_stations)
         offsets.append(leg_offsets)
-        ratios.append(np.where(disqualified, np.inf, ratio))
+        ratios.append(np.where(disqualified, np.inf, score))
     if not names:
         return {}
 
@@ -1438,15 +1521,59 @@ def _outward_slope(points: list[tuple[float, float]]) -> float:
     return 0.0
 
 
+def _inward_slope(points: list[tuple[float, float]]) -> float:
+    """d(offset)/d(station) for the JUNCTION end of a traced side. Mirror of _outward_slope."""
+    start_station, start_offset = points[0]
+    for station, offset in points[1:]:
+        if station - start_station >= CURB_EXTRAPOLATION_MIN_BASELINE_FT:
+            slope = (offset - start_offset) / (station - start_station)
+            return float(np.clip(slope, -CURB_EXTRAPOLATION_MAX_SLOPE, CURB_EXTRAPOLATION_MAX_SLOPE))
+    return 0.0
+
+
+def through_street_sides(legs: dict) -> set:
+    """{(leg name, side)} for the kerbs that run STRAIGHT THROUGH the junction.
+
+    Two angularly-adjacent legs more than THROUGH_STREET_ANGLE_DEG apart are one street
+    passing through, and the pair of kerbs facing away from the stem is one unbroken kerb with
+    no corner in it. Paired the way build_corner_fillets pairs them - leg A's LEFT with leg B's
+    RIGHT - so the answer is per side.
+
+    Computed from the leg centerlines alone, which is what lets _apply_traced_curb_lines use it:
+    the corner fillets are not built yet at that point, and they depend on the curb lines.
+    """
+    usable = {name: leg for name, leg in legs.items() if leg.left_curb is not None}
+    if len(usable) < 2:
+        return set()
+    ordered = sorted(usable.items(), key=lambda kv: _leg_bearing(kv[1]))
+    sides = set()
+    for i, (name_a, leg_a) in enumerate(ordered):
+        name_b, leg_b = ordered[(i + 1) % len(ordered)]
+        if _through_street(leg_a, leg_b):
+            sides.add((name_a, "left"))
+            sides.add((name_b, "right"))
+    return sides
+
+
 def curb_line_from_points(points: list[tuple[float, float]], leg: "Leg",
-                          working_length_ft: float) -> LineString | None:
+                          working_length_ft: float,
+                          extend_to_junction: bool = False) -> LineString | None:
     """One leg side's curb, straight off the traced points.
 
     The points are the surveyor's own vertices, kept as traced and ordered along the leg.
-    Only the outward end is extended, along the bearing of the last traced stretch, to reach
-    the leg's working length - and only when the tracing stops short of it. The junction end
-    is left exactly where the tracing ends; the corner is built from the traced geometry
-    there, not by running this line on into the intersection.
+    The outward end is extended along the bearing of the last traced stretch to reach the
+    leg's working length, when the tracing stops short of it.
+
+    The junction end is normally left exactly where the tracing ends - the corner is built
+    from the traced geometry there, not by running this line on into the intersection.
+    `extend_to_junction` lifts that for a side with NO CORNER RETURN, where the kerb genuinely
+    runs straight through and stopping short is the fabrication. The north side of E Broad at
+    Princeton is one unbroken kerb; the OSM way covering its last 20 ft before the junction has
+    only two vertices, one of which the collinear leg on the far side legitimately claims, so
+    the west leg's curb began 20.7 ft out and its no-stopping hatching could not be built
+    inside that. Extending it in is the same extrapolation the outward end already gets, along
+    a bearing the tracing establishes over 60+ ft of straight kerb - see through_street_sides
+    for what licenses it.
     """
     ordered = sorted(points)
     if len(ordered) < 2:
@@ -1463,6 +1590,9 @@ def curb_line_from_points(points: list[tuple[float, float]], leg: "Leg",
     if deduped[-1][0] < working_length_ft:
         deduped.append((working_length_ft,
                         deduped[-1][1] + _outward_slope(deduped) * (working_length_ft - deduped[-1][0])))
+    if extend_to_junction and deduped[0][0] > 0.0:
+        station = deduped[0][0]
+        deduped.insert(0, (0.0, deduped[0][1] - _inward_slope(deduped) * station))
 
     return LineString([_point_at(leg.centerline, s, o) for s, o in deduped])
 

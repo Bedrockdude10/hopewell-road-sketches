@@ -20,7 +20,8 @@ from src.render.crosswalks import (CROSSWALK_DEPTH_M, STOP_BAR_PLAN_DEPTH_FT, ce
                                    crosswalk_band_ft, crosswalk_bands_ft, stop_bar_bands_ft,
                                    resolve_crosswalk_offsets,
                                    resolve_crosswalk_skews, resolve_stop_bar_offsets,
-                                   stop_bar_band_geometry_ft, stop_bar_width_ft)
+                                   entering_lane_width_ft, stop_bar_band_geometry_ft,
+                                   stop_bar_width_ft)
 from src.sources.osm_context import (fetch_crossings, fetch_kerbs, fetch_sidewalks,
                                      fetch_stop_lines, fetch_street_furniture,
                                      fetch_traffic_control)
@@ -218,7 +219,9 @@ def _draw_crosswalks(ax, model: IntersectionModel, state: DesignState, crosswalk
             # bar is the bar that gets rendered. It also inherits the crosswalk's
             # surveyed skew, being painted parallel to it.
             leg = state.legs[leg_name]
-            span_ft, lateral_ft = stop_bar_band_geometry_ft(stop_bar_width_ft(state, leg_name))
+            span_ft, lateral_ft = stop_bar_band_geometry_ft(
+                stop_bar_width_ft(state, leg_name),
+                entering_lane_width_ft(state, leg_name) is None)
             bar = crosswalk_band_ft(leg, stop_offset_ft, STOP_BAR_PLAN_DEPTH_FT,
                                     crosswalk_skews.get(leg_name, 0.0),
                                    span_ft=span_ft, lateral_offset_ft=lateral_ft)
@@ -285,7 +288,9 @@ def plot_design_state(ax, model: IntersectionModel, state: DesignState, title: s
         if "error" in pieces:
             continue
         gpd.GeoSeries([pieces["arc"]]).plot(ax=ax, color="darkorange", linewidth=2.5, zorder=4)
-        if dimension_labels and "radius_ft" in pieces:
+        # `is not None` as well as `in`: a corner that is not a corner - two legs of one street
+        # running through the junction - has no radius, and reaching for one crashed the build.
+        if dimension_labels and pieces.get("radius_ft") is not None:
             mid = pieces["arc"].interpolate(0.5, normalized=True)
             ax.annotate(f"R={pieces['radius_ft']:.0f} ft", (mid.x, mid.y), fontsize=7, color="darkorange",
                         fontweight="bold", ha="center",
@@ -390,7 +395,8 @@ def plot_design_state(ax, model: IntersectionModel, state: DesignState, title: s
 
     ax.scatter([model.center_ft.x], [model.center_ft.y], color="blue", zorder=6, s=40)
 
-    _draw_centerlines(ax, state, crosswalk_offsets, stop_bar_offsets_for(model, state, crossings))
+    _draw_centerlines(ax, state, crosswalk_offsets,
+                       stop_bar_offsets_for(model, state, crossings), marked)
 
     violations = _mark_violations(ax, model, state, crossings, props, paint, pavement)
 
@@ -408,7 +414,7 @@ def plot_design_state(ax, model: IntersectionModel, state: DesignState, title: s
 DOUBLE_YELLOW_GAP_FT = 0.1 / FT_TO_M
 
 
-def _draw_centerlines(ax, state, crosswalk_offsets, stop_bar_offsets):
+def _draw_centerlines(ax, state, crosswalk_offsets, stop_bar_offsets, marked):
     """The leg centerline (the measurement datum) and the painted centerline on top of it.
 
     Both were missing. The datum matters because every width in this drawing - the 11 ft
@@ -430,7 +436,8 @@ def _draw_centerlines(ax, state, crosswalk_offsets, stop_bar_offsets):
         if style == "none" or leg_name not in crosswalk_offsets:
             continue
         start_ft = centerline_start_ft(crosswalk_offsets[leg_name][0],
-                                        stop_bar_offsets.get(leg_name))
+                                        stop_bar_offsets.get(leg_name),
+                                        leg_name in marked)
         if start_ft >= leg.centerline.length:
             continue
         painted = substring(leg.centerline, start_ft, leg.centerline.length)

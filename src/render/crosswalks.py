@@ -73,17 +73,28 @@ STOP_BAR_CURB_CLEARANCE_M = 0.5
 STOP_BAR_PLAN_DEPTH_FT = 1.5
 
 
-def stop_bar_band_geometry_ft(width_ft: float) -> tuple[float, float]:
+def stop_bar_band_geometry_ft(width_ft: float, edge_is_kerb: bool = True) -> tuple[float, float]:
     """(span_ft, lateral_offset_ft) for a stop bar on a roadway `width_ft` wide.
 
-    The bar covers half the width minus a clearance at each end, and is centred on the
-    middle of the entering half - i.e. offset a quarter of the full width off the road
-    centerline, toward the leg's own 'left' side (see blender_crosswalks.add_stop_bar
-    for why that is the entering driver's side under right-hand traffic).
+    The bar spans the entering half, from the road centerline out to the edge of the lane the
+    stopped vehicle is in, toward the leg's own 'left' side (see
+    blender_crosswalks.add_stop_bar for why that is the entering driver's side under
+    right-hand traffic).
+
+    It STARTS AT THE CENTERLINE. This used to subtract the clearance from the span while
+    centring the bar on the middle of the entering half, which split the clearance between
+    the two ends and left the bar standing 0.7-0.8 ft off the centerline - a gap with nothing
+    on the other side of it, which reads as a striping error because that is what it would be.
+    MUTCD's stop line runs across the approach lanes; at the centerline it meets the
+    centerline. Only the far end is held back, and only when that end is the KERB: paint does
+    not run into the gutter. Where a treatment has narrowed the lane, the far end is a painted
+    edge line instead, and a bar stopping 1.6 ft short of its own edge line looks like the
+    same mistake at the other end - so `edge_is_kerb` is False there and the bar meets it.
     """
     clearance_ft = STOP_BAR_CURB_CLEARANCE_M / FT_TO_M
-    half_ft = width_ft / 2
-    return max(half_ft - clearance_ft, clearance_ft), half_ft / 2
+    outer_ft = width_ft / 2 - (clearance_ft if edge_is_kerb else 0.0)
+    span_ft = max(outer_ft, clearance_ft)
+    return span_ft, span_ft / 2
 
 
 def entering_lane_width_ft(state: DesignState, leg_name: str) -> float | None:
@@ -140,10 +151,19 @@ def _crossing_angle_deg(crossing_line: LineString, centerline: LineString) -> fl
     return 180 - diff if diff > 90 else diff
 
 
-def _crossing_skew_deg(crossing_line: LineString, centerline: LineString) -> float:
+def _crossing_skew_deg(crossing_line: LineString, centerline: LineString,
+                        station_ft: float | None = None) -> float:
     """Signed angle, in (-90, 90], from square-across-the-leg to the crossing's real
     direction. 0 means the surveyed crossing runs exactly perpendicular to the leg
     centerline; positive is counter-clockwise.
+
+    "Square" is measured against the leg AT `station_ft`, because that is the frame
+    crosswalk_axes applies the answer in. Measuring it against the whole-leg chord instead -
+    which this did - makes the two disagree by however much the centerline bends between
+    them: 4.54 deg on broad_st_east, whose alignment kinks 4.5 deg where NJDOT rounds the
+    corner 43.1 ft out. The skew is carried precisely so the marking lines up with the
+    surveyed one, and measuring it in a different frame from the one it is used in threw
+    away exactly as much as it recovered.
 
     Real crosswalks are not always square to the road they cross - they are painted to
     line up with the curb ramps and the sidewalks either side, which at a skewed
@@ -154,9 +174,16 @@ def _crossing_skew_deg(crossing_line: LineString, centerline: LineString) -> flo
     the Blender render orient the crosswalk the way it was actually surveyed.
     """
     (cx0, cy0), (cx1, cy1) = crossing_line.coords[0], crossing_line.coords[-1]
-    (lx0, ly0), (lx1, ly1) = centerline.coords[0], centerline.coords[-1]
     crossing_dir = math.atan2(cy1 - cy0, cx1 - cx0)
-    square_dir = math.atan2(ly1 - ly0, lx1 - lx0) + math.pi / 2  # perpendicular to the leg
+    if station_ft is None:
+        (lx0, ly0), (lx1, ly1) = centerline.coords[0], centerline.coords[-1]
+        leg_dir = math.atan2(ly1 - ly0, lx1 - lx0)
+    else:
+        from src.geometry.model import _frame_at
+
+        _origin, tangent = _frame_at(centerline, station_ft)
+        leg_dir = math.atan2(tangent[1], tangent[0])
+    square_dir = leg_dir + math.pi / 2  # perpendicular to the leg where the crossing sits
     # A line has no direction, so fold the difference into (-90, 90].
     diff = (math.degrees(crossing_dir - square_dir) + 90) % 180 - 90
     return diff
@@ -207,7 +234,7 @@ def _match_crossings_to_legs(legs: dict, crossings: list[dict]) -> dict:
                 continue
             if _crossing_angle_deg(line, centerline) < MIN_CROSSING_ANGLE_DEG:
                 continue  # runs alongside this leg, not across it
-            skew = _crossing_skew_deg(line, centerline)
+            skew = _crossing_skew_deg(line, centerline, along)
             candidates.append((perp, leg_name, along, style, skew, index, line, crossing.get("tags", {})))
 
     best_by_leg: dict[str, tuple] = {}  # leg_name -> (best_perp, along, style, skew, line, tags)
@@ -281,8 +308,18 @@ def resolve_crosswalk_skews(state: DesignState, crossings: list[dict]) -> dict[s
 
 # A stop bar crosses its approach, so it should sit square-ish to the leg, and it belongs
 # to the leg it is painted on rather than the one it happens to point at. Same shape of test
-# the crossing matcher uses, and the same reason: the cross street passes just as close.
-STOP_LINE_MIN_ANGLE_DEG = 45.0
+# the crossing matcher uses, and the same reason: the cross street passes just as close - so
+# the same threshold. A stop bar is painted parallel to the crossing ahead of it, and a
+# tolerance that fits one fits the other.
+#
+# It was 45, and Louellen St's surveyed bar sits at 43.9 deg: rejected by 1.1 deg, on a leg
+# whose two rival candidates are at 13.0 and 4.3 deg and 32-59 ft off the centerline, so
+# there was never any ambiguity about whose bar it was. The approach then fell back to the
+# DERIVED position, which is clamped to the corner return - putting the bar at 70.8 ft when
+# the paint is at 55.6, 15 ft out, on the leg carrying this junction's only marked crossing.
+# 30 deg leaves both rivals far outside; see MIN_CROSSING_ANGLE_DEG for how that value was
+# picked from the real spread.
+STOP_LINE_MIN_ANGLE_DEG = MIN_CROSSING_ANGLE_DEG
 STOP_LINE_MAX_OFFSET_FT = 40.0   # lateral distance from the leg centerline to the bar's midpoint
 STOP_LINE_MAX_ALONG_FT = 120.0   # beyond this it belongs to a neighbouring junction
 
@@ -362,7 +399,8 @@ def resolve_stop_bar_offsets(state: DesignState, crosswalk_offsets: dict[str, tu
 CENTERLINE_CROSSWALK_GAP_FT = 2 / FT_TO_M   # the historical 2 m, kept as-is
 
 
-def centerline_start_ft(crosswalk_offset_ft: float, stop_bar_offset_ft: float | None) -> float:
+def centerline_start_ft(crosswalk_offset_ft: float, stop_bar_offset_ft: float | None,
+                        crosswalk_is_marked: bool = True) -> float:
     """How far out along a leg its centerline paint begins.
 
     A centerline terminates AT the stop bar - it does not continue into the junction past
@@ -373,11 +411,20 @@ def centerline_start_ft(crosswalk_offset_ft: float, stop_bar_offset_ft: float | 
     the bar and into the intersection.
 
     max() rather than just the bar, so a leg whose surveyed bar sits unusually close in
-    still doesn't get centerline paint laid across its crosswalk.
+    still doesn't get centerline paint laid across its crosswalk - but ONLY where there is a
+    crosswalk. An unmarked leg still gets a crosswalk_offset_ft, because every leg needs a
+    resolved station for a crossing a proposal might add; on e_broad_st_east that station is
+    the geometric estimate, 70.1 ft, which is this junction's modelled corner return - a
+    figure the phase output already flags as contradicted by the surveyed stop bar 17 ft
+    inside it. Holding the double yellow back behind it stopped the paint 23.8 ft short of
+    the bar, keeping clear of a crossing that is not painted, using a number the pipeline
+    itself does not believe. Where nothing is painted there is nothing to keep clear of.
     """
     past_crosswalk_ft = crosswalk_offset_ft + CENTERLINE_CROSSWALK_GAP_FT
     if stop_bar_offset_ft is None:
         return past_crosswalk_ft
+    if not crosswalk_is_marked:
+        return stop_bar_offset_ft
     return max(stop_bar_offset_ft, past_crosswalk_ft)
 
 
@@ -676,7 +723,8 @@ def stop_bar_bands_ft(state, stop_bar_offsets: dict, skews: dict) -> dict:
         leg = state.legs.get(name)
         if leg is None:
             continue
-        span_ft, lateral_ft = stop_bar_band_geometry_ft(stop_bar_width_ft(state, name))
+        span_ft, lateral_ft = stop_bar_band_geometry_ft(
+            stop_bar_width_ft(state, name), entering_lane_width_ft(state, name) is None)
         bands[name] = crosswalk_band_ft(leg, offset_ft, STOP_BAR_PLAN_DEPTH_FT, skews.get(name, 0.0),
                                          span_ft=span_ft, lateral_offset_ft=lateral_ft)
     return bands

@@ -120,7 +120,7 @@ def entering_lane_width_ft(state: DesignState, leg_name: str) -> float | None:
          edge - the buffer, the lane, the kerb hatching - is width a stopping car has no
          business in, and the bar used to run straight across all of it because this rule knew
          about narrowing and parking and not about bike lanes. That was a user-visible bug, and
-         tests/test_curb_extensions.py pins the fix.
+         test_a_stop_bar_stops_where_the_bike_lane_starts pins the fix.
       2. a LANE NARROWING on this side, whose buffer is spare asphalt the bar stops at;
       3. MARKED PARKING, whose stalls plus kerb buffer the bar stops at.
 

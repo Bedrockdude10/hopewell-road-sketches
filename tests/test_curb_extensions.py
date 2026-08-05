@@ -22,7 +22,7 @@ from src.geometry.treatments import (AASHTO_MIN_BIKE_LANE_FT, AddBikeLane, AddBi
                                    AddCurbExtension, BikeLane, CornerApron,
                                    DesignState, LaneNarrowing, LaneNarrowingBollards,
                                    SetCornerRadius, TARGET_LANE_WIDTH_FT, find_corner)
-from src.geometry.markings import BOLLARD, BUFFER_FILL, CROSSING_RIM_LINE
+from src.geometry.markings import BOLLARD, BUFFER_EDGE_LINE, BUFFER_FILL
 from src.geometry.paint import LANE_EDGE_LINE_WIDTH_FT
 from src.render.scene import SceneGeometry
 from src.site import load_site_scenarios, run_scenario
@@ -760,8 +760,14 @@ def test_the_kerb_hatching_beside_a_bike_lane_is_trimmed_where_the_crossing_cuts
         hatching = [p for p in paint if p.leg == leg_name and p.side == side
                     and p.kind is BUFFER_FILL]
         assert hatching, f"{leg_name} {side} has no kerb hatching to trim"
+        # A rim is the zone's own edge line continued around the cut (no dedicated kind any
+        # more - see PaintContext.rim), so it is identified by running ACROSS the strip where
+        # the longitudinal edge lines run along it.
         rims = [p for p in paint if p.leg == leg_name and p.side == side
-                and p.kind is CROSSING_RIM_LINE]
+                and p.kind is BUFFER_EDGE_LINE
+                and np.ptp(station_offset_many(
+                    state.legs[leg_name].centerline,
+                    np.asarray(p.geometry.coords, dtype=float))[1]) > 1.0]
         outer_ft = lane.offsets_from_centerline_ft()["outer_ft"]
         # The buffer between the lane and the traffic has a rim of its own, and it is the
         # INNER one - so this looks for a rim out where the kerb hatching is, not just any.

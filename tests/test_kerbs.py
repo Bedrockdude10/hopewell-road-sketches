@@ -14,7 +14,7 @@ import pytest
 
 from src.geometry.kerbs import KerbType, opens_the_kerb
 from src.geometry.markings import BIKE_LANE_SURFACE
-from src.geometry.model import station_offset_many
+from src.geometry.model import curb_offsets_at_stations, station_offset_many
 from src.geometry.treatments import DesignState
 from src.site import load_site_scenarios, run_scenario
 
@@ -300,15 +300,22 @@ def test_a_hatched_zone_tapers_off_at_an_opening_where_a_lane_line_stops_dead(si
     entrance itself - measured here at the E Broad opening, where the removed ground has to be
     wider at the travel lane's edge than at the kerb and the entrance itself must NOT be.
 
-    The run-out is what a first version got wrong invisibly: profiled across the nominal width the
-    band was requested at (25.9 ft) rather than the kerb it was clamped to (7.6 ft), every step
-    came out within 3% of the full run - a gap 4 ft wider at each end, with no taper in it.
+    AND THE RUN-OUT IS A FILLET, tangent to the zone's edge line at the travel lane. That is the
+    property, not just "wider at the lane than at the kerb": the first version was an arc the other
+    way round - tangent to the TRANSVERSE direction at the lane edge, so it was flat exactly where
+    the eye follows the line and curved only in the last foot at the kerb. It measured as a taper
+    (2.5 ft of sweep) and still read as a blunt cut at every drawing scale. Pinned by probing the
+    profile across the strip: most of the sweep has to happen in the half nearest the LANE.
+
+    An earlier version was wrong more crudely: profiled across the nominal width the band was
+    requested at (25.9 ft) rather than the kerb it was clamped to (7.6 ft), every step came out
+    within 3% of the full run - a square gap 4 ft wider at each end with no taper in it at all.
     """
     from shapely.geometry import Point
 
     from src.geometry.kerbs import OpeningSource
     from src.geometry.model import inset_point_at_station
-    from src.geometry.paint import OPENING_TAPER_FT, kerb_opening_bands
+    from src.geometry.paint import kerb_opening_bands
     from src.geometry.treatments import TARGET_LANE_WIDTH_FT
 
     model = site_models["ebroad_princeton"]
@@ -319,26 +326,49 @@ def test_a_hatched_zone_tapers_off_at_an_opening_where_a_lane_line_stops_dead(si
     leg = state.legs["e_broad_st_east"]
     opening = next(o for o in state.kerb_openings[("e_broad_st_east", "left")]
                    if o.source is OpeningSource.DROPPED_KERB)
+    # The traced kerb at this opening, which is both the strip's depth and the fillet's radius.
+    kerb_ft = float(np.abs(curb_offsets_at_stations(
+        leg, "left", np.array([(opening.start_ft + opening.end_ft) / 2]))).max())
 
     def gap_ft(shape, offset_ft):
         """How much station `shape` removes at one offset from the centerline, by probing it."""
-        inside = [s / 8 for s in range(int(8 * (opening.start_ft - 3 * OPENING_TAPER_FT)),
-                                       int(8 * (opening.end_ft + 3 * OPENING_TAPER_FT)))
+        inside = [s / 8 for s in range(int(8 * (opening.start_ft - 40)),
+                                       int(8 * (opening.end_ft + 40)))
                   if shape.contains(Point(inset_point_at_station(leg, s / 8, offset_ft)))]
         return max(inside) - min(inside) if inside else 0.0
 
-    at_the_lane = TARGET_LANE_WIDTH_FT + 0.4
-    near_the_kerb = 17.0
-    entrance = (gap_ft(openings.driven, at_the_lane), gap_ft(openings.driven, near_the_kerb))
-    hatching = (gap_ft(openings.tapered, at_the_lane), gap_ft(openings.tapered, near_the_kerb))
+    depth_ft = kerb_ft - TARGET_LANE_WIDTH_FT
+    probes = [TARGET_LANE_WIDTH_FT + 1.0, TARGET_LANE_WIDTH_FT + depth_ft / 2, kerb_ft - 0.4]
+    entrance = [gap_ft(openings.driven, off) for off in probes]
+    hatching = [gap_ft(openings.tapered, off) for off in probes]
 
-    assert entrance[0] == pytest.approx(entrance[1], abs=0.3), (
-        f"the entrance is {entrance[0]:.2f} ft at the lane edge and {entrance[1]:.2f} ft at the "
+    assert entrance[0] == pytest.approx(entrance[2], abs=0.3), (
+        f"the entrance is {entrance[0]:.2f} ft at the lane edge and {entrance[2]:.2f} ft at the "
         f"kerb - it is the surveyed dropped kerb and must not taper; only the hatching does")
-    assert hatching[0] > entrance[0] + OPENING_TAPER_FT, (
-        f"the hatching gives up {hatching[0]:.2f} ft against the entrance's {entrance[0]:.2f} ft "
-        f"at the lane edge, so it is not tapering off - it stops dead like the lines do")
-    assert hatching[0] - hatching[1] > 1.0, (
-        f"the run-out removes {hatching[0]:.2f} ft at the lane edge and {hatching[1]:.2f} ft near "
-        f"the kerb, which is the same square end 4 ft further back rather than a taper")
-    assert hatching[1] >= entrance[1], "the run-out is inside the entrance near the kerb"
+    # The PROFILE, not the arc's own formula. The mouth's 1.5 ft rounded trim is buffered onto the
+    # union afterwards, and a round buffer smears the arc's steep end sideways - measured, it puts
+    # ~2 ft more station into the probe 1 ft out from the lane edge than the bare arc has there.
+    # So what is pinned is the shape the fillet gives the zone, which is what was wrong before.
+    assert hatching[2] == pytest.approx(entrance[2], abs=0.6), (
+        f"the run-out still removes {hatching[2] - entrance[2]:.2f} ft more than the entrance at "
+        f"the kerb - the fillet is supposed to arrive exactly at the surveyed mouth")
+    assert hatching[0] > hatching[1] > hatching[2], (
+        f"the run-out is not monotonic across the strip: {[round(h, 2) for h in hatching]}")
+    assert hatching[0] - entrance[0] >= depth_ft, (
+        f"the sweep spends {hatching[0] - entrance[0]:.2f} ft at the lane edge on a strip "
+        f"{depth_ft:.2f} ft deep - too short to read as a taper at drawing scale")
+    # TANGENCY, as a profile: an arc that leaves the edge line tangentially closes most of its run
+    # in the half nearest the LANE. The first version's arc was tangent to the transverse direction
+    # instead, and closed most of it near the KERB - flat exactly where the eye follows the line.
+    #
+    # Which assertion catches that, measured rather than assumed: the wrong-way arc fails on the
+    # KERB ARRIVAL above (9.0 ft of gap still open at the kerb, where the fillet closes to the
+    # surveyed mouth), because a bulge keeps its run all the way out. Even given the same radius
+    # and the same two endpoints it fails there first. This one pins the front-loading that makes
+    # the sweep read as one stroke rather than as a wide gap with rounded corners.
+    near_lane_half = hatching[0] - hatching[1]
+    near_kerb_half = hatching[1] - hatching[2]
+    assert near_lane_half > near_kerb_half, (
+        f"the run-out closes {near_lane_half:.2f} ft over the lane-side half of the strip and "
+        f"{near_kerb_half:.2f} ft over the kerb-side half, so the arc is tangent to the wrong "
+        f"direction - flat where the eye follows the edge line, which is the blunt end again")

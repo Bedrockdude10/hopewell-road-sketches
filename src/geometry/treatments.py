@@ -709,7 +709,7 @@ class LaneNarrowing(Treatment):
                 ctx.rim(ctx.add(LANE_NARROWING_FILL, _one(lane_narrowing_polygons_ft(
                     leg, fill_ft, start_left_ft=start_ft, start_right_ft=start_ft,
                     sides=(side,))), leg_name, side, beyond_ft,
-                    shares_a_kerb=(leg_name, side) in ctx.straight_through))
+                    shares_a_kerb=(leg_name, side) in ctx.straight_through), LANE_EDGE_LINE)
                 if curved:
                     ctx.add(TAPER_FILL, _one(lane_narrowing_taper_polygons_ft(
                         leg, fill_ft, at.anchor_ft, at.target_ft, sides=(side,))),
@@ -826,7 +826,7 @@ class MarkedParking(Treatment):
             ctx.rim(ctx.add(DAYLIGHT_FILL, _one(lane_narrowing_polygons_ft(
                 leg, daylight_fill_ft, start_left_ft=start_ft, start_right_ft=start_ft,
                 sides=(side,), end_ft=zone_end_ft)), leg_name, side, beyond_ft,
-                shares_a_kerb=(leg_name, side) in ctx.straight_through))
+                shares_a_kerb=(leg_name, side) in ctx.straight_through), DAYLIGHT_EDGE_LINE)
             # A solid line wherever hatching meets the travel lane, so the lane reads as a
             # lane. The buffer beside the stalls already has one; the daylight zone runs the
             # full depth of the parking lane, so ITS inner edge is the lane edge, and without
@@ -1488,8 +1488,8 @@ class AddBikeLane(Treatment):
         asphalt a lane-narrowing buffer marks; the buffer beside it, and the parking outside it,
         hatched and ticked with the machinery already here."""
         from src.geometry.markings import (BIKE_BUFFER_FILL, BIKE_LANE_DOTTED_EXTENSION,
-                                           BIKE_LANE_EDGE_LINE, BIKE_LANE_SURFACE, BUFFER_FILL,
-                                           STALL_DIVIDER)
+                                           BIKE_LANE_EDGE_LINE, BIKE_LANE_SURFACE,
+                                           BUFFER_EDGE_LINE, BUFFER_FILL, STALL_DIVIDER)
         from src.geometry.model import (curbside_strip_polygon, inset_line_ft,
                                         lane_narrowing_polygons_ft, offset_band_polygon,
                                         parking_stall_lines_ft)
@@ -1556,7 +1556,7 @@ class AddBikeLane(Treatment):
             beyond = curbside_strip_polygon(leg, side, outer_face_ft, start_ft)
             if fill is not None and beyond is not None:
                 fill = fill.difference(beyond)
-            ctx.rim(ctx.add(BIKE_BUFFER_FILL, fill, leg_name, side, beyond_ft))
+            ctx.rim(ctx.add(BIKE_BUFFER_FILL, fill, leg_name, side, beyond_ft), BIKE_LANE_EDGE_LINE)
         if lane.parking_ft:
             # Parking-protected: the stalls sit OUTSIDE the bike lane, between it and the kerb,
             # which is what shields the lane. Ticked at the standard stall length over the runs
@@ -1582,7 +1582,7 @@ class AddBikeLane(Treatment):
             ctx.rim(ctx.add(BUFFER_FILL, _one(lane_narrowing_polygons_ft(
                 leg, leg.curb_to_curb_ft / 2 - bounds["outer_ft"],
                 start_left_ft=start_ft, start_right_ft=start_ft, sides=(side,))),
-                leg_name, side, beyond_ft))
+                leg_name, side, beyond_ft), BUFFER_EDGE_LINE)
 
 
 def resolved_crossing_stations(model, state: DesignState) -> dict:

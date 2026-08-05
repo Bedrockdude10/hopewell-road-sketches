@@ -178,7 +178,6 @@ PAINT_STYLE = require_every_kind({
     markings.TAPER_LINE:          dict(color="goldenrod", linewidth=1.5, zorder=3),
     markings.BUFFER_EDGE_LINE:    dict(color="goldenrod", linewidth=1.5, zorder=3),
     markings.DAYLIGHT_EDGE_LINE:  dict(color="orangered", linewidth=1.5, zorder=3),
-    markings.CROSSING_RIM_LINE:   dict(color="orangered", linewidth=1.5, zorder=3),
     # The square end of a zone with no crossing to be cut by and no room to taper.
     markings.ZONE_END_LINE:       dict(color="goldenrod", linewidth=1.5, zorder=3),
     markings.PARKING_EDGE_LINE:   dict(color="steelblue", linewidth=1.5, zorder=3),

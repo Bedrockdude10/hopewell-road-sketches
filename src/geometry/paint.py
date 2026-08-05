@@ -27,7 +27,7 @@ from shapely.ops import substring, unary_union
 from src.geometry.model import (_point_at, clip_paint_clear_of, corner_apron_annulus,
                                 corner_overlay_polygon, curb_offsets_at_stations,
                                 leg_clearance_ft, station_offset_many, through_street_sides)
-from src.geometry.markings import CROSSING_RIM_LINE, PaintKind
+from src.geometry.markings import PaintKind
 from src.geometry.daylighting import parkable_runs_ft
 from src.render.coords import FT_TO_M
 from src.render.crosswalks import (CROSSWALK_CLEARANCE_FT, CROSSWALK_DEPTH_FT,
@@ -151,19 +151,25 @@ PAINT_TO_CROSSWALK_GAP_FT = 1.0
 # figure - see kerb_opening_bands.
 OPENING_TRIM_FT = 1.5
 
-# How far back from the opening a HATCHED zone gives up, at the travel lane's edge, tapering to
-# the trim above by the time it reaches the kerb. A no-travel zone that simply stops reads as a
-# rectangle cut out of it; at a crossing the same zone ends on the crossing's own clean diagonal,
-# and that is what a striper paints - the buffer closing off gradually rather than being punched
-# through. Rounded rather than chamfered, so it matches the trim's own arcs.
+# A HATCHED zone ends at an opening on an arc that LEAVES ITS OWN EDGE LINE TANGENTIALLY and
+# curves out to the kerb - a fillet, not a chamfer and not a bulge. That tangency is the whole
+# difference between a line and a cut: on a real street the white line beside the travel lane
+# runs straight, peels away in one sweep around the driveway apron, and comes back - one
+# continuous stroke, no corner anywhere in it.
 #
-# 4 ft because of what is tapering: the zone nearest the lane edge is a bike lane's 2 ft buffer,
-# and 2 ft of depth over a 4 ft run is 0.5 - half of MAX_TAPER_DEPTH_PER_RUN, comfortably inside
-# what still reads as a transition. It costs HATCHING rather than lane: the lane's own lines carry
-# a dotted extension straight across (see PaintContext.dashes_through_openings) and its green
-# stops at the trim, so the only paint this gives up is the paint whose message is "nothing
-# belongs here" - which is true of a driveway mouth too.
-OPENING_TAPER_FT = 4.0
+# The first version had the arc the wrong way round. It was tangent to the TRANSVERSE direction at
+# the lane edge instead, i.e. flat where the eye follows the edge line and curved only in the last
+# foot or two at the kerb, which is precisely the blunt end it was meant to fix - 2.5 ft of sweep
+# across 14 ft of depth at Broad St, invisible at any drawing scale.
+#
+# The radius is the depth of the strip being closed, so the arc uses the whole cross-section and
+# arrives at the kerb exactly as the mouth's own trim: one arc, no straight portion, nothing to
+# tune per site. It is bounded by that depth rather than by a constant because the run and the
+# depth are the same measurement seen twice - a shallow strip needs a short sweep to look right and
+# a deep one needs a long one. It costs HATCHING and nothing else: the lane's lines carry a dotted
+# extension across (PaintContext.dashes_through_openings) and its green stops at the trim, so what
+# is given up is the paint that says "nothing belongs here", next to a mouth a car swings through.
+OPENING_FILLET_PER_DEPTH = 1.0
 
 # The dotted extension a lane line becomes where it crosses an opening. MUTCD's dotted lane
 # extension is a 2 ft segment with a 2-6 ft gap; the tight end of that range is used because a
@@ -181,6 +187,16 @@ SURFACE_PAINT_GROUP = 0
 RIM_SNAP_FT = 0.05
 # Below this a rim is a clipping artifact at a corner, not a painted line.
 MIN_RIM_LENGTH_FT = 1.0
+
+# Below this a zone is a HAIRLINE LEFT BY A CLIP, not a marking. Differencing polygons that share
+# an edge leaves slivers along it, and one had been surviving all along: a lane-narrowing fill of
+# **0.0 sq ft with a 12.0 ft perimeter** on broad_st_east's left kerb, drawn in the plan view as an
+# outline with nothing inside it. Harmless until the openings were rimmed too, at which point that
+# sliver's own boundary produced two rim segments 1.7 ft of which lay on top of each other, which
+# MarkingsDoNotCollide reported. The check found a real defect one layer below the change - a zone
+# with no area is not paint, whatever it is drawn around. A hatched zone here is tens to hundreds
+# of square feet, so this cannot reach a real one.
+MIN_ZONE_AREA_SQ_FT = 1.0
 
 # The painted width of a lane-edge line, matching scripts/blender/blender_scene.py's
 # add_paint_polyline(..., 0.25, ...). Paint has width, and where it goes decides whether the
@@ -386,6 +402,8 @@ class PaintContext:
         for part in surviving:
             if beyond_ft is not None and _station_of(self.state.legs[leg], part) < beyond_ft:
                 continue
+            if kind.covers_area and part.area < MIN_ZONE_AREA_SQ_FT:
+                continue
             piece = PaintPiece(kind, part, leg, side)
             self.pieces.append(piece)
             added.append(piece)
@@ -421,21 +439,54 @@ class PaintContext:
         self.pieces.extend(added)
         return added
 
-    def rim(self, fills) -> None:
-        """The line along a fill's cut end, where it meets the crossing.
+    def rim(self, fills, kind) -> None:
+        """The line along a fill's cut end - at a crossing, AND around a kerb opening.
 
-        A hatched zone is outlined, and that outline carries on around the end where the
-        crossing cuts it - which is the diagonal you see finishing the zone off against the
-        crossing on a real street. The lane edge already gets a line of its own; without this
-        one the zone just stopped, with hatch strokes ending in mid-air.
+        A hatched zone is outlined, and that outline carries on around the end where something
+        cuts it: the diagonal that finishes a zone off against a crossing, and the fillet that
+        sweeps it around a driveway mouth. The lane edge already gets a line of its own; without
+        this one the zone just stops, with hatch strokes ending in mid-air. It was doing exactly
+        that at every opening, because only the crossings were rimmed.
+
+        `kind` is the zone's OWN edge line, passed by the caller, so the rim is the same paint
+        continued rather than a line of its own colour - which is the point of it. On a real
+        street the white line beside the lane peels away around the apron and comes back as one
+        continuous stroke; drawing that sweep in a different colour from the line it continues is
+        what makes a drawing look assembled out of pieces. This replaced a dedicated
+        `crossing_rim_line` kind, drawn orangered whatever it closed.
+
+        A rim is only the part of the cut that is NOT ALREADY PAINTED. Where the fillet meets the
+        zone's inner edge the two run together, and emitting the whole intersection laid 1.8 ft of
+        a second lane edge line on top of the first at Broad St and E Broad - which
+        MarkingsDoNotCollide reported, correctly: it is a joint, not a stroke, and the line through
+        it is already there.
         """
-        if self.keep_clear is None:
-            return
+        # The tolerance the collision check uses, imported rather than restated: "already painted"
+        # has to mean here what it means there. Locally imported, like everything else in this
+        # module that would otherwise be a cycle.
+        from src.checks import COLLINEAR_PAINT_TOLERANCE_FT
+
         for piece in fills:
-            edge = piece.geometry.exterior.intersection(self.keep_clear.buffer(RIM_SNAP_FT))
-            for part in getattr(edge, "geoms", [edge]):
-                if part.geom_type == "LineString" and part.length >= MIN_RIM_LENGTH_FT:
-                    self.pieces.append(PaintPiece(CROSSING_RIM_LINE, part, piece.leg, piece.side))
+            painted = []
+            for cutter in (self.keep_clear,
+                           self.openings.against(piece.kind) if self.openings else None):
+                if cutter is None or cutter.is_empty:
+                    continue
+                edge = piece.geometry.exterior.intersection(cutter.buffer(RIM_SNAP_FT))
+                for part in getattr(edge, "geoms", [edge]):
+                    if part.geom_type != "LineString":
+                        continue
+                    # A zone can be cut by a crossing AND by a driveway at the same corner, and
+                    # where the two cuts converge their rims run together - 1.8 ft of doubled lane
+                    # edge line at Broad St and E Broad, which MarkingsDoNotCollide reported. The
+                    # sweep is one stroke however many things cut it.
+                    if painted:
+                        part = part.difference(
+                            unary_union(painted).buffer(COLLINEAR_PAINT_TOLERANCE_FT))
+                    for got in getattr(part, "geoms", [part]):
+                        if got.geom_type == "LineString" and got.length >= MIN_RIM_LENGTH_FT:
+                            self.pieces.append(PaintPiece(kind, got, piece.leg, piece.side))
+                            painted.append(got)
 
     def anchors(self, leg_name: str, side: str, inner_offset_ft: float = 0.0):
         """This leg-side's measuring stations, with the shared crossing geometry filled in."""
@@ -584,41 +635,48 @@ def stands_in_an_opening(openings, geometry) -> bool:
     return driven is not None and driven.intersects(geometry)
 
 
-TAPER_PROFILE_STEPS = 8
+TAPER_PROFILE_STEPS = 16
 
 
-def _opening_run_out(leg, side, inner_ft, outer_ft, start_ft, end_ft, run_ft):
-    """The rounded run-out on the TRAVEL LANE side of an opening, both ends of it.
+def _opening_run_out(leg, side, inner_ft, outer_ft, start_ft, end_ft):
+    """The fillet a hatched zone ends on at an opening, at both ends of it.
 
-    Built as nested sub-bands whose station extent decays from `run_ft` at `inner_ft` to nothing
-    at `outer_ft`, on a circular profile - so the removed ground is deepest along the lane edge
-    and reaches the kerb at the opening's own width. Which is the way round a turning vehicle
-    actually needs: it swings wide out in the roadway, while at the kerb the entrance is exactly
-    as wide as the surveyed dropped kerb says.
+    An arc of radius = the strip's own depth, TANGENT TO THE ZONE'S EDGE LINE at the travel lane
+    and reaching the kerb exactly at the opening's own width. So the zone's outline runs straight
+    beside the lane, peels away in one sweep, and meets the mouth - which is what the white line
+    does around a driveway apron on a real street, and the reason this is a fillet rather than a
+    chamfer or a bulge. `run(u) = R - sqrt(R^2 - (R-u)^2)` for a strip depth R, u measured out from
+    the lane edge: R at the lane edge, 0 at the kerb, vertical tangent at u=0.
 
-    Nested bands rather than a polygon assembled in the leg's frame, because offset_band_polygon
-    already clamps to the traced kerb on the same station grid every other marking is built on -
-    the run-out therefore cannot disagree with the band it grows out of about where the kerb is.
-    The staircase between steps is smaller than OPENING_TRIM_FT, which is buffered on afterwards
-    with round joins and takes it out.
+    Built as nested sub-bands rather than as a polygon assembled in the leg's frame, because
+    offset_band_polygon already clamps to the traced kerb on the same station grid every other
+    marking is built on - so the fillet cannot disagree with the band it grows out of about where
+    the kerb is. The staircase between steps is smaller than OPENING_TRIM_FT, which is buffered on
+    afterwards with round joins and takes it out.
 
     `outer_ft` HAS TO BE THE REAL KERB, measured off the band, not the nominal width the band was
     asked for. The band is deliberately requested wider than the road so offset_band_polygon
-    clamps it to the traced kerb - and profiling a 4 ft run-out across the 25.9 ft that WAS asked
-    for on a strip only 7.6 ft deep put every sub-band within 3% of the full run, i.e. a
-    square-ended gap 4 ft wider at both ends and no taper at all.
+    clamps it to the traced kerb - and profiling across the 25.9 ft that WAS asked for on a strip
+    only 7.6 ft deep put every sub-band within 3% of the full run, i.e. a square-ended gap 4 ft
+    wider at both ends with no taper in it at all.
     """
     from src.geometry.model import offset_band_polygon
 
     depth_ft = outer_ft - inner_ft
-    if depth_ft <= 0 or run_ft <= 0:
+    if depth_ft <= 0:
         return []
+    radius_ft = depth_ft * OPENING_FILLET_PER_DEPTH
     out = []
     for step in range(TAPER_PROFILE_STEPS):
-        t = step / TAPER_PROFILE_STEPS               # 0 at the lane edge, 1 at the kerb
-        run = run_ft * math.sqrt(max(0.0, 1.0 - t * t))
-        piece = offset_band_polygon(leg, side, inner_ft + t * depth_ft,
-                                    inner_ft + (step + 1) / TAPER_PROFILE_STEPS * depth_ft,
+        # The run is taken at the sub-band's MIDPOINT, so the staircase straddles the arc rather
+        # than sitting inside it. Taken at the outer (shallowest) edge instead - the conservative
+        # choice - the innermost band lost 40% of its run, because the arc is steep in u exactly
+        # there: 4.6 ft of sweep where the arc asks for 7.5.
+        lo_ft = step / TAPER_PROFILE_STEPS * depth_ft
+        hi_ft = (step + 1) / TAPER_PROFILE_STEPS * depth_ft
+        u_ft = (lo_ft + hi_ft) / 2
+        run = radius_ft - math.sqrt(max(0.0, radius_ft ** 2 - (radius_ft - u_ft) ** 2))
+        piece = offset_band_polygon(leg, side, inner_ft + lo_ft, inner_ft + hi_ft,
                                     max(start_ft - run, 0.0), end_ft + run)
         if piece is not None and not piece.is_empty:
             out.append(piece)
@@ -677,7 +735,7 @@ def kerb_opening_bands(state) -> KerbOpenings:
                 leg.centerline, np.asarray(band.exterior.coords, dtype=float))
             run_out = _opening_run_out(leg, side, TARGET_LANE_WIDTH_FT,
                                        float(np.abs(offsets).max()),
-                                       opening.start_ft, opening.end_ft, OPENING_TAPER_FT)
+                                       opening.start_ft, opening.end_ft)
             for shape, target in ((band, driven),
                                   (unary_union([band, *run_out]), tapered)):
                 # JOIN_STYLE 1 is round: the corners where the gap meets the travel lane edge and

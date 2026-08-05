@@ -191,8 +191,6 @@ BUFFER_EDGE_LINE = _kind("buffer_edge_line", Role.LINE, PARKING_BUFFER_EDGE_LINE
 # The statutory no-parking zone at a corner (R.S. 39:4-138).
 DAYLIGHT_FILL = _kind("daylight_fill", Role.FILL, PARKING_BUFFER_HATCH_LINES)
 DAYLIGHT_EDGE_LINE = _kind("daylight_edge_line", Role.LINE, PARKING_BUFFER_EDGE_LINES)
-# The line along a hatched zone's cut end, where a crossing slices it - see paint.py:rim.
-CROSSING_RIM_LINE = _kind("crossing_rim_line", Role.LINE, PARKING_BUFFER_EDGE_LINES)
 # The square end of a zone with no crossing to be cut by and no room to taper.
 ZONE_END_LINE = _kind("zone_end_line", Role.LINE, PARKING_BUFFER_EDGE_LINES)
 # An exclusive bike lane: its own edge lines, and the hatched buffer beside it.

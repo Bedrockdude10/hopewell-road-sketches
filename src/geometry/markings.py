@@ -213,6 +213,20 @@ BOLLARD = _kind("bollard", Role.OBJECT)
 
 KINDS: dict[str, PaintKind] = dict(_REGISTRY)
 
+# THE LINES THAT BOUND A HATCHED ZONE, as opposed to the ones that mark a lane or a parking stall.
+# The distinction decides how each ends at a driveway, and it is not derivable from the role - both
+# groups are LINEs. A zone's edge line is part of the zone: when the hatching sweeps away from a
+# driveway mouth on its fillet (see paint.py:kerb_opening_bands) this line has to sweep with it, or
+# it runs straight on to the mouth with no zone behind it and the fillet's own rim cuts diagonally
+# across it - which in the render came out as a hook and a Y where the two disagreed.
+#
+# A bike lane's edge line is the opposite case and stays out of this set: the lane crosses the
+# entrance, so its line stops at the mouth and continues across as a dotted extension. A stall
+# divider likewise belongs to the parking lane, which simply ends.
+ZONE_BOUNDARY_LINES: frozenset = frozenset({
+    LANE_EDGE_LINE, TAPER_LINE, BUFFER_EDGE_LINE, DAYLIGHT_EDGE_LINE, ZONE_END_LINE,
+})
+
 
 def kinds_in(channel: Channel) -> tuple[PaintKind, ...]:
     """Every marking that travels in `channel`, in declaration order."""

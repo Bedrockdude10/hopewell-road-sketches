@@ -609,9 +609,17 @@ class KerbOpenings:
     tapered: object = None
 
     def against(self, kind) -> object:
-        """The shape `kind` is cut against - the run-out for a hatched zone, the entrance itself
-        for everything else."""
-        return self.tapered if kind.is_fill else self.driven
+        """The shape `kind` is cut against - the fillet for a hatched zone AND THE LINES THAT BOUND
+        IT, the entrance itself for everything else.
+
+        The edge line has to go with its zone. Cut at the mouth while the hatching swept away on
+        its fillet, it ran on with nothing behind it and the fillet's rim cut across it at an angle
+        - a hook and a Y in the render, at every driveway. See markings.ZONE_BOUNDARY_LINES for why
+        that set is declared rather than derived from the role.
+        """
+        from src.geometry.markings import ZONE_BOUNDARY_LINES
+
+        return (self.tapered if kind.is_fill or kind in ZONE_BOUNDARY_LINES else self.driven)
 
     def __bool__(self) -> bool:
         return self.driven is not None and not self.driven.is_empty
@@ -635,7 +643,11 @@ def stands_in_an_opening(openings, geometry) -> bool:
     return driven is not None and driven.intersects(geometry)
 
 
-TAPER_PROFILE_STEPS = 16
+# How many sub-bands approximate the fillet. Each is one offset_band_polygon, so this is the whole
+# cost of the sweep: 16 -> 32 takes the 13-scenario export harness from 5.0 s to 6.9 s, and halves
+# the station step to radius/32 - about 0.44 ft on Broad St's 14 ft strip, comfortably under the
+# OPENING_TRIM_FT buffered on afterwards, which is what smooths the steps out of the arc.
+TAPER_PROFILE_STEPS = 32
 
 
 def _opening_run_out(leg, side, inner_ft, outer_ft, start_ft, end_ft):
@@ -667,16 +679,22 @@ def _opening_run_out(leg, side, inner_ft, outer_ft, start_ft, end_ft):
         return []
     radius_ft = depth_ft * OPENING_FILLET_PER_DEPTH
     out = []
+    def depth_at(run_ft):
+        """The depth at which the arc has run back `run_ft` - the profile, inverted."""
+        return radius_ft - math.sqrt(max(0.0, radius_ft ** 2 - (radius_ft - run_ft) ** 2))
+
     for step in range(TAPER_PROFILE_STEPS):
-        # The run is taken at the sub-band's MIDPOINT, so the staircase straddles the arc rather
-        # than sitting inside it. Taken at the outer (shallowest) edge instead - the conservative
-        # choice - the innermost band lost 40% of its run, because the arc is steep in u exactly
-        # there: 4.6 ft of sweep where the arc asks for 7.5.
-        lo_ft = step / TAPER_PROFILE_STEPS * depth_ft
-        hi_ft = (step + 1) / TAPER_PROFILE_STEPS * depth_ft
-        u_ft = (lo_ft + hi_ft) / 2
-        run = radius_ft - math.sqrt(max(0.0, radius_ft ** 2 - (radius_ft - u_ft) ** 2))
-        piece = offset_band_polygon(leg, side, inner_ft + lo_ft, inner_ft + hi_ft,
+        # SLICED BY EQUAL RUN, not by equal depth. The arc is vertical in (depth, run) at the lane
+        # edge - an infinitesimal change of depth there is a large change of station - so uniform
+        # depth slices put the whole of that into one step and left a visible ~1 ft ledge in the
+        # sweep exactly where the eye follows it. Equal run instead caps every step at radius/N of
+        # station, well under the OPENING_TRIM_FT buffered on afterwards, and spends the slices
+        # where the curvature is.
+        run_lo = radius_ft * (1 - step / TAPER_PROFILE_STEPS)
+        run_hi = radius_ft * (1 - (step + 1) / TAPER_PROFILE_STEPS)
+        run = (run_lo + run_hi) / 2
+        piece = offset_band_polygon(leg, side, inner_ft + depth_at(run_lo),
+                                    inner_ft + depth_at(run_hi),
                                     max(start_ft - run, 0.0), end_ft + run)
         if piece is not None and not piece.is_empty:
             out.append(piece)

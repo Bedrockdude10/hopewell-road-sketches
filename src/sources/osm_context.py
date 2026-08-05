@@ -321,11 +321,23 @@ def _nodes_near(center_wgs84: Point, radius_m: float, predicate) -> list[dict]:
 
 def fetch_buildings(center_wgs84: Point, radius_m: float) -> list[dict]:
     """OSM building footprints near a point.
-    Returns [{"coords_wgs84": [(lon, lat), ...], "height_m": float}, ...]."""
+
+    Returns [{"coords_wgs84": [...], "tags": {...}, "height_m": float|None,
+              "height_source": str|None}, ...], where the height is None unless a mapper
+    recorded one - see height_from_tags, and src/sources/assessor.py for where the answer
+    comes from when they did not, which here is almost always.
+    """
     def build():
-        return [{"coords_wgs84": coords, "height_m": _estimate_height(way.get("tags") or {})}
-                for way, coords in _ways_near(center_wgs84, radius_m, lambda t: "building" in t)
-                if len(coords) >= 3]
+        out = []
+        for way, coords in _ways_near(center_wgs84, radius_m, lambda t: "building" in t):
+            if len(coords) < 3:
+                continue
+            tags = way.get("tags") or {}
+            recorded = height_from_tags(tags)
+            out.append({"coords_wgs84": coords, "tags": tags,
+                        "height_m": recorded[0] if recorded else None,
+                        "height_source": recorded[1] if recorded else None})
+        return out
     return _layer("buildings", center_wgs84, radius_m, build)
 
 
@@ -448,18 +460,26 @@ def fetch_kerbs(center_wgs84: Point, radius_m: float) -> list[dict]:
     return _layer("kerbs", center_wgs84, radius_m, build)
 
 
-def _estimate_height(tags: dict) -> float:
+def height_from_tags(tags: dict) -> tuple[float, str] | None:
+    """(height in metres, which tag said so) if a mapper recorded one, else None.
+
+    None rather than DEFAULT_BUILDING_HEIGHT_M, because "nobody said" is a different answer from
+    "7 m" and the caller has somewhere else to look: the assessor's storey count, in
+    src/sources/assessor.py. Returning the default here is what made every building in every
+    render the same height - 0 of the 1150 building ways in this borough carry `height` and 7
+    carry `building:levels`, so the default WAS the model.
+    """
     if tags.get("height"):
         try:
-            return float("".join(c for c in tags["height"] if c.isdigit() or c == "."))
+            return float("".join(c for c in tags["height"] if c.isdigit() or c == ".")), "osm_height"
         except ValueError:
             pass
     if tags.get("building:levels"):
         try:
-            return float(tags["building:levels"]) * METERS_PER_LEVEL
+            return float(tags["building:levels"]) * METERS_PER_LEVEL, "osm_levels"
         except ValueError:
             pass
-    return DEFAULT_BUILDING_HEIGHT_M
+    return None
 
 
 def fetch_roads(center_wgs84: Point, radius_m: float) -> list[dict]:

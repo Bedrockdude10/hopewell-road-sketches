@@ -26,6 +26,8 @@ from src.geometry.paint import RimCause, in_channel
 from src.render.frame import junction_frame
 from src.render.mesh_utils import build_decimated_building_mesh
 from src.render.scene import SceneGeometry
+from src.sources.assessor import (BuildingHeight, assessor_path, describe_building_heights,
+                                   height_of, parcels_near_buildings, storeys_by_pin)
 from src.sources.osm_context import (fetch_buildings, fetch_crossings, fetch_kerbs,
                                      fetch_street_furniture, fetch_traffic_control)
 from src.render.props import build_props, control_nodes_ft, osm_tree_points_ft
@@ -268,23 +270,38 @@ def export_scenario(model: IntersectionModel, state: DesignState, name: str, out
 
     paint_channels = {channel.key: channel_data(channel) for channel in CHANNELS}
 
+    # HOW TALL EACH BUILDING IS, from whoever recorded it. OSM gives this project real outlines
+    # and, here, no heights at all: 0 of 1150 building ways carry `height` and 7 carry
+    # `building:levels`, so every building was extruded to one default and a borough of
+    # storey-and-a-half houses rendered as identical boxes. The assessor counted the storeys -
+    # see src/sources/assessor.py for the join and for what happens where nobody counted.
+    parcels_for_heights = parcels_near_buildings(model)
+    storeys = storeys_by_pin(assessor_path(model))
     building_entries = []
+    heights = []
     for b in buildings:
         footprint_ft = building_footprint_ft(b["coords_wgs84"])
-        mesh = build_decimated_building_mesh(footprint_ft, b["height_m"] / FT_TO_M)
+        recorded = (BuildingHeight(b["height_m"], b["height_source"])
+                    if b.get("height_m") is not None else None)
+        height = height_of(footprint_ft, parcels_for_heights, storeys, osm_height=recorded)
+        heights.append(height)
+        mesh = build_decimated_building_mesh(footprint_ft, height.height_m / FT_TO_M)
         if mesh is not None:
             verts_ft, faces = mesh
             building_entries.append({
                 "mesh": True,
                 "vertices_m": [pt_to_local_m(x, y, center_ft)[:2] + [z * FT_TO_M] for x, y, z in verts_ft],
                 "faces": faces,
+                "height_source": height.source,
             })
         else:
             building_entries.append({
                 "mesh": False,
                 "coords": wgs84_ring_to_local_m(b["coords_wgs84"], center_ft),
-                "height_m": b["height_m"],
+                "height_m": height.height_m,
+                "height_source": height.source,
             })
+    print(f"  NOTE: {describe_building_heights(heights)}.")
 
     data = {
         "name": name,

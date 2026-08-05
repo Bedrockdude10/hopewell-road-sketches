@@ -234,7 +234,8 @@ In this order, because each step is cheaper than the next:
 | Road widths | NJDOT SLD + Danny's field measurements (`sites/<site>/config.yaml`) | Any width field on the road network file (there isn't one) |
 | Crosswalk position | Real OSM-surveyed `highway=footway`+`footway=crossing` geometry, matched to legs | A geometric estimate from corner-fillet tangent points |
 | Crosswalk style | Danny's direct confirmation (existing = "lines", matches OSM's `crossing:markings` tag) | Assumption ("probably ladder") |
-| Building massing | Real OSM building footprints | Placeholder boxes |
+| Building footprints | Real OSM building outlines | Placeholder boxes |
+| Building heights | The assessor's own storey count (MOD-IV `BLDG_DESC`), joined to the footprint through its parcel | One default height for every building in town |
 | Pavement/sidewalk material | Real Poly Haven CC0 PBR textures (asphalt_01, pavement_02) | Flat colors |
 | Streetlight model | Real Poly Haven CC0 model (street_lamp_01) | Flat colors / a guessed asset URL |
 | Traffic signage, trees | **Procedural** geometry, explicitly - no viable CC0 source found (see "Phase 4 fidelity" below) | Silently faking a "real asset" that isn't one |
@@ -257,7 +258,7 @@ When no real source exists (e.g. Greenwood Ave has no NJDOT SLD at all — it's 
   It's safe: the script verifies the copy is WKB-identical to the original before keeping it (and deletes it if not), the `.geojson` stays the canonical source and is never modified, and `sites/*/config.yaml` keeps pointing at the `.geojson`. `src/sources/data_loader.py` picks up the sibling automatically (`_resolve_indexed_path`) and ignores it if it's older than the source. The `.fgb` is gitignored — rebuild it, don't commit it. Skipping this step changes nothing but speed.
 - `00000518__8.000-11.000.pdf` — NJDOT Straight Line Diagram for Route 518 (Broad St), milepost 8.000–11.000. Our intersection is **MP 10.30**, a signalized crossing inside NJDOT's "West Broad Street" segment. Read this by rendering locally at high DPI (`pdftoppm -r 400 file.pdf page`) and cropping — the pdf-viewer MCP tool's own screenshot is too low-res to read the tick labels.
 - `MercerCountyParcels.*` (shapefile) — Mercer County parcel polygons, used for ROW/corner context and to estimate Greenwood Ave's width (see below). `MUN=1105` is Hopewell Borough.
-- `MercerTaxList.dbf` — MOD-IV tax attributes, joinable by PIN, not currently used.
+- `MercerTaxList.dbf` — MOD-IV property tax records, joined by PIN to the parcels above. `BLDG_DESC` is the assessor's shorthand for what stands on the lot (`2SF` two-storey frame, `1.5SF 1G` storey-and-a-half with a one-car garage, `B2S` two-storey over a basement), and it is where **building heights** come from — see "Buildings are as tall as the records say" below. Reading the two columns needed out of all 131,631 county rows takes 0.2 s.
 
 A different site can point `data_sources:` at entirely different files (different county's parcels, a different state's road network) - see "Adding a new site" above.
 
@@ -472,6 +473,23 @@ Both views now call one function, which returns the stripes themselves — alrea
 ## Centerline styles: another real-vs-assumed fact, no OSM equivalent
 
 Unlike crosswalks, OSM has no tag for what's painted down the middle of a road, so this can't be resolved from real survey data at export time the way crosswalk style is - it has to be a per-leg fact recorded directly in `config.yaml` (`legs.<name>.centerline_style`, confirmed via street-view photo review, same sourcing category as the `signals` block). `DesignState.from_model()` seeds `state.existing_centerline_styles` from it, an observed fact about the street rather than any treatment's parameter; a `SetCenterlineStyle` treatment lets a proposal change what is drawn, and `state.centerline_style(leg)` resolves the two (the proposal wins). This replaced an earlier version of the pipeline that just drew a single dashed yellow line down every leg unconditionally, which happened to be wrong here: **West Broad St, East Broad St, and North Greenwood Ave all have a solid double yellow (no-passing zone) centerline; South Greenwood Ave has no centerline paint at all.** `blender_crosswalks.py:add_double_yellow_centerline` draws two continuous parallel lines (real MUTCD/AASHTO proportions - 6 in lines, 4 in gap) for `"double_yellow"`; `"none"` draws nothing.
+
+## Buildings are as tall as the records say (`src/sources/assessor.py`)
+
+The footprints were always real OSM outlines. The **heights** were one number for the whole town, and that is what made a borough of storey-and-a-half houses render as a field of identical boxes. OSM cannot help here — of the 1150 building ways in the snapshot, `height` appears **0** times, `building:levels` 7 times, and `roof:shape` and `building:material` not at all — so the default *was* the model.
+
+New Jersey's MOD-IV property tax records have the answer, and `data/MercerTaxList.dbf` had been in this repo since before any of the rendering work, described in this file as "joinable by PIN, not currently used". `BLDG_DESC` is the assessor's shorthand for what stands on each lot, and for Hopewell Borough it parses to a storey count on **682 of the 697** parcels that carry a description: 2 storeys (435), 1 (140), 1½ (94), 2½ (8), 3 (5).
+
+The join is geometric and then by PIN: an OSM footprint sits in a parcel (`PAMS_PIN`), whose PIN keys the tax row (`GIS_PIN`). **Largest overlap wins** among the parcels a footprint touches, because a building on a lot line clips its neighbour's parcel by a sliver and that sliver must not decide its height — measured at Broad & Greenwood, 59 of 80 footprints sit in exactly one parcel, 20 straddle two to four, one lands in none, and the median building's best parcel covers 100% of it.
+
+| | before | after |
+|---|---|---|
+| heights from a record | 2 of 307 (both OSM `building:levels`) | **283 of 307** |
+| distinct heights per site | 1–2 | 5–6 |
+
+Ordered by who looked at what: a mapper's `height` or `building:levels` first (they looked at the building; the assessor's record is about the parcel), then the assessor's storeys, then the default. A footprint in no parcel, a parcel in no tax row, or a description with no storey in it (`2G` is a detached garage — 15 of Hopewell's 697) keeps the default and exports `height_source: assumed`, the same contract `crosswalk_offset_source` has.
+
+Roofs stay flat. Nothing in OSM or MOD-IV says what shape they are, so a pitched roof would be invention rather than reconstruction — and it would be **load-bearing** invention, since the ridge is the tallest thing in the render. The consequence is worth stating: a one-storey house is extruded to its 3 m eaves and reads squat, because the roof above it is a thing this project does not know.
 
 ## Phase 4 fidelity (textures, props, trees, mesh optimization)
 

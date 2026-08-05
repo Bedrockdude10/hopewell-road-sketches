@@ -10,6 +10,9 @@ data_sources:
   # Paths are relative to the repo root.
   road_network: data/NJ_Roadway_Network.geojson
   parcels: data/MercerCountyParcels.shp
+  # MOD-IV property tax records - the assessor's storey count per parcel, which is where
+  # building heights come from (src/sources/assessor.py). OSM has none here.
+  tax_list: data/MercerTaxList.dbf
 
 intersection:
   name: "Broad St (CR 518) & Greenwood Ave, Hopewell Borough, NJ 08525"

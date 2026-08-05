@@ -22,7 +22,7 @@ from src.geometry.model import hatch_lines_ft
 from src.geometry.intersection import IntersectionModel, kerb_lines_with_tags_ft
 from src.geometry.kerbs import KerbType
 from src.geometry.markings import CHANNELS, KINDS, Role, kinds_in
-from src.geometry.paint import in_channel
+from src.geometry.paint import RimCause, in_channel
 from src.render.frame import junction_frame
 from src.render.mesh_utils import build_decimated_building_mesh
 from src.render.scene import SceneGeometry
@@ -208,9 +208,11 @@ def export_scenario(model: IntersectionModel, state: DesignState, name: str, out
     def _line(piece):
         return ring_to_local_m(piece.geometry.coords, center_ft)
 
+    # Only the OPENING rims: the hatching runs into a crossing's diagonal, which is what gives a
+    # zone its clean end there, and stops short of a driveway's fillet. See paint.RimCause.
     rims_by_side = {}
     for piece in paint:
-        if piece.rim:
+        if piece.rim is RimCause.OPENING:
             rims_by_side.setdefault((piece.leg, piece.side), []).append(piece.geometry)
 
     def _hatch(piece):
@@ -228,20 +230,22 @@ def export_scenario(model: IntersectionModel, state: DesignState, name: str, out
         2 ft from the sweep at the lane edge and 5 ft from it at the kerb: in the render, a fork.
         The tapered tip is then bounded by paint and left unhatched, which is what a striper does
         with a point too narrow to hatch. Same idea as PAINT_TO_CROSSWALK_GAP_FT one layer up.
+
+        WHOLE STROKES ONLY. Taking the gap out of the polygon before hatching instead truncated the
+        offending stroke rather than dropping it, and its far half survived as a 3 ft mark floating
+        alone against the kerb - a stray, which is worse than the fork it replaced. A stroke either
+        clears the sweep or it is not painted.
         """
         angle_deg = (_leg_heading_deg(state.legs[piece.leg]) + 45 if piece.leg
                       else HATCH_ANGLE_DEG)
-        ground = piece.geometry
+        strokes = hatch_lines_ft(piece.geometry, spacing_ft=PAINT_HATCH_SPACING_FT,
+                                  angle_deg=angle_deg,
+                                  phase_origin=(center_ft.x, center_ft.y))
         rims = rims_by_side.get((piece.leg, piece.side))
         if rims:
-            ground = ground.difference(unary_union(rims).buffer(PAINT_HATCH_SPACING_FT / 2))
-            if ground.is_empty:
-                return []
-        return [[pt_to_local_m(x, y, center_ft) for x, y in line.coords]
-                for part in getattr(ground, "geoms", [ground])
-                for line in hatch_lines_ft(part, spacing_ft=PAINT_HATCH_SPACING_FT,
-                                            angle_deg=angle_deg,
-                                            phase_origin=(center_ft.x, center_ft.y))]
+            keep_off = unary_union(rims).buffer(PAINT_HATCH_SPACING_FT / 2)
+            strokes = [line for line in strokes if not line.intersects(keep_off)]
+        return [[pt_to_local_m(x, y, center_ft) for x, y in line.coords] for line in strokes]
 
     def _surface(piece):
         return ring_to_local_m(piece.geometry.exterior.coords, center_ft)

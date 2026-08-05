@@ -19,6 +19,7 @@ a third copy free to drift from the other two; checking THIS list is checking wh
 """
 import math
 from dataclasses import dataclass, field
+from enum import StrEnum
 
 import numpy as np
 from shapely.geometry import LineString, Polygon
@@ -32,6 +33,18 @@ from src.geometry.daylighting import parkable_runs_ft
 from src.render.coords import FT_TO_M
 from src.render.crosswalks import (CROSSWALK_CLEARANCE_FT, CROSSWALK_DEPTH_FT,
                                    crosswalk_reach_on_leg_side_ft)
+
+
+class RimCause(StrEnum):
+    """What cut a zone short, for the line that closes it there.
+
+    CROSSING a painted crossing, which the hatching runs into and is cut by - the clean diagonal
+             end you see on a real street.
+    OPENING  a driveway's fillet, which the hatching stops short of, because that arc's chord is
+             at the hatch angle and a stroke laid beside it reads as a fork.
+    """
+    CROSSING = "crossing"
+    OPENING = "opening"
 
 
 @dataclass(frozen=True)
@@ -50,13 +63,13 @@ class PaintPiece:
     geometry: LineString | Polygon
     leg: str | None = None
     side: str | None = None
-    # Whether this piece is the line along a zone's CUT END rather than along its length - the
-    # diagonal that closes it against a crossing, or the fillet that sweeps it around a driveway
-    # mouth. It carries the same `kind` as the zone's edge line, deliberately (see rim), so this
-    # flag is the only thing that distinguishes the two, and two consumers need to: the hatching
-    # keeps half a spacing off a rim so the sweep reads as an edge rather than as one more stroke,
-    # and the tests that pin rims can find them by name instead of by guessing at their shape.
-    rim: bool = False
+    # What cut this piece, if it is the line along a zone's CUT END rather than along its length.
+    # A rim carries the same `kind` as the zone's edge line, deliberately (see PaintContext.rim), so
+    # this is the only thing that distinguishes the two - and the cause matters as well as the fact,
+    # because the two ends do not want the same treatment: the hatching keeps half a spacing off an
+    # OPENING's fillet, whose chord runs at the hatch angle and so reads as a stroke, and runs
+    # straight into a CROSSING's diagonal, which is what gives a zone its clean end there.
+    rim: "RimCause | None" = None
 
     @property
     def is_fill(self) -> bool:
@@ -475,8 +488,10 @@ class PaintContext:
 
         for piece in fills:
             painted = []
-            for cutter in (self.keep_clear,
-                           self.openings.against(piece.kind) if self.openings else None):
+            for cutter, cause in (
+                    (self.keep_clear, RimCause.CROSSING),
+                    (self.openings.against(piece.kind) if self.openings else None,
+                     RimCause.OPENING)):
                 if cutter is None or cutter.is_empty:
                     continue
                 edge = piece.geometry.exterior.intersection(cutter.buffer(RIM_SNAP_FT))
@@ -493,7 +508,7 @@ class PaintContext:
                     for got in getattr(part, "geoms", [part]):
                         if got.geom_type == "LineString" and got.length >= MIN_RIM_LENGTH_FT:
                             self.pieces.append(PaintPiece(kind, got, piece.leg, piece.side,
-                                                          rim=True))
+                                                          rim=cause))
                             painted.append(got)
 
     def anchors(self, leg_name: str, side: str, inner_offset_ft: float = 0.0):

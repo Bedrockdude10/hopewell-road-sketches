@@ -11,7 +11,8 @@ measured, so treat the lane/parking dimensions below as a design study rather th
 construction drawing.
 """
 from src.geometry.targets import LegSide, LegTarget
-from src.geometry.treatments import (BIKE_LANE_BUFFER_FT, BIKE_LANE_WIDTH_FT,
+from src.geometry.treatments import (
+    MIN_BIKE_LANE_FT, widest_protected_lane_ft,BIKE_LANE_BUFFER_FT, BIKE_LANE_WIDTH_FT,
     LANE_WIDTH_SLACK_FT, TARGET_LANE_WIDTH_FT, AddBikeLane, AddBikeLaneBollards, DesignState,
     LaneNarrowing, MarkedParking, ProtectDaylightZone, UpgradeCrosswalkMarkings,
     all_crosswalks_continental, apply_osm_parking, bike_lane_spare_ft, complete_centerlines)
@@ -147,26 +148,6 @@ BIKE_LANE_BOLLARD_SPACING_FT = 8.0  # matches Broad & Greenwood's pitch - reads 
 E_BROAD_LEGS = ("e_broad_st_east", "e_broad_st_west")
 
 
-def _buffer_that_fits_ft(state: DesignState, leg_name: str, side: str) -> float:
-    """The standard buffer if this kerb can hold it, else 0.0 - a conventional lane instead.
-
-    The STANDARD width (src: BIKE_LANE_BUFFER_FT), not the widest that happens to fit. An earlier
-    version handed each kerb whatever it could spare and produced 2.01 and 2.14 ft buffers, which
-    is a lane sized by the noisiest input in the model rather than to a standard - the same
-    mistake marking a 10 ft parking stall would be. The spare width's job is to be hatched.
-
-    Asked of BikeLane's own accounting rather than re-derived, because the arithmetic has a trap
-    in it: a buffer REPLACES the single stripe an unbuffered lane takes against the travel lane
-    rather than adding to it (see BikeLane.offsets_from_centerline_ft), so the room available for
-    one is a whole stripe more than the spare an unbuffered section leaves. Measured the other
-    way this said no side of either leg could hold a buffer - including the two that comfortably
-    can, which is how it was caught.
-    """
-    spare_ft = bike_lane_spare_ft(state, leg_name, side, width_ft=BIKE_LANE_WIDTH_FT,
-                                  buffer_ft=BIKE_LANE_BUFFER_FT)
-    return BIKE_LANE_BUFFER_FT if spare_ft >= -LANE_WIDTH_SLACK_FT else 0.0
-
-
 def build_proposal_bike_lanes(baseline: DesignState, model=None) -> DesignState:
     """Bike lanes both sides of both E Broad St legs - protected on the leg that can hold a
     buffer. Princeton Ave gets none.
@@ -194,20 +175,37 @@ def build_proposal_bike_lanes(baseline: DesignState, model=None) -> DesignState:
     state = all_crosswalks_continental(state)
     for leg_name in E_BROAD_LEGS:
         for side in ("left", "right"):
-            buffer_ft = _buffer_that_fits_ft(state, leg_name, side)
+            # PROTECTION FIRST, and the lane gives to keep it. The buffer is what a flex post
+            # stands in, so a kerb that is a few inches short narrows its lane to the floor rather
+            # than spending the whole buffer to hold a nominal 5 ft - see widest_protected_lane_ft.
+            lane_ft = widest_protected_lane_ft(state, leg_name, side)
+            if lane_ft is not None:
+                state = state.apply(AddBikeLane(LegSide(leg_name, side), width_ft=lane_ft,
+                                                 buffer_ft=BIKE_LANE_BUFFER_FT))
+                state = state.apply(AddBikeLaneBollards(LegSide(leg_name, side),
+                                                        spacing_ft=BIKE_LANE_BOLLARD_SPACING_FT))
+                if lane_ft < BIKE_LANE_WIDTH_FT - LANE_WIDTH_SLACK_FT:
+                    print(f"  NOTE: {leg_name} {side}'s protected lane is {lane_ft:.2f} ft, under "
+                          f"the {BIKE_LANE_WIDTH_FT:.0f} ft design width - the kerb has room for "
+                          f"the 11 ft travel lane, the {BIKE_LANE_BUFFER_FT:.0f} ft buffer and this "
+                          f"much lane, and the buffer is kept because it is what the posts stand "
+                          f"in. Above the {MIN_BIKE_LANE_FT:.0f} ft floor.")
+                continue
+            # Under the floor with a buffer. Fall back to the conventional lane this kerb CAN hold
+            # rather than dropping it: a 5 ft unprotected lane is still a lane, and losing it
+            # entirely would be a worse answer than the one being flagged.
             try:
                 state = state.apply(AddBikeLane(LegSide(leg_name, side),
-                                                 width_ft=BIKE_LANE_WIDTH_FT,
-                                                 buffer_ft=buffer_ft))
+                                                 width_ft=BIKE_LANE_WIDTH_FT, buffer_ft=0.0))
             except ValueError as too_narrow:
                 print(f"  NOTE: no bike lane on {leg_name} {side} - {too_narrow}")
                 continue
-            if not buffer_ft:
-                print(f"  NOTE: {leg_name} {side}'s bike lane is conventional, not protected - "
-                      f"the kerb cannot spare the standard {BIKE_LANE_BUFFER_FT:.0f} ft buffer, so "
-                      f"there is nowhere to stand a flex post that is not in a travel lane or in "
-                      f"the bike lane itself.")
-                continue
-            state = state.apply(AddBikeLaneBollards(LegSide(leg_name, side),
-                                                    spacing_ft=BIKE_LANE_BOLLARD_SPACING_FT))
+            spare_ft = bike_lane_spare_ft(state, leg_name, side, width_ft=BIKE_LANE_WIDTH_FT,
+                                           buffer_ft=BIKE_LANE_BUFFER_FT)
+            print(f"  NOTE: {leg_name} {side} is CONVENTIONAL, not protected - keeping the "
+                  f"{BIKE_LANE_BUFFER_FT:.0f} ft buffer would leave "
+                  f"{BIKE_LANE_WIDTH_FT + spare_ft:.2f} ft of lane, under the "
+                  f"{MIN_BIKE_LANE_FT:.0f} ft floor. Widening this kerb by "
+                  f"{MIN_BIKE_LANE_FT - (BIKE_LANE_WIDTH_FT + spare_ft):.2f} ft would buy a "
+                  f"protected lane.")
     return state

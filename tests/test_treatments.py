@@ -13,7 +13,7 @@ from shapely.geometry import LineString
 
 from src.geometry.model import Leg
 from src.geometry.targets import Corner, LegSide, LegTarget, Side
-from src.geometry.treatments import (AASHTO_MIN_BIKE_LANE_FT, AddBikeLane, AddBikeLaneBollards,
+from src.geometry.treatments import (MIN_BIKE_LANE_FT, AddBikeLane, AddBikeLaneBollards,
                                      DesignState, LaneNarrowing,
                                      NACTO_MIN_REFUGE_ISLAND_WIDTH_FT, RaiseCrossing,
                                      RefugeIsland, Treatment)
@@ -214,7 +214,7 @@ def test_a_treatment_is_refused_before_it_touches_the_design():
     """Constructed, therefore valid - the point of putting the checks in __post_init__."""
 
     with pytest.raises(ValueError):
-        AddBikeLane(LegSide("east", "left"), width_ft=AASHTO_MIN_BIKE_LANE_FT - 1)
+        AddBikeLane(LegSide("east", "left"), width_ft=MIN_BIKE_LANE_FT - 1)
 
 
 def test_bollards_still_refuse_a_lane_with_no_buffer_through_the_funnel():

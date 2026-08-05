@@ -1249,10 +1249,20 @@ def _corner_fed_by(state: DesignState, leg_name: str, side: str) -> tuple[str, s
     return None
 
 
-# AASHTO's minimum width for an exclusive on-street bike lane. A hard floor, not a target: a
-# lane narrower than this is not a bike lane, and proposing one would be proposing something
-# that fails its own standard. It is what rules Greenwood Ave (2.3 and 4.6 ft spare per side)
-# and Princeton Ave (4.1) out of a bike lane entirely - see build_proposal_bike_lanes.
+# AASHTO gives two figures for an exclusive on-street bike lane and this project needs both, so
+# they are two constants rather than one that quietly changes meaning:
+#
+#   5 ft  the width to design to, and what AASHTO asks for where the lane runs against a curb and
+#         gutter or a parking lane - the gutter pan is not ridable, so a 5 ft lane there is about
+#         4 ft of usable surface.
+#   4 ft  the hard floor, AASHTO's figure where there is no curb face taking part of the lane.
+#         Below this it is not a bike lane, and drawing one would propose something that fails the
+#         standard it is meant to meet.
+#
+# The floor is what rules Greenwood Ave and Princeton Ave out entirely (1.0-1.7 ft of lane would
+# be left on those kerbs), and it is what lets E Broad's east kerb keep its protection at 4.49 ft
+# instead of losing the buffer to hold a nominal 5 - see widest_protected_lane_ft.
+MIN_BIKE_LANE_FT = 4.0
 AASHTO_MIN_BIKE_LANE_FT = 5.0
 # THE BIKE LANE THIS PROJECT PROPOSES: a 5 ft lane with a 2 ft painted buffer. In src rather
 # than in each site's scenarios.py for the reason TARGET_LANE_WIDTH_FT gives - it is a standard
@@ -1286,6 +1296,11 @@ BIKE_LANE_BUFFER_FT = 2.0
 BIKE_LANE_DEFAULT_SHY_FT = 2.0
 
 
+def _feet(value: float) -> str:
+    """A width for a note: a decimal only where the number has one. 5.0 -> "5", 4.4947 -> "4.5"."""
+    return f"{value:.1f}".removesuffix(".0")
+
+
 @dataclass(frozen=True)
 class BikeLane:
     """One exclusive bike lane, described from the centerline outward.
@@ -1312,11 +1327,12 @@ class BikeLane:
     shy_ft: float = 0.0
 
     def __post_init__(self):
-        if self.width_ft < AASHTO_MIN_BIKE_LANE_FT:
+        if self.width_ft < MIN_BIKE_LANE_FT:
             raise ValueError(
-                f"A {self.width_ft:.1f} ft bike lane is under AASHTO's {AASHTO_MIN_BIKE_LANE_FT:.0f} ft "
-                f"minimum for an exclusive lane. Draw no lane rather than one that fails the "
-                f"standard it is meant to meet.")
+                f"A {self.width_ft:.2f} ft bike lane is under the {MIN_BIKE_LANE_FT:.0f} ft floor "
+                f"(AASHTO's minimum where no curb face eats into the lane; {AASHTO_MIN_BIKE_LANE_FT:.0f} ft "
+                f"is the width to design to). Draw no lane rather than one that fails the standard "
+                f"it is meant to meet.")
         if self.buffer_ft and self.buffer_ft < min_bike_lane_buffer_ft():
             raise ValueError(
                 f"A {self.buffer_ft:.2f} ft buffer cannot hold the two {_lane_line_ft():.2f} ft "
@@ -1415,6 +1431,32 @@ def bike_lane_spare_ft(state: DesignState, leg_name: str, side: str, width_ft: f
     return narrowest_half_width_ft(state.legs[leg_name], side) - lane.total_ft
 
 
+def widest_protected_lane_ft(state: DesignState, leg_name: str, side: str) -> float | None:
+    """The widest PROTECTED bike lane this kerb can hold, or None if that is under the floor.
+
+    THE BUFFER IS KEPT AND THE LANE GIVES, which is the opposite of what this project did first.
+    The earlier rule held the lane at a nominal 5 ft and dropped the 2 ft buffer whenever the last
+    few inches did not fit, so a kerb 0.51 ft short lost its flex posts entirely and got a
+    conventional lane instead - trading all of the protection for 6 in of paint. A rider is better
+    served by a 4.49 ft lane with a post beside it than by a 5 ft lane with a moving truck beside
+    it, and 4 ft is a width AASHTO recognises (MIN_BIKE_LANE_FT).
+
+    Ordered outward from the centerline, which is the order the widths are given up in: the 11 ft
+    travel lane is fixed (TravelLanesKeepTheirWidth), the 2 ft buffer is fixed because it is what a
+    post stands in, and the bike lane takes what is left - capped at the 5 ft design width, since
+    spare beyond that is hatched rather than spent on a lane wider than the standard.
+
+    Measured, this is the difference between one protected kerb and two on E Broad's east leg:
+    +0.01 and +0.14 ft spare on the west leg (5 ft either side), -0.51 on the east right (4.49 ft,
+    protected) and -1.20 on the east left (3.80 ft, under the floor - see the caller for what
+    happens then).
+    """
+    spare_ft = bike_lane_spare_ft(state, leg_name, side, width_ft=BIKE_LANE_WIDTH_FT,
+                                   buffer_ft=BIKE_LANE_BUFFER_FT)
+    fitted_ft = min(BIKE_LANE_WIDTH_FT, BIKE_LANE_WIDTH_FT + spare_ft)
+    return fitted_ft if fitted_ft >= MIN_BIKE_LANE_FT - LANE_WIDTH_SLACK_FT else None
+
+
 @dataclass(frozen=True)
 class AddBikeLane(Treatment):
     """Mark an exclusive bike lane along one side of a leg. Paint only - no kerb moves.
@@ -1463,8 +1505,12 @@ class AddBikeLane(Treatment):
     def describe(self) -> str:
         # leg, side rather than str(target): a note is meant to read as the constructor call
         # that produced it, so someone reading a render's provenance can paste it back.
-        return (f"AddBikeLane({self.target.leg}, {self.target.side}): {self.width_ft:.0f} ft lane"
-                + (f", {self.buffer_ft:.0f} ft buffer" if self.buffer_ft else "")
+        #
+        # A DECIMAL WHERE THERE IS ONE. Rounded to whole feet this reported E Broad's narrowed
+        # protected lane as "4 ft lane" when it is 4.49 - understating a width by half a foot in
+        # the one line a reader would check it against.
+        return (f"AddBikeLane({self.target.leg}, {self.target.side}): {_feet(self.width_ft)} ft lane"
+                + (f", {_feet(self.buffer_ft)} ft buffer" if self.buffer_ft else "")
                 + (f", parking-protected behind {self.parking_ft:.0f} ft of marked parking"
                    if self.parking_ft
                    else f", {self.shy_ft:.1f} ft shy of the kerb" if self.shy_ft else ""))

@@ -1,7 +1,8 @@
 """Example treatment scenarios, shared by the Phase 3 plan-view render and the
 Phase 4 3D export so both phases show the exact same design."""
 from src.geometry.targets import LegSide, LegTarget
-from src.geometry.treatments import (BIKE_LANE_BUFFER_FT, BIKE_LANE_WIDTH_FT,
+from src.geometry.treatments import (BIKE_LANE_BUFFER_FT,
+    MIN_BIKE_LANE_FT, widest_protected_lane_ft,
     TARGET_LANE_WIDTH_FT, AddBikeLane, AddBikeLaneBollards, DesignState, LaneNarrowing,
     MarkedParking, ProtectDaylightZone, all_crosswalks_continental, apply_osm_parking,
     bulb_out_corner_pair, complete_centerlines, resolved_crossing_stations)
@@ -279,6 +280,17 @@ def build_proposal_bike_lanes(baseline: DesignState, model=None) -> DesignState:
     state = all_crosswalks_continental(state)
     for leg_name in BROAD_ST_LEGS:
         for side in ("left", "right"):
-            state = state.apply(AddBikeLane(LegSide(leg_name, side), width_ft=BIKE_LANE_WIDTH_FT, buffer_ft=BIKE_LANE_BUFFER_FT))
-            state = state.apply(AddBikeLaneBollards(LegSide(leg_name, side), spacing_ft=BIKE_LANE_BOLLARD_SPACING_FT))
+            # The same rule E Broad uses (widest_protected_lane_ft): the travel lane and the
+            # buffer are fixed and the bike lane takes what is left, down to the floor. All four
+            # of these kerbs have 2.51-7.77 ft to spare, so all four get the full design width -
+            # but the rule lives in src rather than being a local assumption that happens to hold.
+            lane_ft = widest_protected_lane_ft(state, leg_name, side)
+            if lane_ft is None:
+                print(f"  NOTE: no protected lane on {leg_name} {side} - under the "
+                      f"{MIN_BIKE_LANE_FT:.0f} ft floor once the travel lane and buffer are taken.")
+                continue
+            state = state.apply(AddBikeLane(LegSide(leg_name, side), width_ft=lane_ft,
+                                             buffer_ft=BIKE_LANE_BUFFER_FT))
+            state = state.apply(AddBikeLaneBollards(LegSide(leg_name, side),
+                                                    spacing_ft=BIKE_LANE_BOLLARD_SPACING_FT))
     return state

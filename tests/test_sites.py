@@ -1810,12 +1810,16 @@ def test_the_bike_lane_proposal_treats_only_the_legs_wide_enough(site_models, si
                                                                  untreated):
     """Which legs can take a bike lane is the finding, so it is the thing pinned.
 
-    Greenwood Ave (2.3 and 4.6 ft spare per side) and Princeton Ave (4.1) are all under AASHTO's
-    5 ft minimum for an exclusive lane. A narrower stripe would read as a bike lane in the
-    render while failing the standard it is meant to meet, which is the sort of thing that gets
-    waved through because the picture looks plausible.
+    Greenwood Ave and Princeton Ave would be left 1.0-1.7 ft of lane once the 11 ft travel lane
+    and the 2 ft buffer are taken, which is under the 4 ft floor by any reading. A narrower stripe
+    would read as a bike lane in the render while failing the standard it is meant to meet, which
+    is the sort of thing that gets waved through because the picture looks plausible.
+
+    The width asserted is the FLOOR, not the design width, since the rule changed: a kerb that
+    cannot hold the full 5 ft narrows the lane rather than giving up the buffer, so E Broad's east
+    kerb now carries a 4.49 ft protected lane. What must never appear is a lane under 4 ft.
     """
-    from src.geometry.treatments import AASHTO_MIN_BIKE_LANE_FT, AddBikeLane
+    from src.geometry.treatments import MIN_BIKE_LANE_FT, AddBikeLane
 
     model = site_models[site]
     with contextlib.redirect_stdout(io.StringIO()):
@@ -1827,7 +1831,7 @@ def test_the_bike_lane_proposal_treats_only_the_legs_wide_enough(site_models, si
             treatment = state.treatment_for(AddBikeLane, LegSide(leg_name, side))
             assert treatment is not None, f"{leg_name} {side} has the width but got no lane"
             lane = treatment.lane
-            assert lane.width_ft >= AASHTO_MIN_BIKE_LANE_FT
+            assert lane.width_ft >= MIN_BIKE_LANE_FT
             assert lane.total_ft <= narrowest_half_width_ft(state.legs[leg_name], side) + 0.05, (
                 f"{leg_name} {side}'s section does not fit where the leg is narrowest")
     for leg_name in untreated:

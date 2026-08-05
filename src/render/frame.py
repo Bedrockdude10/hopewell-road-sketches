@@ -34,6 +34,7 @@ what matches between the views is the subject and the radius, not the outline of
 region. The 2D axes are square; the render is 4:3.
 """
 import math
+import os
 from dataclasses import dataclass
 
 from shapely.geometry import Point
@@ -44,6 +45,33 @@ from src.render.coords import FT_TO_M
 # How much wider than the modelled pavement the frame is drawn. Tight on purpose: this is a
 # drawing of one junction, and the paint and signage detail is the subject.
 FRAME_MARGIN = 1.2
+
+# A deliberate zoom-out, for a picture whose subject is longer than one junction - a corridor
+# treatment down a street, say, where the point is that the bike lane runs the whole way rather
+# than what colour the flex posts are. It scales the RADIUS only, so the frame stays centred on
+# the same ground and both views widen together: the plan view's axes and the camera both come
+# through junction_frame, and a knob that moved one of them would undo the whole reason this
+# module exists.
+#
+# An environment variable because it has to reach two call sites several layers down (plot_design_
+# state and export_scenario), which is the same problem HOPEWELL_RENDER_SCALE has and the same
+# answer - see scripts/phase4_render_3d.py, which sets both from flags.
+FRAME_SCALE_ENV = "HOPEWELL_FRAME_SCALE"
+
+
+def frame_scale() -> float:
+    """The zoom-out multiplier, or 1.0. Anything unparseable falls back with a warning rather than
+    failing a batch of renders over an environment variable."""
+    raw = os.environ.get(FRAME_SCALE_ENV, "1")
+    try:
+        scale = float(raw)
+    except ValueError:
+        print(f"  WARNING: {FRAME_SCALE_ENV}={raw!r} is not a number - framing at 1x.")
+        return 1.0
+    if scale <= 0:
+        print(f"  WARNING: {FRAME_SCALE_ENV}={raw!r} is not positive - framing at 1x.")
+        return 1.0
+    return scale
 
 # How far past a leg's far end a pavement vertex may still count as part of this junction. The
 # corner fillets trim the curbs a little past the leg's own end, so a hard cut at the leg length
@@ -94,8 +122,9 @@ def junction_frame(model) -> Frame:
                                           y - model.center_ft.y) <= reach_ft * LEG_REACH_TOLERANCE:
                 xs.append(x)
                 ys.append(y)
+    scale = frame_scale()
     if not xs:
-        return Frame(model.center_ft, max(reach_ft, 1.0) * FRAME_MARGIN)
+        return Frame(model.center_ft, max(reach_ft, 1.0) * FRAME_MARGIN * scale)
     center = Point((min(xs) + max(xs)) / 2, (min(ys) + max(ys)) / 2)
     radius = max(max(xs) - min(xs), max(ys) - min(ys)) / 2 * FRAME_MARGIN
-    return Frame(center, radius)
+    return Frame(center, radius * scale)

@@ -1,5 +1,5 @@
 {
-  "name": "build_proposal_bike_lanes",
+  "name": "Proposed Treatments (build_proposal_bike_lanes)",
   "units": "meters",
   "notes": [
     "LaneNarrowing(greenwood_ave_north, stripe_width_ft=2.2789901022439274, line_only=False, sides=('left', 'right'))",
@@ -69,7 +69,7 @@
       0.439115268321801,
       3.4039294004950675
     ],
-    "radius_m": 52.567075407003244
+    "radius_m": 115.64756589540715
   },
   "pavement_near": [
     [

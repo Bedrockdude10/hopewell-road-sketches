@@ -24,6 +24,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+from src.render.frame import FRAME_SCALE_ENV
 from src.render.export import BUILDING_CONTEXT_RADIUS_M, export_scenario
 from src.geometry.intersection import load_intersection_model
 from src.sources.osm_context import fetch_buildings, fetch_crossings
@@ -113,8 +114,13 @@ def main():
     parser = add_scenario_arg(add_site_arg(argparse.ArgumentParser()))
     parser.add_argument("--render-scale", type=int, default=1, choices=(1, 2, 3, 4),
                         help="render resolution as a multiple of 1920x1440 (default 1)")
+    parser.add_argument("--frame-scale", type=float, default=1.0,
+                        help="zoom the frame out by this factor, for a picture whose subject is "
+                             "longer than one junction (default 1.0). Widens BOTH views, since "
+                             "they share one frame - see src/render/frame.py")
     args = parser.parse_args()
     os.environ[RENDER_SCALE_ENV] = str(args.render_scale)
+    os.environ[FRAME_SCALE_ENV] = str(args.frame_scale)
     out_dir = site_output_dir(args.site)
     label = scenario_label(args.scenario)
 

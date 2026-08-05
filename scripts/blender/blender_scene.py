@@ -202,7 +202,12 @@ def build_scene(data: dict):
     all_y = pavement_y + [y for b in data.get("buildings", []) for x, y, *_ in
                            (b["vertices_m"] if b["mesh"] else b["coords"])]
     context_radius = max(max(all_x) - min(all_x), max(all_y) - min(all_y)) / 2
-    ground_size = max(context_radius * 2.5, 100)
+    # AND AT LEAST FOUR TIMES THE FRAME, because the camera can be asked to pull back further than
+    # the context reaches (src/render/frame.py's HOPEWELL_FRAME_SCALE, for a picture whose subject
+    # is longer than one junction). At a 2.2x frame the ground ran out inside the shot and the
+    # horizon showed the plane's own edge with sky under it - the buildings and pavement had all
+    # been drawn correctly on a groundsheet too small for the view.
+    ground_size = max(context_radius * 2.5, scene_radius * 4, 100)
     bpy.ops.mesh.primitive_plane_add(size=ground_size, location=(cx, cy, -0.03))
     ground = bpy.context.active_object
     ground.name = "Ground"

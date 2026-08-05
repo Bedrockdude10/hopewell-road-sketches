@@ -405,8 +405,11 @@ def build_scene(data: dict):
         painted = leg.get("centerline_paint_m")
         if painted is not None:
             for i, line in enumerate(painted):
-                add_paint_polyline(f"centerline_{leg['name']}_{i}",
-                                    [mathutils.Vector((x, y, 0)) for x, y in line],
+                # The raw [x, y] pairs, as every other add_paint_polyline caller passes: it
+                # reaches add_paint_line, which builds its own 3D vectors with `(*p, 0.0)`.
+                # Handing it mathutils.Vector((x, y, 0)) instead made that `(x, y, 0, 0.0)` and
+                # Blender refused the addition - 13 scenes failed to render at all.
+                add_paint_polyline(f"centerline_{leg['name']}_{i}", line,
                                     CENTERLINE_WIDTH_M, centerline_mat)
         elif centerline_style == "double_yellow":
             add_double_yellow_centerline(f"centerline_{leg['name']}", near, far, centerline_mat,

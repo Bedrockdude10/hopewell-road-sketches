@@ -183,6 +183,14 @@ Driveways were fetched and projected in **three** places — the plan view, the 
 
 That fifth row is the one unguarded seam in the project, and it is where the bike lane's bollards shipped visible in 2D and absent in 3D. **After adding a channel, look at the render**, not just the JSON.
 
+And after touching anything in `scripts/blender/`, put one scene through Blender *before* committing:
+
+```bash
+/Applications/Blender.app/Contents/MacOS/Blender --background --python scripts/blender/blender_scene.py -- output/broad_st_greenwood/geometry_proposed.json /tmp/probe.png
+```
+
+It takes about five seconds and it is the only check that exists over there. The failure mode is not a wrong picture, it is **no picture**: handing `add_paint_polyline` a `mathutils.Vector((x, y, 0))` where every other caller passes a raw `[x, y]` pair made the point four-dimensional inside `add_paint_line`, and all 13 scenes failed to render. The suite was green throughout, because none of this is importable from the test process.
+
 ### Build derived geometry once, from the thing that bounds it
 
 The green bike-lane surface was first built by differencing two kerbside strips. Where the traced kerb is unmapped that difference **overshot its own outer stripe by 6.6 ft**, and neither `MarkingsDoNotCollide` nor `PaintInsideTheCurb` fired — correctly, since there was no other paint there and no traced kerb to be outside of. `model.offset_band_polygon(leg, side, inner, outer, start, end)` builds a band from the two offsets that actually define it, on the same station grid and with the same kerb clamping `inset_line_ft` uses, so a band and the stripes drawn at its edges cannot disagree.

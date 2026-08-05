@@ -109,3 +109,43 @@ def test_a_height_nobody_recorded_says_so(site_models, tmp_path):
         assert top == pytest.approx(DEFAULT_BUILDING_HEIGHT_M, abs=0.01), (
             f"a building flagged 'assumed' is {top:.2f} m tall, not the "
             f"{DEFAULT_BUILDING_HEIGHT_M} m default it claims to be")
+
+
+@needs_source_data
+@pytest.mark.parametrize("site", SITES)
+def test_a_building_keeps_its_flat_roof(site, site_models, tmp_path):
+    """An extruded footprint has exactly two heights in it: the ground and the top.
+
+    Quadric decimation does not know that. It collapses whichever edges are cheapest, and on a
+    short extrusion those are the vertical ones - so a building crossing the old 40-face threshold
+    came out with a crumpled tent where its flat roof should be. Four of Broad & Greenwood's 80
+    did, visibly, in the render.
+
+    Pinned on the SHAPE rather than on the threshold, because the threshold is a tuning number and
+    this is the property that matters: whatever budget a future site needs, a building may not
+    arrive with a roof nobody designed. The heights work made this worse before it was noticed
+    (3 mangled buildings became 4), since a shorter extrusion is cheaper to collapse.
+    """
+    import json
+    from pathlib import Path
+
+    from src.geometry.treatments import DesignState
+    from src.render.export import export_scenario
+    from src.sources.osm_context import fetch_crossings
+
+    model = site_models[site]
+    with contextlib.redirect_stdout(io.StringIO()):
+        path = export_scenario(model, DesignState.from_model(model), "existing",
+                               tmp_path / f"{site}_roofs.json",
+                               crossings=fetch_crossings(model.center_wgs84, radius_m=130),
+                               theme={})
+    mangled = []
+    for i, b in enumerate(json.loads(Path(path).read_text())["buildings"]):
+        if not b["mesh"]:
+            continue
+        levels = {round(v[2], 2) for v in b["vertices_m"]}
+        if len(levels) > 2:
+            mangled.append((i, sorted(levels)))
+    assert not mangled, (
+        f"{site}: {len(mangled)} building(s) are not flat-topped extrusions - e.g. building "
+        f"{mangled[0][0]} has vertices at {mangled[0][1]} m. Decimation has invented a roof")

@@ -3,10 +3,23 @@ the subject of the render and doesn't need full poly density. Not used for the
 authoritative pavement/curb geometry - see src/geometry/model.py for that."""
 from shapely.geometry import Polygon
 
-MAX_BUILDING_FACES_BEFORE_DECIMATION = 40  # a straight-walled prism from a simple
-# footprint is already this cheap or cheaper (a rectangular box is 12 triangles) -
-# only bother decimating footprints complex enough to produce more than this.
-DECIMATE_TARGET_FACES = 24
+# When a building is heavy enough to be worth simplifying, and what to simplify it to.
+#
+# THIS WAS 40 FACES, DOWN TO 24, AND IT WAS DAMAGING THE RENDER. A straight-walled prism off an
+# n-vertex footprint is about 4n-4 triangles, so 40 faces is an 11-sided building - which is not
+# complex, it is an ordinary house with a porch. Measured at Broad & Greenwood: 9 of 80 buildings
+# crossed that line (44, 44, 44, 44, 44, 52, 60, 68 and 100 faces) and were crushed to 24, and
+# quadric decimation does not know that a building's roof is meant to be flat: it collapses
+# whichever edges are cheapest, which on a short extrusion are the vertical ones, leaving a
+# crumpled tent where the roof was. Four buildings rendered that way.
+#
+# The saving it bought: all 80 buildings undecimated total **1,692 triangles**, in a scene that
+# also carries textured pavement, instanced trees and procedural signal heads. There was nothing
+# to save. The threshold now sits where a footprint is genuinely heavy - 400 faces is a ~100-sided
+# outline, four times the most complex building at any of these four junctions - so the path stays
+# ready for richer building data (which is why it exists) without firing on a house.
+MAX_BUILDING_FACES_BEFORE_DECIMATION = 400
+DECIMATE_TARGET_FACES = 200
 
 
 def build_decimated_building_mesh(footprint: Polygon, height: float) -> tuple[list, list] | None:

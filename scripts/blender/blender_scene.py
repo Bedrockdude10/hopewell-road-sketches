@@ -228,15 +228,19 @@ def build_scene(data: dict):
     for i, ring in enumerate(data.get("sidewalks_far", [])):
         extrude_polygon(f"sidewalk_far_{i}", ring, 0.03, concrete_far)
 
-    # The driveways each kerb opening exists for, as the strip POLYGON src/ built - the same one
-    # the plan view fills, so the two views cannot disagree about a driveway's position or width.
+    # The paved ground beside the carriageway - driveways, parking aisles and parking lots - as
+    # the POLYGON src/ built, the same one the plan view fills, so the two views cannot disagree
+    # about where any of it is. All one asphalt, which is what they are; `kind` names each object
+    # so a scene is readable in the outliner. `driveways` is the pre-parking key, kept as the
+    # fallback for a geometry file written before this one.
     # Extruded to the pavement's own height so it reads as connected paving where it meets the
     # road. A driveway running off past the modelled legs is drawn where it really is; that it
     # ends in grass is our road model stopping, not the driveway being wrong.
-    for i, drive in enumerate(data.get("driveways", [])):
+    for i, drive in enumerate(data.get("paved_surfaces", data.get("driveways", []))):
         coords = drive.get("coords") or []
         if len(coords) >= 3:
-            extrude_polygon(f"driveway_{i}", coords, PAVEMENT_HEIGHT_M, asphalt_far)
+            extrude_polygon(f"{drive.get('kind', 'driveway')}_{i}", coords,
+                            PAVEMENT_HEIGHT_M, asphalt_far)
 
     # The traced kerbs, at the height their OSM kerb= tag calls for (src/render/export.py:
     # KERB_HEIGHT_M). There was no kerb in this scene before - the road slab simply met the

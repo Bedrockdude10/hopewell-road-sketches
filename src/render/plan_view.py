@@ -122,16 +122,24 @@ KERB_STYLE = {
 # thin dashed centreline, which on a drawing already carrying parcel lines, sidewalk centrelines
 # and leg centrelines was indistinguishable from them - the thing it exists to explain (the gap in
 # the markings at its mouth) needs to be visibly a surface a car drives on.
-DRIVEWAY_STYLE = dict(color="#8a7a68", alpha=0.55, zorder=2)
-DRIVEWAY_EDGE = dict(color="#5d5044", linewidth=0.8, zorder=2)
+PAVED_STYLE = dict(color="#8a7a68", alpha=0.55, zorder=2)
+PAVED_EDGE = dict(color="#5d5044", linewidth=0.8, zorder=2)
+# A surveyed outline gets a solid edge and a widened one a dashed edge, because the difference is
+# the same one this drawing already makes for a curb line: an extent somebody traced against an
+# extent this project inferred. A parking lot is mapped as an area; a driveway and an aisle are
+# centrelines widened by an assumed number (PavedSurface.width_ft).
+PAVED_EDGE_ASSUMED = dict(PAVED_EDGE, linestyle="--")
 
 
-def _draw_driveways(ax, driveways) -> None:
-    """The junction's mapped driveways, off the MODEL - already projected and already widened into
-    the strip both views draw, so the plan view and the 3D render cannot disagree about where a
-    driveway is or how wide it is. See src/geometry/intersection.py:Driveway."""
-    _draw(ax, [drive.surface for drive in driveways or () if drive.surface is not None],
-          boundary=DRIVEWAY_EDGE, **DRIVEWAY_STYLE)
+def _draw_paved_surfaces(ax, paved) -> None:
+    """The junction's driveways, parking aisles and parking lots, off the MODEL - already
+    projected and already turned into the polygon both views draw, so the plan view and the 3D
+    render cannot disagree about where any of it is or how wide it is. See
+    src/geometry/intersection.py:PavedSurface."""
+    for surveyed, edge in ((True, PAVED_EDGE), (False, PAVED_EDGE_ASSUMED)):
+        _draw(ax, [p.surface for p in paved or ()
+                   if p.surface is not None and p.extent_is_surveyed == surveyed],
+              boundary=edge, **PAVED_STYLE)
 
 
 def _draw_kerbs(ax, kerb_lines) -> None:
@@ -220,7 +228,7 @@ def _draw_props(ax, model: IntersectionModel, state: DesignState, crosswalk_offs
     kerb_lines = kerb_lines_with_tags_ft(model.center_wgs84, model.center_ft)
     props = build_props(model, state, crosswalk_offsets, model.center_ft, traffic_control,
                          street_furniture, crossings, fetch_kerbs(model.center_wgs84, radius_m=120))
-    _draw_driveways(ax, model.driveways)
+    _draw_paved_surfaces(ax, model.paved_surfaces)
     _draw_kerbs(ax, kerb_lines)
 
     # Grouped, then drawn once per group. See _draw / _scatter_groups.
@@ -732,7 +740,9 @@ def legend_handles():
         Line2D([0], [0], color="black", lw=1.1, ls="--",
                label="Traced kerb - LOWERED: a vehicle crosses, so the paint opens"),
         Patch(facecolor="#8a7a68", alpha=0.55, edgecolor="#5d5044",
-               label="Driveway (OSM service=driveway) - width DRAWN is assumed"),
+               label="Parking lot (OSM amenity=parking) - outline as surveyed"),
+        Patch(facecolor="#8a7a68", alpha=0.55, edgecolor="#5d5044", linestyle="--",
+               label="Driveway / parking aisle - width DRAWN is assumed"),
         Line2D([0], [0], color="steelblue", lw=1, ls=(0,(4,2)), label="OSM sidewalk centerline"),
         Line2D([0], [0], color="#3b6ea5", lw=0.9, ls=(0,(7,3,1,3)), label="Leg centerline (widths measured from this)"),
         Line2D([0], [0], color="gold", lw=1.2, label="Centerline paint (double yellow / dashed)"),

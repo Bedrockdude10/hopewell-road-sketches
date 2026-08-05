@@ -394,6 +394,40 @@ def fetch_driveways(center_wgs84: Point, radius_m: float) -> list[dict]:
     return _layer("driveways", center_wgs84, radius_m, build)
 
 
+def fetch_parking_aisles(center_wgs84: Point, radius_m: float) -> list[dict]:
+    """OSM-mapped parking aisles (highway=service + service=parking_aisle).
+
+    The lanes inside a parking lot. Mapped as centrelines like a driveway, and like a driveway
+    carrying no width - 0 of the borough's 20 carry a `width` tag - so the strip drawn for one is
+    as wide as this project assumes, not as wide as anybody measured. Where the aisle is inside a
+    mapped `amenity=parking` area, that area's own surveyed outline is drawn instead and the
+    aisle is dropped; only 6 of the 20 are, which is why both layers are read.
+    """
+    def build():
+        return [{"coords_wgs84": coords, "tags": way.get("tags", {}), "id": way["id"]}
+                for way, coords in _ways_near(center_wgs84, radius_m,
+                                               lambda t: t.get("highway") == "service"
+                                               and t.get("service") == "parking_aisle")
+                if len(coords) >= 2]
+    return _layer("parking_aisles", center_wgs84, radius_m, build)
+
+
+def fetch_parking_lots(center_wgs84: Point, radius_m: float) -> list[dict]:
+    """OSM-mapped parking areas (amenity=parking), as the AREAS they are mapped as.
+
+    Better evidence than anything else paved in this project: a surveyed outline, with no width to
+    assume. A driveway and an aisle are centrelines and have to be widened by a number this repo
+    picks; a lot is a polygon somebody traced off imagery, the same standing as a building
+    footprint or a traced kerb.
+    """
+    def build():
+        return [{"coords_wgs84": coords, "tags": way.get("tags", {}), "id": way["id"]}
+                for way, coords in _ways_near(center_wgs84, radius_m,
+                                               lambda t: t.get("amenity") == "parking")
+                if len(coords) >= 4]
+    return _layer("parking_lots", center_wgs84, radius_m, build)
+
+
 def fetch_traffic_control(center_wgs84: Point, radius_m: float) -> list[dict]:
     """OSM traffic control nodes: highway=traffic_signals / stop / give_way / crossing.
     Returns [{"lon": float, "lat": float, "tags": {...}}, ...].

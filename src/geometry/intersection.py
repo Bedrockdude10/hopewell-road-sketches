@@ -5,11 +5,13 @@ intersection (see sites/README.md for what a site provides instead)."""
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from enum import StrEnum
+
 import geopandas as gpd
 import numpy as np
 from shapely import affinity
 from shapely.geometry import LineString, Point, Polygon
-from shapely.ops import substring
+from shapely.ops import substring, unary_union
 
 from src.sources.data_loader import load_parcels_near, load_road_network
 from src.render.coords import wgs84_to_state_plane
@@ -65,11 +67,19 @@ class IntersectionModel:
     # Where they disagree the sides swap. Per span in leg_road_spans, since two ways covering
     # one leg can be drawn in opposite directions.
     leg_osm_aligned: dict = field(default_factory=dict)
-    # [Driveway] - every mapped driveway near this junction, projected once. Where vehicles cross
-    # the kerb, so it is both drawn (both views) and read as an opening signal
-    # (src/geometry/kerbs.py). See Driveway for why it lives on the model rather than being
-    # fetched three times.
-    driveways: tuple = ()
+    # [PavedSurface] - every mapped driveway, parking aisle and parking lot near this junction,
+    # projected once. Paved ground that is not carriageway: drawn as asphalt in both views, and in
+    # the driveways' case read as an opening signal too (src/geometry/kerbs.py). See PavedSurface
+    # for why they live on the model rather than being fetched per consumer, and why all three are
+    # one type.
+    paved_surfaces: tuple = ()
+
+    @property
+    def driveways(self) -> tuple:
+        """Just the driveways - what opens a kerb. A parking lot behind a building crosses none of
+        ours, and an aisle inside one reaches the street through a driveway that is mapped
+        separately, so neither may put a gap in a marking."""
+        return tuple(s for s in self.paved_surfaces if s.kind == PavedKind.DRIVEWAY)
 
     def parking_restriction_spans(self, leg_name: str) -> list[tuple]:
         """[(start_ft, end_ft, {"left": value, "right": value}, way_id)] in the LEG's frame.
@@ -175,32 +185,82 @@ def _assign_leg_pieces(pieces: list, leg_names: list[str], legs_cfg: dict, cente
     return assigned
 
 
+class PavedKind(StrEnum):
+    """What a piece of paved ground beside the carriageway IS.
+
+    A StrEnum so it travels to the 3D render and into the exported JSON as the OSM value it came
+    from, the same reason KerbType is one - a reader of the geometry file sees `parking_aisle`,
+    not an integer they have to look up.
+    """
+    DRIVEWAY = "driveway"                # highway=service + service=driveway
+    PARKING_AISLE = "parking_aisle"      # highway=service + service=parking_aisle
+    PARKING_LOT = "parking_lot"          # amenity=parking, mapped as an AREA
+
+
 # One radius for driveways, here rather than in each consumer. Matches the building/crossing
 # context radius the renderers use, so a driveway drawn in a view is a driveway the openings were
 # derived from - the divergence Driveway's docstring is about.
 DRIVEWAY_CONTEXT_RADIUS_M = 130
-# How wide a driveway is DRAWN. An assumption, and flagged as one wherever it surfaces - see
-# Driveway.width_ft. About a residential driveway; the surveyed figure this is NOT is the width of
-# the opening the driveway makes in the kerb.
+# How wide each LINEAR kind is DRAWN. Assumptions, flagged as such wherever they surface - see
+# PavedSurface.width_ft - because OSM maps these as centrelines and none of them carries a width
+# here. A residential driveway; a two-way parking aisle at the low end of the 20-24 ft ITE range,
+# and a one-way at 12, which is the one place a real tag (`oneway`) picks between them.
 DRIVEWAY_DRAWN_WIDTH_FT = 10.0
+PARKING_AISLE_WIDTH_FT = 20.0
+PARKING_AISLE_ONEWAY_WIDTH_FT = 12.0
+DRAWN_WIDTH_FT = {PavedKind.DRIVEWAY: DRIVEWAY_DRAWN_WIDTH_FT,
+                  PavedKind.PARKING_AISLE: PARKING_AISLE_WIDTH_FT}
 
 
-def _driveways_ft(center_wgs84: Point) -> tuple:
-    """Every mapped driveway near this junction, projected into state-plane feet once."""
-    from src.sources.osm_context import fetch_driveways
+def _to_state_plane(coords) -> list:
+    xs, ys = wgs84_to_state_plane.transform([c[0] for c in coords], [c[1] for c in coords])
+    return list(zip(xs, ys))
 
-    out = []
-    for drive in fetch_driveways(center_wgs84, radius_m=DRIVEWAY_CONTEXT_RADIUS_M):
-        coords = drive.get("coords_wgs84") or []
-        if len(coords) < 2:
+
+def _paved_surfaces_ft(center_wgs84: Point) -> tuple:
+    """Every mapped driveway, parking aisle and parking lot near this junction, projected once.
+
+    The lots are built first because they SUBTRACT from the aisles. An aisle inside a mapped lot
+    is already paved by the lot's own surveyed outline, and drawing both leaves two coplanar
+    surfaces at the same height - which in Blender is not redundancy, it is z-fighting (the
+    project has hit that before; see MARKING_CLEARANCE_M). 6 of the borough's 20 aisles are inside
+    a lot, so the other 14 still need their strips.
+    """
+    from src.sources.osm_context import (fetch_driveways, fetch_parking_aisles,
+                                         fetch_parking_lots)
+
+    lots = []
+    for lot in fetch_parking_lots(center_wgs84, radius_m=DRIVEWAY_CONTEXT_RADIUS_M):
+        coords = lot.get("coords_wgs84") or []
+        if len(coords) < 4:
             continue
-        xs, ys = wgs84_to_state_plane.transform([c[0] for c in coords], [c[1] for c in coords])
-        line = LineString(zip(xs, ys))
-        # Flat caps: a round cap would put a half-disc on the end of every driveway, out in the
-        # garden it leads to.
-        surface = line.buffer(DRIVEWAY_DRAWN_WIDTH_FT / 2, cap_style=2)
-        out.append(Driveway(line=line, way_id=drive.get("id"), tags=drive.get("tags", {}),
-                            surface=surface if surface.geom_type == "Polygon" else None))
+        surface = Polygon(_to_state_plane(coords)).buffer(0)
+        if surface.geom_type == "Polygon" and not surface.is_empty:
+            lots.append(PavedSurface(kind=PavedKind.PARKING_LOT, surface=surface,
+                                     way_id=lot.get("id"), tags=lot.get("tags", {})))
+    paved_by_lots = unary_union([lot.surface for lot in lots]) if lots else None
+
+    out = list(lots)
+    for kind, fetch in ((PavedKind.DRIVEWAY, fetch_driveways),
+                        (PavedKind.PARKING_AISLE, fetch_parking_aisles)):
+        for way in fetch(center_wgs84, radius_m=DRIVEWAY_CONTEXT_RADIUS_M):
+            coords = way.get("coords_wgs84") or []
+            if len(coords) < 2:
+                continue
+            tags = way.get("tags", {})
+            line = LineString(_to_state_plane(coords))
+            width_ft = (PARKING_AISLE_ONEWAY_WIDTH_FT
+                        if kind == PavedKind.PARKING_AISLE and tags.get("oneway") == "yes"
+                        else DRAWN_WIDTH_FT[kind])
+            # Flat caps: a round cap would put a half-disc on the end of every driveway, out in
+            # the garden it leads to.
+            surface = line.buffer(width_ft / 2, cap_style=2)
+            if kind == PavedKind.PARKING_AISLE and paved_by_lots is not None:
+                surface = surface.difference(paved_by_lots)
+            for piece in getattr(surface, "geoms", [surface]):
+                if piece.geom_type == "Polygon" and not piece.is_empty:
+                    out.append(PavedSurface(kind=kind, line=line, way_id=way.get("id"),
+                                            tags=tags, surface=piece))
     return tuple(out)
 
 
@@ -825,8 +885,8 @@ MIN_ROAD_SPAN_FT = 5.0
 
 
 @dataclass(frozen=True)
-class Driveway:
-    """One OSM-mapped driveway (`highway=service` + `service=driveway`), in state-plane feet.
+class PavedSurface:
+    """One piece of paved ground beside the carriageway - a driveway, a parking aisle, a lot.
 
     PART OF THE MODELLED STREET, and it took a correction to put it here. A driveway was added as
     render dressing, fetched and projected independently by the plan view and by the export; then
@@ -839,26 +899,46 @@ class Driveway:
     about this junction's street network, not something each renderer looks up for itself. A
     driveway IS street geometry - it is where vehicles cross the kerb, and it is the reason a
     marking stops.
+
+    ONE TYPE FOR ALL THREE, because they differ in exactly two ways and are otherwise the same
+    thing: paved ground that is not carriageway, drawn as asphalt in both views. What differs is
+    whether the extent was surveyed (a lot is mapped as an area; a driveway and an aisle are
+    centrelines this project widens) and whether it opens the kerb (a driveway does, and
+    src/geometry/kerbs.py reads only those - a lot behind a building crosses no kerb of ours).
+    Adding parking as its own parallel field, with its own fetch, its own export key and its own
+    branch in each renderer, is the same mistake the docstring above is about.
     """
-    line: LineString
+    kind: str = PavedKind.DRIVEWAY
+    #: The centreline, for the kinds OSM maps as a way. None for a lot, which is mapped as an area.
+    line: LineString | None = None
     way_id: int | None = None
     tags: dict = field(default_factory=dict)
-    #: The paved strip itself, built from the centreline once so the plan view and the 3D render
-    #: draw the SAME polygon rather than each widening the line their own way.
+    #: The paved ground itself, built once so the plan view and the 3D render draw the SAME
+    #: polygon rather than each widening the line their own way.
     surface: Polygon | None = None
 
     @property
-    def width_ft(self) -> float:
-        """How wide the strip is drawn. ASSUMED - and the one number here that is not surveyed.
+    def extent_is_surveyed(self) -> bool:
+        """Whether somebody traced this outline, or this project widened a line into it.
 
-        OSM maps a driveway as a centreline; not one of the 43 in this borough carries a `width`
-        tag. What IS surveyed is the width of the OPENING it makes in the kerb - the extent of the
-        `kerb=lowered` section - and that is what the gap in the markings uses
-        (src/geometry/kerbs.py). The two are different measurements and must not be swapped: at
-        E Broad the dropped kerb runs 37 ft while the driveway centreline enters near one end of
-        it, so that section is a frontage the driveway opens onto, not the driveway's own width.
+        A parking lot is mapped as an area and its extent is as surveyed as a building footprint.
+        A driveway and an aisle are centrelines with no width on them - 0 of the borough's 43
+        driveways and 0 of its 20 aisles carry a `width` tag - so their strips are as wide as
+        DRAWN_WIDTH_FT says, which is an assumption and is labelled as one in the legend.
         """
-        return DRIVEWAY_DRAWN_WIDTH_FT
+        return self.kind == PavedKind.PARKING_LOT
+
+    @property
+    def width_ft(self) -> float | None:
+        """How wide the strip is drawn, for the kinds that needed a width. ASSUMED.
+
+        For a driveway, the number that is NOT this: the width of the OPENING it makes in the kerb,
+        which IS surveyed (the extent of the `kerb=lowered` section) and is what the gap in the
+        markings uses (src/geometry/kerbs.py). The two must not be swapped - at E Broad the dropped
+        kerb runs 37 ft while the driveway centreline enters near one end of it, so that section is
+        a frontage the driveway opens onto, not the driveway's own width.
+        """
+        return None if self.extent_is_surveyed else DRAWN_WIDTH_FT[self.kind]
 
 
 @dataclass(frozen=True)
@@ -1123,7 +1203,7 @@ def load_intersection_model(config: dict | None = None, site: str | None = None)
         leg_osm_aligned=leg_osm_aligned,
         parcels=parcels,
         corner_parcels=corner_parcels,
-        driveways=_driveways_ft(center),
+        paved_surfaces=_paved_surfaces_ft(center),
     )
 
 

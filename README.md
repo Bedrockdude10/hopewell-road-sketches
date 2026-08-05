@@ -235,6 +235,7 @@ In this order, because each step is cheaper than the next:
 | Crosswalk position | Real OSM-surveyed `highway=footway`+`footway=crossing` geometry, matched to legs | A geometric estimate from corner-fillet tangent points |
 | Crosswalk style | Danny's direct confirmation (existing = "lines", matches OSM's `crossing:markings` tag) | Assumption ("probably ladder") |
 | Building footprints | Real OSM building outlines | Placeholder boxes |
+| Parking lot extent | The `amenity=parking` area as mapped | A width assumed around an aisle centreline |
 | Building heights | The assessor's own storey count (MOD-IV `BLDG_DESC`), joined to the footprint through its parcel | One default height for every building in town |
 | Pavement/sidewalk material | Real Poly Haven CC0 PBR textures (asphalt_01, pavement_02) | Flat colors |
 | Streetlight model | Real Poly Haven CC0 model (street_lamp_01) | Flat colors / a guessed asset URL |
@@ -386,6 +387,13 @@ The arithmetic was never wrong; re-cutting an arc between two curb lines leaves 
 OSM says whether each kerb is `raised` or `lowered`, and this project read the geometry and threw the tag away: the plan view drew one black line for all 95 mapped ways, the 3D render drew **no kerb at all** (the road slab simply met the concrete band), and the kerbside paint ran unbroken past every driveway.
 
 **Both signals are read.** A driveway is mapped twice over — as a `service=driveway` way running up to the road, and as the stretch of kerb it crosses being tagged `kerb=lowered` — and each opens the markings. The kerb is the better evidence, for one specific reason: its extent is *surveyed*, where a driveway centreline carries no width at all and its mouth has to be assumed. Every opening records which source produced it so the citation says so. Reading only the kerb (which an earlier version did, arguing the mismatch would be visible — nothing was comparing them) meant a driveway drawn without its kerb tagged produced no opening and the markings ran across it.
+
+**Parking is paving too.** `amenity=parking` areas and `service=parking_aisle` ways are read alongside the driveways and drawn as the same asphalt, because to a renderer they are the same thing: paved ground that is not carriageway. They differ from a driveway in exactly two ways, and both are modelled rather than glossed:
+
+- **A lot's extent is surveyed** — it is mapped as an *area*, so its outline has the standing of a building footprint or a traced kerb, and nothing about its size is assumed. A driveway and an aisle are centrelines with no `width` on them (0 of the borough's 43 driveways, 0 of its 20 aisles), so their strips are as wide as this project says. The plan view draws a widened outline **dashed** and a surveyed one solid, and the exported JSON carries `surveyed` per surface.
+- **Neither opens a kerb.** A lot behind a building crosses no kerb this project models, and an aisle reaches the street through a driveway OSM maps separately, so `model.driveways` — what the opening logic reads — stays driveways only.
+
+An aisle inside a mapped lot is **cut against it**, because two coplanar surfaces at the same height are not redundancy, they are z-fighting. 6 of the 20 aisles are inside one; the other 14 are why the aisle layer is read at all rather than dropped in favour of the areas. Across the four junctions this took the paved ground drawn from 3,290–9,066 sq ft of driveway to 17,993–58,663 sq ft — at E Broad, 44,347 sq ft of parking that had been rendering as grass.
 
 **A driveway is street geometry, so it lives on the model.** `IntersectionModel.driveways`, resolved once at load beside `corner_parcels` and `leg_road_spans`. It was previously fetched and projected three separate times — by the plan view, by the export, and by the opening logic, each with its own radius constant — which is exactly the divergence `SceneGeometry` was built to stop, committed again one layer down.
 

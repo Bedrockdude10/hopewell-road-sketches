@@ -468,11 +468,15 @@ def export_scenario(model: IntersectionModel, state: DesignState, name: str, out
         # The driveways the kerb openings exist for. Drawn as a narrow strip of the same asphalt
         # rather than as a marking: it is a minor carriageway, and its job in the render is to
         # explain why the kerbside markings stop where they do.
-        # The strip POLYGON, not the centreline plus a width for Blender to re-widen: the plan
-        # view draws this same polygon, so neither view can disagree about where a driveway is.
-        "driveways": [
-            {"coords": ring_to_local_m(drive.surface.exterior.coords, center_ft)}
-            for drive in model.driveways if drive.surface is not None
+        # The POLYGON, not a centreline plus a width for Blender to re-widen: the plan view draws
+        # this same shape, so neither view can disagree about where a driveway is. `surveyed` says
+        # whether the outline was traced (a parking lot is mapped as an area) or widened from a
+        # line by this project (a driveway, an aisle) - see PavedSurface.extent_is_surveyed.
+        "paved_surfaces": [
+            {"kind": str(paved.kind),
+             "surveyed": paved.extent_is_surveyed,
+             "coords": ring_to_local_m(paved.surface.exterior.coords, center_ft)}
+            for paved in model.paved_surfaces if paved.surface is not None
         ],
         "corner_parcels": [
             {"name": str(row["quadrant"]), "coords": ring_to_local_m(row.geometry.exterior.coords, center_ft)}

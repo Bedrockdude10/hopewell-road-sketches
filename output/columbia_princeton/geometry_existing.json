@@ -14319,7 +14319,29 @@
       "stop_bar_offset_m": null,
       "stop_bar_width_m": 9.522252350947932,
       "centerline_style": "double_yellow",
-      "centerline_start_m": 7.929257324606246
+      "centerline_start_m": 7.929257324606246,
+      "centerline_paint_m": [
+        [
+          [
+            3.1416913135299462,
+            -7.280923294334673
+          ],
+          [
+            15.350542405149156,
+            -36.52935985894986
+          ]
+        ],
+        [
+          [
+            3.04940828671474,
+            -7.319443976607733
+          ],
+          [
+            15.25825937833395,
+            -36.56788054122292
+          ]
+        ]
+      ]
     },
     {
       "name": "princeton_ave_north",
@@ -14351,7 +14373,29 @@
       "stop_bar_offset_m": null,
       "stop_bar_width_m": 9.306024573659409,
       "centerline_style": "double_yellow",
-      "centerline_start_m": 9.186418197095444
+      "centerline_start_m": 9.186418197095444,
+      "centerline_paint_m": [
+        [
+          [
+            -3.677854502819991,
+            8.42050057671005
+          ],
+          [
+            -15.24194528013412,
+            36.57575213425588
+          ]
+        ],
+        [
+          [
+            -3.5853528982508465,
+            8.458493380678911
+          ],
+          [
+            -15.149443675564976,
+            36.61374493822474
+          ]
+        ]
+      ]
     },
     {
       "name": "columbia_ave_east",
@@ -14383,7 +14427,8 @@
       "stop_bar_offset_m": null,
       "stop_bar_width_m": 8.184841432076974,
       "centerline_style": "none",
-      "centerline_start_m": 9.718110897917528
+      "centerline_start_m": 9.718110897917528,
+      "centerline_paint_m": []
     },
     {
       "name": "columbia_ave_west",
@@ -14415,7 +14460,8 @@
       "stop_bar_offset_m": null,
       "stop_bar_width_m": 8.060601506676592,
       "centerline_style": "none",
-      "centerline_start_m": 8.771861348066237
+      "centerline_start_m": 8.771861348066237,
+      "centerline_paint_m": []
     }
   ],
   "refuge_islands": [],

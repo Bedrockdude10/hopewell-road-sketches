@@ -10,6 +10,7 @@ import math
 from pathlib import Path
 
 from shapely.geometry import Point, Polygon
+from shapely.ops import unary_union
 
 from src.render.coords import FT_TO_M, building_footprint_ft, pt_to_local_m, ring_to_local_m, wgs84_ring_to_local_m
 from src.render.crosswalks import (CROSSWALK_DEPTH_M, STOP_BAR_CURB_CLEARANCE_M,
@@ -207,6 +208,11 @@ def export_scenario(model: IntersectionModel, state: DesignState, name: str, out
     def _line(piece):
         return ring_to_local_m(piece.geometry.coords, center_ft)
 
+    rims_by_side = {}
+    for piece in paint:
+        if piece.rim:
+            rims_by_side.setdefault((piece.leg, piece.side), []).append(piece.geometry)
+
     def _hatch(piece):
         """A fill polygon becomes the diagonal strokes that actually get painted.
 
@@ -214,11 +220,26 @@ def export_scenario(model: IntersectionModel, state: DesignState, name: str, out
         the daylight zone and the offcuts left by clipping around a crossing all land on one
         continuous family of lines. Phased off each polygon's own extent instead, the
         strokes stepped sideways at every seam and read as sheared.
+
+        THE HATCHING KEEPS HALF A SPACING OFF A RIM, so the line that closes the zone reads as its
+        edge and not as one more stroke. It has to, because the driveway fillet's chord is at the
+        hatch angle by construction - its radius is the strip's depth, so the chord is at 45
+        degrees, and the strokes are at 45 degrees. On Broad St's east kerb that put a 19 ft stroke
+        2 ft from the sweep at the lane edge and 5 ft from it at the kerb: in the render, a fork.
+        The tapered tip is then bounded by paint and left unhatched, which is what a striper does
+        with a point too narrow to hatch. Same idea as PAINT_TO_CROSSWALK_GAP_FT one layer up.
         """
         angle_deg = (_leg_heading_deg(state.legs[piece.leg]) + 45 if piece.leg
                       else HATCH_ANGLE_DEG)
+        ground = piece.geometry
+        rims = rims_by_side.get((piece.leg, piece.side))
+        if rims:
+            ground = ground.difference(unary_union(rims).buffer(PAINT_HATCH_SPACING_FT / 2))
+            if ground.is_empty:
+                return []
         return [[pt_to_local_m(x, y, center_ft) for x, y in line.coords]
-                for line in hatch_lines_ft(piece.geometry, spacing_ft=PAINT_HATCH_SPACING_FT,
+                for part in getattr(ground, "geoms", [ground])
+                for line in hatch_lines_ft(part, spacing_ft=PAINT_HATCH_SPACING_FT,
                                             angle_deg=angle_deg,
                                             phase_origin=(center_ft.x, center_ft.y))]
 

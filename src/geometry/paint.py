@@ -50,6 +50,13 @@ class PaintPiece:
     geometry: LineString | Polygon
     leg: str | None = None
     side: str | None = None
+    # Whether this piece is the line along a zone's CUT END rather than along its length - the
+    # diagonal that closes it against a crossing, or the fillet that sweeps it around a driveway
+    # mouth. It carries the same `kind` as the zone's edge line, deliberately (see rim), so this
+    # flag is the only thing that distinguishes the two, and two consumers need to: the hatching
+    # keeps half a spacing off a rim so the sweep reads as an edge rather than as one more stroke,
+    # and the tests that pin rims can find them by name instead of by guessing at their shape.
+    rim: bool = False
 
     @property
     def is_fill(self) -> bool:
@@ -485,7 +492,8 @@ class PaintContext:
                             unary_union(painted).buffer(COLLINEAR_PAINT_TOLERANCE_FT))
                     for got in getattr(part, "geoms", [part]):
                         if got.geom_type == "LineString" and got.length >= MIN_RIM_LENGTH_FT:
-                            self.pieces.append(PaintPiece(kind, got, piece.leg, piece.side))
+                            self.pieces.append(PaintPiece(kind, got, piece.leg, piece.side,
+                                                          rim=True))
                             painted.append(got)
 
     def anchors(self, leg_name: str, side: str, inner_offset_ft: float = 0.0):

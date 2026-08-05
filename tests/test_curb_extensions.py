@@ -760,14 +760,10 @@ def test_the_kerb_hatching_beside_a_bike_lane_is_trimmed_where_the_crossing_cuts
         hatching = [p for p in paint if p.leg == leg_name and p.side == side
                     and p.kind is BUFFER_FILL]
         assert hatching, f"{leg_name} {side} has no kerb hatching to trim"
-        # A rim is the zone's own edge line continued around the cut (no dedicated kind any
-        # more - see PaintContext.rim), so it is identified by running ACROSS the strip where
-        # the longitudinal edge lines run along it.
+        # A rim is the zone's own edge line continued around the cut (no dedicated kind any more
+        # - see PaintContext.rim), and PaintPiece.rim is what distinguishes the two.
         rims = [p for p in paint if p.leg == leg_name and p.side == side
-                and p.kind is BUFFER_EDGE_LINE
-                and np.ptp(station_offset_many(
-                    state.legs[leg_name].centerline,
-                    np.asarray(p.geometry.coords, dtype=float))[1]) > 1.0]
+                and p.kind is BUFFER_EDGE_LINE and p.rim]
         outer_ft = lane.offsets_from_centerline_ft()["outer_ft"]
         # The buffer between the lane and the traffic has a rim of its own, and it is the
         # INNER one - so this looks for a rim out where the kerb hatching is, not just any.

@@ -608,16 +608,6 @@ def test_a_daylight_zone_is_square_ended():
         assert sum(abs(stations - hi) < 0.01) == 2
 
 
-def _offset_span_ft(piece) -> float:
-    """How far across the kerbside strip a line reaches, on these synthetic straight legs.
-
-    The legs a_leg builds run along x with their offsets in y, so a line drawn ALONG the kerb has
-    no y-extent and one drawn ACROSS it (a rim, a stall divider) does. That is what identifies a
-    rim now that it is painted in the same kind as the zone's own edge line."""
-    ys = [y for _x, y in piece.geometry.coords]
-    return max(ys) - min(ys)
-
-
 def test_a_fill_cut_by_a_crossing_gets_a_line_along_the_cut():
     """A hatched zone is outlined, and the outline carries on around the end where the
     crossing cuts it - the diagonal that finishes the zone off against the crossing on a real
@@ -639,13 +629,9 @@ def test_a_fill_cut_by_a_crossing_gets_a_line_along_the_cut():
 
     paint = curbside_paint_ft(state, crossing_at(21.0), None, {"east": band},
                                marked_crosswalks={"east"})
-    # A rim is found by SHAPE, not by a kind of its own: it runs across the zone's depth where
-    # every other line on this kerb runs along it. That is the point of the change that removed
-    # `crossing_rim_line` - the rim is the zone's own edge line continued around the cut, so it
-    # cannot be identified by colour, and a test that asked for a dedicated kind was really
-    # asking for the drawing to be assembled out of differently-coloured pieces.
-    rims = [p for p in paint if p.kind.is_line and p.kind is not STALL_DIVIDER
-            and _offset_span_ft(p) > 5.0]
+    # A rim carries the same KIND as the zone's edge line - it is that line continued around the
+    # cut, which is the point of it - and says what it is with PaintPiece.rim instead.
+    rims = [p for p in paint if p.rim]
     assert rims, "no line drawn where the zone meets the crossing"
     for r in rims:
         assert r.geometry.length > 5.0
@@ -667,9 +653,8 @@ def test_no_rim_where_there_is_no_crossing_to_cut_against():
     state = state.apply(MarkedParking(LegSide("east", "left"), depth_ft=8.0, stall_length_ft=22.0,
                                        curb_offset_ft=1.0))
     paint = curbside_paint_ft(state, crossing_at(21.0), None)
-    assert not [p for p in paint if p.kind.is_line and p.kind is not STALL_DIVIDER
-                and _offset_span_ft(p) > 5.0], (
-        "a line runs across the zone's depth with nothing there to have cut it")
+    assert not [p for p in paint if p.rim], (
+        "a zone was rimmed with nothing there to have cut it")
 
 
 def test_sampled_polylines_are_rendered_as_polylines_not_chords():

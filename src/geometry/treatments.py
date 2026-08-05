@@ -1525,14 +1525,10 @@ class AddBikeLane(Treatment):
         for key in ("inner_line_ft", "buffer_outer_line_ft", "outer_line_ft"):
             if bounds[key] is None:
                 continue
-            line = inset_line_ft(leg, side, bounds[key], start_ft,
-                                  keep_inside_ft=LANE_EDGE_LINE_WIDTH_FT / 2)
-            ctx.add(BIKE_LANE_EDGE_LINE, line, leg_name, side, beyond_ft)
-            # AND ACROSS EACH DRIVEWAY IT MEETS, dotted. The lane is not interrupted by an
-            # entrance - it is crossed there, and the dotted extension is what says so. Only the
-            # lane's own lines get this: a parking stall divider lies ACROSS the kerbside strip
-            # rather than along it, so it has nothing to continue into.
-            ctx.dashes_through_openings(BIKE_LANE_DOTTED_EXTENSION, line, leg_name, side)
+            ctx.add(BIKE_LANE_EDGE_LINE,
+                     inset_line_ft(leg, side, bounds[key], start_ft,
+                                    keep_inside_ft=LANE_EDGE_LINE_WIDTH_FT / 2),
+                     leg_name, side, beyond_ft)
         # THE LANE'S OWN ASPHALT, PAINTED GREEN - between the two edge stripes, i.e. exactly the
         # width a rider gets. Bounded by the stripes' faces rather than their centres, so the
         # green stops where the white starts instead of running under it; MarkingsDoNotCollide
@@ -1545,9 +1541,33 @@ class AddBikeLane(Treatment):
         # Through ctx.add like every other marking, NOT ctx.add_surface: a surface is built
         # ground that everything else is cut around (seal_surfaces), and colouring the lane must
         # not cut the lane's own edge lines - or the buffer hatching beside it - back out.
-        ctx.add(BIKE_LANE_SURFACE, offset_band_polygon(
+        surface = offset_band_polygon(
             leg, side, bounds["bike_inner_ft"], bounds["bike_outer_ft"], start_ft,
-            keep_inside_ft=LANE_EDGE_LINE_WIDTH_FT / 2), leg_name, side, beyond_ft)
+            keep_inside_ft=LANE_EDGE_LINE_WIDTH_FT / 2)
+        ctx.add(BIKE_LANE_SURFACE, surface, leg_name, side, beyond_ft)
+        # AND ACROSS EACH DRIVEWAY IT MEETS, DOTTED - the green and both lines together. A lane is
+        # not interrupted by an entrance, it is crossed there, and the dotted extension is what
+        # says so; a rider looking down the lane sees it continue. The spans come from the lane's
+        # own footprint and are shared, so the green marks land between the white ones rather than
+        # each being dashed along its own length and drifting out of phase.
+        #
+        # Only the lane's own markings get this. A parking stall divider lies ACROSS the kerbside
+        # strip rather than along it, so it has nothing to continue into, and the hatching beside
+        # the lane is a no-travel zone - it sweeps away from the mouth instead (see
+        # paint.kerb_opening_bands).
+        for dash_start_ft, dash_end_ft in ctx.opening_dash_spans(surface, leg_name):
+            for key in ("inner_line_ft", "buffer_outer_line_ft", "outer_line_ft"):
+                if bounds[key] is None:
+                    continue
+                ctx.emit_across_opening(BIKE_LANE_DOTTED_EXTENSION,
+                                         inset_line_ft(leg, side, bounds[key], dash_start_ft,
+                                                       dash_end_ft,
+                                                       keep_inside_ft=LANE_EDGE_LINE_WIDTH_FT / 2),
+                                         leg_name, side)
+            ctx.emit_across_opening(BIKE_LANE_SURFACE, offset_band_polygon(
+                leg, side, bounds["bike_inner_ft"], bounds["bike_outer_ft"],
+                dash_start_ft, dash_end_ft,
+                keep_inside_ft=LANE_EDGE_LINE_WIDTH_FT / 2), leg_name, side)
         if lane.buffer_ft:
             # The hatched buffer, between the two lines that bound it rather than under them.
             # lane_narrowing_polygons_ft measures its stripe inward from the kerb-to-kerb half,

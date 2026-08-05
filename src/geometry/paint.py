@@ -23,7 +23,7 @@ from enum import StrEnum
 
 import numpy as np
 from shapely.geometry import LineString, Polygon
-from shapely.ops import substring, unary_union
+from shapely.ops import unary_union
 
 from src.geometry.model import (_point_at, clip_paint_clear_of, corner_apron_annulus,
                                 curbside_strip_polygon,
@@ -432,31 +432,49 @@ class PaintContext:
             self.through_painted.extend(p.geometry for p in added)
         return added
 
-    def dashes_through_openings(self, kind, geometry, leg=None, side=None):
-        """A dotted extension of `geometry` across each opening it crosses.
+    def opening_dash_spans(self, geometry, leg_name: str) -> list[tuple[float, float]]:
+        """The station spans a marking is broken into where `geometry` crosses an opening.
 
-        A LANE LINE DOES NOT STOP AT A DRIVEWAY, it goes dotted. That is what a striper paints and
-        what a rider needs to see: the lane still runs here, and here is where it is crossed. This
-        module used to argue the opposite - that a plain gap was the honest version of "the paint
-        does not continue" - which was really an argument that the marking had not been built yet.
-        A gap says the lane ends and starts again, which is not what a driveway does to it.
+        A LANE DOES NOT STOP AT A DRIVEWAY, it goes dotted - lines and green alike. That is what a
+        striper paints and what a rider needs to see: the lane still runs here, and here is where
+        it is crossed. This module used to argue the opposite, that a plain gap was the honest
+        version of "the paint does not continue", which was really an argument that the marking had
+        not been built yet.
 
-        Called with the SAME geometry that was passed to `add`, so the dashes land exactly in the
-        gap that clip left, and cut clear of the surfaces and crossings like any other paint - an
-        opening that overlaps a crossing band gets no dashes across the crossing.
+        Asked once per lane, off the LANE'S OWN FOOTPRINT, and handed to everything that crosses -
+        so the two edge lines and the green between them break at the same stations instead of each
+        being dashed along its own length and drifting out of phase. Which shape is canonical
+        matters and it is the surface: the lines are its edges.
         """
         driven = self.openings.driven if self.openings else None
         if geometry is None or geometry.is_empty or driven is None:
             return []
-        added = []
+        centerline = self.state.legs[leg_name].centerline
+        spans = []
         inside = geometry.intersection(driven)
         for part in getattr(inside, "geoms", [inside]):
-            if part.geom_type != "LineString" or part.length < DOTTED_MARK_FT:
+            if part.is_empty:
                 continue
-            for dash in _dashes_along(part):
-                for clear in clip_paint_clear_of(dash, self.surfaces):
-                    for piece in clip_paint_clear_of(clear, self.keep_clear):
-                        added.append(PaintPiece(kind, piece, leg, side))
+            coords = (part.exterior.coords if part.geom_type == "Polygon" else part.coords)
+            stations, _offsets = station_offset_many(centerline, np.asarray(coords, dtype=float))
+            spans.extend(_dash_spans(float(stations.min()), float(stations.max())))
+        return spans
+
+    def emit_across_opening(self, kind, geometry, leg=None, side=None):
+        """One mark of a dotted extension, laid IN an opening rather than clipped out of it.
+
+        Cut clear of the surfaces and the crossings like any other paint - an opening that overlaps
+        a crossing band gets no marks across the crossing - but not against the opening itself,
+        which is the whole point: `add` would remove exactly what this is placing.
+        """
+        added = []
+        if geometry is None or geometry.is_empty:
+            return added
+        for clear in clip_paint_clear_of(geometry, self.surfaces):
+            for part in clip_paint_clear_of(clear, self.keep_clear):
+                if kind.covers_area and part.area < MIN_ZONE_AREA_SQ_FT:
+                    continue
+                added.append(PaintPiece(kind, part, leg, side))
         self.pieces.extend(added)
         return added
 
@@ -614,27 +632,30 @@ def curbside_paint_ft(state, crosswalk_offsets: dict, center_ft,
     return ctx.pieces
 
 
-def _dashes_along(line):
-    """`line` cut into MUTCD dotted-extension segments, centred on it.
+def _dash_spans(lo_ft: float, hi_ft: float) -> list[tuple[float, float]]:
+    """`lo_ft`..`hi_ft` cut into MUTCD dotted-extension marks, centred in it.
 
-    Centred rather than started at one end so the pattern reads as deliberate: an opening is only
-    a few dashes long, and one clipped to a stub at the far end looks like a striping error. The
-    count comes out of the length, so a wide entrance gets more dashes rather than longer ones.
+    STATIONS, not distance along one line, because everything the dashes carry across an opening
+    has to break at the SAME places: the lane's two edge lines and the green between them are one
+    marking seen three ways, and dashing each along its own arc length puts them out of phase - by
+    little on a straight leg and visibly on a curved one, where the inner and outer stripes have
+    different lengths through the same mouth.
+
+    Centred rather than started at one end so the pattern reads as deliberate: an opening is only a
+    few marks long, and one clipped to a stub at the far end looks like a striping error. The count
+    comes out of the length, so a wide entrance gets more marks rather than longer ones.
     """
+    length_ft = hi_ft - lo_ft
+    if length_ft < DOTTED_MARK_FT:
+        return []
     period = DOTTED_MARK_FT + DOTTED_GAP_FT
-    n = max(1, int(round((line.length + DOTTED_GAP_FT) / period)))
+    n = max(1, int(round((length_ft + DOTTED_GAP_FT) / period)))
     span = n * DOTTED_MARK_FT + (n - 1) * DOTTED_GAP_FT
-    while n > 1 and span > line.length:
+    while n > 1 and span > length_ft:
         n -= 1
         span = n * DOTTED_MARK_FT + (n - 1) * DOTTED_GAP_FT
-    start = max((line.length - span) / 2, 0.0)
-    out = []
-    for i in range(n):
-        at = start + i * period
-        dash = substring(line, at, min(at + DOTTED_MARK_FT, line.length))
-        if dash.geom_type == "LineString" and dash.length > 0:
-            out.append(dash)
-    return out
+    start_ft = lo_ft + max((length_ft - span) / 2, 0.0)
+    return [(start_ft + i * period, start_ft + i * period + DOTTED_MARK_FT) for i in range(n)]
 
 
 @dataclass(frozen=True)

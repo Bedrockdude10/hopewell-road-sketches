@@ -406,11 +406,13 @@ What opens is what a vehicle drives over: the band runs from the travel lane's e
 
 | At an opening | ends how | cut against |
 |---|---|---|
-| a bike lane's edge lines | **dotted extension straight across** — 2 ft marks, 2 ft gaps, MUTCD's dotted lane extension | `driven`, then the dashes are put back |
+| a bike lane — **both edge lines and the green between them** | **dotted extension straight across** — 2 ft marks, 2 ft gaps, MUTCD's dotted lane extension | `driven`, then the marks are put back |
 | a hatched no-travel zone | **sweeps away on a fillet** — an arc of the strip's own depth, tangent to the zone's edge line at the travel lane, arriving at the mouth at the kerb | `tapered` |
-| the green surface, the stalls, a flex post | stop at the entrance | `driven` |
+| a parking stall, a flex post | stops at the entrance | `driven` |
 
-The dotted extension is the correction of an argument this file used to make — that a plain gap was "the honest version of the paint not continuing", since the marking did not exist. It was an admission, not a principle: a driveway does not end a bike lane, it crosses one, and a gap says the lane stops and restarts 37 ft later. The dashes live in the **geometry**, not in a line style, so the plan view draws short stripes and the render extrudes the same ones; they travel in the bike lane's existing channel, which is why the 3D side needed no new code at all.
+The dotted extension is the correction of an argument this file used to make — that a plain gap was "the honest version of the paint not continuing", since the marking did not exist. It was an admission, not a principle: a driveway does not end a bike lane, it crosses one, and a gap says the lane stops and restarts 37 ft later. The marks live in the **geometry**, not in a line style, so the plan view draws short stripes and the render extrudes the same ones; they travel in the bike lane's existing channels, which is why the 3D side needed no new code at all.
+
+**The green is dotted with the lines, from one set of stations.** The lane's two edge stripes and the colour between them are one marking seen three ways, so they are broken at the same places: `PaintContext.opening_dash_spans` measures the crossing once off the lane's own footprint — the surface, since the lines are its edges — and everything is built from those spans. Dashing each along its own arc length instead puts them out of phase, by little on a straight leg and visibly on a curved one, where the inner and outer stripes have different lengths through the same mouth. Measured at E Broad: all 10 green marks land on a white dash span exactly.
 
 **The sweep is a fillet, and which way the arc curves is the whole thing.** On a real street the white line beside the travel lane runs straight, peels away in one continuous stroke around the driveway apron, and comes back — no corner anywhere in it. That is an arc *tangent to the edge line* at the lane, arriving at the surveyed mouth at the kerb, with a radius equal to the strip's own depth (so there is no constant to tune, and the arc uses the whole cross-section). `PaintContext.rim` then paints that curve, so the zone's outline follows it in the 3D render too and not only in the plan view, where matplotlib outlines a polygon for free.
 

@@ -88,21 +88,38 @@ def test_the_markings_break_over_a_dropped_kerb(site_models):
     assert opening.kerb is KerbType.LOWERED
     assert opening.way_id is not None, "an opening has to name the kerb way that caused it"
 
+    from src.geometry.paint import DOTTED_GAP_FT, DOTTED_MARK_FT
+
     leg = state.legs["e_broad_st_east"]
     green = [p for p in paint if p.kind is BIKE_LANE_SURFACE
              and p.leg == "e_broad_st_east" and p.side == "left"]
     assert len(green) >= 2, (
         f"the green surface is in {len(green)} piece(s) - it should be broken by the "
         f"{opening.length_ft:.0f} ft dropped kerb at {opening.start_ft:.0f}-{opening.end_ft:.0f} ft")
-    # Nothing may be painted inside the opening. Checked on the pieces' own stations rather than
-    # by counting them, because two pieces could still both overlap it.
+
+    # The green BREAKS over the opening - into marks, not into nothing. This asserted that no green
+    # at all survived inside, which was the behaviour until Danny asked for the surface to carry the
+    # dotted extension too: a lane is crossed at a driveway, not ended, and the green saying so
+    # matters more than the gap did. What must not survive is a continuous slab.
+    runs = []
     for piece in green:
         stations, _offsets = station_offset_many(
             leg.centerline, np.asarray(piece.geometry.exterior.coords, dtype=float))
-        inside = (stations > opening.start_ft + 1.0) & (stations < opening.end_ft - 1.0)
-        assert not inside.any(), (
-            f"green surface still painted inside the {opening.start_ft:.0f}-"
-            f"{opening.end_ft:.0f} ft driveway opening")
+        lo, hi = max(float(stations.min()), opening.start_ft), min(float(stations.max()),
+                                                                   opening.end_ft)
+        if hi - lo > 0.05:
+            runs.append((lo, hi))
+    assert runs, (
+        f"no green at all inside the {opening.start_ft:.0f}-{opening.end_ft:.0f} ft opening - the "
+        f"lane stops at the driveway instead of being dotted across it")
+    for lo, hi in runs:
+        assert hi - lo <= DOTTED_MARK_FT + 0.5, (
+            f"a {hi - lo:.1f} ft run of green inside the opening, against a {DOTTED_MARK_FT} ft "
+            f"mark - that is a slab painted through the driveway, not a dotted extension")
+    runs.sort()
+    for (_lo, hi), (next_lo, _next_hi) in zip(runs, runs[1:]):
+        assert next_lo - hi >= DOTTED_GAP_FT - 0.5, (
+            f"only {next_lo - hi:.1f} ft between two marks, against a {DOTTED_GAP_FT} ft gap")
 
 
 @needs_source_data

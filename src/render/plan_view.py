@@ -5,8 +5,6 @@ from matplotlib.lines import Line2D
 from matplotlib.patches import Patch
 from shapely.geometry import LineString
 
-from shapely.ops import substring
-
 from src.geometry.model import inset_point_at_station, trimmed_curb_lines
 from src.geometry.intersection import IntersectionModel, kerb_lines_with_tags_ft
 from src.geometry.kerbs import KerbType
@@ -16,8 +14,8 @@ from src.geometry import markings
 from src.geometry.markings import require_every_kind
 from src.render.props import (DRAWN_BY_PAINT, TACTILE_PAD_DEPTH_FT, TACTILE_PAD_WIDTH_FT,
                                build_props, pad_polygon, signalization_conflicts)
-from src.render.coords import FT_TO_M, wgs84_to_state_plane
-from src.render.crosswalks import centerline_start_ft
+from src.render.coords import wgs84_to_state_plane
+from src.render.crosswalks import centerline_paint_ft, centerline_start_ft
 from src.render.frame import junction_frame
 from src.render.scene import SceneGeometry
 from src.sources.osm_context import (fetch_crossings, fetch_kerbs, fetch_sidewalks,
@@ -529,11 +527,6 @@ def plot_design_state(ax, model: IntersectionModel, state: DesignState, title: s
     return violations
 
 
-# MUTCD/AASHTO proportions, matching scripts/blender/blender_crosswalks.py's
-# add_double_yellow_centerline: ~6 in stripes with a ~4 in gap between them.
-DOUBLE_YELLOW_GAP_FT = 0.1 / FT_TO_M
-
-
 def _draw_centerlines(ax, scene: SceneGeometry):
     """The leg centerline (the measurement datum) and the painted centerline on top of it.
 
@@ -560,15 +553,12 @@ def _draw_centerlines(ax, scene: SceneGeometry):
         start_ft = centerline_start_ft(scene.crosswalk_offsets[leg_name].offset_ft,
                                         scene.stop_bar_offsets.get(leg_name),
                                         leg_name in scene.marked_crosswalks)
-        if start_ft >= leg.centerline.length:
-            continue
-        painted = substring(leg.centerline, start_ft, leg.centerline.length)
-        if style == "double_yellow":
-            for sign in (1, -1):
-                ax.plot(*painted.offset_curve(sign * DOUBLE_YELLOW_GAP_FT / 2).xy,
-                        color="gold", lw=1.2, zorder=4)
-        else:   # single_yellow_dashed
-            ax.plot(*painted.xy, color="gold", lw=1.2, ls=(0, (6, 6)), zorder=4)
+        # The stripes themselves come from src/render/crosswalks.py, so this view and the render
+        # draw the same paint - see centerline_paint_ft for the up-to-4 ft they used to differ by
+        # on broad_st_east. Drawn solid whatever the style, because a dashed style now arrives as
+        # separate dash segments rather than as one line with a pattern on it.
+        for line in centerline_paint_ft(leg, start_ft, style):
+            ax.plot(*line.xy, color="gold", lw=1.2, zorder=4)
 
 
 # What OSM says about kerbside parking, and what that produced. Colour is the OSM statement

@@ -26,6 +26,7 @@ from shapely.geometry import LineString, Polygon
 from shapely.ops import substring, unary_union
 
 from src.geometry.model import (_point_at, clip_paint_clear_of, corner_apron_annulus,
+                                curbside_strip_polygon,
                                 corner_overlay_polygon, curb_offsets_at_stations,
                                 leg_clearance_ft, station_offset_many, through_street_sides)
 from src.geometry.markings import PaintKind
@@ -487,14 +488,41 @@ class PaintContext:
         from src.checks import COLLINEAR_PAINT_TOLERANCE_FT
 
         for piece in fills:
-            painted = []
+            # Seeded with EVERY line already on this kerb, not only this kind's. The zone's own
+            # edge line is the one this rim continues, and now that the rim is drawn on that
+            # line's locus rather than half a stripe off it, the two are collinear where the
+            # fillet leaves the lane edge - a joint, not a second stroke. But a kerbside zone's
+            # inner edge is also some other marking's outer edge: beside a bike lane it is the
+            # lane's own outer stripe, so the rim ran 1.8 ft along the dotted extension crossing
+            # the mouth. Whatever kind painted it, it is painted.
+            painted = [p.geometry for p in self.pieces
+                       if p.kind.is_line and p.leg == piece.leg and p.side == piece.side]
             for cutter, cause in (
                     (self.keep_clear, RimCause.CROSSING),
                     (self.openings.against(piece.kind) if self.openings else None,
                      RimCause.OPENING)):
                 if cutter is None or cutter.is_empty:
                     continue
-                edge = piece.geometry.exterior.intersection(cutter.buffer(RIM_SNAP_FT))
+                # HALF A STRIPE OUTSIDE THE FILL, because that is where the line it continues
+                # runs. lane_edge_stripes puts the edge line's centre half its own width outside
+                # the hatching, so the stripe's body fills the space between them - and a rim
+                # traced on the fill's boundary instead sits 0.41 ft to the side of the line it is
+                # supposed to be part of. Near the fillet's tangent point, where the arc runs
+                # almost along the road, those 0.41 ft of offset stretch into a 1.78 ft break in
+                # the line: the seam where the sweep begins.
+                grown = piece.geometry.buffer(LANE_EDGE_LINE_WIDTH_FT / 2, join_style=2)
+                edge = grown.exterior.intersection(
+                    cutter.buffer(RIM_SNAP_FT + LANE_EDGE_LINE_WIDTH_FT / 2))
+                # The buffer grows the fill in EVERY direction, the kerb included, and
+                # PaintInsideTheCurb duly reported the rim 0.4 ft over the traced kerb on all four
+                # of Columbia & Princeton's kerbs. Held back inside the kerb here: a marking may
+                # meet it, never cross it, and half a stripe is exactly the amount by which an
+                # unclipped grown boundary would.
+                if piece.leg and piece.side:
+                    inside = curbside_strip_polygon(self.state.legs[piece.leg], piece.side,
+                                                     0.0, 0.0)
+                    if inside is not None and not inside.is_empty:
+                        edge = edge.intersection(inside)
                 for part in getattr(edge, "geoms", [edge]):
                     if part.geom_type != "LineString":
                         continue
@@ -666,61 +694,61 @@ def stands_in_an_opening(openings, geometry) -> bool:
     return driven is not None and driven.intersects(geometry)
 
 
-# How many sub-bands approximate the fillet. Each is one offset_band_polygon, so this is the whole
-# cost of the sweep: 16 -> 32 takes the 13-scenario export harness from 5.0 s to 6.9 s, and halves
-# the station step to radius/32 - about 0.44 ft on Broad St's 14 ft strip, comfortably under the
-# OPENING_TRIM_FT buffered on afterwards, which is what smooths the steps out of the arc.
-TAPER_PROFILE_STEPS = 32
+# How many points the fillet's arc is sampled at. A curve, not a staircase - see _opening_run_out
+# for why it stopped being one.
+FILLET_ARC_POINTS = 28
 
 
 def _opening_run_out(leg, side, inner_ft, outer_ft, start_ft, end_ft):
-    """The fillet a hatched zone ends on at an opening, at both ends of it.
+    """The fillet a hatched zone ends on at an opening: one polygon per end, or [].
 
     An arc of radius = the strip's own depth, TANGENT TO THE ZONE'S EDGE LINE at the travel lane
-    and reaching the kerb exactly at the opening's own width. So the zone's outline runs straight
-    beside the lane, peels away in one sweep, and meets the mouth - which is what the white line
-    does around a driveway apron on a real street, and the reason this is a fillet rather than a
-    chamfer or a bulge. `run(u) = R - sqrt(R^2 - (R-u)^2)` for a strip depth R, u measured out from
-    the lane edge: R at the lane edge, 0 at the kerb, vertical tangent at u=0.
+    and arriving at the mouth at the kerb. So the zone's outline runs straight beside the lane,
+    peels away in one sweep, and meets the entrance - which is what the white line does around a
+    driveway apron on a real street, and the reason this is a fillet rather than a chamfer or a
+    bulge. `run(u) = R - sqrt(R^2 - (R-u)^2)` for a strip depth R, u measured out from the lane
+    edge: R at the lane edge, 0 at the kerb, vertical tangent at u=0.
 
-    Built as nested sub-bands rather than as a polygon assembled in the leg's frame, because
-    offset_band_polygon already clamps to the traced kerb on the same station grid every other
-    marking is built on - so the fillet cannot disagree with the band it grows out of about where
-    the kerb is. The staircase between steps is smaller than OPENING_TRIM_FT, which is buffered on
-    afterwards with round joins and takes it out.
+    SAMPLED AS THE ARC ITSELF, in the leg's own frame. It was 32 nested offset_band_polygon
+    slices, whose staircase was only smooth because OPENING_TRIM_FT was buffered over the top of
+    it afterwards - and that buffer is what put a BULGE where the sweep begins, since a round
+    buffer grows the fillet by 1.5 ft in every direction including along its own tangent, so the
+    curve left the edge line 1.5 ft wide instead of at a point. The trim belongs to the mouth,
+    where a turning vehicle needs the room; the fillet is exact and unbuffered, and joins the
+    trimmed mouth at both of its ends because it is built from the trimmed stations.
 
     `outer_ft` HAS TO BE THE REAL KERB, measured off the band, not the nominal width the band was
     asked for. The band is deliberately requested wider than the road so offset_band_polygon
     clamps it to the traced kerb - and profiling across the 25.9 ft that WAS asked for on a strip
-    only 7.6 ft deep put every sub-band within 3% of the full run, i.e. a square-ended gap 4 ft
-    wider at both ends with no taper in it at all.
+    only 7.6 ft deep put every step within 3% of the full run, i.e. a square-ended gap 4 ft wider
+    at both ends with no taper in it at all. The result is intersected with the kerbside strip by
+    the caller, which is what holds the arc to the traced kerb rather than to this one number.
     """
-    from src.geometry.model import offset_band_polygon
+    from src.geometry.model import inset_point_at_station
+    from src.geometry.targets import Side
 
     depth_ft = outer_ft - inner_ft
     if depth_ft <= 0:
         return []
     radius_ft = depth_ft * OPENING_FILLET_PER_DEPTH
-    out = []
-    def depth_at(run_ft):
-        """The depth at which the arc has run back `run_ft` - the profile, inverted."""
-        return radius_ft - math.sqrt(max(0.0, radius_ft ** 2 - (radius_ft - run_ft) ** 2))
+    sign = Side(side).sign
 
-    for step in range(TAPER_PROFILE_STEPS):
-        # SLICED BY EQUAL RUN, not by equal depth. The arc is vertical in (depth, run) at the lane
-        # edge - an infinitesimal change of depth there is a large change of station - so uniform
-        # depth slices put the whole of that into one step and left a visible ~1 ft ledge in the
-        # sweep exactly where the eye follows it. Equal run instead caps every step at radius/N of
-        # station, well under the OPENING_TRIM_FT buffered on afterwards, and spends the slices
-        # where the curvature is.
-        run_lo = radius_ft * (1 - step / TAPER_PROFILE_STEPS)
-        run_hi = radius_ft * (1 - (step + 1) / TAPER_PROFILE_STEPS)
-        run = (run_lo + run_hi) / 2
-        piece = offset_band_polygon(leg, side, inner_ft + depth_at(run_lo),
-                                    inner_ft + depth_at(run_hi),
-                                    max(start_ft - run, 0.0), end_ft + run)
-        if piece is not None and not piece.is_empty:
-            out.append(piece)
+    def at(station_ft, offset_ft):
+        return tuple(inset_point_at_station(leg, station_ft, sign * offset_ft))
+
+    out = []
+    for mouth_ft, direction in ((start_ft, -1), (end_ft, +1)):
+        ring = []
+        for i in range(FILLET_ARC_POINTS + 1):
+            u_ft = depth_ft * i / FILLET_ARC_POINTS
+            run_ft = radius_ft - math.sqrt(max(0.0, radius_ft ** 2 - (radius_ft - u_ft) ** 2))
+            ring.append(at(max(mouth_ft + direction * run_ft, 0.0), inner_ft + u_ft))
+        ring.append(at(mouth_ft, inner_ft))     # back along the mouth, then the lane edge closes it
+        fillet = Polygon(ring)
+        if not fillet.is_valid:
+            fillet = fillet.buffer(0)
+        if not fillet.is_empty:
+            out.append(fillet)
     return out
 
 
@@ -774,19 +802,23 @@ def kerb_opening_bands(state) -> KerbOpenings:
             # _opening_run_out for the flat 4 ft gap that using the requested width gave instead.
             _stations, offsets = station_offset_many(
                 leg.centerline, np.asarray(band.exterior.coords, dtype=float))
+            # THE TRIM IS THE MOUTH'S, and only the mouth's. JOIN_STYLE 1 is round, so the corners
+            # where the entrance meets the travel lane edge and the kerb come off as arcs rather
+            # than right angles. Buffering the fillet along with it - which is what this did - grew
+            # the sweep by 1.5 ft in every direction including along its own tangent, so the curve
+            # left the edge line 1.5 ft wide: the bulge where the sweep begins.
+            mouth = band.buffer(OPENING_TRIM_FT, join_style=1, cap_style=1)
+            # Grown from the TRIMMED mouth, so the arc's square end lands exactly on the entrance's
+            # edge and the two join without a step.
             run_out = _opening_run_out(leg, side, TARGET_LANE_WIDTH_FT,
                                        float(np.abs(offsets).max()),
-                                       opening.start_ft, opening.end_ft)
-            for shape, target in ((band, driven),
-                                  (unary_union([band, *run_out]), tapered)):
-                # JOIN_STYLE 1 is round: the corners where the gap meets the travel lane edge and
-                # the kerb come off as arcs rather than right angles, which is the whole visual
-                # point, and it smooths the run-out's own steps at the same time.
-                trimmed = shape.buffer(OPENING_TRIM_FT, join_style=1, cap_style=1)
+                                       opening.start_ft - OPENING_TRIM_FT,
+                                       opening.end_ft + OPENING_TRIM_FT)
+            for shape, target in ((mouth, driven), (unary_union([mouth, *run_out]), tapered)):
                 if kerbside is not None and not kerbside.is_empty:
-                    trimmed = trimmed.intersection(kerbside)
-                if not trimmed.is_empty:
-                    target.append(trimmed)
+                    shape = shape.intersection(kerbside)
+                if not shape.is_empty:
+                    target.append(shape)
     return KerbOpenings(driven=unary_union(driven) if driven else None,
                         tapered=unary_union(tapered) if tapered else None)
 

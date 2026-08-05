@@ -120,6 +120,11 @@ LEG_REACH_TOLERANCE = 1.05
 # edge at the camera distance, and the height is what carries the raised/lowered distinction.
 KERB_WIDTH_M = 0.15
 
+# One stripe of a centerline, matching add_double_yellow_centerline's own width_m - MUTCD's ~6 in.
+# The two lines of a double yellow arrive already offset from each other, so this is the width of
+# each, not of the pair.
+CENTERLINE_WIDTH_M = 0.15
+
 
 
 
@@ -388,7 +393,22 @@ def build_scene(data: dict):
         # drift from the bar this same scene draws. Falls back to the old fixed gap past
         # the crosswalk for geometry written before that field existed.
         centerline_start_m = leg.get("centerline_start_m", offset_m + 2)
-        if centerline_style == "double_yellow":
+        # THE STRIPES COME DOWN AS GEOMETRY, following the leg's real centerline - already
+        # offset into the two lines of a double yellow, already cut into the segments of a
+        # dashed one (src/render/crosswalks.py:centerline_paint_ft). The two calls below build
+        # a stripe between near and far instead, which is the leg's CHORD: up to 3.98 ft off
+        # the centerline on broad_st_east and 7.58 ft on louellen_st_west, so the double yellow
+        # missed the stop bar it is supposed to meet and the lanes either side of it came out
+        # different widths. They remain as the fallback for a geometry file written before this
+        # key, and they are the reason nothing may derive a marking's shape on this side of the
+        # boundary: the plan view had it right the whole time and nothing could compare them.
+        painted = leg.get("centerline_paint_m")
+        if painted is not None:
+            for i, line in enumerate(painted):
+                add_paint_polyline(f"centerline_{leg['name']}_{i}",
+                                    [mathutils.Vector((x, y, 0)) for x, y in line],
+                                    CENTERLINE_WIDTH_M, centerline_mat)
+        elif centerline_style == "double_yellow":
             add_double_yellow_centerline(f"centerline_{leg['name']}", near, far, centerline_mat,
                                           start_m=centerline_start_m)
         elif centerline_style == "single_yellow_dashed":

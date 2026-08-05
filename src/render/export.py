@@ -14,7 +14,7 @@ from shapely.ops import unary_union
 
 from src.render.coords import FT_TO_M, building_footprint_ft, pt_to_local_m, ring_to_local_m, wgs84_ring_to_local_m
 from src.render.crosswalks import (CROSSWALK_DEPTH_M, STOP_BAR_CURB_CLEARANCE_M,
-                                   continental_bar_count, crosswalk_axes,
+                                   centerline_paint_ft, continental_bar_count, crosswalk_axes,
                                    centerline_start_ft,
                                    entering_lane_width_ft, resolve_crosswalk_style,
                                    stop_bar_band_geometry_ft, stop_bar_width_ft)
@@ -396,6 +396,22 @@ def export_scenario(model: IntersectionModel, state: DesignState, name: str, out
                     crosswalk_offsets[leg_name].offset_ft,
                     stop_bar_offsets.get(leg_name),
                     leg_name in marked_crosswalks) * FT_TO_M,
+                # THE STRIPES THEMSELVES, following the leg's own centerline. Blender used to be
+                # handed near_m and far_m and draw a straight stripe between them, which is the
+                # CHORD - up to 3.98 ft off the real centerline on broad_st_east and 7.58 ft on
+                # louellen_st_west, putting the double yellow where the stop bar it meets is not
+                # and making the lanes either side of it read as different widths. The plan view
+                # was drawing it correctly from the same DesignState the whole time; see
+                # src/render/crosswalks.py:centerline_paint_ft, which both now call.
+                "centerline_paint_m": [
+                    ring_to_local_m(line.coords, center_ft)
+                    for line in centerline_paint_ft(
+                        leg,
+                        centerline_start_ft(crosswalk_offsets[leg_name].offset_ft,
+                                            stop_bar_offsets.get(leg_name),
+                                            leg_name in marked_crosswalks),
+                        state.centerline_style(leg_name))
+                ],
             }
             for leg_name, leg in state.legs.items()
         ],

@@ -541,6 +541,52 @@ def centerline_start_ft(crosswalk_offset_ft: float, stop_bar_offset_ft: float | 
     return max(stop_bar_offset_ft, past_crosswalk_ft)
 
 
+# MUTCD/AASHTO proportions for a no-passing centerline: two ~6 in stripes about 4 in apart.
+DOUBLE_YELLOW_GAP_FT = 0.1 / FT_TO_M
+# The dashed style's mark and gap. Real segments in feet rather than a dash PATTERN, so the
+# plan view and the render break the line in the same places - the same reason the bike lane's
+# dotted extension is geometry (see paint.py:_dashes_along).
+CENTERLINE_DASH_FT = 1.0 / FT_TO_M
+CENTERLINE_GAP_FT = 1.0 / FT_TO_M
+
+
+def centerline_paint_ft(leg, start_ft: float, style: str) -> list[LineString]:
+    """The stripes actually painted down this leg's middle, from `start_ft` to its far end.
+
+    ONE definition for both views, because they had two and only one of them followed the road.
+    The plan view offset the leg's real centerline; the 3D render was handed the leg's near and
+    far points and drew a straight stripe between them - the CHORD. Identical on a straight leg,
+    which ten of this project's twelve are, and on the two that are not:
+
+        broad_st_east      the chord runs up to 3.98 ft off the centerline
+        louellen_st_west   up to 7.58 ft
+
+    Four feet is most of a lane's worth of asphalt moved from one side of Broad St to the other.
+    It put the double yellow somewhere the stop bar it is supposed to meet is not, and made the
+    lanes either side of it read as different widths - both visible in the render, and neither
+    visible in the plan view, which was drawing it correctly all along. Same failure as
+    crosswalk_axes had for the crossing frame, in the marking next to it.
+    """
+    if style == "none" or start_ft >= leg.centerline.length:
+        return []
+    painted = shapely.ops.substring(leg.centerline, start_ft, leg.centerline.length)
+    if painted.is_empty or painted.geom_type != "LineString":
+        return []
+    if style == "double_yellow":
+        return [line for line in
+                (painted.offset_curve(sign * DOUBLE_YELLOW_GAP_FT / 2) for sign in (1, -1))
+                if line.geom_type == "LineString" and not line.is_empty]
+    period_ft = CENTERLINE_DASH_FT + CENTERLINE_GAP_FT
+    dashes = []
+    at_ft = 0.0
+    while at_ft + CENTERLINE_DASH_FT <= painted.length:
+        dash = shapely.ops.substring(painted, at_ft, at_ft + CENTERLINE_DASH_FT)
+        if dash.geom_type == "LineString" and dash.length > 0:
+            dashes.append(dash)
+        at_ft += period_ft
+    return dashes
+
+
 def crosswalk_axes(leg, offset_ft: float, skew_deg: float = 0.0):
     """(centre, along-travel axis, across-road axis, cos skew) for a crossing on this leg.
 

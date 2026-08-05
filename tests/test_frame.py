@@ -17,6 +17,8 @@ import pytest
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
+from shapely.geometry import Point
+
 from src.render.coords import FT_TO_M
 from src.render.frame import LEG_REACH_TOLERANCE
 from tests.conftest import SITES, needs_source_data
@@ -136,3 +138,68 @@ def test_a_proposal_frames_the_same_ground_as_its_baseline(site_models):
     (bx, by), (ax_, ay) = limits
     assert bx == pytest.approx(ax_, abs=TOL_FT), "the two panels of a before/after differ in x"
     assert by == pytest.approx(ay, abs=TOL_FT), "the two panels of a before/after differ in y"
+
+
+@needs_source_data
+@pytest.mark.parametrize("site", SITES)
+def test_the_centerline_paint_follows_the_road_in_both_views(site, site_models, tmp_path):
+    """The double yellow is the same stripe in the plan view and in the render.
+
+    The render used to be handed the leg's near and far points and draw a straight stripe between
+    them - the CHORD. Ten of this project's twelve legs are straight 2-vertex lines, so it looked
+    right nearly everywhere; on the two that are not, it is 3.98 ft out on broad_st_east and 7.58
+    ft on louellen_st_west. That is most of a lane's width of asphalt moved from one side of the
+    road to the other, and it put the centerline where the stop bar it meets is not.
+
+    Checked as "every exported vertex lies on the leg's own centerline, half the gap away from
+    it", which is what following the road means, and separately that the two views produce the
+    same lines - the chord passes neither.
+    """
+    from src.geometry.treatments import DesignState
+    from src.render.crosswalks import (DOUBLE_YELLOW_GAP_FT, centerline_paint_ft,
+                                       centerline_start_ft)
+    from src.render.scene import SceneGeometry
+    from src.sources.osm_context import fetch_crossings
+
+    model = site_models[site]
+    state = DesignState.from_model(model)
+    data = _export(model, state, "existing", tmp_path / f"{site}.json")
+    with contextlib.redirect_stdout(io.StringIO()):
+        scene = SceneGeometry.resolve(model, state,
+                                      fetch_crossings(model.center_wgs84, radius_m=130))
+
+    painted_legs = 0
+    for exported in data["legs"]:
+        leg = state.legs[exported["name"]]
+        lines = exported["centerline_paint_m"]
+        style = exported["centerline_style"]
+        if style == "none":
+            assert not lines, f"{exported['name']} is styled 'none' but paint was exported"
+            continue
+        if not lines:
+            continue        # paint that starts past the end of the leg - see centerline_start_ft
+        painted_legs += 1
+        if style == "double_yellow":
+            assert len(lines) == 2, f"a double yellow is two stripes, got {len(lines)}"
+
+        for line in lines:
+            for x_m, y_m in line:
+                point = Point(model.center_ft.x + x_m / FT_TO_M,
+                              model.center_ft.y + y_m / FT_TO_M)
+                off_ft = leg.centerline.distance(point)
+                expected_ft = DOUBLE_YELLOW_GAP_FT / 2 if style == "double_yellow" else 0.0
+                assert off_ft == pytest.approx(expected_ft, abs=0.35), (
+                    f"{exported['name']}: a centerline vertex sits {off_ft:.2f} ft off the "
+                    f"leg's centerline where the paint should be {expected_ft:.2f} ft off it - "
+                    f"the stripe is not following the road")
+
+        # And the plan view draws these exact lines, from the same call.
+        start_ft = centerline_start_ft(scene.crosswalk_offsets[exported["name"]].offset_ft,
+                                        scene.stop_bar_offsets.get(exported["name"]),
+                                        exported["name"] in scene.marked_crosswalks)
+        drawn = centerline_paint_ft(leg, start_ft, style)
+        assert len(drawn) == len(lines), (
+            f"{exported['name']}: the plan view draws {len(drawn)} stripe(s) where the render "
+            f"gets {len(lines)}")
+
+    assert painted_legs, f"{site} exported no centerline paint at all, so this proves nothing"

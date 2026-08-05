@@ -823,18 +823,23 @@ class MarkedParking(Treatment):
                 start_ft, beyond_ft = end_against_crossing(at, zone_start_ft)
             else:
                 start_ft, beyond_ft = max(zone_start_ft, at.target_ft), None
-            ctx.rim(ctx.add(DAYLIGHT_FILL, _one(lane_narrowing_polygons_ft(
-                leg, daylight_fill_ft, start_left_ft=start_ft, start_right_ft=start_ft,
-                sides=(side,), end_ft=zone_end_ft)), leg_name, side, beyond_ft,
-                shares_a_kerb=(leg_name, side) in ctx.straight_through), DAYLIGHT_EDGE_LINE)
             # A solid line wherever hatching meets the travel lane, so the lane reads as a
             # lane. The buffer beside the stalls already has one; the daylight zone runs the
             # full depth of the parking lane, so ITS inner edge is the lane edge, and without
             # this the hatching just faded into the carriageway.
+            #
+            # BEFORE the fill, so that the rim - which is this same line continued around the
+            # zone's cut end - can be trimmed against it. Painted after, the two overlapped by
+            # 3.3 ft where the fillet leaves the lane edge tangentially, which is exactly where
+            # they are supposed to meet; MarkingsDoNotCollide reported it.
             ctx.add(DAYLIGHT_EDGE_LINE,
                      inset_line_ft(leg, side, lane_edge_offset_ft, start_ft, zone_end_ft,
                                     keep_inside_ft=LANE_EDGE_LINE_WIDTH_FT / 2),
                      leg_name, side, beyond_ft)
+            ctx.rim(ctx.add(DAYLIGHT_FILL, _one(lane_narrowing_polygons_ft(
+                leg, daylight_fill_ft, start_left_ft=start_ft, start_right_ft=start_ft,
+                sides=(side,), end_ft=zone_end_ft)), leg_name, side, beyond_ft,
+                shares_a_kerb=(leg_name, side) in ctx.straight_through), DAYLIGHT_EDGE_LINE)
             # Nothing to end against and no taper available: close the square end. See
             # zone_end_line_ft. Not where the kerb runs straight through - the zone carries
             # on into the next leg there.

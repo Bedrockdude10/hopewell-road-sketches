@@ -1,10 +1,13 @@
 """Plan-view rendering: draws an IntersectionModel + DesignState to a matplotlib axis."""
+from dataclasses import dataclass
+
 import geopandas as gpd
 import numpy as np
 from matplotlib.lines import Line2D
 from matplotlib.patches import Patch
 from shapely.geometry import LineString
 
+from src.metrics import Comparison, SceneMetrics, stalls_in_run
 from src.geometry.model import inset_point_at_station, trimmed_curb_lines
 from src.geometry.intersection import IntersectionModel, kerb_lines_with_tags_ft
 from src.geometry.kerbs import KerbType
@@ -360,6 +363,40 @@ def _draw_crosswalks(ax, scene: SceneGeometry, dimension_labels: bool):
     _draw(ax, scene.stop_bar_bands.values(), color="dimgrey", alpha=0.9, zorder=4)
 
 
+@dataclass(frozen=True)
+class PlotResult:
+    """What one drawn panel reports back: what failed, and what the design achieves.
+
+    Both, from one call, because both are read off the SAME resolved scene the panel drew
+    (src/render/scene.py). A caller that wanted the outcome numbers would otherwise have to
+    resolve the crossings, the paint and the props a second time to measure them - which is
+    how the plan view, the export and the invariants came to be checking three different sets
+    of geometry before SceneGeometry existed.
+    """
+    violations: list
+    metrics: SceneMetrics
+
+
+def draw_change_panel(fig, before: SceneMetrics, after: SceneMetrics) -> Comparison:
+    """The summary block beside a before/after pair: what the proposal actually changes.
+
+    Every other number on this drawing is an INPUT - the measured street width, the stall
+    length, the corner radius. They say what is built. This says what it accomplishes, which
+    is the thing the drawing is shown in order to argue, and it was the one thing the figure
+    did not contain: two plan views and a forty-row legend, with the reader left to diff them
+    by eye.
+
+    Drawn in figure coordinates outside the axes, so it extends the saved image under
+    bbox_inches="tight" rather than covering geometry - the same trick the legend already
+    uses below the panels.
+    """
+    comparison = Comparison.of(before, after)
+    fig.text(1.01, 0.5, comparison.panel_text(), ha="left", va="center", family="monospace",
+             fontsize=8.5, linespacing=1.5,
+             bbox=dict(boxstyle="round,pad=0.6", fc="white", ec="#444444", alpha=0.97))
+    return comparison
+
+
 def plot_design_state(ax, model: IntersectionModel, state: DesignState, title: str, dimension_labels: bool = True,
                        crossings: list[dict] | None = None, sidewalks: list[dict] | None = None,
                        traffic_control: list[dict] | None = None, street_furniture: list[dict] | None = None):
@@ -532,7 +569,7 @@ def plot_design_state(ax, model: IntersectionModel, state: DesignState, title: s
     ax.set_xlim(xmin, xmax)
     ax.set_ylim(ymin, ymax)
     ax.set_xlabel("Feet (EPSG:3424)")
-    return violations
+    return PlotResult(violations=violations, metrics=scene.metrics(paint))
 
 
 def _draw_centerlines(ax, scene: SceneGeometry):
@@ -695,7 +732,9 @@ def _label_paint(ax, state, paint):
         parking = state.treatment_for(MarkedParking, LegSide(piece.leg, piece.side))
         if parking is None:
             continue
-        n_stalls = int(piece.geometry.length // parking.stall_length_ft)
+        # The same rule the summary panel totals with (src/metrics.py:stalls_in_run), so the
+        # count beside a run and the count in the panel cannot be two arithmetics.
+        n_stalls = stalls_in_run(piece.geometry.length, parking.stall_length_ft)
         mid = piece.geometry.interpolate(0.5, normalized=True)
         ax.annotate(f"parking\n{n_stalls} stalls ({parking.depth_ft:.0f} ft)", (mid.x, mid.y),
                     fontsize=6, color="steelblue", ha="center", va="center", fontweight="bold",

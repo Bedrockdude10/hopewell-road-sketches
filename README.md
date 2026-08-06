@@ -173,6 +173,30 @@ Three details worth stating. A side below the threshold still **uses every kerb 
 
 `PavedKind.ROADWAY` joins driveway/aisle/lot rather than becoming a parallel field with its own fetch and its own branch in each renderer — which `PavedSurface`'s docstring already argues against. It is the one kind whose extent can be either surveyed or assumed, so `extent_is_surveyed` decides solid vs dashed in the plan view exactly as it does for a lot vs a driveway.
 
+### A drawing-extent setting was deciding junction membership (`CROSSING_NEAR_JUNCTION_FT`)
+
+Wiring `leg_working_length_ft` to the frame scale — so a treatment runs the length of the drawn street — exposed a bug that was already there. `_matched_crossings` had two guards on whether a mapped crossing belongs to a leg (lateral distance, and orientation) and, longitudinally, only this:
+
+```python
+if not (0 < along < centerline.length):
+```
+
+So **how far a leg is drawn** decided **which crossing is ours**. Lengthening `broad_st_east` from 170 ft to 374 ft made it adopt the *next junction's* crossing at station 264 — and report it as `osm_survey`. Everything downstream was then correct arithmetic on the wrong crossing:
+
+| | leg 170 ft | leg 374 ft (before the fix) |
+|---|---|---|
+| `crosswalk_offset` | 21.3 ft `osm_survey` | **264.0 ft** `osm_survey` |
+| daylight zone | `0–48.4` — 25 ft from the side line | **`0–289.0`** — 25 ft from *the crosswalk* |
+| parkable runs | `[(79.5, 170.0)]` | `[(289.0, 373.9)]` |
+
+A daylight zone at station 268 is not a daylight zone — R.S. 39:4-138 is a setback *from the intersection*. The visible symptom was that lengthening a leg didn't extend the parking, it **slid the whole assembly down the block**, leaving 268 ft of kerb bare.
+
+This is the third instance of one shape of bug in this repo: a feature matched by *"anywhere along the leg"* rather than *"belongs to this junction"* — after the way-nearest-the-midpoint parking matcher, and the near-set kerbs above. The fix is the missing third guard, at the same 80 ft as `KERB_NEAR_JUNCTION_FT` and for the same reason. Measured, the 11 genuine matches across the four sites run **19.5–41.7 ft**, so it is nearly twice the observed worst case and cannot exclude a real crossing, while a neighbour's is hundreds of feet away.
+
+Worth knowing even if you never touch `--frame-scale`: **`working_length_ft` in `config.yaml` was silently a placement setting.** Changing `broad_st_east` from 170 to 200 would have moved the statutory daylight zone 30 ft down the block. It is a drawing-extent knob again.
+
+Because treatments now follow the frame, `SceneMetrics` splits **measured** from **projected**: stalls past the length the site configured are counted separately, and `Comparison.panel_text()` says so. The measured figure is stable across scales (8 stalls on Broad St at both 1x and 2.2x); only the projected part grows.
+
 If you edit `sites/<site>/config.yaml` (widths, corner radius, crosswalks, treatments, props), rerun from Phase 2 onward — Phase 1 doesn't depend on it.
 
 Phase 4 shells out to Blender (not the project venv — `blender_scene.py` runs under Blender's own bundled Python, with no network access and none of this project's packages). Needs Blender on `PATH`, or set `BLENDER_BIN` — defaults to `/Applications/Blender.app/Contents/MacOS/Blender` on Mac if nothing else is found.

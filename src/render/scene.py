@@ -140,7 +140,8 @@ class SceneGeometry:
 
         return SceneMetrics.of(self.state, reaches=self.crosswalk_reaches,
                                 offsets=self.crosswalk_offsets, skews=self.crosswalk_skews,
-                                paint=paint, marked=self.marked_crosswalks)
+                                paint=paint, marked=self.marked_crosswalks,
+                                surveyed_leg_lengths=getattr(self.model, "surveyed_leg_lengths", None))
 
     def context(self, props: list[dict], paint: list):
         """This scene as the one object every invariant reads (src/checks.py:SceneContext).

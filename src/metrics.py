@@ -28,10 +28,12 @@ this module only measures it and says what changed.
 from dataclasses import dataclass
 from math import sqrt
 
+import numpy as np
 from shapely.geometry import LineString
 from shapely.ops import unary_union
 
 from src.geometry.markings import PARKING_EDGE_LINE
+from src.geometry.model import station_offset_many
 from src.geometry.targets import Corner, LegSide
 
 # MUTCD's normal walking speed for timing a pedestrian clearance interval. Stated on the
@@ -154,6 +156,36 @@ class Crossing:
         return self.distance_ft / speed_ft_s
 
 
+def split_at_surveyed_end(geometry: LineString, leg, surveyed_length_ft: float | None) -> tuple:
+    """(measured_ft, projected_ft) for a run, split where the SURVEYED leg ends.
+
+    The frame scale carries the legs out so a treatment runs the length of the drawn street
+    (src/geometry/intersection.py). That is a drawing decision, and it must not become an
+    arithmetic one: the same proposal reported 8 stalls at 1x and 17 at 2.2x, which is a stall
+    count moving with a camera setting. So the part of a run past the length the site actually
+    configured is measured separately and reported as projected.
+
+    Split by STATION along the leg rather than by distance from the junction, because a kerb run
+    is offset from the centerline and on a curved leg the two diverge. Walked segment by segment
+    and attributed on each segment's midpoint - a run crossing the boundary contributes to both.
+    """
+    if surveyed_length_ft is None or leg is None:
+        return geometry.length, 0.0
+    coords = list(geometry.coords)
+    if len(coords) < 2:
+        return geometry.length, 0.0
+    mids = np.asarray([((a[0] + b[0]) / 2, (a[1] + b[1]) / 2) for a, b in zip(coords, coords[1:])])
+    stations, _offsets = station_offset_many(leg.centerline, mids)
+    measured = projected = 0.0
+    for (a, b), station in zip(zip(coords, coords[1:]), stations):
+        seg = float(np.hypot(b[0] - a[0], b[1] - a[1]))
+        if station <= surveyed_length_ft:
+            measured += seg
+        else:
+            projected += seg
+    return measured, projected
+
+
 @dataclass(frozen=True)
 class ParkingRun:
     """One continuous run of marked stalls, as painted."""
@@ -161,6 +193,20 @@ class ParkingRun:
     side: str
     stalls: int
     length_ft: float
+    #: How much of this run lies past the length the site configured for its leg - drawn because
+    #: the frame was widened, not because anybody surveyed that far. 0.0 at an unscaled frame.
+    projected_ft: float = 0.0
+    #: The stall length the treatment marks at. Carried rather than recovered as length/stalls,
+    #: which is the AVERAGE and rounds a run's measured share to the wrong whole stall.
+    stall_length_ft: float = 0.0
+
+    @property
+    def measured_ft(self) -> float:
+        return self.length_ft - self.projected_ft
+
+    @property
+    def is_projected(self) -> bool:
+        return self.projected_ft > 0.0
 
 
 @dataclass(frozen=True)
@@ -182,7 +228,7 @@ class SceneMetrics:
 
     @classmethod
     def of(cls, state, reaches: dict, offsets: dict, skews: dict, paint: list,
-           marked=None) -> "SceneMetrics":
+           marked=None, surveyed_leg_lengths: dict | None = None) -> "SceneMetrics":
         """Measure a design. Arguments are SceneGeometry's own fields - see its `metrics`.
 
         `marked` is the set of legs carrying a crossing; None measures every leg with a
@@ -216,7 +262,12 @@ class SceneMetrics:
             if parking is None:
                 continue
             length_ft = piece.geometry.length
+            _measured, projected = split_at_surveyed_end(
+                piece.geometry, state.legs.get(piece.leg),
+                (surveyed_leg_lengths or {}).get(piece.leg))
             runs.append(ParkingRun(leg=piece.leg, side=piece.side, length_ft=length_ft,
+                                    projected_ft=projected,
+                                    stall_length_ft=parking.stall_length_ft,
                                     stalls=stalls_in_run(length_ft, parking.stall_length_ft)))
 
         corners = []
@@ -238,6 +289,20 @@ class SceneMetrics:
     @property
     def total_stalls(self) -> int:
         return sum(run.stalls for run in self.parking)
+
+    @property
+    def measured_stalls(self) -> int:
+        """Stalls on the length of leg the SITE configured - the number that does not move.
+
+        Counted from each run's measured length rather than by scaling the total, because a run
+        crossing the surveyed end is one run and the stalls in it are whole.
+        """
+        return sum(stalls_in_run(run.measured_ft, run.stall_length_ft)
+                   for run in self.parking if run.stall_length_ft > 0)
+
+    @property
+    def projected_stalls(self) -> int:
+        return self.total_stalls - self.measured_stalls
 
 
 @dataclass(frozen=True)
@@ -355,6 +420,14 @@ class Comparison:
 
         lines += ["", f"MARKED PARKING            {self.stalls_before} -> {self.stalls_after} "
                        f"stalls   {self.stalls_delta:+d}"]
+        # A projected stall is one the frame scale drew, past the length of leg the site
+        # configured. Said out loud rather than folded into the total, because otherwise the
+        # same proposal reports 8 stalls at 1x and 17 at 2.2x and nothing on the drawing says
+        # why - a number that moves with a camera setting, presented as a measurement.
+        if self.after.projected_stalls or self.before.projected_stalls:
+            lines.append(f"  of which surveyed       {self.before.measured_stalls} -> "
+                          f"{self.after.measured_stalls}   the rest is projected past the "
+                          f"surveyed leg")
 
         turns = {turn.corner: turn for turn in self.before.corners}
         changed = [turn for turn in self.after.corners

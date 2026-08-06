@@ -116,9 +116,36 @@ class Frame:
 
 
 def leg_reach_ft(model) -> float:
-    """How far from the junction the modelled street extends, along its longest leg."""
-    return max((model.center_ft.distance(Point(leg.centerline.coords[-1]))
-                for leg in model.legs.values()), default=0.0)
+    """How far from the junction the SURVEYED street extends, along its longest leg.
+
+    The site's configured working length, not the built centerline, once the frame scale began
+    carrying the legs out with it (src/geometry/intersection.py). Otherwise the two compound:
+    longer legs make a longer pavement ring, this measures the ring, the radius is multiplied by
+    the scale a second time, and a 2.2x frame comes out 4.8x. Measuring against the surveyed
+    length keeps the radius exactly what it has always been at 1x and a clean multiple of it
+    above - the legs then fill the frame instead of ending a third of the way across it.
+
+    Measured by TRUNCATING each centerline to its surveyed length and taking the far end of
+    that, rather than by reading the configured number straight off. The two are not the same:
+    a centerline does not start exactly at the junction node and is not always straight, so
+    w_broad_louellen's 130 ft leg reaches 136.4 ft. Taking the number would have moved that
+    site's frame at 1x, and a frame that shifts is the one thing this module exists to stop.
+    Truncating reproduces the old value exactly wherever the scale is 1.
+
+    Falls back to the built centerline for a model with no configured lengths recorded, which is
+    every synthetic model in the tests.
+    """
+    from shapely.ops import substring
+
+    surveyed = getattr(model, "surveyed_leg_lengths", None) or {}
+    reaches = []
+    for name, leg in model.legs.items():
+        line = leg.centerline
+        length = surveyed.get(name)
+        if length is not None and line.length > length:
+            line = substring(line, 0.0, length)
+        reaches.append(model.center_ft.distance(Point(line.coords[-1])))
+    return max(reaches, default=0.0)
 
 
 def junction_frame(model) -> Frame:

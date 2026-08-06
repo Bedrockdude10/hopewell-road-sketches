@@ -274,3 +274,57 @@ def test_stations_are_measured_in_the_leg_frame_not_world_coordinates():
     zones = [z for z in no_parking_zones_ft(state, "ne", "left", {"ne": (10.0,)},
                                              [hydrant_at_station_50]) if "hydrant" in z.reason]
     assert zones and zones[0].start_ft == pytest.approx(50.0 - FIRE_HYDRANT_SETBACK_FT, abs=0.1)
+
+
+def _crossing_at(x_ft: float, half_width_ft: float = 20.0) -> dict:
+    """One OSM crossing way, square across a leg running east along y=0, at station `x_ft`.
+
+    In WGS84 because that is what the matcher takes, so the coordinates are converted back
+    from the state plane the synthetic leg lives in.
+    """
+    from src.render.coords import wgs84_to_state_plane
+
+    import pyproj
+    back = pyproj.Transformer.from_crs(wgs84_to_state_plane.target_crs,
+                                        wgs84_to_state_plane.source_crs, always_xy=True)
+    ends = [back.transform(x_ft, -half_width_ft), back.transform(x_ft, half_width_ft)]
+    return {"coords_wgs84": [list(e) for e in ends], "tags": {}, "id": 1}
+
+
+def test_a_crossing_down_the_block_is_not_this_junctions_crossing():
+    """A leg drawn further must not adopt the NEXT junction's crosswalk.
+
+    The only longitudinal test used to be "projects between the junction and the leg's far
+    end", so leg_working_length_ft - a drawing-extent setting - decided junction membership.
+    Lengthening broad_st_east from 170 ft to 374 ft made it adopt a crossing at station 264,
+    reported as osm_survey; daylighting then took its 25 ft setback from THAT and blanked
+    289 ft of kerb, moving the statutory zone from the corner into the middle of the block.
+
+    The same crossing, against a short leg and a long one: neither may match it.
+    """
+    from src.render.crosswalks import CROSSING_NEAR_JUNCTION_FT, _matched_crossings
+
+    far_ft = CROSSING_NEAR_JUNCTION_FT + 100
+    crossing = [_crossing_at(far_ft)]
+    for length_ft in (CROSSING_NEAR_JUNCTION_FT + 50, far_ft + 200):
+        legs = {"east": Leg(name="east", centerline=LineString([(0, 0), (length_ft, 0)]),
+                             curb_to_curb_ft=40.0)}
+        assert "east" not in _matched_crossings(legs, crossing), (
+            f"a crossing {far_ft:.0f} ft out was adopted by a {length_ft:.0f} ft leg")
+
+
+def test_this_junctions_own_crossing_still_matches_however_far_the_leg_is_drawn():
+    """The other half: the bound must not cost a real crossing when a leg is drawn long.
+
+    Every genuine match across the four sites sits at 19.5-41.7 ft, so a crossing at 30 ft is
+    squarely inside the range this has to keep.
+    """
+    from src.render.crosswalks import _matched_crossings
+
+    crossing = [_crossing_at(30.0)]
+    for length_ft in (130.0, 400.0):
+        legs = {"east": Leg(name="east", centerline=LineString([(0, 0), (length_ft, 0)]),
+                             curb_to_curb_ft=40.0)}
+        matched = _matched_crossings(legs, crossing)
+        assert "east" in matched, f"a real crossing at 30 ft was dropped on a {length_ft:.0f} ft leg"
+        assert matched["east"][0] == pytest.approx(30.0, abs=1.0)

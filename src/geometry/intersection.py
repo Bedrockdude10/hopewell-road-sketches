@@ -16,6 +16,7 @@ from shapely.ops import substring, unary_union
 from src.sources.data_loader import load_parcels_near, load_road_network
 from src.render.coords import wgs84_to_state_plane
 from src.sources.osm_context import fetch_kerbs, fetch_roads
+from src.render.frame import frame_scale
 from src.geometry.model import (
     CURB_POINT_BEHIND_TOLERANCE_FT,
     CURB_POINT_MAX_WIDTH_RATIO,
@@ -73,6 +74,11 @@ class IntersectionModel:
     # for why they live on the model rather than being fetched per consumer, and why all three are
     # one type.
     paved_surfaces: tuple = ()
+    # {leg name: the working length the SITE configured}, before the frame scale carried it out.
+    # The surveyed answer, kept because two things must not move when the picture zooms: the
+    # frame (src/render/frame.py:leg_reach_ft measures against this, so widening does not
+    # compound) and the metrics (src/metrics.py reports anything past it as projected).
+    surveyed_leg_lengths: dict = field(default_factory=dict)
 
     @property
     def driveways(self) -> tuple:
@@ -1252,8 +1258,25 @@ def load_intersection_model(config: dict | None = None, site: str | None = None)
     # that curb_line_from_points extrapolates from a bearing. So the length that shows the
     # most ground truth on an arterial is longer than the one that starts inventing kerb on
     # the cross street. One global forces the shorter answer on both.
-    leg_lengths = {name: float(cfg.get("working_length_ft", working_len))
-                   for name, cfg in legs_cfg.items()}
+    # What the SITE says each leg is worth drawing. Kept separately from the scaled figure below
+    # because it is the surveyed answer: it is what the frame is measured against (so a zoom-out
+    # does not compound), and what src/metrics.py splits measured from projected on.
+    surveyed_leg_lengths = {name: float(cfg.get("working_length_ft", working_len))
+                            for name, cfg in legs_cfg.items()}
+    # Carried out with the frame, so a treatment runs as far as the picture draws the street
+    # rather than stopping a third of the way along it. Three things make this safe rather than
+    # a licence to invent:
+    #   * the width fit is bounded at stations TRACED_SECTION_START_FT..TRACED_SECTION_END_FT
+    #     "whatever working_length_ft says", so no measured width moves;
+    #   * a leg is cut from the NJDOT alignment with substring(), so it simply stops where the
+    #     surveyed alignment stops - asking for more than exists yields what exists;
+    #   * past the traced kerb, curb_line_from_points already extrapolates from a bearing, and
+    #     that is drawn with the provenance it always was.
+    # What it does NOT make safe is the arithmetic downstream - a leg twice as long carries twice
+    # the kerb to mark parking along - so SceneMetrics reports the projected part separately
+    # rather than letting a stall count move with a camera setting.
+    scale = frame_scale()
+    leg_lengths = {name: length * scale for name, length in surveyed_leg_lengths.items()}
     sri_to_leg_names: dict[str, list[str]] = {}
     for name, leg_cfg in legs_cfg.items():
         sri_to_leg_names.setdefault(leg_cfg["sri"], []).append(name)
@@ -1345,6 +1368,7 @@ def load_intersection_model(config: dict | None = None, site: str | None = None)
         parcels=parcels,
         corner_parcels=corner_parcels,
         paved_surfaces=_paved_surfaces_ft(center, corner_fillets),
+        surveyed_leg_lengths=surveyed_leg_lengths,
     )
 
 

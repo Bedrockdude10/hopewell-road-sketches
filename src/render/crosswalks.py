@@ -256,6 +256,24 @@ def _match_crossings_to_legs(legs: dict, crossings: list[dict]) -> dict:
     return match
 
 
+# How far down a leg a mapped crossing may sit and still be THIS junction's crossing.
+#
+# There was no such bound: the only longitudinal test was that the crossing projects between the
+# junction and the leg's FAR END, so `leg_working_length_ft` - a drawing-extent setting in
+# config.yaml - was also deciding junction membership. Lengthening a leg from 170 ft to 374 ft
+# made broad_st_east adopt the NEXT junction's crossing at station 264, reported as `osm_survey`;
+# daylighting then set its 25 ft setback from that crossing and blanked 289 ft of kerb, moving
+# the statutory zone from the corner into the middle of the block. Everything downstream was
+# correct arithmetic on the wrong crossing.
+#
+# 80 ft, which is KERB_NEAR_JUNCTION_FT and carries the same justification: a feature belonging
+# to this junction is close to it. Measured, the 11 genuine matches across the four sites run
+# 19.5-41.7 ft (the furthest is greenwood_ave_south), so this is nearly twice the observed worst
+# case and cannot exclude a real crossing - while a neighbouring junction's is hundreds of feet
+# away. The lateral and orientation guards below are unchanged; this is the missing third one.
+CROSSING_NEAR_JUNCTION_FT = 80.0
+
+
 def _matched_crossings(legs: dict, crossings: list[dict]) -> dict:
     """
     Match each OSM-mapped crossing way to whichever leg it actually crosses -
@@ -294,7 +312,7 @@ def _matched_crossings(legs: dict, crossings: list[dict]) -> dict:
         for leg_name, leg in legs.items():
             centerline = leg.centerline
             along = centerline.project(mid)
-            if not (0 < along < centerline.length):
+            if not (0 < along < centerline.length) or along > CROSSING_NEAR_JUNCTION_FT:
                 continue
             perp = centerline.interpolate(along).distance(mid)
             if perp > leg.curb_to_curb_ft / 2 + 10:  # not plausibly this leg's crossing

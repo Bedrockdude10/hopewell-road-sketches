@@ -195,6 +195,7 @@ class PavedKind(StrEnum):
     DRIVEWAY = "driveway"                # highway=service + service=driveway
     PARKING_AISLE = "parking_aisle"      # highway=service + service=parking_aisle
     PARKING_LOT = "parking_lot"          # amenity=parking, mapped as an AREA
+    ROADWAY = "roadway"                  # highway=* around the junction, past the modelled legs
 
 
 # One radius for driveways, here rather than in each consumer. Matches the building/crossing
@@ -217,7 +218,65 @@ def _to_state_plane(coords) -> list:
     return list(zip(xs, ys))
 
 
-def _paved_surfaces_ft(center_wgs84: Point) -> tuple:
+def _context_roadways_ft(center_wgs84: Point, radius_m: float, exclude) -> tuple:
+    """The streets AROUND the junction, widened from the kerb that was actually traced.
+
+    The wide render's road used to stop at the modelled legs because the exported kerbs were the
+    NEAR set - within 80 ft of the centre - and everything past that was dropped. These are what
+    fills the rest of the frame, and src/geometry/context_roads.py is where the reasoning lives.
+
+    `exclude` is the modelled pavement (and the mapped lots): subtracted from every surface, so
+    where this project has measured geometry that geometry wins, and no two asphalt polygons end
+    up coplanar for Blender to z-fight over.
+    """
+    from src.geometry.context_roads import (SAMPLE_SPACING_FT, assign_kerbs_to_roads,
+                                            is_carriageway, kerb_points, roadway_surface)
+    from src.sources.osm_context import fetch_kerbs, fetch_roads
+
+    center_ft = Point(*_to_state_plane([(center_wgs84.x, center_wgs84.y)])[0])
+    # Clipped to where the KERB data reaches, not to the road fetch radius. Two reasons, and they
+    # are the same reason: a way carries on well past it - West Broad Street is one 1,226 ft way -
+    # so judging how much of it is traced over a length whose kerbs were never fetched reports a
+    # surveyed street as unmapped; and drawing asphalt further out than the kerbs go leaves the
+    # corridor losing its edges partway along, which is exactly the mismatch that made the first
+    # wide render show street to 938 ft and kerb to 379. A way clipped into two pieces is two
+    # surfaces; each is measured on its own.
+    reach_ft = drawn_kerb_radius_ft()
+    in_range = center_ft.buffer(reach_ft)
+    ways = []
+    for way in fetch_roads(center_wgs84, radius_m=radius_m):
+        tags = way.get("tags", {})
+        if not is_carriageway(tags) or len(way.get("coords_wgs84") or []) < 2:
+            continue
+        clipped = LineString(_to_state_plane(way["coords_wgs84"])).intersection(in_range)
+        for piece in getattr(clipped, "geoms", [clipped]):
+            if piece.geom_type == "LineString" and piece.length > SAMPLE_SPACING_FT:
+                ways.append((tags, piece))
+    if not ways:
+        return ()
+    kerb_lines = [LineString(_to_state_plane(k["coords_wgs84"]))
+                  for k in fetch_kerbs(center_wgs84, radius_m=radius_m)
+                  if len(k.get("coords_wgs84") or []) >= 2]
+
+    centerlines = [line for _tags, line in ways]
+    per_road = assign_kerbs_to_roads(centerlines, kerb_points(kerb_lines))
+
+    out = []
+    for (tags, line), (stations, offsets) in zip(ways, per_road):
+        surface, traced, width_ft = roadway_surface(line, stations, offsets, tags)
+        if surface is None:
+            continue
+        if exclude is not None:
+            surface = surface.difference(exclude)
+        for piece in getattr(surface, "geoms", [surface]):
+            if piece.geom_type == "Polygon" and not piece.is_empty and piece.area > 1.0:
+                out.append(PavedSurface(kind=PavedKind.ROADWAY, line=line, tags=tags,
+                                        surface=piece, traced_sides=frozenset(traced),
+                                        drawn_width_ft=width_ft))
+    return tuple(out)
+
+
+def _paved_surfaces_ft(center_wgs84: Point, corner_fillets: dict | None = None) -> tuple:
     """Every mapped driveway, parking aisle and parking lot near this junction, projected once.
 
     The lots are built first because they SUBTRACT from the aisles. An aisle inside a mapped lot
@@ -225,12 +284,23 @@ def _paved_surfaces_ft(center_wgs84: Point) -> tuple:
     surfaces at the same height - which in Blender is not redundancy, it is z-fighting (the
     project has hit that before; see MARKING_CLEARANCE_M). 6 of the borough's 20 aisles are inside
     a lot, so the other 14 still need their strips.
+
+    ...and the surrounding STREETS, once `corner_fillets` says where the modelled pavement is so
+    they can be cut around it. Same reason they are here rather than fetched by each renderer:
+    a roadway is street geometry, resolved once at load, not render dressing.
+
+    The radius follows the frame (src/render/frame.py:context_radius_m), so a zoom-out widens
+    what there is to see and not just how much ground is in shot. Imported lazily: this is the
+    geometry layer, and a module-level import of the render layer would invert the dependency
+    for what is one environment variable.
     """
+    from src.render.frame import context_radius_m
     from src.sources.osm_context import (fetch_driveways, fetch_parking_aisles,
                                          fetch_parking_lots)
 
+    radius_m = context_radius_m(DRIVEWAY_CONTEXT_RADIUS_M)
     lots = []
-    for lot in fetch_parking_lots(center_wgs84, radius_m=DRIVEWAY_CONTEXT_RADIUS_M):
+    for lot in fetch_parking_lots(center_wgs84, radius_m=radius_m):
         coords = lot.get("coords_wgs84") or []
         if len(coords) < 4:
             continue
@@ -243,7 +313,7 @@ def _paved_surfaces_ft(center_wgs84: Point) -> tuple:
     out = list(lots)
     for kind, fetch in ((PavedKind.DRIVEWAY, fetch_driveways),
                         (PavedKind.PARKING_AISLE, fetch_parking_aisles)):
-        for way in fetch(center_wgs84, radius_m=DRIVEWAY_CONTEXT_RADIUS_M):
+        for way in fetch(center_wgs84, radius_m=radius_m):
             coords = way.get("coords_wgs84") or []
             if len(coords) < 2:
                 continue
@@ -260,8 +330,15 @@ def _paved_surfaces_ft(center_wgs84: Point) -> tuple:
             for piece in getattr(surface, "geoms", [surface]):
                 if piece.geom_type == "Polygon" and not piece.is_empty:
                     out.append(PavedSurface(kind=kind, line=line, way_id=way.get("id"),
-                                            tags=tags, surface=piece))
-    return tuple(out)
+                                            tags=tags, surface=piece, drawn_width_ft=width_ft))
+
+    # The streets last, cut around everything already resolved: the junction's own measured
+    # pavement first of all, and the mapped lots for the same reason the aisles are.
+    keep_clear = [build_pavement_polygon(corner_fillets)] if corner_fillets else []
+    if paved_by_lots is not None:
+        keep_clear.append(paved_by_lots)
+    exclude = unary_union([g for g in keep_clear if g is not None and not g.is_empty]) or None
+    return tuple(out) + _context_roadways_ft(center_wgs84, radius_m, exclude)
 
 
 def _runs_along_a_leg(line: LineString, legs: dict) -> bool:
@@ -294,19 +371,51 @@ def _runs_along_a_leg(line: LineString, legs: dict) -> bool:
     return False
 
 
-def kerb_lines_with_tags_ft(center_wgs84: Point, center_ft: Point, legs: dict | None = None) -> list:
+def drawn_kerb_radius_ft() -> float:
+    """How far out a kerb still counts as part of the PICTURE, in feet.
+
+    Every kerb that was fetched, which is the honest answer: the fetch radius already scales
+    with the frame, so this is "all the traced kerb around this junction" and not a second
+    independent idea of how much is relevant.
+
+    Both renderers take this one number, so the set they draw is literally the same set. The
+    plan view is a square window on it and matplotlib crops what falls outside the axes; the
+    3D camera is a tilted perspective and necessarily sees further. That asymmetry is the one
+    src/render/frame.py already describes - the views share the subject and the radius, not the
+    outline of the visible region - and it is not the same thing as the two disagreeing about
+    which kerbs exist, which is what the frame radius was quietly doing when the roads ran to
+    938 ft and the kerbs stopped at 379.
+    """
+    from src.render.frame import context_radius_m
+
+    return context_radius_m(KERB_CONTEXT_RADIUS_M) / 0.3048
+
+
+def kerb_lines_with_tags_ft(center_wgs84: Point, center_ft: Point, legs: dict | None = None,
+                             radius_ft: float | None = None) -> list:
     """[(LineString, tags)] for traced kerbs near the junction - geometry plus what OSM
     says about each (kerb=lowered, tactile_paving=yes, wheelchair=yes).
 
-    Two relevance tests, because "is this kerb ours" has two different answers. With `legs`
-    omitted this returns the NEAR set: everything within KERB_NEAR_JUNCTION_FT of the junction
-    CENTRE, which is the right test for fitting a corner RADIUS and for measuring a width -
-    a return belonging to this junction is close to it, and at the 120 m fetch radius anything
-    looser drags in the neighbouring junctions' returns. Pass `legs` and the test becomes
-    _runs_along_a_leg instead: kerb anywhere along a leg, however far out, which is what a
-    curb LINE wants. 14 traced ways across the four junctions sit at stations 76-127 with
-    plausible kerb offsets and fail the near test - both sides of greenwood_ave_south from
-    ~90 ft out among them.
+    THREE relevance tests, because "is this kerb ours" has three different answers and they are
+    not interchangeable:
+
+      * `radius_ft` - everything within that distance of the centre. The DRAWING test, and the
+        only one of the three that is about the picture rather than about the junction. Use it
+        for anything being rendered.
+      * `legs` - _runs_along_a_leg: kerb anywhere along a leg, however far out, which is what a
+        curb LINE wants. 14 traced ways across the four junctions sit at stations 76-127 with
+        plausible kerb offsets and fail the near test - both sides of greenwood_ave_south from
+        ~90 ft out among them.
+      * neither - the NEAR set, within KERB_NEAR_JUNCTION_FT of the junction CENTRE. The right
+        test for fitting a corner RADIUS and for measuring a width: a return belonging to this
+        junction is close to it, and at the fetch radius anything looser drags in the
+        neighbouring junctions' returns.
+
+    The near set was the DEFAULT, and both renderers took the default, which is how a wide render
+    came to show a cross of asphalt floating on grass: 8,938 ft of kerb is traced within 600 m of
+    Broad & Greenwood - both sides of the corridor, Louellen to Princeton - and an 80 ft filter
+    meant for the radius fit threw all but the corner returns away. A test written to keep a
+    neighbouring junction out of a CIRCLE FIT was silently deciding what a drawing contains.
 
     The wide set is deliberately NOT fed to the fit. Admitting those ways shifts
     w_broad_st_southwest's measured width, that reshuffles the vertex contest at the one
@@ -316,9 +425,15 @@ def kerb_lines_with_tags_ft(center_wgs84: Point, center_ft: Point, legs: dict | 
     the widths are settled and the extra ways can only lengthen a curb, never redefine one.
     See tests/test_leg_frame.py.
     """
+    def relevant(line):
+        if radius_ft is not None:
+            return line.distance(center_ft) <= radius_ft
+        if legs:
+            return _runs_along_a_leg(line, legs)
+        return line.distance(center_ft) <= KERB_NEAR_JUNCTION_FT
+
     return [(line, tags, way_id) for line, tags, way_id in _projected_kerbs(center_wgs84)
-            if (_runs_along_a_leg(line, legs) if legs
-                else line.distance(center_ft) <= KERB_NEAR_JUNCTION_FT)]
+            if relevant(line)]
 
 
 # Every traced kerb way at one junction, projected into state-plane feet once. The projection
@@ -340,8 +455,14 @@ def _projected_kerbs(center_wgs84: Point) -> list[tuple]:
 
     Lone `barrier=kerb` NODES are dropped: they carry no arc to fit and no line to draw.
     """
+    from src.render.frame import context_radius_m
+
+    # Scaled with the frame (see _paved_surfaces_ft for why the import is lazy). Widening this
+    # cannot disturb the fits: the near set filters to 80 ft and the wide set to a 130-170 ft
+    # leg, both far inside the unscaled 120 m, so the extra ways are candidates that every
+    # existing test then rejects. It is the DRAWING that needed them.
     try:
-        kerbs = fetch_kerbs(center_wgs84, radius_m=KERB_CONTEXT_RADIUS_M)
+        kerbs = fetch_kerbs(center_wgs84, radius_m=context_radius_m(KERB_CONTEXT_RADIUS_M))
     except RuntimeError as e:
         # An outage must not look like "nothing is mapped here". Returning [] silently
         # would drop the traced kerbs, and with them the measured widths, the per-corner
@@ -916,6 +1037,13 @@ class PavedSurface:
     #: The paved ground itself, built once so the plan view and the 3D render draw the SAME
     #: polygon rather than each widening the line their own way.
     surface: Polygon | None = None
+    #: Which sides of a ROADWAY had a traced kerb to measure the edge from - {"left", "right"},
+    #: one of them, or empty. Empty for every other kind, which has no two edges to speak of.
+    traced_sides: frozenset = frozenset()
+    #: The width this project ASSUMED, where it had to assume one. Carried per surface rather
+    #: than looked up per kind because a roadway's assumption is per highway class and a
+    #: one-way aisle is 12 ft where a two-way is 20 - the table cannot express either.
+    drawn_width_ft: float | None = None
 
     @property
     def extent_is_surveyed(self) -> bool:
@@ -925,7 +1053,14 @@ class PavedSurface:
         A driveway and an aisle are centrelines with no width on them - 0 of the borough's 43
         driveways and 0 of its 20 aisles carry a `width` tag - so their strips are as wide as
         DRAWN_WIDTH_FT says, which is an assumption and is labelled as one in the legend.
+
+        A ROADWAY is the one kind that can be either, which is the whole point of it: both of
+        Broad Street's kerbs are traced for the length of the corridor, so that surface is
+        measured on both edges and as surveyed as the lot. With one side traced or none, it is
+        not - half a measured outline is still a guess about where the street ends.
         """
+        if self.kind == PavedKind.ROADWAY:
+            return self.traced_sides == frozenset({"left", "right"})
         return self.kind == PavedKind.PARKING_LOT
 
     @property
@@ -937,8 +1072,14 @@ class PavedSurface:
         markings uses (src/geometry/kerbs.py). The two must not be swapped - at E Broad the dropped
         kerb runs 37 ft while the driveway centreline enters near one end of it, so that section is
         a frontage the driveway opens onto, not the driveway's own width.
+
+        `drawn_width_ft` where the surface recorded its own, because the kind no longer determines
+        it: a one-way parking aisle is built at 12 ft and used to REPORT 20, the table's two-way
+        figure, which is the quiet over-claim the rest of this class is arranged against.
         """
-        return None if self.extent_is_surveyed else DRAWN_WIDTH_FT[self.kind]
+        if self.extent_is_surveyed:
+            return None
+        return self.drawn_width_ft if self.drawn_width_ft is not None else DRAWN_WIDTH_FT[self.kind]
 
 
 @dataclass(frozen=True)
@@ -1203,7 +1344,7 @@ def load_intersection_model(config: dict | None = None, site: str | None = None)
         leg_osm_aligned=leg_osm_aligned,
         parcels=parcels,
         corner_parcels=corner_parcels,
-        paved_surfaces=_paved_surfaces_ft(center),
+        paved_surfaces=_paved_surfaces_ft(center, corner_fillets),
     )
 
 

@@ -73,6 +73,24 @@ def frame_scale() -> float:
         return 1.0
     return scale
 
+
+def context_radius_m(base_m: float) -> float:
+    """How far out to pull CONTEXT - buildings, roads, parking - for the frame in force.
+
+    The frame scale widens what the camera takes in; it has to widen what there IS to take in
+    by the same factor, or a zoom-out just adds bare ground. That was the defect at 2.2x: the
+    ground plane got bigger (see FRAME_SCALE_ENV above), the buildings and driveways already
+    reached 130 m so they filled it, and the STREET stopped dead at the modelled legs' 52 m -
+    a road cross floating on grass with sharply cut ends.
+
+    Scaled off the base radius rather than off the frame's own radius on purpose. The frame is
+    measured FROM the model, and the context is fetched to BUILD the model, so reading one from
+    the other is circular. A flat multiple of the constant each layer already uses is not
+    circular, is the same factor everywhere, and at 1x returns exactly the radius that layer
+    used before - so an unscaled render pulls the identical context it always did.
+    """
+    return base_m * frame_scale()
+
 # How far past a leg's far end a pavement vertex may still count as part of this junction. The
 # corner fillets trim the curbs a little past the leg's own end, so a hard cut at the leg length
 # would drop legitimate ring vertices.

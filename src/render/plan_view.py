@@ -9,7 +9,8 @@ from shapely.geometry import LineString
 
 from src.metrics import Comparison, SceneMetrics, stalls_in_run
 from src.geometry.model import inset_point_at_station, trimmed_curb_lines
-from src.geometry.intersection import IntersectionModel, kerb_lines_with_tags_ft
+from src.geometry.intersection import (IntersectionModel, drawn_kerb_radius_ft,
+                                       kerb_lines_with_tags_ft)
 from src.geometry.kerbs import KerbType
 from src.geometry.treatments import DesignState, RaiseCrossing, RefugeIsland
 from src.provenance import PLOT_STYLE, built_width_provenance
@@ -228,7 +229,11 @@ def _draw_props(ax, model: IntersectionModel, state: DesignState, crosswalk_offs
     way this used to meant the plan view of a bollard proposal showed no bollards while the
     3D render of the same scenario showed thirteen.
     """
-    kerb_lines = kerb_lines_with_tags_ft(model.center_wgs84, model.center_ft)
+    # Every traced kerb inside the frame, which is the same set the 3D export writes - see
+    # src/geometry/intersection.py:kerb_lines_with_tags_ft on why the drawing test is not the
+    # corner-fit's near set, and src/render/export.py for the matching call.
+    kerb_lines = kerb_lines_with_tags_ft(model.center_wgs84, model.center_ft,
+                                          radius_ft=drawn_kerb_radius_ft())
     props = build_props(model, state, crosswalk_offsets, model.center_ft, traffic_control,
                          street_furniture, crossings, fetch_kerbs(model.center_wgs84, radius_m=120))
     _draw_paved_surfaces(ax, model.paved_surfaces)
@@ -779,9 +784,9 @@ def legend_handles():
         Line2D([0], [0], color="black", lw=1.1, ls="--",
                label="Traced kerb - LOWERED: a vehicle crosses, so the paint opens"),
         Patch(facecolor="#8a7a68", alpha=0.55, edgecolor="#5d5044",
-               label="Parking lot (OSM amenity=parking) - outline as surveyed"),
+               label="Parking lot / street traced BOTH sides - outline as surveyed"),
         Patch(facecolor="#8a7a68", alpha=0.55, edgecolor="#5d5044", linestyle="--",
-               label="Driveway / parking aisle - width DRAWN is assumed"),
+               label="Driveway, aisle, street part-traced - width DRAWN is assumed"),
         Line2D([0], [0], color="steelblue", lw=1, ls=(0,(4,2)), label="OSM sidewalk centerline"),
         Line2D([0], [0], color="#3b6ea5", lw=0.9, ls=(0,(7,3,1,3)), label="Leg centerline (widths measured from this)"),
         Line2D([0], [0], color="gold", lw=1.2, label="Centerline paint (double yellow / dashed)"),

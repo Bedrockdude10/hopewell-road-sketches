@@ -48,17 +48,29 @@ def test_a_surveyed_outline_is_not_confused_with_a_widened_one(site, site_models
     and the exported JSON carries `surveyed` per surface. A lot claiming a width this repo picked,
     or a driveway claiming a surveyed one, would be the quiet over-claim the provenance strings
     exist to prevent.
+
+    A ROADWAY is the one kind that can be either, and that is the point of it: a street with both
+    kerbs traced has a measured outline, and one with neither is a ribbon at the width this repo
+    picked for its highway class. So the rule is not "a lot is surveyed and nothing else is" - it
+    is that every surface reports which of the two it is, and reports a width only when it guessed.
     """
     model = site_models[site]
     for paved in model.paved_surfaces:
         if paved.kind == PavedKind.PARKING_LOT:
             assert paved.extent_is_surveyed
-            assert paved.width_ft is None, "a mapped area has no width for us to have assumed"
             assert paved.line is None, "a lot is mapped as an area, not a centreline"
+        elif paved.kind == PavedKind.ROADWAY:
+            assert paved.extent_is_surveyed == (paved.traced_sides == frozenset({"left", "right"}))
+            assert paved.line is not None
         else:
             assert not paved.extent_is_surveyed
-            assert paved.width_ft > 0, f"{paved.kind} has no drawn width"
             assert paved.line is not None
+        # A width is what this project ASSUMED. Reporting one alongside a surveyed outline claims
+        # the outline came from it; reporting none on a widened line hides that a guess was made.
+        if paved.extent_is_surveyed:
+            assert paved.width_ft is None, f"{paved.kind} has a surveyed extent AND a drawn width"
+        else:
+            assert paved.width_ft > 0, f"{paved.kind} has no drawn width"
 
 
 @needs_source_data

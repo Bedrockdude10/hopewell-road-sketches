@@ -48,6 +48,7 @@ from src.checks import SceneInvariantError
 from src.geometry.intersection import load_intersection_model
 from src.geometry.treatments import DesignState
 from src.render.export import BUILDING_CONTEXT_RADIUS_M, export_scenario
+from src.render.frame import FRAME_SCALE_ENV
 from src.render.plan_view import draw_change_panel, legend_handles, plot_design_state
 from src.render.theme import build_default_theme
 from src.site import (list_sites, load_site_scenarios, run_scenario, scenario_label,
@@ -224,14 +225,27 @@ def main():
     parser.add_argument("--render-scale", type=int, default=1, choices=(1, 2, 3, 4),
                         help="3D render resolution as a multiple of 1920x1440 (default 1). "
                              "2 gives 3840x2880. Costs roughly the square in time and memory.")
+    parser.add_argument("--frame-scale", type=float, default=1.0,
+                        help="zoom BOTH views out by this factor, for a picture whose subject is "
+                             "longer than one junction (default 1.0). Matches the flag of the same "
+                             "name on phase4_render_3d.py - see src/render/frame.py")
     parser.add_argument("--refresh-osm", action="store_true",
                         help="re-pull every OSM layer from Overpass instead of serving output/.cache "
                              "- use after tracing kerbs/crossings/tactile paving in the OSM editor")
     args = parser.parse_args()
 
+    # Before anything is built, not beside the Blender call below: the frame scale reaches the
+    # PLAN VIEW and the exported geometry too, and it widens what context is fetched at all
+    # (src/render/frame.py:context_radius_m). Setting it late would have produced a 1x geometry
+    # file and a 2.2x camera. Inherited by the worker processes, which is why it is an env var
+    # in the first place. Without this flag, `build_all` silently reset a wide artifact to 1x -
+    # the standard rebuild command could not reproduce the pictures in output/.
+    os.environ[FRAME_SCALE_ENV] = str(args.frame_scale)
+
     sites = args.site or list_sites()
     started = time.perf_counter()
     print(f"Building {len(sites)} site(s){' + 3D renders' if args.render_3d else ''}"
+          f"{f' at {args.frame_scale}x frame' if args.frame_scale != 1.0 else ''}"
           f"{' + re-pulling OSM' if args.refresh_osm else ''}")
 
     if args.refresh_osm:

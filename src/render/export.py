@@ -19,7 +19,8 @@ from src.render.crosswalks import (CROSSWALK_DEPTH_M, STOP_BAR_CURB_CLEARANCE_M,
                                    entering_lane_width_ft, resolve_crosswalk_style,
                                    stop_bar_band_geometry_ft, stop_bar_width_ft)
 from src.geometry.model import hatch_lines_ft
-from src.geometry.intersection import IntersectionModel, kerb_lines_with_tags_ft
+from src.geometry.intersection import (IntersectionModel, drawn_kerb_radius_ft,
+                                       kerb_lines_with_tags_ft)
 from src.geometry.kerbs import KerbType
 from src.geometry.markings import CHANNELS, KINDS, Role, kinds_in
 from src.geometry.paint import RimCause, in_channel
@@ -184,6 +185,10 @@ def export_scenario(model: IntersectionModel, state: DesignState, name: str, out
     # than render buildings sitting in the middle of the road.
     buildings = [b for b in buildings if not building_footprint_ft(b["coords_wgs84"]).intersects(pavement)]
 
+    # Resolved once and read twice - written into the JSON for the camera, and used to decide
+    # which traced kerbs are in the picture at all. Two calls would be two chances to disagree.
+    frame = junction_frame(model)
+
     near_radius_ft = max((v[0] for v in crosswalk_offsets.values()), default=30) + NEAR_ZONE_BUFFER_FT
     pavement_near, pavement_far = _split_near_far([pavement], center_ft, near_radius_ft)
     sidewalks_near, sidewalks_far = _split_near_far(sidewalk_pieces, center_ft, near_radius_ft)
@@ -318,7 +323,7 @@ def export_scenario(model: IntersectionModel, state: DesignState, name: str, out
         # this render and the plan view frame the same ground. Blender used to compute an extent
         # of its own from the pavement below, which is how the two views came to disagree by up
         # to 1.57x on the same junction.
-        "frame": junction_frame(model).as_local_m(center_ft),
+        "frame": frame.as_local_m(center_ft),
         "pavement_near": [ring_to_local_m(p.exterior.coords, center_ft) for p in pavement_near],
         "pavement_far": [ring_to_local_m(p.exterior.coords, center_ft) for p in pavement_far],
         "sidewalks_near": [ring_to_local_m(p.exterior.coords, center_ft) for p in sidewalks_near],
@@ -456,14 +461,19 @@ def export_scenario(model: IntersectionModel, state: DesignState, name: str, out
         # concrete band started, so a dropped kerb and a 6 in stood-up kerb looked identical and
         # the raised/lowered tagging on all 95 mapped ways reached nothing.
         #
-        # The SAME set the plan view draws (kerb_lines_with_tags_ft with no legs - the near set),
-        # because the two views disagreeing about which kerbs exist is the failure this project
-        # is built around.
+        # The SAME set the plan view draws - kerb_lines_with_tags_ft at the FRAME radius, because
+        # the two views disagreeing about which kerbs exist is the failure this project is built
+        # around, and because what a drawing contains is a question about the drawing.
+        #
+        # This took the near set (within 80 ft of the centre) until it was noticed that the near
+        # set is the corner-radius fit's test, not a renderer's: at Broad & Greenwood both kerbs
+        # are traced the length of the corridor and all but the four returns were being dropped.
         "kerbs": [
             {"coords": ring_to_local_m(line.coords, center_ft),
              "kerb": str(KerbType.from_tags(tags)),
              "height_m": KERB_HEIGHT_M[KerbType.from_tags(tags)]}
-            for line, tags, _way_id in kerb_lines_with_tags_ft(model.center_wgs84, center_ft)
+            for line, tags, _way_id in kerb_lines_with_tags_ft(model.center_wgs84, center_ft,
+                                                                radius_ft=drawn_kerb_radius_ft())
         ],
         # The driveways the kerb openings exist for. Drawn as a narrow strip of the same asphalt
         # rather than as a marking: it is a minor carriageway, and its job in the render is to

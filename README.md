@@ -147,6 +147,32 @@ The same failure one level up, in the most literal form available: the plan view
 
 `junction_frame(model)` now resolves it once: the modelled pavement's extent, clipped at the legs' reach, plus a 20% margin. The plan view sets its axes from it, `export_scenario` writes it into the JSON as `frame`, and `blender_scene.py` points its camera at that rather than recomputing an extent of its own. Two deliberate details: it is measured from the **model** rather than from a `DesignState`, because a curb extension moves the kerb and a before/after pair whose two panels frame differently is exactly what makes two pictures incomparable; and vertices past a leg's far end are dropped, because a traced kerb runs on down the block (425 ft off a 130 ft leg at E Broad) and that is street, not junction. `tests/test_frame.py` compares the plan view's own axis limits against the exported frame, per site.
 
+### "Is this kerb ours" has three answers (`src/geometry/context_roads.py`)
+
+The first wide render — `--frame-scale 2.2` — showed a cross of asphalt floating on grass. The buildings and driveways ran out to 200 m and filled the frame; the street stopped dead at 52 m with sharply cut ends. The obvious suspect was `leg_working_length_ft: 130`, and it was wrong. The cause was one default argument:
+
+```python
+for line, tags, _way_id in kerb_lines_with_tags_ft(model.center_wgs84, center_ft)
+```
+
+No `legs`, so that returns the **near set** — everything within `KERB_NEAR_JUNCTION_FT` (80 ft) of the junction centre. Its own docstring says that test is for *fitting a corner radius and measuring a width*, and that anything looser "drags in the neighbouring junctions' returns". Correct, for a circle fit. But **8,938 ft of kerb is traced within 600 m of Broad & Greenwood** — both sides of the corridor, Louellen to Princeton — and an 80 ft filter meant for the fit was silently deciding what a drawing contains. The model already knew: `broad_st_west left curb follows traced kerb out to 244 ft`, `e_broad_st_west ... out to 425 ft`. It printed that and then drew none of it.
+
+So there are three relevance tests, and they are not interchangeable: **near the centre** (the radius fit), **along a leg** (a curb line), and **in the picture** (`radius_ft`, for anything being rendered). The third did not exist.
+
+`context_roads.py` then widens each OSM highway way into asphalt, taking the width **from the traced kerbs wherever they exist**, per side and per station. The measured coverage is sharply bimodal, which is why the surveyed/assumed threshold is not a knob anyone has to tune:
+
+| | left | right | |
+|---|---|---|---|
+| West Broad Street | 100% | 100% | measured both edges |
+| East Broad Street | 95% | 100% | measured both edges |
+| North Greenwood Avenue | 44% | 59% | its own median, flagged assumed |
+| Blackwell Avenue | 38% | 38% | " |
+| Model Ave, Railroad Pl, Front St | 0% | 0% | class-assumed ribbon |
+
+Three details worth stating. A side below the threshold still **uses every kerb that was traced** — the fraction sets the provenance flag only, because discarding real measurements for being sparse is the same over-correction as trusting a third of a street and calling it surveyed. A kerb vertex goes to the **nearest** centreline, not to every road within reach, or two parallel streets each claim the kerb between them and widen to meet in the middle. And kerbs are **resampled, not read at their vertices**: a straight kerb is mapped with as few vertices as it takes to be straight (~3 per way here), so reading vertices found kerb at 28 of 82 stations along West Broad and reported a fully traced street as unmapped.
+
+`PavedKind.ROADWAY` joins driveway/aisle/lot rather than becoming a parallel field with its own fetch and its own branch in each renderer — which `PavedSurface`'s docstring already argues against. It is the one kind whose extent can be either surveyed or assumed, so `extent_is_surveyed` decides solid vs dashed in the plan view exactly as it does for a lot vs a driveway.
+
 If you edit `sites/<site>/config.yaml` (widths, corner radius, crosswalks, treatments, props), rerun from Phase 2 onward — Phase 1 doesn't depend on it.
 
 Phase 4 shells out to Blender (not the project venv — `blender_scene.py` runs under Blender's own bundled Python, with no network access and none of this project's packages). Needs Blender on `PATH`, or set `BLENDER_BIN` — defaults to `/Applications/Blender.app/Contents/MacOS/Blender` on Mac if nothing else is found.

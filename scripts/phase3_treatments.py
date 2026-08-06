@@ -13,7 +13,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import matplotlib.pyplot as plt
 
 from src.geometry.intersection import load_intersection_model
-from src.render.plan_view import BUILDING_CONTEXT_RADIUS_M, legend_handles, plot_design_state
+from src.render.plan_view import (BUILDING_CONTEXT_RADIUS_M, draw_change_panel, legend_handles,
+                                   plot_design_state)
 from src.site import DEFAULT_SCENARIO, add_scenario_arg, add_site_arg, load_site_scenarios, scenario_label, site_output_dir, run_scenario
 from src.geometry.treatments import DesignState
 from src.sources.osm_context import fetch_crossings
@@ -36,8 +37,15 @@ def main():
     crossings = fetch_crossings(model.center_wgs84, radius_m=BUILDING_CONTEXT_RADIUS_M)
 
     fig, axes = plt.subplots(1, 2, figsize=(18, 10))
-    plot_design_state(axes[0], model, baseline, "Existing Conditions (Phase 2 baseline)", crossings=crossings)
-    plot_design_state(axes[1], model, scenario, f"Proposed Treatments ({args.scenario})", crossings=crossings)
+    existing = plot_design_state(axes[0], model, baseline, "Existing Conditions (Phase 2 baseline)",
+                                  crossings=crossings)
+    proposed = plot_design_state(axes[1], model, scenario, f"Proposed Treatments ({args.scenario})",
+                                  crossings=crossings)
+    # What the proposal achieves, measured off the two panels above rather than recomputed -
+    # see src/metrics.py. Printed as well as drawn: these are the numbers the scenario is
+    # discussed in, and reading them off a PNG to quote them is a step nobody should need.
+    comparison = draw_change_panel(fig, existing.metrics, proposed.metrics)
+    print(f"\n{comparison.panel_text()}")
     fig.legend(handles=legend_handles(), loc="lower center", ncol=4, fontsize=8, bbox_to_anchor=(0.5, -0.02))
     fig.suptitle(f"{model.config['intersection']['name']} - Before / After (NAD83 NJ State Plane, feet)", fontsize=13)
 

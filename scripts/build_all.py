@@ -48,7 +48,7 @@ from src.checks import SceneInvariantError
 from src.geometry.intersection import load_intersection_model
 from src.geometry.treatments import DesignState
 from src.render.export import BUILDING_CONTEXT_RADIUS_M, export_scenario
-from src.render.plan_view import legend_handles, plot_design_state
+from src.render.plan_view import draw_change_panel, legend_handles, plot_design_state
 from src.render.theme import build_default_theme
 from src.site import (list_sites, load_site_scenarios, run_scenario, scenario_label,
                       site_output_dir)
@@ -82,7 +82,7 @@ def scenarios_for(site: str, module=None) -> list[str]:
 def draw_geometry_plot(model, state, out_path: Path, crossings) -> list:
     """The phase 2 single-panel plan view, byte-for-byte the same figure that script makes."""
     fig, ax = plt.subplots(figsize=(11, 11))
-    violations = plot_design_state(ax, model, state, "Existing Conditions", crossings=crossings) or []
+    violations = plot_design_state(ax, model, state, "Existing Conditions", crossings=crossings).violations
     ax.legend(handles=legend_handles(), loc="upper left", fontsize=8)
     fig.suptitle(f"{model.config['intersection']['name']} - Phase 2 geometry", fontsize=13)
     fig.savefig(out_path, dpi=PLOT_DPI, bbox_inches="tight")
@@ -98,9 +98,12 @@ def draw_before_after(model, baseline, state, scenario_name: str, out_path: Path
     similar-but-different pictures is how two views drift apart.
     """
     fig, axes = plt.subplots(1, 2, figsize=(18, 10))
-    plot_design_state(axes[0], model, baseline, "Existing Conditions (Phase 2 baseline)", crossings=crossings)
-    violations = plot_design_state(axes[1], model, state, f"Proposed Treatments ({scenario_name})",
-                                    crossings=crossings) or []
+    existing = plot_design_state(axes[0], model, baseline, "Existing Conditions (Phase 2 baseline)",
+                                  crossings=crossings)
+    proposed = plot_design_state(axes[1], model, state, f"Proposed Treatments ({scenario_name})",
+                                  crossings=crossings)
+    violations = proposed.violations
+    draw_change_panel(fig, existing.metrics, proposed.metrics)
     fig.legend(handles=legend_handles(), loc="lower center", ncol=4, fontsize=8, bbox_to_anchor=(0.5, -0.02))
     fig.suptitle(f"{model.config['intersection']['name']} - Before / After "
                  f"(NAD83 NJ State Plane, feet)", fontsize=13)

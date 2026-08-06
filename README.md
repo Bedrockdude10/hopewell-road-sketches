@@ -12,7 +12,7 @@ python scripts/phase3_treatments.py --site broad_st_greenwood  # apply treatment
 python scripts/phase4_render_3d.py --site broad_st_greenwood   # export geometry + render both scenarios in Blender
 ```
 
-`--site` defaults to `broad_st_greenwood` if omitted. Outputs land in `output/<site>/`: `phase1_network_plot.png`, `phase2_geometry_plot.png`, `phase3_before_after.png`, `phase4_render_existing.png`, `phase4_render_proposed.png`.
+`--site` defaults to `broad_st_greenwood` if omitted. Outputs land in `output/<site>/`: `phase1_network_plot.png`, `phase2_geometry_plot.png`, `phase3_before_after.png`, `phase4_render_existing.png`, `phase4_render_proposed.png`. Phase 3 also prints the change summary it draws beside the two panels — crossing distance, exposure, parking, turn speed (see "What the design *achieves*" below).
 
 To rebuild **everything** — all sites, all proposals — in one command instead of ~30:
 
@@ -127,6 +127,19 @@ Checking both paths is necessary but not sufficient: the two paths also have to 
 - `tests/test_sites.py`'s helper made the same bands-without-reaches substitution while its docstring claimed to check "exactly what `export.py` and the plan view check".
 
 None of the three was visible from any one call site — each looked locally reasonable, and they only disagreed side by side. That is the argument for resolving once rather than agreeing to follow a convention in four places.
+
+### What the design *achieves* (`src/metrics.py`)
+
+Every dimension on the drawing is an **input**: the 55.5 ft street, the 8 ft stall, `R=20` at the corner. They say what is built. None of them says what it accomplished, and "the crossing is 14 ft shorter and a person is in the road for 4 fewer seconds" is the sentence a proposal is actually argued over — so the before/after figure was two plan views and a forty-row legend, with the reader left to diff them by eye.
+
+`SceneMetrics.of(...)` measures the outcome off the **resolved scene** (`SceneGeometry.metrics(paint)`), never off the config that scene was built from, and `draw_change_panel` puts it beside the panels. Four numbers, and the reason each is measured rather than derived:
+
+- **Crossing distance, curb to curb.** The sum of the two-pass reaches, not the leg's nominal width. `crosswalk_reach_to_curbs_ft` measures out to the *traced* kerbs and the answer is asymmetric (12 ft one way, 20 the other on a 30 ft street); a curb extension changes it. Re-deriving it from `leg.curb_to_curb_ft` would agree with the drawing on a straight symmetric leg, disagree quietly everywhere else, and keep reporting the old width after a treatment moved the kerb.
+- **Time exposed to traffic** — the **longest stage**, at MUTCD's 3.5 ft/s (named on the panel, because a time in seconds is an assumption about who is crossing). A refuge island is somewhere to stand, so a staged crossing exposes a person one stage at a time; summing the stages would credit the island with nothing at all, which is the opposite of what it does. The stages come from cutting the islands out of the crossing's **own axis**, so an island 60 ft down the leg cuts nothing — otherwise a refuge anywhere on a leg gets credited to every crossing on it. A staged crossing is labelled `staged (refuge)`, because "16 ft" against "30 ft" is only true if you also say a person now stops halfway.
+- **Marked parking**, counted off the `PARKING_EDGE_LINE` pieces the paint builder emitted, one run at a time — a hydrant or a driveway splits a kerb into two runs, and a daylight zone shortens a run rather than the leg. `stalls_in_run` is shared with the plan view's per-run label, so the number beside a run and the total in the panel cannot be two different arithmetics.
+- **Turn speed at a tightened corner**, from AASHTO's `V = sqrt(15·R·(e+f))` at the low-speed side friction factor. `R=20` against `R=15` means nothing to a reader; ~9.5 mph against ~8.2 does. Labelled *modelled, not measured*, on the same terms an estimated width is dashed rather than solid.
+
+A crossing carries its `CrosswalkOffset` provenance through to the panel, so a distance measured at an estimated position says `est. position`; a leg a proposal marks but that has nothing today is reported as `new` rather than as "0 ft saved", which would be false in both directions. `tests/test_metrics.py` pins all of it against a synthetic junction, so it runs without `data/`.
 
 ### Both views frame the same ground (`src/render/frame.py`)
 

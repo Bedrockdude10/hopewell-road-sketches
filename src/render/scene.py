@@ -128,6 +128,20 @@ class SceneGeometry:
         paint = self.build_paint(props)
         return paint, props + bollard_props_from_paint(self.state, paint)
 
+    def metrics(self, paint: list):
+        """What this scenario achieves, measured off this resolution (src/metrics.py).
+
+        Here for the same reason `context` is: the outcome numbers a summary panel reports
+        have to be measured from the geometry the figure drew, not recomputed from the config
+        it was built out of. A crossing distance re-derived from `leg.curb_to_curb_ft` would
+        agree with the drawing on a symmetric leg and quietly disagree everywhere else.
+        """
+        from src.metrics import SceneMetrics
+
+        return SceneMetrics.of(self.state, reaches=self.crosswalk_reaches,
+                                offsets=self.crosswalk_offsets, skews=self.crosswalk_skews,
+                                paint=paint, marked=self.marked_crosswalks)
+
     def context(self, props: list[dict], paint: list):
         """This scene as the one object every invariant reads (src/checks.py:SceneContext).
 

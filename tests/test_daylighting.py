@@ -13,6 +13,7 @@ from src.geometry.daylighting import (CROSSWALK_SETBACK_FT, CROSSWALK_SETBACK_WI
                                        STOP_SIGN_SETBACK_FT, legal_parking_start_ft,
                                        no_parking_zones_ft, parkable_runs_ft)
 from src.geometry.model import Leg
+from tests.conftest import needs_source_data
 from src.geometry.targets import LegSide
 from src.geometry.treatments import (DesignState, ProtectDaylightZone)
 
@@ -328,3 +329,81 @@ def test_this_junctions_own_crossing_still_matches_however_far_the_leg_is_drawn(
         matched = _matched_crossings(legs, crossing)
         assert "east" in matched, f"a real crossing at 30 ft was dropped on a {length_ft:.0f} ft leg"
         assert matched["east"][0] == pytest.approx(30.0, abs=1.0)
+
+
+@needs_source_data
+def test_no_marked_parking_within_25_ft_of_any_intersecting_street(site_models):
+    """R.S. 39:4-138(e) applies at EVERY intersection, not the one the drawing is centred on.
+
+    Legs are carried out with the frame now, so Broad St runs 374 ft - past Blackwell Avenue and
+    the rest of the block - and the markings did not know: stalls were painted straight across
+    the mouth of a side street, and the statutory setback existed only at this junction's own
+    corners. The data was already fetched; fetch_roads had been read for `overtaking=no` and its
+    geometry thrown away.
+
+    Asserted against the PAINT rather than the zone list, because a zone nobody subtracts is not
+    a setback. Every marked stall on every leg, against every street that leg crosses.
+    """
+    import contextlib
+    import io
+
+    from src.geometry.cross_streets import cross_streets_from_model
+    from src.geometry.daylighting import SIDELINE_SETBACK_FT, parkable_runs_ft
+    from src.render.scene import SceneGeometry
+    from src.sources.osm_context import fetch_crossings
+
+    checked = 0
+    for site, model in site_models.items():
+        with contextlib.redirect_stdout(io.StringIO()):
+            state = DesignState.from_model(model)
+            scene = SceneGeometry.resolve(
+                model, state, crossings=fetch_crossings(model.center_wgs84, radius_m=130))
+        crossings = cross_streets_from_model(model)
+        for leg_name, streets in crossings.items():
+            for side in ("left", "right"):
+                runs = parkable_runs_ft(state, leg_name, side, scene.crosswalk_offsets, [])
+                for cross in streets:
+                    if side not in cross.sides:
+                        continue
+                    checked += 1
+                    near_ft, far_ft = cross.mouth_ft
+                    forbidden = (near_ft - SIDELINE_SETBACK_FT, far_ft + SIDELINE_SETBACK_FT)
+                    for start_ft, end_ft in runs:
+                        assert end_ft <= forbidden[0] or start_ft >= forbidden[1], (
+                            f"{site}: parking run {start_ft:.0f}-{end_ft:.0f} ft on "
+                            f"{leg_name}/{side} overlaps the {SIDELINE_SETBACK_FT:.0f} ft "
+                            f"setback {forbidden[0]:.0f}-{forbidden[1]:.0f} ft around "
+                            f"{cross.citation}")
+    assert checked, "no leg crossed another street at any site, so this asserted nothing"
+
+
+@needs_source_data
+def test_a_cross_street_breaks_the_kerb_it_joins_and_not_the_one_opposite(site_models):
+    """A T-junction opens one kerb. Opening both would break paint that is really there."""
+    import contextlib
+    import io
+
+    from src.geometry.cross_streets import cross_streets_from_model
+    from src.geometry.kerbs import OpeningSource
+
+    seen = 0
+    for site, model in site_models.items():
+        with contextlib.redirect_stdout(io.StringIO()):
+            state = DesignState.from_model(model)
+        for leg_name, streets in cross_streets_from_model(model).items():
+            for cross in streets:
+                assert cross.sides, "a cross street that leaves on neither side is not one"
+                seen += 1
+                for side in ("left", "right"):
+                    openings = [o for o in state.kerb_openings.get((leg_name, side), [])
+                                if o.source is OpeningSource.CROSS_STREET
+                                and o.way_id == cross.way_id]
+                    if side in cross.sides:
+                        assert openings, (
+                            f"{site}: {cross.citation} joins {leg_name}/{side} but does not "
+                            f"break its kerb - paint runs across the mouth")
+                    else:
+                        assert not openings, (
+                            f"{site}: {cross.citation} broke {leg_name}/{side}, the kerb "
+                            f"OPPOSITE the one it joins")
+    assert seen, "no cross street found at any site"

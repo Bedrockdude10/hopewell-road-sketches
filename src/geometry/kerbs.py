@@ -122,6 +122,7 @@ class OpeningSource(StrEnum):
     """
     DROPPED_KERB = "dropped_kerb"
     DRIVEWAY = "driveway"
+    CROSS_STREET = "cross_street"
 
 
 @dataclass(frozen=True)
@@ -157,6 +158,9 @@ class KerbOpening:
         if self.source is OpeningSource.DRIVEWAY:
             return (f"OSM service=driveway{where} (mouth assumed {DRIVEWAY_WIDTH_FT:.0f} ft - a "
                     f"centreline carries no width)")
+        if self.source is OpeningSource.CROSS_STREET:
+            return (f"OSM intersecting street{where} (mouth is its own carriageway width, "
+                    f"assumed from its highway class unless OSM records one)")
         return f"OSM kerb={self.kerb.value if self.kerb else 'lowered'}{where}"
 
 
@@ -223,6 +227,21 @@ def kerb_openings_from_model(model) -> dict:
             KerbOpening(start_ft=max(station_ft - DRIVEWAY_WIDTH_FT / 2, 0.0),
                         end_ft=station_ft + DRIVEWAY_WIDTH_FT / 2,
                         source=OpeningSource.DRIVEWAY, way_id=way_id))
+    # A CROSS STREET opens the kerb the same way a driveway does, over its own width - it is a
+    # driveway that a whole street drives out of. Legs are drawn as far as the frame asks now, so
+    # Broad St runs across Blackwell and Model Avenue, and the markings were being painted
+    # straight over their mouths. See src/geometry/cross_streets.py; the statutory 25 ft either
+    # side of the same meeting is added in src/geometry/daylighting.py, which is a separate rule
+    # about parking rather than about where the kerb physically stops.
+    from src.geometry.cross_streets import cross_streets_from_model
+
+    for leg_name, crossings in cross_streets_from_model(model).items():
+        for cross in crossings:
+            near_ft, far_ft = cross.mouth_ft
+            for side in cross.sides:
+                openings.setdefault((leg_name, side), []).append(
+                    KerbOpening(start_ft=max(near_ft, 0.0), end_ft=far_ft,
+                                source=OpeningSource.CROSS_STREET, way_id=cross.way_id))
     for key in openings:
         openings[key].sort(key=lambda o: o.start_ft)
     return openings

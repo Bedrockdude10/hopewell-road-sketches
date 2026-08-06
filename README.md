@@ -197,6 +197,25 @@ Worth knowing even if you never touch `--frame-scale`: **`working_length_ft` in 
 
 Because treatments now follow the frame, `SceneMetrics` splits **measured** from **projected**: stalls past the length the site configured are counted separately, and `Comparison.panel_text()` says so. The measured figure is stable across scales (8 stalls on Broad St at both 1x and 2.2x); only the projected part grows.
 
+### The statute applies at every intersection (`src/geometry/cross_streets.py`)
+
+Once legs run 374 ft they cross other streets, and the markings did not know. Stalls were painted straight across the mouth of Blackwell Avenue, and R.S. 39:4-138(e)'s 25 ft setback existed only at the junction the drawing is centred on — which is not what the statute says.
+
+The fact was already fetched and being thrown away. `fetch_roads` pulls every `highway=*` way in range and had been read for exactly one tag, `overtaking=no`; where those ways actually meet ours was discarded. So cross streets now feed the two mechanisms that already exist for this shape of thing — a **no-parking zone** either side (the same statutory rule the junction end gets) and a **kerb opening** across the mouth (what a driveway already gets; a cross street is a driveway a whole street drives out of).
+
+```
+zone  253.1..329.1   R.S. 39:4-138(e), 25 ft from the side line of Blackwell Avenue on way 11643011
+runs  [(79.5, 253.1), (329.1, 373.9)]
+```
+
+Three details that are not obvious:
+
+- **It is not a geometric intersection.** A side street's OSM way stops on OSM's centreline for the main road; our leg is the NJDOT alignment, a few feet away. Requiring a true crossing found 2 ways at Broad & Greenwood and *both were Broad Street itself*. The test is approach — a street that reaches inside our own carriageway is meeting us, whoever drew which centreline where.
+- **An angle test is required**, because this leg's own OSM way runs alongside it for its whole length. Without it every leg reports itself as its own cross street. Same discriminator `_matched_crossings` uses.
+- **One side, not both.** A T-junction opens the kerb it joins; opening the kerb opposite would break paint that is really there. The side comes from the way's own vertices — both sides only for a genuine crossroads.
+
+The setback is measured from the **side line** (the edge of the cross street's carriageway), not its centreline, matching `sideline_station_ft` at the junction end. That width is OSM's `width` tag where a mapper recorded one, else the highway class — an assumption, and `KerbOpening.citation` says so.
+
 If you edit `sites/<site>/config.yaml` (widths, corner radius, crosswalks, treatments, props), rerun from Phase 2 onward — Phase 1 doesn't depend on it.
 
 Phase 4 shells out to Blender (not the project venv — `blender_scene.py` runs under Blender's own bundled Python, with no network access and none of this project's packages). Needs Blender on `PATH`, or set `BLENDER_BIN` — defaults to `/Applications/Blender.app/Contents/MacOS/Blender` on Mac if nothing else is found.

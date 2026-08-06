@@ -193,6 +193,25 @@ def no_parking_zones_ft(state, leg_name: str, side: str, crosswalk_offsets: dict
         zones.append(NoParkingZone(restriction.start_ft, restriction.end_ft,
                                     restriction.citation))
 
+    # (e) again, at EVERY OTHER intersection this leg runs across. The statute is about an
+    # intersection, not about the one the drawing is centred on, and a leg carried out with the
+    # frame crosses several - Broad St at 374 ft passes Blackwell and Model Avenue. Before this
+    # the markings ran straight through them: stalls marked across the mouth of a side street,
+    # and no setback anywhere but at this junction's own corners.
+    #
+    # Measured from the SIDE LINE, i.e. from the edge of the cross street's own carriageway
+    # rather than from its centreline, which is what "the side line of the intersecting street"
+    # means and what sideline_station_ft does at the junction end. Only on the side the street
+    # actually leaves on - a T-junction does not daylight the kerb opposite it.
+    for cross in getattr(state, "cross_streets", {}).get(leg_name, []):
+        if side not in cross.sides:
+            continue
+        near_ft, far_ft = cross.mouth_ft
+        zones.append(NoParkingZone(
+            near_ft - sideline_setback, far_ft + sideline_setback,
+            f"R.S. 39:4-138(e), {sideline_setback:.0f} ft from the side line of "
+            f"{cross.citation}"))
+
     # (h) and (i) - radii around a point feature, anywhere along the leg.
     for prop in props or []:
         setback = _SETBACK_BY_PROP.get(prop.get("type"))

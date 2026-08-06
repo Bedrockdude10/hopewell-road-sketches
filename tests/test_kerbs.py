@@ -150,11 +150,18 @@ def test_every_opening_names_the_osm_object_that_caused_it(site_models):
                 if opening.source is OpeningSource.DROPPED_KERB:
                     assert "kerb=" in opening.citation
                     assert opening.is_surveyed_width
-                else:
+                elif opening.source is OpeningSource.DRIVEWAY:
                     assert "service=driveway" in opening.citation
                     assert not opening.is_surveyed_width, (
                         "a driveway centreline carries no width, so its mouth must not be "
                         "reported as surveyed")
+                else:
+                    # A cross street opens the kerb over its own carriageway, which OSM records
+                    # for almost none of them - so the mouth is this repo's assumption about a
+                    # highway class, exactly as a driveway's is, and must not claim otherwise.
+                    assert opening.source is OpeningSource.CROSS_STREET
+                    assert "intersecting street" in opening.citation
+                    assert not opening.is_surveyed_width
         for line in describe_kerb_openings(state):
             assert "OSM " in line, f"{site}: an opening reported without its source"
     assert found, "no openings found at any site - neither signal is being read"

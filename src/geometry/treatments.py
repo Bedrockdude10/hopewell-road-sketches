@@ -9,6 +9,7 @@ from typing import ClassVar
 import numpy as np
 from shapely.geometry import Polygon
 
+from src.geometry.cross_streets import cross_streets_from_model
 from src.geometry.kerbs import kerb_openings_from_model
 from src.geometry.targets import BOTH_SIDES, LegSide, LegTarget, Side, Target
 from src.geometry.model import (BULBOUT_TAPER_RATE, build_pavement_polygon, curb_extension_line,
@@ -259,6 +260,11 @@ class DesignState:
     # STRETCH of it - seeded from the model in from_model. Read by src/geometry/daylighting.py,
     # which turns a prohibition into a no-parking zone like any statutory one.
     parking_restrictions: dict = field(default_factory=dict)
+    #: {leg name: [CrossStreet]} - every OTHER street a leg runs across. Seeded here with the
+    #: two above because it is the same kind of thing: an observed fact about the street that no
+    #: treatment chose. R.S. 39:4-138(e) applies at every intersection, not only the one the
+    #: drawing is about, and a leg drawn 374 ft crosses several - see src/geometry/cross_streets.
+    cross_streets: dict = field(default_factory=dict)
     # Every Treatment applied to this design, in order (see apply) - the design as a list of
     # decisions, which is what a scenario actually is, what every renderer reads its parameters
     # from (treatment_for / treatments_of / every_treatment) and what provenance is written from.
@@ -301,7 +307,8 @@ class DesignState:
         return cls(legs=deepcopy(model.legs), corner_fillets=deepcopy(model.corner_fillets),
                    existing_centerline_styles=centerline_styles,
                    kerb_openings=kerb_openings_from_model(model),
-                   parking_restrictions=_parking_restrictions_from_model(model))
+                   parking_restrictions=_parking_restrictions_from_model(model),
+                   cross_streets=cross_streets_from_model(model))
 
     def clone(self) -> "DesignState":
         return deepcopy(self)

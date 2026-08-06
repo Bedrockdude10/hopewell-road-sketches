@@ -105,39 +105,41 @@ def test_the_shared_frame_is_the_one_the_render_computed_for_itself(site, site_m
 def test_a_proposal_frames_the_same_ground_as_its_baseline(site_models):
     """A before/after pair is only comparable if both panels cover the same square.
 
-    Broad & Greenwood's bulb-out proposal moves four kerbs and takes ~1,090 sq ft of roadway into
-    the corners, so a frame measured from the resolved pavement would tighten between the two
-    panels - which is why the frame is measured from the model instead.
+    The kerb-moving state is built HERE rather than borrowed from a site's scenario list. It
+    used to be Broad & Greenwood's bulb-out proposal - the only scenario in the repo that moved
+    a kerb - so deleting that proposal would have quietly left this test with nothing to prove:
+    every remaining scenario is paint-only, and a frame cannot shift when no kerb does. The
+    subject of this test is the frame, not any one proposal, so it makes its own.
     """
     from src.geometry.model import build_pavement_polygon
-    from src.geometry.treatments import DesignState
+    from src.geometry.treatments import DesignState, bulb_out_corner_pair
     from src.render.plan_view import plot_design_state
-    from src.site import load_site_scenarios, run_scenario
 
     model = site_models["broad_st_greenwood"]
     baseline = DesignState.from_model(model)
     with contextlib.redirect_stdout(io.StringIO()):
-        proposed = run_scenario(
-            load_site_scenarios("broad_st_greenwood").build_proposal_apron_bulbouts,
-            baseline, model)
+        proposed = baseline
+        for leg_name in ("broad_st_east", "broad_st_west"):
+            proposed = bulb_out_corner_pair(proposed, leg_name, extension_ft=8.0,
+                                             crossing_ft=25.0)
     assert (build_pavement_polygon(proposed.corner_fillets).area
             < build_pavement_polygon(baseline.corner_fillets).area - 500), (
-        "this proposal is supposed to take roadway into the corners; if it no longer does, it "
-        "cannot show that the frame ignores the treated pavement")
+        "this state is supposed to take roadway into the corners; if it no longer does, it "
+        "cannot exercise what this test is about")
 
-    limits = []
-    for state in (baseline, proposed):
+    frames = []
+    for state, label in ((baseline, "baseline"), (proposed, "proposed")):
         fig, ax = plt.subplots()
         try:
             with contextlib.redirect_stdout(io.StringIO()):
-                plot_design_state(ax, model, state, "panel", dimension_labels=False)
-            limits.append((ax.get_xlim(), ax.get_ylim()))
+                plot_design_state(ax, model, state, label, dimension_labels=False)
+            frames.append((ax.get_xlim(), ax.get_ylim()))
         finally:
             plt.close(fig)
-
-    (bx, by), (ax_, ay) = limits
-    assert bx == pytest.approx(ax_, abs=TOL_FT), "the two panels of a before/after differ in x"
-    assert by == pytest.approx(ay, abs=TOL_FT), "the two panels of a before/after differ in y"
+    assert [v for pair in frames[0] for v in pair] == pytest.approx(
+        [v for pair in frames[1] for v in pair], abs=0.01), (
+        "the two panels of a before/after pair frame different ground, so the drawing invites "
+        "a comparison it does not support")
 
 
 @needs_source_data

@@ -100,17 +100,16 @@ def stop_bar_band_geometry_ft(width_ft: float, edge_is_kerb: bool = True) -> tup
     return span_ft, span_ft / 2
 
 
-def entering_lane_width_ft(state: DesignState, leg_name: str) -> float | None:
-    """Real width of the entering travel lane if a treatment has narrowed that side
-    (a bike lane, lane narrowing, or marked parking), else None meaning the full
-    curb-to-curb half.
+def travel_lane_edge_ft(state: DesignState, leg_name: str, side) -> float | None:
+    """How far from the centerline the MOTOR travel lane reaches on `side`, or None for the
+    full curb-to-curb half where no treatment has narrowed it.
 
-    Lives here rather than in export.py so the plan view and the 3D export size the stop
-    bar from the same rule - a bar should stop at the real lane edge, not run across a
-    painted buffer, a parking lane, or a bike lane that no stopped vehicle occupies.
-
-    The LEFT side, because that is the entering driver's own side under right-hand traffic -
-    the same swap src/render/props.py:APPROACHING_DRIVER_RIGHT documents.
+    One rule with two callers, and they are not obviously the same question until you say it
+    out loud: a stop bar must not run across a bike lane, a painted buffer or a parking lane,
+    and a person crossing is not in front of motor traffic while they are in one either. Both
+    are asking where the ground a car drives on ends. It was written for the stop bar and
+    hardcoded to the LEFT side; src/metrics.py needs both sides, so the side is a parameter and
+    entering_lane_width_ft is the left-hand case of it.
 
     THE ORDER IS A DECISION, and it is load-bearing. Three treatments can each narrow this
     kerb, and asked of the design rather than of three dicts it has to be stated rather than
@@ -129,18 +128,25 @@ def entering_lane_width_ft(state: DesignState, leg_name: str) -> float | None:
     the four sites applies two of these to one kerb, so this ordering is a statement about what
     should happen if one ever does, not a description of current output.
     """
-    kerb = LegSide(leg_name, Side.LEFT)
+    side = Side(side)
+    kerb = LegSide(leg_name, side)
     half_ft = state.legs[leg_name].curb_to_curb_ft / 2
     bike_lane = state.treatment_for(AddBikeLane, kerb)
     if bike_lane is not None:
         return bike_lane.lane.offsets_from_centerline_ft()["travel_lane_edge_ft"]
     narrowing = state.treatment_for(LaneNarrowing, kerb.leg_target)
-    if narrowing is not None and Side.LEFT in narrowing.sides:
+    if narrowing is not None and side in narrowing.sides:
         return half_ft - narrowing.stripe_width_ft
     parking = state.treatment_for(MarkedParking, kerb)
     if parking is not None:
         return half_ft - parking.curb_offset_ft - parking.depth_ft
     return None
+
+
+def entering_lane_width_ft(state: DesignState, leg_name: str) -> float | None:
+    """The entering driver's own side - LEFT under right-hand traffic, the same swap
+    src/render/props.py:APPROACHING_DRIVER_RIGHT documents. See travel_lane_edge_ft."""
+    return travel_lane_edge_ft(state, leg_name, Side.LEFT)
 
 
 def stop_bar_width_ft(state: DesignState, leg_name: str) -> float:

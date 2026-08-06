@@ -329,3 +329,38 @@ def test_the_panel_actually_renders_onto_a_figure():
 def test_a_leg_reads_as_a_street_name_not_a_dict_key():
     assert leg_label("broad_st_east") == "Broad St East"
     assert leg_label("greenwood_ave_north") == "Greenwood Ave North"
+
+
+def test_exposure_is_measured_across_the_travel_lanes_not_curb_to_curb():
+    """A person in a bike lane or a parking lane is not standing in front of a car.
+
+    Exposure was the crossing distance divided by a walking speed, which made the panel's two
+    rows the same measurement under two headings - and meant no paint-only proposal could ever
+    move either. A bike lane takes 18 ft of Broad St out of the part a car drives on; the number
+    did not budge. Curb-to-curb is still the whole walk, which is a different question.
+    """
+    from src.geometry.targets import LegSide
+    from src.geometry.treatments import MarkedParking
+
+    state = a_state()
+    bare = metrics(state, marked={"east"}).crossing("east")
+    assert bare.distance_ft == pytest.approx(30.0)
+    assert bare.exposure_s() == pytest.approx(30.0 / 3.5)
+
+    # 8 ft of stalls against each kerb of a 30 ft street, plus a 1 ft buffer: 9 ft either side
+    # is no longer ground a car drives on, so 30 ft of walking is 12 ft of exposure.
+    parked = state
+    for side in ("left", "right"):
+        parked = parked.apply(MarkedParking(LegSide("east", side), depth_ft=8.0,
+                                             curb_offset_ft=1.0))
+    after = metrics(parked, marked={"east"}).crossing("east")
+    assert after.distance_ft == pytest.approx(30.0), "the walk itself did not get shorter"
+    assert after.motor_distance_ft == pytest.approx(12.0, abs=0.5)
+    assert after.exposure_s() == pytest.approx(12.0 / 3.5, abs=0.2)
+    assert after.exposure_s() < bare.exposure_s()
+
+
+def test_the_panel_says_motor_traffic_because_that_is_what_it_measured():
+    """A bike lane is a real conflict this number does not count. The heading has to say so."""
+    before = metrics(a_state(), marked={"east"})
+    assert "MOTOR TRAFFIC" in Comparison.of(before, before).panel_text()

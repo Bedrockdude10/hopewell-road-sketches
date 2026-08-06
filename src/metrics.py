@@ -86,6 +86,36 @@ def turn_speed_mph(radius_ft: float) -> float:
     return sqrt(15 * radius_ft * (TURN_SUPERELEVATION + TURN_SIDE_FRICTION))
 
 
+def motor_lane_reach_ft(state, leg_name: str, reach: tuple) -> tuple[float, float]:
+    """How far either side of the centerline a person is in front of MOTOR traffic.
+
+    The kerb, unless a treatment put something else against it. A bike lane, its buffer, a
+    parking lane, a hatched buffer: all of it is roadway a person walks across and none of it
+    is ground a car drives on, so counting it as exposure says a proposal achieved nothing when
+    it narrowed the part that matters.
+
+    Asked of src/render/crosswalks.py:travel_lane_edge_ft, which is the rule the STOP BAR
+    already stops at - a bar must not run across a bike lane either. One definition, so the bar
+    and this number cannot disagree about where the travel lane ends.
+
+    NOT measured off the paint at the crossing, and that is the subtle part. Every treatment is
+    held back from the crossing by the daylight setback and CROSSWALK_CLEARANCE_FT, so sampling
+    polygons at the crossing station finds bare asphalt on every leg - the bike lane on
+    broad_st_east is painted from station 26.4 and the crossing sits at 21.3. The cross-section
+    a person actually walks through is the leg's ALLOCATION, which is what the treatments say.
+    """
+    from src.render.crosswalks import travel_lane_edge_ft
+
+    out = []
+    for side, reach_ft in (("left", reach[0]), ("right", reach[1])):
+        try:
+            edge_ft = travel_lane_edge_ft(state, leg_name, side)
+        except Exception:
+            edge_ft = None
+        out.append(reach_ft if edge_ft is None else min(reach_ft, max(edge_ft, 0.0)))
+    return tuple(out)
+
+
 def crossing_stages_ft(leg, offset_ft: float, skew_deg: float, reach: tuple,
                         islands: list) -> tuple[float, ...]:
     """The unprotected walks a crossing is made of, in order across the road.
@@ -123,6 +153,11 @@ class Crossing:
     #: a scenario-shift suffix. Carried so a reported distance always says whether the position
     #: it was measured at is surveyed, on the same terms the drawing says it.
     source: str
+    #: The stages of the walk that are in front of MOTOR traffic, cut the same way but bounded
+    #: at the travel lane's own edge rather than at the kerb. Equal to stages_ft on a leg with
+    #: nothing against the kerb; shorter wherever a bike lane, parking or hatching holds the
+    #: cars off it. See motor_lane_reach_ft.
+    motor_stages_ft: tuple[float, ...] = ()
 
     @property
     def is_surveyed(self) -> bool:
@@ -141,15 +176,40 @@ class Crossing:
     def longest_stage_ft(self) -> float:
         return max(self.stages_ft, default=0.0)
 
+    @property
+    def motor_distance_ft(self) -> float:
+        """Roadway in front of motor traffic - the whole crossing less the kerbside bands."""
+        return sum(self.motor_stages_ft) if self.motor_stages_ft else self.distance_ft
+
+    @property
+    def longest_motor_stage_ft(self) -> float:
+        return max(self.motor_stages_ft, default=self.longest_stage_ft)
+
     def exposure_s(self, speed_ft_s: float = MUTCD_WALKING_SPEED_FT_S) -> float:
-        """Time in front of moving traffic, worst stage.
+        """Time in front of MOTOR traffic, worst stage.
 
         The longest stage rather than the sum: a refuge island is somewhere to stand, so a
         staged crossing exposes a person one stage at a time and the honest number for a
         two-stage crossing is the worse of the two. Summing them would credit the island with
         nothing at all, which is the opposite of what it does.
+
+        Measured across the TRAVEL LANES, not curb to curb. This used to be the crossing
+        distance divided by a walking speed, which made it the same measurement twice under two
+        headings and meant no paint-only proposal could ever move it: a bike lane takes 18 ft of
+        Broad St out of the part a car drives on and left the number unchanged. A person in a
+        bike lane or a parking lane is not standing in front of a car.
+
+        Bicycle traffic is a real conflict and this does not count it - which is why the panel
+        says MOTOR traffic rather than traffic. Naming what is measured is the point.
+
+        AND THE HONEST LIMIT: hatching is paint, not a kerb. A driver CAN cross a painted buffer,
+        so this is the exposure the design intends rather than one anything physically enforces.
+        It is the same edge the stop bar already stops at, so the drawing is at least consistent
+        with itself about where the travel lane ends - but a proposal that wants the number to be
+        true on the ground has to put something in the buffer, which is what a flex post is for
+        (ProtectDaylightZone) and why that treatment exists at all.
         """
-        return self.longest_stage_ft / speed_ft_s
+        return self.longest_motor_stage_ft / speed_ft_s
 
     def crossing_time_s(self, speed_ft_s: float = MUTCD_WALKING_SPEED_FT_S) -> float:
         """Time actually walking, all stages - not counting the wait on the refuge."""
@@ -249,10 +309,15 @@ class SceneMetrics:
             if marked is not None and leg_name not in marked:
                 continue
             offset = offsets[leg_name]
+            skew = skews.get(leg_name, 0.0)
+            islands = islands_by_leg.get(leg_name, [])
             crossings.append(Crossing(
                 leg=leg_name, source=offset.source,
-                stages_ft=crossing_stages_ft(leg, offset.offset_ft, skews.get(leg_name, 0.0),
-                                              reaches[leg_name], islands_by_leg.get(leg_name, []))))
+                stages_ft=crossing_stages_ft(leg, offset.offset_ft, skew,
+                                              reaches[leg_name], islands),
+                motor_stages_ft=crossing_stages_ft(
+                    leg, offset.offset_ft, skew,
+                    motor_lane_reach_ft(state, leg_name, reaches[leg_name]), islands)))
 
         runs = []
         for piece in paint:
@@ -411,7 +476,7 @@ class Comparison:
 
         measurable = [c for c in self.crossings if c.saved_ft is not None]
         if measurable:
-            lines += ["", "TIME EXPOSED TO TRAFFIC, worst stage"]
+            lines += ["", "TIME EXPOSED TO MOTOR TRAFFIC, worst stage"]
         for change in measurable:
             before_s = change.before.exposure_s(self.speed_ft_s)
             after_s = change.after.exposure_s(self.speed_ft_s)

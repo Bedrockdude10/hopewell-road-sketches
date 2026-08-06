@@ -347,7 +347,6 @@ def test_no_marked_parking_within_25_ft_of_any_intersecting_street(site_models):
     import contextlib
     import io
 
-    from src.geometry.cross_streets import cross_streets_from_model
     from src.geometry.daylighting import SIDELINE_SETBACK_FT, parkable_runs_ft
     from src.render.scene import SceneGeometry
     from src.sources.osm_context import fetch_crossings
@@ -358,7 +357,7 @@ def test_no_marked_parking_within_25_ft_of_any_intersecting_street(site_models):
             state = DesignState.from_model(model)
             scene = SceneGeometry.resolve(
                 model, state, crossings=fetch_crossings(model.center_wgs84, radius_m=130))
-        crossings = cross_streets_from_model(model)
+        crossings = model.cross_streets
         for leg_name, streets in crossings.items():
             for side in ("left", "right"):
                 runs = parkable_runs_ft(state, leg_name, side, scene.crosswalk_offsets, [])
@@ -383,14 +382,13 @@ def test_a_cross_street_breaks_the_kerb_it_joins_and_not_the_one_opposite(site_m
     import contextlib
     import io
 
-    from src.geometry.cross_streets import cross_streets_from_model
     from src.geometry.kerbs import OpeningSource
 
     seen = 0
     for site, model in site_models.items():
         with contextlib.redirect_stdout(io.StringIO()):
             state = DesignState.from_model(model)
-        for leg_name, streets in cross_streets_from_model(model).items():
+        for leg_name, streets in model.cross_streets.items():
             for cross in streets:
                 assert cross.sides, "a cross street that leaves on neither side is not one"
                 seen += 1

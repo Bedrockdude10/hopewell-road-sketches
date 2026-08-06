@@ -16,6 +16,7 @@ from shapely.ops import substring, unary_union
 from src.sources.data_loader import load_parcels_near, load_road_network
 from src.render.coords import wgs84_to_state_plane
 from src.sources.osm_context import fetch_kerbs, fetch_roads
+from src.geometry.cross_streets import cross_streets_ft
 from src.render.frame import frame_scale
 from src.geometry.model import (
     CURB_POINT_BEHIND_TOLERANCE_FT,
@@ -79,6 +80,11 @@ class IntersectionModel:
     # frame (src/render/frame.py:leg_reach_ft measures against this, so widening does not
     # compound) and the metrics (src/metrics.py reports anything past it as projected).
     surveyed_leg_lengths: dict = field(default_factory=dict)
+    # {leg name: [CrossStreet]} - every OTHER street these legs run across, resolved ONCE here.
+    # It was derived twice, for the kerb openings and for the DesignState, which is the failure
+    # PavedSurface's docstring is about: two consumers assembling the same geometry and free to
+    # diverge. R.S. 39:4-138(e) applies at every one of them - see src/geometry/cross_streets.py.
+    cross_streets: dict = field(default_factory=dict)
 
     @property
     def driveways(self) -> tuple:
@@ -1369,6 +1375,7 @@ def load_intersection_model(config: dict | None = None, site: str | None = None)
         corner_parcels=corner_parcels,
         paved_surfaces=_paved_surfaces_ft(center, corner_fillets),
         surveyed_leg_lengths=surveyed_leg_lengths,
+        cross_streets=cross_streets_ft(center, center_ft, legs),
     )
 
 

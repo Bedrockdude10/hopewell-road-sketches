@@ -118,28 +118,43 @@ def _sides_of(leg_line: LineString, way_line: LineString, at: Point) -> frozense
 
 
 def cross_streets_from_model(model) -> dict:
-    """{leg name: [CrossStreet]} for every other street our legs run across.
+    """{leg name: [CrossStreet]} for this model, RESOLVED ONCE at load.
 
-    Seeded onto the design by DesignState.from_model, beside parking_restrictions and the kerb
-    openings, for the reason those are: an observed fact about the street that no treatment
-    chose. Guarded the same way too - a stand-in model with no OSM answers "none" rather than
-    raising, which is what the centerline-precedence tests build.
+    Reads what `load_intersection_model` already worked out (IntersectionModel.cross_streets)
+    rather than deriving it again. It was derived twice - once for the kerb openings and once
+    seeding the DesignState - which is the shape src/geometry/intersection.py:PavedSurface's
+    docstring is about: two consumers assembling the same geometry, free to diverge the moment
+    one of their tolerances is touched.
+
+    Falls back to computing it for a stand-in model that carries legs and no resolved field,
+    which is what the centerline-precedence tests build.
     """
-    from src.geometry.intersection import _to_state_plane
-    from src.render.frame import context_radius_m
-
+    resolved = getattr(model, "cross_streets", None)
+    if resolved is not None:
+        return resolved
     if not all(hasattr(model, attr) for attr in ("center_wgs84", "center_ft", "legs")):
         return {}
-    try:
-        from src.geometry.intersection import ROAD_CONTEXT_RADIUS_M
-        from src.sources.osm_context import fetch_roads
+    return cross_streets_ft(model.center_wgs84, model.center_ft, model.legs)
 
-        ways = fetch_roads(model.center_wgs84, radius_m=context_radius_m(ROAD_CONTEXT_RADIUS_M))
+
+def cross_streets_ft(center_wgs84, center_ft, legs: dict) -> dict:
+    """{leg name: [CrossStreet]} for every other street these legs run across.
+
+    Takes the pieces rather than a model, so `load_intersection_model` can call it while the
+    model is still being assembled - the same shape _paved_surfaces_ft has, and for the same
+    reason. Guarded: no OSM reachable answers "none" rather than raising.
+    """
+    from src.geometry.intersection import ROAD_CONTEXT_RADIUS_M, _to_state_plane
+    from src.render.frame import context_radius_m
+    from src.sources.osm_context import fetch_roads
+
+    try:
+        ways = fetch_roads(center_wgs84, radius_m=context_radius_m(ROAD_CONTEXT_RADIUS_M))
     except Exception:
         return {}
 
     out: dict[str, list[CrossStreet]] = {}
-    for leg_name, leg in model.legs.items():
+    for leg_name, leg in legs.items():
         for way in ways:
             tags = way.get("tags", {})
             coords = way.get("coords_wgs84") or []
@@ -156,7 +171,7 @@ def cross_streets_from_model(model) -> dict:
             if leg.centerline.distance(way_line) > reach_ft:
                 continue
             on_leg, _on_way = nearest_points(leg.centerline, way_line)
-            if on_leg.distance(model.center_ft) <= JUNCTION_OWN_REACH_FT:
+            if on_leg.distance(center_ft) <= JUNCTION_OWN_REACH_FT:
                 continue
             station_ft = leg.centerline.project(on_leg)
             # A way ALONGSIDE us is not a way across us - and this leg's own OSM way runs

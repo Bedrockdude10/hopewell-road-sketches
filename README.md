@@ -208,6 +208,18 @@ zone  253.1..329.1   R.S. 39:4-138(e), 25 ft from the side line of Blackwell Ave
 runs  [(79.5, 253.1), (329.1, 373.9)]
 ```
 
+Nothing in any marking builder was touched to make this work, and that is the point. Every marking goes through `PaintContext.emit`, which cuts it against `KerbOpenings.against(kind)`, and each kind declares its own behaviour in `markings.py` — `is_fill`, `ZONE_BOUNDARY_LINES`, `dashes_through_openings`. So adding cross streets as a *source* of `KerbOpening` propagated to all of them at once. The bike lane, unprompted:
+
+```
+bike_lane_edge_line         77.7..276.6      stops before the mouth
+bike_lane_dotted_extension 278.1..280.1      dotted extension ACROSS the conflict area
+                           ...302.1..304.1   (7 dashes)
+bike_lane_edge_line        305.6..373.9      resumes after
+bike_buffer_fill            87.5..268.5 / 313.8..373.9
+```
+
+That is the MUTCD treatment for a bike lane through a conflict area, and no code knew a cross street existed. If a new interruption needs adding — a rail crossing, a bus pad — it is a new `OpeningSource` and every marking already handles it.
+
 Three details that are not obvious:
 
 - **It is not a geometric intersection.** A side street's OSM way stops on OSM's centreline for the main road; our leg is the NJDOT alignment, a few feet away. Requiring a true crossing found 2 ways at Broad & Greenwood and *both were Broad Street itself*. The test is approach — a street that reaches inside our own carriageway is meeting us, whoever drew which centreline where.

@@ -235,6 +235,7 @@ def kerb_openings_from_model(model) -> dict:
     # about parking rather than about where the kerb physically stops.
     from src.geometry.cross_streets import cross_streets_from_model
 
+    # The model's own resolution, not a second derivation of it - see cross_streets_from_model.
     for leg_name, crossings in cross_streets_from_model(model).items():
         for cross in crossings:
             near_ft, far_ft = cross.mouth_ft

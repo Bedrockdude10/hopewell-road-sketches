@@ -219,6 +219,15 @@ MIN_RIM_LENGTH_FT = 1.0
 # of square feet, so this cannot reach a real one.
 MIN_ZONE_AREA_SQ_FT = 1.0
 
+# And the same thing for a LINE. A clip that lands on a vertex leaves a LineString of zero or
+# near-zero length: three of them survived at E Broad & Princeton, including one at exactly the
+# station of a cross street's mouth, each drawn as a stray tick of lane edge line with nothing
+# attached to it. MIN_RIM_LENGTH_FT already discards a rim this short - a rim is a sweep and a
+# 1 ft sweep is nothing - but an ordinary line went through unfiltered, so the guard existed for
+# fills and for rims and not for the case in between. Well under a stall divider (the shortest
+# real line here, a few feet), so it cannot reach a marking anyone meant to draw.
+MIN_LINE_LENGTH_FT = 0.25
+
 # The painted width of a lane-edge line, matching scripts/blender/blender_scene.py's
 # add_paint_polyline(..., 0.25, ...). Paint has width, and where it goes decides whether the
 # lane behind it is really the width it claims: an edge line CENTRED on the 11 ft mark puts
@@ -424,6 +433,8 @@ class PaintContext:
             if beyond_ft is not None and _station_of(self.state.legs[leg], part) < beyond_ft:
                 continue
             if kind.covers_area and part.area < MIN_ZONE_AREA_SQ_FT:
+                continue
+            if kind.is_line and not kind.is_object and part.length < MIN_LINE_LENGTH_FT:
                 continue
             piece = PaintPiece(kind, part, leg, side)
             self.pieces.append(piece)

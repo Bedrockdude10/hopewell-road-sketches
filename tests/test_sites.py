@@ -598,6 +598,62 @@ def test_the_two_halves_of_a_through_street_line_up(site, site_models):
 
 @needs_source_data
 @pytest.mark.parametrize("site", SITES)
+def test_a_cross_street_mouth_ends_where_the_traced_kerb_does(site, wide_site_models):
+    """The treatment stops with the kerb it is drawn against, not with an assumed width.
+
+    A cross street's mouth was taken as its own carriageway width every time - a fact about
+    that street, not a measurement of THIS kerb. At E Broad & Hamilton the tracing runs out at
+    station 143.4 and picks up at 173.4, while the assumed mouth was 141.7-167.7: the kerbside
+    hatching restarted 5.8 ft before the kerb did and ran on over ground with no kerb beside
+    it. Where the survey shows where the kerb stops, that is the mouth - the same "surveyed
+    width wins" rule kerb_openings_from_model already applied to driveways.
+
+    Checked against the tracing rather than against a remembered number, so it still holds when
+    somebody re-traces that corner.
+    """
+    from src.geometry.intersection import kerb_lines_with_tags_ft
+    from src.geometry.kerbs import OpeningSource, _place_on_a_leg_side, opens_the_kerb
+
+    model = wide_site_models[site]
+    with contextlib.redirect_stdout(io.StringIO()):
+        state = DesignState.from_model(model)
+        ways = kerb_lines_with_tags_ft(model.center_wgs84, model.center_ft, model.legs)
+
+    covered = {}
+    for line, tags, _way_id in ways:
+        if opens_the_kerb(tags):
+            continue
+        placed = _place_on_a_leg_side(line, model.legs)
+        if placed is None:
+            continue
+        leg_name, side, start_ft, end_ft = placed
+        covered.setdefault((leg_name, side), []).append((start_ft, end_ft))
+
+    checked = 0
+    for key, openings in (getattr(state, "kerb_openings", {}) or {}).items():
+        spans = covered.get(key, [])
+        for opening in openings:
+            if opening.source is not OpeningSource.CROSS_STREET:
+                continue
+            # Only where the tracing actually brackets the mouth - elsewhere the assumed width
+            # is the best answer there is, and this says nothing about it.
+            before = [end for _s, end in spans if end <= opening.start_ft + 0.01]
+            after = [start for start, _e in spans if start >= opening.end_ft - 0.01]
+            if not (before and after):
+                continue
+            checked += 1
+            assert opening.start_ft == pytest.approx(max(before), abs=0.05), (
+                f"{site}/{key}: the mouth starts at {opening.start_ft:.2f} ft but the traced "
+                f"kerb runs to {max(before):.2f} - the treatment must stop with the kerb")
+            assert opening.end_ft == pytest.approx(min(after), abs=0.05), (
+                f"{site}/{key}: the mouth ends at {opening.end_ft:.2f} ft but the traced kerb "
+                f"resumes at {min(after):.2f} - the treatment must restart with the kerb")
+    if not checked:
+        pytest.skip(f"{site} has no cross-street mouth bracketed by traced kerb")
+
+
+@needs_source_data
+@pytest.mark.parametrize("site", SITES)
 def test_the_edge_line_runs_unbroken_past_a_driveway(site, wide_site_models):
     """MUTCD 3B.07: an edge line is maintained across a driveway, interrupted at intersections.
 

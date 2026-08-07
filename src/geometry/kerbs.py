@@ -184,6 +184,15 @@ DRIVEWAY_WIDTH_FT = 10.0
 # of both and cannot drag in a neighbour's driveway.
 DRIVEWAY_REACH_FT = 5.0
 
+# How far past its assumed width a cross street's mouth may be moved to reach where the traced
+# kerb actually stops - see _mouth_from_the_tracing. Bounded because "no raised kerb is traced
+# between here and there" has two causes and only one of them is a mouth: at E Broad & Princeton
+# the tracing stops 5.8 ft short of the assumed mouth (a real corner return), while on a leg
+# nobody has traced at all the nearest kerb may be a hundred feet away and the assumed
+# width is the better answer. Comfortably clears the 5.8 ft that prompted this and nothing near
+# a leg's length.
+MAX_MOUTH_SNAP_FT = 20.0
+
 
 def kerb_openings_from_model(model) -> dict:
     """{(leg, side): [KerbOpening]} for every vehicle-crossable kerb along this junction's legs.
@@ -236,10 +245,20 @@ def kerb_openings_from_model(model) -> dict:
     from src.geometry.cross_streets import cross_streets_from_model
 
     # The model's own resolution, not a second derivation of it - see cross_streets_from_model.
+    traced = _kerb_coverage_outside_openings(model)
     for leg_name, crossings in cross_streets_from_model(model).items():
         for cross in crossings:
-            near_ft, far_ft = cross.mouth_ft
             for side in cross.sides:
+                # THE SURVEYED WIDTH WINS HERE TOO, which it did not until now. The mouth was
+                # taken as the cross street's own carriageway width every time, and that is an
+                # assumption about the street rather than a measurement of THIS kerb: at E Broad
+                # & Hamilton the tracing runs out at station 143.4 and picks up again at 173.4,
+                # while the assumed mouth was 141.7-167.7. So the kerbside treatment restarted
+                # 5.8 ft before the kerb it is drawn against did, and the hatching ran on over
+                # ground with no kerb beside it - visible at once, and the reason this exists.
+                # Where the tracing shows where the kerb really stops, that is the mouth.
+                near_ft, far_ft = _mouth_from_the_tracing(
+                    traced.get((leg_name, side), ()), cross.station_ft, cross.mouth_ft)
                 openings.setdefault((leg_name, side), []).append(
                     KerbOpening(start_ft=max(near_ft, 0.0), end_ft=far_ft,
                                 source=OpeningSource.CROSS_STREET, way_id=cross.way_id))
@@ -285,6 +304,63 @@ def _driveway_meetings(model) -> list[tuple[str, str, float, int | None]]:
             _gap, leg_name, side, station_ft = best
             meetings.append((leg_name, side, station_ft, drive.way_id))
     return meetings
+
+
+def _kerb_coverage_outside_openings(model) -> dict:
+    """{(leg, side): [(start_ft, end_ft)]} for the stations a traced kerb covers, openings aside.
+
+    Everything opens_the_kerb rejects counts as coverage, which is a wider set than "raised" and
+    deliberately so. A dropped kerb is only an opening when the surveyor also said it is not a
+    pedestrian crossing point; the lowered stubs at E Broad & Hamilton's corners are kerb RAMPS,
+    tagged for pedestrians, and they are traced kerb a marking can perfectly well run beside.
+    Excluding every lowered stretch instead would push each mouth out to the last raised kerb and
+    swallow its ramps - 2.7 ft further out at Hamilton, on ground that is drawn as kerb.
+    """
+    from src.geometry.intersection import kerb_lines_with_tags_ft
+
+    covered: dict[tuple[str, str], list[tuple[float, float]]] = {}
+    for line, tags, _way_id in kerb_lines_with_tags_ft(model.center_wgs84, model.center_ft,
+                                                        model.legs):
+        if opens_the_kerb(tags):
+            continue
+        placed = _place_on_a_leg_side(line, model.legs)
+        if placed is None:
+            continue
+        leg_name, side, start_ft, end_ft = placed
+        covered.setdefault((leg_name, side), []).append((start_ft, end_ft))
+    for spans in covered.values():
+        spans.sort()
+    return covered
+
+
+def _mouth_from_the_tracing(spans, station_ft: float, assumed: tuple) -> tuple:
+    """Where the traced kerb really stops either side of a cross street, or `assumed`.
+
+    Three ways this declines to move the mouth, each for its own reason:
+
+      * A kerb traced STRAIGHT THROUGH the station. Then the survey says there is no gap
+        in the kerb here, and widening a mouth to fit a gap that is not there would open the
+        markings over a kerb somebody traced.
+      * Nothing traced on that side at all - no bound to snap to, so the assumption stands.
+      * A bound further than MAX_MOUTH_SNAP_FT out. "The nearest traced kerb is a long way off"
+        means the kerb is unmapped, not that the mouth is enormous.
+
+    Each end is decided on its own: a mouth is routinely traced tight on one corner and short on
+    the other, and taking the assumption for both because one end failed would throw away the end
+    that was measured.
+    """
+    if any(start < station_ft < end for start, end in spans):
+        return assumed
+    assumed_near, assumed_far = assumed
+    before = [end for _start, end in spans if end <= station_ft]
+    after = [start for start, _end in spans if start >= station_ft]
+    near = max(before) if before else assumed_near
+    far = min(after) if after else assumed_far
+    if abs(near - assumed_near) > MAX_MOUTH_SNAP_FT:
+        near = assumed_near
+    if abs(far - assumed_far) > MAX_MOUTH_SNAP_FT:
+        far = assumed_far
+    return (near, far) if far > near else assumed
 
 
 def _place_on_a_leg_side(line, legs: dict):

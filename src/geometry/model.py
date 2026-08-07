@@ -570,7 +570,7 @@ def curbside_strip_polygon(leg: "Leg", side: str, inner_offset_ft: float,
     outer_pts = curb_edge_by_station(leg, side, lo, hi)
     if outer_pts is None:
         return None
-    inner_pts = _place_in_measured_frame(leg.centerline, stations, inner)
+    inner_pts = _place_no_further_in_than(leg.centerline, stations, inner)
     poly = Polygon(list(outer_pts) + list(reversed(inner_pts)))
     if not poly.is_valid:
         poly = poly.buffer(0)
@@ -671,7 +671,7 @@ def inset_line_ft(leg: "Leg", side: str, offset_ft: float,
     inner = sign * np.minimum(offset_ft, room)
     # Same measured-frame placement curbside_strip_polygon uses, and for the same reason - this
     # line is the inner boundary of that strip and the two must not disagree about where it is.
-    return LineString(_place_in_measured_frame(leg.centerline, stations, inner))
+    return LineString(_place_no_further_in_than(leg.centerline, stations, inner))
 
 
 def offset_band_polygon(leg: "Leg", side: str, inner_offset_ft: float, outer_offset_ft: float,
@@ -767,6 +767,15 @@ def _taper_arc_points(leg: "Leg", role: str, sign: int, inner_half_ft: float,
     a verbatim copy of it - the LINE and the FILL either side of one seam, solved twice. Two
     copies of the arc that the fill's whole purpose is to sit inside is the drift this project
     keeps paying for; they cannot disagree now.
+
+    Held out of the travel lane at the end, because the arc is solved in WORLD space while the
+    lane edge it leaves from is a fixed offset in the LEG's frame. Those are the same line only
+    while the centerline is straight. Once the alignment bends onto the carriageway
+    (intersection._centre_legs_on_traced_kerbs) a leg that curves toward the paint lets the arc
+    cut 0.16 ft inside the 11 ft mark just after it leaves the tangent - which is real paint in
+    a real travel lane, and check_paint_stays_out_of_the_travel_lane duly caught it on
+    w_broad_st_northeast. Clamping the offset is the same move inset_line_ft makes against the
+    kerb: the arc keeps its shape everywhere it was already outside the line.
     """
     p1 = inset_point_at_station(leg, anchor_ft, sign * inner_half_ft)
     p2 = curb_point_at_station(leg, role, target_ft)
@@ -783,7 +792,14 @@ def _taper_arc_points(leg: "Leg", role: str, sign: int, inner_half_ft: float,
     a2 = np.arctan2(p2[1] - center[1], p2[0] - center[0])
     delta = (a2 - a1 + np.pi) % (2 * np.pi) - np.pi
     angles = a1 + np.linspace(0, delta, n_points)
-    return [(center[0] + radius_ft * np.cos(t), center[1] + radius_ft * np.sin(t)) for t in angles]
+    arc = np.array([(center[0] + radius_ft * np.cos(t), center[1] + radius_ft * np.sin(t))
+                    for t in angles])
+    stations, offsets = station_offset_many(leg.centerline, arc)
+    inside = np.abs(offsets) < inner_half_ft
+    if not inside.any():
+        return [tuple(p) for p in arc]
+    offsets[inside] = sign * inner_half_ft
+    return _place_in_measured_frame(leg.centerline, stations, offsets)
 
 
 # A taper runs from the straight run's start INWARD to the curb. When target_ft is further out
@@ -1118,6 +1134,14 @@ def curb_extension_line(leg: "Leg", side: str, extension_ft: float, full_ft: flo
 # How many corrective passes _place_in_measured_frame takes. Two is enough at every leg here -
 # the residual falls from 0.59 ft to under a thousandth - and a cap means a pathological frame
 # ends the loop rather than spinning in it.
+#
+# Raising it is not the way to chase a stubborn residual, which is worth stating because it
+# looks like the obvious lever and it is not: each pass re-asks at a corrected (station,
+# offset) and keeps whichever attempt has the smallest COMBINED station-and-offset error, so
+# another pass can legitimately trade station accuracy for offset accuracy and land somewhere
+# else entirely. Going 2 -> 3 moved enough geometry to fail 18 tests across four junctions
+# while still not fixing the fold that prompted it. Where one line must not drift a particular
+# way, bias that line - see inset_line_ft.
 _FRAME_CORRECTION_PASSES = 2
 
 
@@ -1166,6 +1190,58 @@ def _place_in_measured_frame(centerline: LineString, stations: np.ndarray,
         better = error < best_error
         best[better], best_error[better] = trial[better], error[better]
     return [tuple(p) for p in best]
+
+
+# How many times the outward bias below re-asks. One pass closes most folds; broad_st_west's
+# is deep enough at a 2.0x frame that a single correction still left 0.076 ft of the parking
+# edge line inside the travel lane, and the residual only showed at that ONE frame scale -
+# 1.0, 2.2, 2.5 and 3.0 were all clean. Each pass shrinks what is left, and the loop stops as
+# soon as nothing is short, so this costs nothing where there is no fold.
+_OUTWARD_BIAS_PASSES = 4
+
+
+def _place_no_further_in_than(centerline: LineString, stations: np.ndarray,
+                               offsets: np.ndarray) -> list[tuple]:
+    """_place_in_measured_frame, biased so no point lands INSIDE the offset it was asked for.
+
+    A kerbside marking's two possible placement errors are not equivalent. This offset is the
+    edge of a travel lane: landing a hair wide of it costs a hair of kerbside treatment, and
+    landing a hair narrow puts paint in the lane, which is what PaintStaysOutOfTheTravelLane
+    exists to catch. Inside a frame fold - broad_st_east's 7.2 degree kink 43 ft out - the
+    placement settles 0.05 ft short, and 0.05 ft short is a reported violation.
+
+    Only the points that fell short move. Re-placing the whole line instead shifts every OTHER
+    point too, because _place_in_measured_frame searches from the ask and a changed ask
+    anywhere reshuffles the lot: that moved enough geometry across all four junctions to fail
+    18 tests, in service of 0.05 ft on one vertex of one leg.
+
+    Used by curbside_strip_polygon AND inset_line_ft, which is not optional - the line IS the
+    strip's inner boundary, and biasing one without the other breaks the property inset_line_ft
+    exists to hold. Biased on its own it put the rim of a hatched zone 1.5 ft alongside the
+    edge line it continues, far enough off to stop reading as the same stroke and near enough
+    for MarkingsDoNotCollide to call it two.
+    """
+    offsets = np.asarray(offsets, dtype=float)
+    placed = np.asarray(_place_in_measured_frame(centerline, stations, offsets), dtype=float)
+    ask = offsets.copy()
+    for _ in range(_OUTWARD_BIAS_PASSES):
+        _stations, got = station_offset_many(centerline, placed)
+        short = np.maximum(np.abs(offsets) - np.abs(got), 0.0)
+        if not short.any():
+            break
+        # Eased into the neighbouring vertices at half height rather than applied to the short
+        # one alone. A single vertex pushed out of line with the two either side of it is a
+        # kink, and a kink in a line that is then clipped around crossings and driveways comes
+        # back as overlapping fragments: a 1.5 ft offcut of w_broad_st_southwest's buffer edge
+        # line lying on top of the 125 ft one it was cut from, which MarkingsDoNotCollide reads
+        # - correctly - as two lines painted down the same stretch of road.
+        padded = np.pad(short, 1, mode="edge")
+        short = np.maximum(short, 0.5 * np.maximum(padded[:-2], padded[2:]))
+        ask = ask + np.sign(offsets) * short
+        nudged = np.asarray(_place_in_measured_frame(centerline, stations, ask), dtype=float)
+        moved = short > 0
+        placed[moved] = nudged[moved]
+    return [tuple(p) for p in placed]
 
 
 def curb_edge_by_station(leg: "Leg", side: str, lo_ft: float, hi_ft: float) -> list[tuple] | None:

@@ -62,6 +62,30 @@ MIN_MARKED_PARKING_DEPTH_FT = 8.0
 CORNER_HATCHING_DEFAULT_DEPTH_FT = 6.0  # paint-only zone depth, comparable footprint to a modest real curb extension
 CORNER_APRON_DEFAULT_EXTENT_FT = 5.0  # mountable-apron zone depth - same shape as hatching, different surface finish
 
+
+def kerbside_allowance_ft(leg, side: str) -> float:
+    """How much room this kerb has beside a target-width travel lane. ONE definition.
+
+    There used to be two numbers for this, and they disagreed. The DECISION - is there room
+    for a stall here? - halved `leg.curb_to_curb_ft`, a single figure field-measured at the
+    intersection. The DRAWING measured the traced kerb, station by station, because that is
+    where the paint actually has to fit. On broad_st_east the two read 15.0 ft and 5.0 ft at
+    the same place: an 8 ft stall was committed to off the nominal figure and then clipped to
+    4.6 ft against a kerb 16.0 ft out, which is what "the parking spaces look unusable" was.
+
+    So this is the measured one, per side, and everything that asks the question asks it here
+    - apply_osm_parking, the plan view's kerb labels, and TravelLanesKeepTheirWidth. The
+    nominal width keeps its own job: reporting the approach, and standing in for legs with no
+    tracing at all (narrowest_half_width_ft falls back to it).
+
+    Narrowest rather than typical, for the reason AddBikeLane gives: a treatment applied to a
+    kerb is a promise about the whole of it, and a promise sized off the average is broken
+    wherever the street pinches.
+    """
+    if leg.curb_to_curb_ft is None:
+        return 0.0
+    return narrowest_half_width_ft(leg, side) - TARGET_LANE_WIDTH_FT
+
 # What's actually painted down the middle of a leg today: a single dashed
 # yellow line (default - the ordinary two-way-undivided-road marking), a solid
 # double yellow (no-passing zone), or none at all (some real local streets
@@ -2020,13 +2044,22 @@ def apply_osm_parking(state: DesignState, model, depth_ft: float = PARKING_STALL
 
         untouched = [s for s in ("left", "right") if not already_treated(s)]
 
-        # The allowance is PER SIDE, and it is half the road minus one target lane - not the
-        # spare width divided by however many sides happen to be untreated. Those coincide
-        # at two sides and diverge at one: handing a lone side the whole spare would shrink
-        # its own lane to 2*target - half, well under the target it is supposed to protect.
+        # Two questions here, and one number was answering both.
+        #
+        # WHERE THE PAINT GOES is an offset from the nominal half-width, because that is the
+        # datum MarkedParking and LaneNarrowing express themselves in: each subtracts its own
+        # widths from `curb_to_curb_ft / 2`, so both land their inner edge on
+        # TARGET_LANE_WIDTH_FT whatever the kerb does, and their outer edge is the traced kerb
+        # itself (curbside_strip_polygon). That is a coordinate, not a measurement, and it is
+        # named for what it is rather than borrowing the word "allowance".
+        #
+        # WHETHER THERE IS ROOM is a measurement of the kerb, per side - kerbside_allowance_ft.
+        # Answering it with the nominal figure is what marked 8 ft stalls on a kerb with 5 ft
+        # behind the lane edge and drew them clipped to 4.6 ft.
         half_ft = leg.curb_to_curb_ft / 2
-        allowance_ft = half_ft - TARGET_LANE_WIDTH_FT
-        if allowance_ft <= 0 or not untouched:
+        lane_edge_from_nominal_ft = half_ft - TARGET_LANE_WIDTH_FT
+        room_ft = {side: kerbside_allowance_ft(leg, side) for side in ("left", "right")}
+        if not untouched or max(room_ft[s] for s in untouched) <= 0:
             if untouched:
                 print(f"  NOTE: {leg_name} is {leg.curb_to_curb_ft:.1f} ft curb to curb - too narrow "
                       f"for two {TARGET_LANE_WIDTH_FT:.0f} ft lanes, so no kerbside paint is marked "
@@ -2045,36 +2078,39 @@ def apply_osm_parking(state: DesignState, model, depth_ft: float = PARKING_STALL
         # hatching beside a travel lane reads as a buffer/shoulder, the same thing the strip
         # between a parking lane and the kerb already is, not as a parking prohibition.
         parkable = [s for s in untouched
-                    if s not in restricted and allowance_ft >= MIN_MARKED_PARKING_DEPTH_FT]
+                    if s not in restricted and room_ft[s] >= MIN_MARKED_PARKING_DEPTH_FT]
         hatched = [s for s in untouched if s not in restricted and s not in parkable]
         for side in hatched:
-            print(f"  NOTE: {leg_name} {side} is unrestricted, but only {allowance_ft:.1f} ft is "
-                  f"spare beside a {TARGET_LANE_WIDTH_FT:.0f} ft lane - under one "
-                  f"{MIN_MARKED_PARKING_DEPTH_FT:.0f} ft stall, so it is hatched as buffer "
-                  f"rather than marked for parking.")
+            print(f"  NOTE: {leg_name} {side} is unrestricted, but only {room_ft[side]:.1f} ft is "
+                  f"spare beside a {TARGET_LANE_WIDTH_FT:.0f} ft lane at the kerb's narrowest - "
+                  f"under one {MIN_MARKED_PARKING_DEPTH_FT:.0f} ft stall, so it is hatched as "
+                  f"buffer rather than marked for parking.")
         restricted = restricted + hatched
 
         if restricted:
             new_state = new_state.apply(LaneNarrowing(LegTarget(leg_name),
-                                                       stripe_width_ft=allowance_ft,
+                                                       stripe_width_ft=lane_edge_from_nominal_ft,
                                                        sides=tuple(restricted)))
             for side in restricted:
                 why = (sides[side].describe() if sides[side].prohibited_ft
                        else "too narrow for a stall")
-                new_state.notes.append(f"apply_osm_parking({leg_name}, {side}): {allowance_ft:.1f} ft "
-                                        f"hatched - {why}")
+                new_state.notes.append(f"apply_osm_parking({leg_name}, {side}): "
+                                        f"{room_ft[side]:.1f} ft hatched - {why}")
         for side in parkable:
             # The stall is a fixed standard depth and the leftover between it and the kerb is
             # hatched (add_marked_parking's curb_offset_ft draws that buffer with the same
             # geometry a lane-narrowing buffer uses). Handing the whole allowance to depth_ft
             # instead produced 10-12 ft "parking spaces", which is a stall plus a strip of
             # unmarked asphalt drawn as though you could park on it.
-            buffer_ft = allowance_ft - PARKING_STALL_DEPTH_DEFAULT_FT
+            buffer_ft = lane_edge_from_nominal_ft - PARKING_STALL_DEPTH_DEFAULT_FT
             new_state = new_state.apply(
                 MarkedParking(LegSide(leg_name, side),
                                depth_ft=PARKING_STALL_DEPTH_DEFAULT_FT,
                                curb_offset_ft=buffer_ft))
-            extra = (f" + {buffer_ft:.1f} ft hatched to the kerb" if buffer_ft > 0.05 else "")
+            # What is REALLY hatched between the stall and the kerb, which is the nominal
+            # buffer only where the nominal width is the real one.
+            hatched_ft = room_ft[side] - PARKING_STALL_DEPTH_DEFAULT_FT
+            extra = (f" + {hatched_ft:.1f} ft hatched to the kerb" if hatched_ft > 0.05 else "")
             new_state.notes.append(f"apply_osm_parking({leg_name}, {side}): "
                                     f"{PARKING_STALL_DEPTH_DEFAULT_FT:.0f} ft stalls{extra} - "
                                     f"{sides[side].describe()}")

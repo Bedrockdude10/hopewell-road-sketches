@@ -528,7 +528,14 @@ class PaintContext:
                 # supposed to be part of. Near the fillet's tangent point, where the arc runs
                 # almost along the road, those 0.41 ft of offset stretch into a 1.78 ft break in
                 # the line: the seam where the sweep begins.
-                grown = piece.geometry.buffer(LANE_EDGE_LINE_WIDTH_FT / 2, join_style=2)
+                # ROUND joins, not mitre. A mitre corner extends to half a stripe / cos(t/2),
+                # so where the zone's inner edge turns to sweep around an opening the join
+                # spikes past the offset it is supposed to hold - 0.16 ft into the travel lane
+                # at a right-angled corner, which is what it produced on e_broad_st_west and
+                # w_broad_st_northeast once their alignments were centred on the carriageway
+                # and the corner came out square. A rim is a line held half a stripe off the
+                # fill; a spike is not part of that line.
+                grown = piece.geometry.buffer(LANE_EDGE_LINE_WIDTH_FT / 2, join_style=1)
                 edge = grown.exterior.intersection(
                     cutter.buffer(RIM_SNAP_FT + LANE_EDGE_LINE_WIDTH_FT / 2))
                 # The buffer grows the fill in EVERY direction, the kerb included, and
@@ -682,15 +689,25 @@ class KerbOpenings:
 
     def against(self, kind) -> object:
         """The shape `kind` is cut against - the fillet for a hatched zone AND THE LINES THAT BOUND
-        IT, the entrance itself for everything else.
+        IT, the entrance itself for everything else, and NOTHING for the edge of the travelled way.
 
         The edge line has to go with its zone. Cut at the mouth while the hatching swept away on
         its fillet, it ran on with nothing behind it and the fillet's rim cut across it at an angle
         - a hook and a Y in the render, at every driveway. See markings.ZONE_BOUNDARY_LINES for why
         that set is declared rather than derived from the role.
-        """
-        from src.geometry.markings import ZONE_BOUNDARY_LINES
 
+        And the line marking the edge of the running lane is cut by nothing here, which is what
+        this docstring and kerb_opening_bands both always said should happen ("it does not break
+        the line that marks the edge of the running lane, which carries straight past") and what
+        the code did not do: a parking edge line was cut against `driven` like a stall, so at the
+        driveway 178-204 ft along broad_st_east's south kerb the stalls stopped, both lines
+        stopped, and 26 ft of kerb was left with nothing drawn on it at all. See
+        markings.LINES_UNBROKEN_BY_A_DRIVEWAY for the standard.
+        """
+        from src.geometry.markings import LINES_UNBROKEN_BY_A_DRIVEWAY, ZONE_BOUNDARY_LINES
+
+        if kind in LINES_UNBROKEN_BY_A_DRIVEWAY:
+            return None
         return (self.tapered if kind.is_fill or kind in ZONE_BOUNDARY_LINES else self.driven)
 
     def __bool__(self) -> bool:

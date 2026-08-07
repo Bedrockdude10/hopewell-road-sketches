@@ -636,14 +636,16 @@ def _label_parking_legality(ax, model, state):
     from src.geometry.targets import BOTH_SIDES, LegSide, LegTarget
     from src.geometry.treatments import (AddBikeLane, LaneNarrowing, MarkedParking,
                                          MIN_MARKED_PARKING_DEPTH_FT, TARGET_LANE_WIDTH_FT,
-                                         _restriction_summary)
+                                         _restriction_summary, kerbside_allowance_ft)
 
     for leg_name, leg in state.legs.items():
         if leg.curb_to_curb_ft is None:
             continue
-        allowance_ft = leg.curb_to_curb_ft / 2 - TARGET_LANE_WIDTH_FT
         narrowing = state.treatment_for(LaneNarrowing, LegTarget(leg_name))
         for side in BOTH_SIDES:
+            # The same measurement apply_osm_parking decides on, so the label cannot say
+            # "7.5 ft spare" about a kerb the code sized a treatment for at 5.0.
+            allowance_ft = kerbside_allowance_ft(leg, side)
             kerb = LegSide(leg_name, side)
             bike_lane = state.treatment_for(AddBikeLane, kerb)
             at = _restriction_summary(state, leg_name, side, leg.centerline.length)

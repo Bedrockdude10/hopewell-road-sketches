@@ -814,16 +814,17 @@ def test_the_buffer_is_kept_and_the_lane_gives(site_models):
     """A kerb a few inches short narrows its lane; it does not spend the buffer.
 
     The rule that produced this project's first answer held the lane at a nominal 5 ft and dropped
-    the 2 ft buffer whenever the section did not quite fit, so E Broad's east kerb - 0.51 ft short -
-    lost every flex post to hold 6 in of paint. A protected 4.49 ft lane is the better street and
-    4 ft is a width AASHTO recognises.
+    the 2 ft buffer whenever the section did not quite fit, so E Broad's east kerb - half a foot
+    short - lost every flex post to hold 6 in of paint. A protected 4-and-a-bit foot lane is the
+    better street and 4 ft is a width AASHTO recognises.
 
-    Both outcomes are pinned, because the interesting part is that they differ ON THE SAME LEG:
-
-        e_broad_st_east right   0.51 ft short -> 4.49 ft, protected
-        e_broad_st_east left    1.20 ft short -> 3.80 ft would be under the floor, so conventional
-
-    and the second falls back to the 5 ft unprotected lane it can hold rather than to nothing.
+    BOTH of e_broad_st_east's kerbs are protected now, at 4.04 and 4.22 ft. Its left kerb used to
+    come out at 3.80 - under the floor, so it fell back to a conventional 5 ft lane - and what
+    moved it is not a change to this rule but to the alignment the width is measured from: the
+    leg is centred on its carriageway over its whole length now
+    (intersection._centre_legs_on_traced_kerbs) instead of over its first 130 ft, which is worth
+    0.3 ft on this kerb and enough to clear the floor. No real leg at any of the four junctions
+    exercises the conventional fallback any more, so it is pinned on its own below.
     """
     from src.geometry.treatments import (BIKE_LANE_BUFFER_FT, BIKE_LANE_WIDTH_FT,
                                          MIN_BIKE_LANE_FT, AddBikeLane, AddBikeLaneBollards)
@@ -833,23 +834,42 @@ def test_the_buffer_is_kept_and_the_lane_gives(site_models):
         state = run_scenario(load_site_scenarios("ebroad_princeton").build_proposal_bike_lanes,
                              DesignState.from_model(model), model)
 
-    east_right = state.treatment_for(AddBikeLane, LegSide("e_broad_st_east", "right"))
-    assert east_right is not None, "e_broad_st_east right lost its lane entirely"
-    assert east_right.buffer_ft == pytest.approx(BIKE_LANE_BUFFER_FT), (
-        f"e_broad_st_east right gave up its buffer to hold a wider lane - it has "
-        f"{east_right.width_ft:.2f} ft of lane and a {east_right.buffer_ft:.2f} ft buffer")
-    assert MIN_BIKE_LANE_FT <= east_right.width_ft < BIKE_LANE_WIDTH_FT, (
-        f"e_broad_st_east right's lane is {east_right.width_ft:.2f} ft - the point of this kerb is "
-        f"that it is between the floor and the design width")
-    assert state.treatment_for(AddBikeLaneBollards, LegSide("e_broad_st_east", "right")), (
-        "the narrowed lane kept its buffer but got no posts, which is the whole reason for it")
-
-    east_left = state.treatment_for(AddBikeLane, LegSide("e_broad_st_east", "left"))
-    assert east_left is not None, (
-        "e_broad_st_east left lost its lane; it should fall back to the conventional one it holds")
-    assert east_left.buffer_ft == 0.0, "east left cannot hold a buffer above the floor"
-    assert not state.treatment_for(AddBikeLaneBollards, LegSide("e_broad_st_east", "left"))
+    for side in ("left", "right"):
+        lane = state.treatment_for(AddBikeLane, LegSide("e_broad_st_east", side))
+        assert lane is not None, f"e_broad_st_east {side} lost its lane entirely"
+        assert lane.buffer_ft == pytest.approx(BIKE_LANE_BUFFER_FT), (
+            f"e_broad_st_east {side} gave up its buffer to hold a wider lane - it has "
+            f"{lane.width_ft:.2f} ft of lane and a {lane.buffer_ft:.2f} ft buffer")
+        assert MIN_BIKE_LANE_FT <= lane.width_ft < BIKE_LANE_WIDTH_FT, (
+            f"e_broad_st_east {side}'s lane is {lane.width_ft:.2f} ft - the point of this kerb is "
+            f"that it is between the floor and the design width")
+        assert state.treatment_for(AddBikeLaneBollards, LegSide("e_broad_st_east", side)), (
+            "the narrowed lane kept its buffer but got no posts, which is the whole reason for it")
 
     # And nothing anywhere is under the floor.
     for treatment in state.treatments_of(AddBikeLane):
         assert treatment.lane.width_ft >= MIN_BIKE_LANE_FT
+
+
+def test_a_kerb_under_the_floor_with_a_buffer_falls_back_to_a_conventional_lane():
+    """The other branch, which no junction here reaches any more - see the test above.
+
+    Losing the example is not the same as losing the rule: a kerb that cannot hold the 4 ft floor
+    ALONGSIDE a buffer gets the unprotected lane it can hold, rather than nothing. Dropping the
+    lane entirely would be the worse answer, and it is the one the code gave before the fallback
+    existed.
+    """
+    from src.geometry.treatments import (BIKE_LANE_BUFFER_FT, BIKE_LANE_WIDTH_FT,
+                                         MIN_BIKE_LANE_FT, widest_protected_lane_ft)
+
+    # The protected section is 18.82 ft: 11 ft lane + 2 ft buffer + 5 ft lane + two 0.82 ft
+    # stripes. A 16.3 ft kerb leaves 2.48 ft of bike lane, well under the floor, while holding
+    # a conventional 5 ft lane (17.64 ft) would need only 1.34 ft more than it has.
+    narrow = a_state(half_traced_ft=16.3)
+    assert widest_protected_lane_ft(narrow, "east", "left") is None, (
+        "a kerb this narrow cannot hold the floor and a buffer, so there is no protected lane")
+
+    roomy = a_state(half_traced_ft=19.5)
+    assert widest_protected_lane_ft(roomy, "east", "left") == pytest.approx(BIKE_LANE_WIDTH_FT), (
+        "and one with room holds the full design width, buffer and all")
+    assert MIN_BIKE_LANE_FT < BIKE_LANE_WIDTH_FT

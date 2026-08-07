@@ -8,6 +8,7 @@ this repo's geometry changes, not when someone re-traces a kerb in OSM.
 import contextlib
 import io
 import json
+import os
 from pathlib import Path
 
 import numpy as np
@@ -450,16 +451,21 @@ def test_each_kerb_gets_the_paint_its_restriction_and_width_allow(site, site_mod
     from src.geometry.treatments import (MIN_MARKED_PARKING_DEPTH_FT,
                                           PARKING_STALL_DEPTH_DEFAULT_FT,
                                           TARGET_LANE_WIDTH_FT, _restriction_summary,
-                                          apply_osm_parking)
+                                          apply_osm_parking, kerbside_allowance_ft)
 
     model = site_models[site]
     with contextlib.redirect_stdout(io.StringIO()):
         state = apply_osm_parking(DesignState.from_model(model), model)
 
     for leg_name, leg in model.legs.items():
-        allowance_ft = leg.curb_to_curb_ft / 2 - TARGET_LANE_WIDTH_FT
         narrowing = state.treatment_for(LaneNarrowing, LegTarget(leg_name))
         for side in ("left", "right"):
+            # The MEASURED room, from the one function the implementation decides on. This
+            # test used to restate the rule as `curb_to_curb_ft / 2 - TARGET_LANE_WIDTH_FT`,
+            # so it agreed with the nominal figure that marked 8 ft stalls on kerbs holding
+            # 3.4 - a test that re-derives the rule can only ever confirm the arithmetic it
+            # copied. Asking the same question the code asks is the point of having one.
+            allowance_ft = kerbside_allowance_ft(leg, side)
             # Per STRETCH of kerb, not one value for the leg. Reading the whole-leg tag here
             # asked a question the street does not answer: broad_st_east's dominant way says
             # "none" while its first 79.5 ft are tagged no_parking, so this test used to agree
@@ -489,8 +495,14 @@ def test_each_kerb_gets_the_paint_its_restriction_and_width_allow(site, site_mod
                 assert parking.depth_ft == pytest.approx(PARKING_STALL_DEPTH_DEFAULT_FT), (
                     "a stall is a standard width - the leftover goes to the kerb buffer, it "
                     "does not make the stall wider")
+                # The kerb buffer is a COORDINATE - it and depth_ft are subtracted from the
+                # nominal half to land the parking lane's inner edge on TARGET_LANE_WIDTH_FT,
+                # whatever the traced kerb does out there (the stall's outer edge is the kerb
+                # itself). Measured room decides WHETHER to mark; the nominal datum decides
+                # WHERE. See apply_osm_parking.
                 assert parking.curb_offset_ft == pytest.approx(
-                    allowance_ft - PARKING_STALL_DEPTH_DEFAULT_FT, abs=0.01)
+                    leg.curb_to_curb_ft / 2 - TARGET_LANE_WIDTH_FT
+                    - PARKING_STALL_DEPTH_DEFAULT_FT, abs=0.01)
             else:
                 assert hatched and not stalls, (
                     f"{leg_name} {side} has only {allowance_ft:.1f} ft spare - too little for a "
@@ -526,6 +538,169 @@ def test_osm_parking_never_narrows_a_lane_below_target(site, site_models):
         state = apply_osm_parking(DesignState.from_model(model), model)
     violations = TravelLanesKeepTheirWidth().run(SceneContext(state=state))
     assert not violations, "\n".join(str(v) for v in violations)
+
+
+# The frame the committed outputs are drawn at (scripts/build_all.py --frame-scale; see the
+# commit "Regenerate the outputs: the corridor, drawn to the frame at 2.2x"). The session
+# fixture builds at 1x, where every leg ends inside the 130 ft its width and centre were
+# measured over - so a promise that only breaks further out cannot show up there at all.
+WIDE_FRAME_SCALE = 2.2
+
+
+@pytest.fixture(scope="module")
+def wide_site_models():
+    """{site: IntersectionModel} built at the frame scale output/ is drawn at."""
+    from src.geometry.intersection import load_intersection_model
+    from src.render.frame import FRAME_SCALE_ENV
+
+    previous = os.environ.get(FRAME_SCALE_ENV)
+    os.environ[FRAME_SCALE_ENV] = str(WIDE_FRAME_SCALE)
+    try:
+        models = {}
+        for site in SITES:
+            with contextlib.redirect_stdout(io.StringIO()):
+                models[site] = load_intersection_model(site=site)
+        return models
+    finally:
+        if previous is None:
+            os.environ.pop(FRAME_SCALE_ENV, None)
+        else:
+            os.environ[FRAME_SCALE_ENV] = previous
+
+
+@needs_source_data
+@pytest.mark.parametrize("site", SITES)
+def test_the_two_halves_of_a_through_street_line_up(site, site_models):
+    """One street through a junction is one alignment, not two that nearly agree.
+
+    Each half is modelled as its own leg off its own NJDOT route line, and nothing required
+    them to meet. At W Broad & Louellen they did not - the halves are two different routes
+    (CR 518 turns onto Louellen, CR 654 carries on) and their junction ends sat 3.1 ft apart,
+    which drew as a dog-leg with the centreline paint kinking at the node and the kerbside
+    hatching fanning off it. Greenwood Ave's two halves were 3.5 ft apart for the same reason.
+
+    Measured sideways, which is the part that shows: a longitudinal difference between the two
+    legs' origins is invisible, since each paints outward from its own start and the junction
+    box sits between them.
+    """
+    from src.geometry.intersection import _through_leg_pairs
+
+    model = site_models[site]
+    pairs = _through_leg_pairs(model.legs)
+    assert pairs, f"{site} has no through street - this test would check nothing"
+    for name_a, name_b in pairs:
+        start_b = np.asarray([model.legs[name_b].centerline.coords[0]], dtype=float)
+        _stations, offsets = station_offset_many(model.legs[name_a].centerline, start_b)
+        assert abs(float(offsets[0])) <= 0.5, (
+            f"{site}: {name_b} starts {abs(float(offsets[0])):.2f} ft to the side of "
+            f"{name_a}'s alignment - they are the same street and the paint runs through")
+
+
+@needs_source_data
+@pytest.mark.parametrize("site", SITES)
+def test_the_edge_line_runs_unbroken_past_a_driveway(site, wide_site_models):
+    """MUTCD 3B.07: an edge line is maintained across a driveway, interrupted at intersections.
+
+    A driveway breaks what a car drives over on its way in. It does not break the line marking
+    where the running lane ends, because that does not stop being true because someone can turn
+    in. kerb_opening_bands said exactly this and the code did the opposite - a parking edge line
+    was cut against the entrance like a stall, so at the driveway 178-204 ft along
+    broad_st_east's south kerb the stalls stopped, both lines stopped, and 26 ft of kerb was
+    left with nothing drawn on it.
+
+    The stalls still stop, which is right: a stall across a driveway is a space nobody can park
+    in. It is the line in front of them that carries on.
+    """
+    from src.geometry.markings import LINES_UNBROKEN_BY_A_DRIVEWAY
+
+    model = wide_site_models[site]
+    with contextlib.redirect_stdout(io.StringIO()):
+        state = run_scenario(load_site_scenarios(site).build_demo_scenario,
+                             DesignState.from_model(model), model)
+        paint = resolved_scene(model, state).build_paint()
+
+    openings = {key: spans for key, spans in getattr(state, "kerb_openings", {}).items() if spans}
+    if not openings:
+        pytest.skip(f"{site} has no traced kerb openings")
+
+    checked = 0
+    for (leg_name, side), spans in openings.items():
+        leg = model.legs.get(leg_name)
+        if leg is None:
+            continue
+        # Every piece of this kind on this kerb, as station ranges. Asked of the SET and not of
+        # each piece: a broken line is exactly a set of pieces that each stop short of the
+        # driveway, so a per-piece test skips the very case it exists for - which this one did
+        # until it was checked against the defect.
+        runs = []
+        for piece in paint:
+            if (piece.leg, piece.side) != (leg_name, side):
+                continue
+            if piece.kind not in LINES_UNBROKEN_BY_A_DRIVEWAY:
+                continue
+            stations, _offsets = station_offset_many(
+                leg.centerline, np.asarray(piece.geometry.coords, dtype=float))
+            runs.append((float(stations.min()), float(stations.max())))
+        if not runs:
+            continue
+        # A cross street's mouth is a kerb opening too, and MUTCD interrupts an edge line
+        # THERE - the distinction it draws is a driveway "that does not meet the definition of
+        # an intersection". Blackwell Avenue's mouth (278-304 ft on broad_st_east's north kerb)
+        # is the case, and the code already gets it right: the line stops. Demanding continuity
+        # across it was the test being wrong about the standard, not the code.
+        mouths = [cross.mouth_ft for cross in getattr(model, "cross_streets", {}).get(leg_name, [])
+                  if side in cross.sides]
+        for opening in spans:
+            if any(near <= opening.end_ft and far >= opening.start_ft for near, far in mouths):
+                continue
+            # Only an opening the line reaches on both sides - past the end of the marked run
+            # there is nothing to carry through.
+            if not (min(lo for lo, _hi in runs) < opening.start_ft
+                    and max(hi for _lo, hi in runs) > opening.end_ft):
+                continue
+            checked += 1
+            assert any(lo <= opening.start_ft and hi >= opening.end_ft for lo, hi in runs), (
+                f"{site}/{leg_name} {side}: the edge of the travelled way is broken across the "
+                f"driveway at {opening.start_ft:.0f}-{opening.end_ft:.0f} ft - pieces run "
+                + ", ".join(f"{lo:.0f}-{hi:.0f}" for lo, hi in sorted(runs))
+                + ". MUTCD 3B.07 maintains an edge line across a driveway")
+    if not checked:
+        pytest.skip(f"{site} has no driveway inside a marked run")
+
+
+@needs_source_data
+@pytest.mark.parametrize("site", SITES)
+def test_a_marked_stall_fits_the_kerb_it_is_drawn_against(site, wide_site_models):
+    """The promise and the drawing have to be the same number.
+
+    apply_osm_parking decided an 8 ft stall fitted from the leg's NOMINAL half-width - a
+    figure field-measured at the intersection - and the paint was then clipped to wherever
+    the traced kerb actually ran. On broad_st_east that meant committing to 8 ft stalls off
+    a 26.0 ft half-width and drawing them 4.6 ft deep against a kerb 16.0 ft out, which is
+    what "the parking spaces look unusable" turned out to be. Nothing checked that the
+    promise survived contact with the survey.
+
+    So: wherever a stall is marked, the measured room must hold the lane AND the stall.
+    """
+    from src.geometry.treatments import TARGET_LANE_WIDTH_FT, apply_osm_parking
+
+    model = wide_site_models[site]
+    with contextlib.redirect_stdout(io.StringIO()):
+        state = apply_osm_parking(DesignState.from_model(model), model)
+
+    for leg_name, leg in model.legs.items():
+        for side in ("left", "right"):
+            parking = state.treatment_for(MarkedParking, LegSide(leg_name, side))
+            if parking is None:
+                continue
+            promised_ft = TARGET_LANE_WIDTH_FT + parking.depth_ft
+            measured_ft = narrowest_half_width_ft(leg, side)
+            assert measured_ft >= promised_ft - 0.05, (
+                f"{site}/{leg_name} {side}: marked an {parking.depth_ft:.0f} ft stall beside "
+                f"an {TARGET_LANE_WIDTH_FT:.0f} ft lane, needing {promised_ft:.1f} ft, but the "
+                f"traced kerb comes within {measured_ft:.1f} ft of the alignment - the stall is "
+                f"drawn {measured_ft - TARGET_LANE_WIDTH_FT:.1f} ft deep where it was promised "
+                f"{parking.depth_ft:.0f}")
 
 
 def test_a_street_too_narrow_for_two_target_lanes_gets_no_paint():

@@ -343,6 +343,14 @@ class TravelLanesKeepTheirWidth(SceneCheck):
         for leg_name, leg in state.legs.items():
             if leg.curb_to_curb_ft is None:
                 continue
+            # NOMINAL half-width on purpose, and it must stay that way: `painted_ft` below is
+            # read straight off the treatments, which express their widths as offsets from
+            # this same datum (see apply_osm_parking's lane_edge_from_nominal_ft). Both sides
+            # of the subtraction are in one frame, so it measures what it says it measures.
+            # Swapping in the measured kerb here - kerbside_allowance_ft - would compare a
+            # traced offset against a nominal one and report a lane width that is neither.
+            # Whether the paint fits the real kerb is a different question, asked by
+            # check_paint_inside_the_curb.
             half_ft = leg.curb_to_curb_ft / 2
             narrowing = state.treatment_for(LaneNarrowing, LegTarget(leg_name))
             for side in BOTH_SIDES:

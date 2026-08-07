@@ -175,3 +175,79 @@ def test_a_missing_curb_gives_nothing_rather_than_guessing():
     leg = a_leg()
     leg.left_curb = None
     assert curb_point_at_station(leg, "left", 40.0) is None
+
+
+# --------------------------------------------------------------------------
+# Centring the alignment on the traced kerbs, over the WHOLE leg
+# --------------------------------------------------------------------------
+
+def a_drifting_leg(length_ft=360.0, width_ft=40.0, drift_ft=4.0, samples=40):
+    """A leg whose alignment starts centred and wanders off the carriageway further out.
+
+    The real shape of broad_st_east: NJDOT's route line sits midway between the kerbs at the
+    junction and is 4 ft north of the carriageway centre 300 ft out. Both kerbs are traced
+    the whole way, so the midpoint between them is a measurement at every station.
+    """
+    stations = np.linspace(0.0, length_ft, samples)
+    mid = drift_ft * stations / length_ft
+    leg = Leg(name="east", centerline=LineString([(0, 0), (length_ft, 0)]),
+              curb_to_curb_ft=width_ft)
+    leg.left_curb = LineString(np.column_stack([stations, mid + width_ft / 2]))
+    leg.right_curb = LineString(np.column_stack([stations, mid - width_ft / 2]))
+    leg.traced_sides = {"left", "right"}
+    return leg
+
+
+def midpoint_drift_ft(leg, samples=60):
+    """How far the kerbs' midpoint sits off the alignment, sampled along the traced run."""
+    from src.geometry.model import curb_offsets_at_stations, curb_station_span
+
+    spans = [curb_station_span(leg, side) for side in ("left", "right")]
+    lo, hi = max(s[0] for s in spans), min(s[1] for s in spans)
+    stations = np.linspace(lo, hi, samples)
+    left = curb_offsets_at_stations(leg, "left", stations)
+    right = curb_offsets_at_stations(leg, "right", stations)
+    return np.abs((left + right) / 2)
+
+
+def recentre(legs):
+    """The final centring pass, which is where the profile correction lives."""
+    from src.geometry.intersection import _centre_legs_on_traced_kerbs
+
+    _centre_legs_on_traced_kerbs(legs, quiet=True)
+    return legs
+
+
+def test_the_alignment_is_centred_over_the_whole_leg_not_just_its_first_130_ft():
+    """The defect behind unusable parking at Broad & Blackwell.
+
+    The width and the centre correction were measured over stations 35-130 and then applied
+    as CONSTANTS to a leg drawn out to 374 ft. Inside the window the alignment is centred to
+    a tenth of a foot; 290 ft out it is 4.2 ft off, so an 11 ft lane measured from it left
+    13.0 ft on one kerb and 4.6 ft on the other - out of 40.4 ft of road that holds two
+    11 ft lanes and two 8 ft stalls with room to spare.
+
+    A leg is centred over the length it is DRAWN, or the number is not a measurement of it.
+    """
+    legs = {"east": a_drifting_leg()}
+    before = midpoint_drift_ft(legs["east"]).max()
+    assert before > 3.0, "the fixture has to start off centre or it pins nothing"
+
+    recentre(legs)
+
+    after = midpoint_drift_ft(legs["east"]).max()
+    assert after <= 1.0, (
+        f"the alignment is still {after:.2f} ft off the kerbs' midpoint at its worst "
+        f"(was {before:.2f} ft) - a constant shift cannot centre a leg whose carriageway "
+        f"drifts, and every offset in a proposal is measured from this line")
+
+
+def test_centring_leaves_an_already_centred_leg_alone():
+    """The correction is a measurement, so where there is nothing to correct it does nothing."""
+    legs = {"east": a_drifting_leg(drift_ft=0.0)}
+    before = list(legs["east"].centerline.coords)
+    recentre(legs)
+    after = midpoint_drift_ft(legs["east"]).max()
+    assert after <= 0.05, f"a centred leg moved {after:.3f} ft"
+    assert legs["east"].centerline.length == pytest.approx(
+        LineString(before).length, rel=1e-3), "centring must not change the leg's length"

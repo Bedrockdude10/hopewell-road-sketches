@@ -802,18 +802,26 @@ def test_a_leg_already_centred_is_left_alone():
     assert list(out.centerline.coords) == before
 
 
-def test_a_midpoint_that_wanders_is_reported_rather_than_shifted():
+def test_a_midpoint_that_wanders_is_left_to_the_profile_pass_not_shifted_by_a_constant():
     """A single constant shift describes a PARALLEL offset between the alignment and the
-    street. Where the kerbs' midpoint swings along the leg the alignment is bending relative
-    to the street instead, no one number centres it, and moving the paint on that evidence
-    would be worse than leaving it."""
+    street. Where the kerbs' midpoint swings along the leg the alignment is BENDING relative
+    to the street, no one number centres it, and the fit says so and leaves its constant at
+    zero - because the frame it would move is the one deciding which traced vertex belongs to
+    which leg side, and moving that mid-fit is what once collapsed louellen_st_west from
+    42.1 ft wide to 17.5.
+
+    The bend is then taken out by _centre_legs_on_traced_kerbs, after the fit has settled.
+    This used to be the end of the story - "no single shift centres that, so the alignment is
+    left as surveyed" - and leaving it there is what drew 4.6 ft parking stalls at Broad &
+    Blackwell, 290 ft out on a leg centred over its first 130.
+    """
     leg = traced(traced(a_leg(width_ft=30.0, length_ft=130.0),
                          "left", [(10, 7.2), (130, 7.2)]),
                   "right", [(10, 28.0), (130, 60.0)])
     before = list(leg.centerline.coords)
     out, log = _centred(leg)
-    assert list(out.centerline.coords) == before
-    assert "wanders" in log and "left as surveyed" in log, log
+    assert list(out.centerline.coords) == before, "the fit's constant must not move a bend"
+    assert "wanders" in log, log
 
 
 # --------------------------------------------------------------------------

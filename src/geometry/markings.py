@@ -227,6 +227,22 @@ ZONE_BOUNDARY_LINES: frozenset = frozenset({
     LANE_EDGE_LINE, TAPER_LINE, BUFFER_EDGE_LINE, DAYLIGHT_EDGE_LINE, ZONE_END_LINE,
 })
 
+# Markings that are the EDGE OF THE TRAVELLED WAY, and so run unbroken past a driveway.
+#
+# MUTCD Section 3B.07: an edge line is maintained across the intersecting approach of a
+# driveway that does not meet the definition of an intersection, and is interrupted only at
+# an actual intersection (where a dotted extension may carry it instead). The reason is what
+# the line means - it marks where the running lane ends, and that does not stop being true
+# because someone can turn in.
+#
+# Only the PARKING edge line is here, and the omissions are deliberate. LANE_EDGE_LINE and
+# BUFFER_EDGE_LINE bound a hatched zone as well as the lane, and a zone that sweeps away on
+# its run-out while its own boundary line carries straight on is the hook-and-Y that
+# KerbOpenings.against describes - those follow their zone. Behind a parking edge line there
+# are only stalls, which stop at a driveway because a stall there is a space you cannot park
+# in; the line in front of them is a different statement and carries on.
+LINES_UNBROKEN_BY_A_DRIVEWAY: frozenset = frozenset({PARKING_EDGE_LINE})
+
 
 def kinds_in(channel: Channel) -> tuple[PaintKind, ...]:
     """Every marking that travels in `channel`, in declaration order."""

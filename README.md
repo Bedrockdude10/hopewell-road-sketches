@@ -2,6 +2,8 @@
 
 Parametric pedestrian-safety visualization for real intersections — real-world geometry (NJDOT + field measurements + OSM), not hand-drawn sketches. Produces to-scale 2D plan-view before/after comparisons and presentation-quality 3D renders. Currently has one site configured: **Broad St (CR 518) & Greenwood Ave, Hopewell Borough, NJ 08525**.
 
+**[STANDARDS.md](STANDARDS.md)** indexes every published figure the geometry relies on — the R.S. 39:4-138 setbacks, the MUTCD and AASHTO numbers, which constant encodes each one, and which have actually been checked against their source rather than written from memory.
+
 ## Quick start
 
 ```bash

@@ -23,6 +23,8 @@ from src.geometry.model import (
     CURB_POINT_MAX_WIDTH_RATIO,
     Leg,
     _line_direction,
+    _place_in_measured_frame,
+    _unit,
     assign_curb_points_to_legs,
     assign_kerbs_to_corners,
     curb_line_from_points,
@@ -597,13 +599,32 @@ TRACED_SECTION_END_FT = 130.0
 # Below this there isn't enough of a traced overlap to call it a cross-section.
 MIN_TRACED_SECTION_FT = 20.0
 TRACED_SECTION_SAMPLES = 40
-# How much the kerbs' midpoint may wander along a leg before a single constant shift stops
-# describing it. A parallel offset between NJDOT's alignment and the real carriageway is
-# constant by definition; a midpoint that swings several feet means the alignment is
-# BENDING relative to the street, and there is no one number that centres it.
+# How finely the kerbs' midpoint is sampled when the alignment is centred on it, and over how
+# long a run each sample is averaged. The centring used to be a single constant per leg, on the
+# reasoning that a striper lays a straight line - true of the line, but the thing being
+# corrected is not a stripe. NJDOT's alignment is a linear-referencing reference that BENDS
+# relative to the carriageway, and a constant cannot follow that: broad_st_east is centred to
+# 0.07 ft over the 35-130 ft the constant was measured across and 4.28 ft off 290 ft out, where
+# an 11 ft lane measured from it left 4.6 ft of kerb on one side and 13.0 ft on the other. The
+# smoothing window is what keeps the result something a striper would lay - it follows the
+# street's bend and not every wobble in the tracing.
+CENTRE_SAMPLE_FT = 10.0
+CENTRE_SMOOTH_FT = 60.0
+# No two vertices of a corrected alignment closer than this - see _thinned.
+MIN_CENTRE_VERTEX_GAP_FT = 2.5
+# Over how far each half of a through street eases from the shared junction tangent back onto
+# its own measured centre, and how finely that easing is sampled - see _join_through_legs.
+# 60 ft is about the run over which a striper actually swings a centreline through a bend:
+# much shorter reads as a kink again, much longer starts overriding the measurement it is
+# meant to be blending into.
+THROUGH_JOIN_BLEND_FT = 60.0
+THROUGH_JOIN_SAMPLE_FT = 5.0
+# How much the kerbs' midpoint may wander before a single CONSTANT stops describing it. Only
+# the constant inside the fit is bounded by this now - past it the fit leaves the alignment
+# alone and the final profile pass does the centring instead.
 MAX_CENTRE_SPREAD_FT = 5.0
-# And a sanity bound on the shift itself. Past this the two "kerbs" are more likely to be
-# one street's kerb and a neighbouring one's than the two sides of this leg.
+# A sanity bound on the correction. Past this the two "kerbs" are more likely to be one
+# street's kerb and a neighbouring one's than the two sides of this leg.
 MAX_CENTRE_SHIFT_FT = 15.0
 # What counts as a real change between two rounds of the fit below, as opposed to the
 # geometry jittering on the last decimal place and the loop never terminating.
@@ -637,6 +658,103 @@ def _traced_cross_section(leg) -> tuple[np.ndarray, np.ndarray] | None:
     if left is None or right is None:
         return None
     return left - right, (left + right) / 2
+
+
+def _smoothed(values: np.ndarray, sample_ft: float, window_ft: float) -> np.ndarray:
+    """A centred moving average over `window_ft`, with the ends held rather than tapered.
+
+    Edge-padded, so the first and last samples average the run they can see instead of being
+    dragged toward zero by absent neighbours - the ends are exactly where the correction is
+    least forgiving, since the junction end sets where station 0 sits.
+    """
+    width = int(round(window_ft / sample_ft))
+    width = min(max(width | 1, 1), len(values))     # odd, so the average is centred
+    if width <= 1:
+        return values
+    pad = width // 2
+    return np.convolve(np.pad(values, pad, mode="edge"), np.ones(width) / width, mode="valid")
+
+
+def _thinned(stations: np.ndarray, gap_ft: float) -> np.ndarray:
+    """Drop stations closer together than `gap_ft`, always keeping the first and the last.
+
+    Two vertices a couple of inches apart are a hazard, not extra fidelity: the lateral
+    correction at each is placed independently (_place_in_measured_frame corrects per point),
+    so a hundredth of a foot of difference between them turns a 0.17 ft segment into a 34
+    degree turn - which is what louellen_st_west's alignment did, and a turn that sharp makes
+    the offset frame meaningless for every marking measured across it.
+
+    The alignment's own vertices are thinned along with the grid rather than held back as
+    required points. Keeping every one of them reshapes the corrected line enough that the
+    kerb-vertex claim window shifts underneath it and one to three surveyed vertices at each
+    of two junctions stop being claimable by any leg - tracing thrown away to protect a vertex
+    that carries no measurement of its own.
+    """
+    kept = [float(stations[0])]
+    for station in stations[1:-1]:
+        if station - kept[-1] >= gap_ft:
+            kept.append(float(station))
+    last = float(stations[-1])
+    while len(kept) > 1 and last - kept[-1] < gap_ft:
+        kept.pop()
+    kept.append(last)
+    return np.asarray(kept)
+
+
+def _traced_centre_profile(leg) -> tuple[np.ndarray, np.ndarray] | None:
+    """Where the kerbs' midpoint sits relative to the alignment, STATION BY STATION.
+
+    _traced_cross_section answers the same question for the width, over the 35-130 ft window
+    a width is a fact about (TRACED_SECTION_END_FT). The centre cannot borrow that window: a
+    width describes the approach and is reported as one number, while the centre positions
+    every offset in the proposal at every station of a leg that is DRAWN three times as far.
+    Measured over the window and applied beyond it, it stops being a measurement of the road
+    it is drawing - which is the whole defect this returns a profile to fix.
+
+    Still MEASURED from TRACED_SECTION_START_FT out: nearer than that the kerbs are corner
+    returns flaring to the cross street, and their midpoint is a fact about the junction mouth
+    rather than the street. Outside the measured run the correction holds the nearest value it
+    has, so it is flat exactly where it has nothing to measure.
+
+    But the grid it is RETURNED on spans the whole centerline, including the original's own
+    vertices, and that is not a detail. The correction is a lateral shift applied to this
+    alignment, so the alignment can only survive it where there is a vertex to carry its
+    shape: returning the correction on the measured run alone replaced everything inboard of
+    station 35 with one straight chord, which cut the corner NJDOT rounds ~43 ft out and put
+    w_broad_st_northeast's lane edge line 0.16 ft into the travel lane at station 11.
+    """
+    if not {"left", "right"} <= leg.traced_sides:
+        return None
+    spans = [curb_station_span(leg, side) for side in ("left", "right")]
+    if any(span is None for span in spans):
+        return None
+    lo = max(max(span[0] for span in spans), TRACED_SECTION_START_FT)
+    hi = min(min(span[1] for span in spans), leg.centerline.length)
+    if hi - lo < MIN_TRACED_SECTION_FT:
+        return None
+    n = max(int(np.ceil((hi - lo) / CENTRE_SAMPLE_FT)) + 1, 2)
+    measured = np.linspace(lo, hi, n)
+    left = curb_offsets_at_stations(leg, "left", measured)
+    right = curb_offsets_at_stations(leg, "right", measured)
+    if left is None or right is None:
+        return None
+
+    # Extended to the full leg BEFORE smoothing, not after. Smoothing the measured run alone
+    # and then holding its first value flat inboard leaves a corner in the correction where
+    # the two meet, and a corner in the correction is a kink in the alignment: 1.74 deg at
+    # station 35 on w_broad_st_northeast, which at an 11.4 ft offset throws the frame by
+    # 0.17 ft and put the lane edge line inside the travel lane. Smoothed across the join,
+    # the correction eases into the flat section instead.
+    total = leg.centerline.length
+    grid = np.append(np.arange(0.0, total, CENTRE_SAMPLE_FT), total)
+    centres = _smoothed(np.interp(grid, measured, (left + right) / 2),
+                        CENTRE_SAMPLE_FT, CENTRE_SMOOTH_FT)
+
+    own, _offsets = station_offset_many(leg.centerline,
+                                        np.asarray(leg.centerline.coords, dtype=float))
+    stations = _thinned(np.unique(np.concatenate([grid, np.clip(own, 0.0, total)])),
+                        MIN_CENTRE_VERTEX_GAP_FT)
+    return stations, np.interp(stations, grid, centres)
 
 
 def _resize_from_one_traced_kerb(legs: dict, name: str, legs_cfg: dict, quiet: bool) -> bool:
@@ -698,11 +816,14 @@ def _resize_and_centre_from_traced_kerbs(legs: dict, legs_cfg: dict, quiet: bool
       centre, the paint comes out symmetrical about the wrong line and the drawing looks
       wrong even where it measures right.
 
-    The shift is a single constant per leg - a straight line parallel to the street, which
-    is what a striper would lay, not a centreline that wanders to track every wobble in the
-    tracing. Mutates `legs` in place (replacing the Leg, so its derived curb lines are
-    rebuilt) and returns whether anything moved materially; the caller re-reads the traced
-    kerbs in the new frame and comes back, until the two agree.
+    The shift here is a single constant per leg, measured over the 35-130 ft window, and it
+    stays one because the fit's vertex assignment reads the frame this moves - see
+    _centre_legs_on_traced_kerbs, which bends the alignment onto the kerbs' midpoint over the
+    whole leg once the fit has settled and nothing is left to reassign.
+
+    Mutates `legs` in place (replacing the Leg, so its derived curb lines are rebuilt) and
+    returns whether anything moved materially; the caller re-reads the traced kerbs in the new
+    frame and comes back, until the two agree.
     """
     from src.provenance import (FIELD_MEASURED, OSM_DERIVED, field_measurement_governs_corner,
                                  leg_width_provenance)
@@ -744,8 +865,8 @@ def _resize_and_centre_from_traced_kerbs(legs: dict, legs_cfg: dict, quiet: bool
             if not quiet:
                 print(f"  NOTE: {name}'s kerb midpoint is {shift_ft:+.1f} ft off the NJDOT alignment "
                       f"and wanders {spread_ft:.1f} ft along the leg - no single shift centres that, "
-                      f"so the alignment is left as surveyed. Check whether this leg is a bend, or "
-                      f"whether one kerb's tracing strays onto a neighbouring street.")
+                      f"so the constant is left alone and _centre_legs_on_traced_kerbs bends the "
+                      f"alignment onto the midpoint instead.")
         else:
             moved_ft = shift_ft
             if not quiet:
@@ -767,6 +888,186 @@ def _resize_and_centre_from_traced_kerbs(legs: dict, legs_cfg: dict, quiet: bool
                           width_provenance=None if keep_width else OSM_DERIVED)
         changed = True
     return changed
+
+
+def _centre_legs_on_traced_kerbs(legs: dict, quiet: bool = False) -> None:
+    """Bend each alignment onto its kerbs' midpoint, station by station. Runs LAST.
+
+    Not inside _fit_legs_to_traced_kerbs, and that placement is the whole point. The fit
+    decides which traced vertex belongs to which leg side by judging it against the side's
+    current half-width and offset, so anything that moves the frame mid-fit changes the
+    answer - and a correction that VARIES along the leg moves it differently at every
+    station. Tried there, it did exactly what the fit's monotonicity guard was written to
+    catch: louellen_st_west fell from 42.1 ft wide to 17.5 and w_broad_st_southwest from
+    43.9 to 22.3, the same runaway that guard exists to make impossible.
+
+    Here the widths are already settled and the traced kerbs are already assigned, so this
+    can only re-express them in a better frame. THE KERBS DO NOT MOVE - they are surveyed
+    world geometry, and their station/offset is recomputed against the new alignment - so
+    there is no vertex to reassign and no width to re-measure. Only the derived curb of an
+    UNTRACED side is rebuilt, which is right: it was never anything but an offset from this
+    line.
+    """
+    for name in sorted(legs):
+        leg = legs[name]
+        profile = _traced_centre_profile(leg)
+        if profile is None:
+            continue
+        stations, offsets = profile
+        worst_ft = float(np.abs(offsets).max())
+        if worst_ft < MATERIAL_SHIFT_FT:
+            continue
+        if worst_ft > MAX_CENTRE_SHIFT_FT:
+            if not quiet:
+                print(f"  NOTE: {name}'s kerb midpoint reaches {worst_ft:.1f} ft off its alignment - "
+                      f"too far to be the two sides of one street, so it is left as surveyed. Check "
+                      f"whether one kerb's tracing strays onto a neighbouring street.")
+            continue
+
+        centred = Leg(name=name, curb_to_curb_ft=leg.curb_to_curb_ft,
+                      centerline=LineString(_place_in_measured_frame(leg.centerline, stations,
+                                                                     offsets)),
+                      width_provenance=leg.width_provenance)
+        # Traced sides keep the surveyor's line; untraced ones keep the offset __post_init__
+        # just rebuilt from the corrected alignment.
+        for side in leg.traced_sides:
+            setattr(centred, f"{side}_curb", getattr(leg, f"{side}_curb"))
+        centred.traced_sides = set(leg.traced_sides)
+        legs[name] = centred
+        if not quiet:
+            print(f"  NOTE: {name}'s centerline bends onto its kerbs' midpoint - {offsets[0]:+.1f} ft "
+                  f"at the junction to {offsets[-1]:+.1f} ft at {stations[-1]:.0f} ft out, "
+                  f"{worst_ft:.1f} ft at its furthest. NJDOT's alignment is a route reference and it "
+                  f"bends relative to the carriageway; every offset in a proposal is measured from "
+                  f"this line, so it follows the street the whole way out.")
+
+
+def _through_leg_pairs(legs: dict) -> list[tuple[str, str]]:
+    """The (leg, leg) pairs that are one street running through the junction.
+
+    Each leg is matched with whichever OTHER leg points most nearly back the way it came, and
+    the pair is kept only if _through_street agrees they are one street. Deliberately not the
+    pairing through_street_sides uses: that one walks legs in bearing order and pairs each with
+    its angular NEIGHBOUR, which is right for the question it asks - which corner has no kerb
+    in it - and useless for this one, because at a four-way junction a leg's neighbours are the
+    two cross-street legs and its opposite number is never adjacent to it. Copying it found the
+    through pair at the two T-junctions and silently found nothing at Broad & Greenwood or
+    Columbia & Princeton.
+    """
+    from src.geometry.model import _leg_bearing_deg, _through_street
+
+    usable = {name: leg for name, leg in legs.items() if leg.centerline is not None}
+    pairs = set()
+    for name_a, leg_a in usable.items():
+        opposed = None
+        for name_b, leg_b in usable.items():
+            if name_b == name_a or not _through_street(leg_a, leg_b):
+                continue
+            apart = abs(180.0 - abs((_leg_bearing_deg(leg_a) - _leg_bearing_deg(leg_b) + 180.0)
+                                     % 360.0 - 180.0))
+            if opposed is None or apart < opposed[1]:
+                opposed = (name_b, apart)
+        if opposed is not None:
+            pairs.add(tuple(sorted((name_a, opposed[0]))))
+    return sorted(pairs)
+
+
+def _near_direction(leg, reach_ft: float) -> np.ndarray:
+    """Unit vector from a leg's junction end toward its station `reach_ft`.
+
+    The chord over the blend, not the first segment: louellen_st_west leaves the junction on a
+    15 ft stub bearing 239 deg before settling onto 269, and a tangent read off that stub
+    describes nothing but the stub.
+    """
+    start = np.asarray(leg.centerline.coords[0], dtype=float)
+    ahead = np.asarray(leg.centerline.interpolate(
+        min(reach_ft, leg.centerline.length)).coords[0], dtype=float)
+    return _unit(ahead - start)
+
+
+def _join_through_legs(legs: dict, quiet: bool = False) -> None:
+    """Make the two halves of one street meet at a point and a tangent, not at a joint.
+
+    A through street is modelled as two legs, and nothing has ever required them to agree
+    where they meet. At W Broad & Louellen they do not: the halves come off two different
+    NJDOT routes - CR 518 turns west onto Louellen, CR 654 carries on southwest - so their
+    junction ends sit 3.1 ft apart and their tangents differ by 16 deg where the traced kerbs
+    say the street bends 13. Centring each half on its own carriageway (see
+    _centre_legs_on_traced_kerbs) cannot fix that, because the disagreement is BETWEEN the
+    halves and each is individually right.
+
+    Drawn, it reads as a dog-leg at the node with the centreline paint kinking and the
+    kerbside hatching fanning off it - which is not what is on the ground, where the paint
+    runs through in one line.
+
+    So the pair is given a shared junction point (the midpoint of the two ends) and one shared
+    axis, and each half eases back onto its own measured alignment over THROUGH_JOIN_BLEND_FT.
+    The REAL bend is untouched: it is still there, spread over the blend the way a striper
+    would lay it rather than folded into one vertex. What goes away is the part that is an
+    artefact of two route lines not meeting - up to half the 3.1 ft gap near the node, falling
+    to nothing by the end of the blend.
+    """
+    for name_a, name_b in _through_leg_pairs(legs):
+        leg_a, leg_b = legs[name_a], legs[name_b]
+        blend_ft = min(THROUGH_JOIN_BLEND_FT, leg_a.centerline.length, leg_b.centerline.length)
+        if blend_ft < MIN_TRACED_SECTION_FT:
+            continue
+        start_a = np.asarray(leg_a.centerline.coords[0], dtype=float)
+        start_b = np.asarray(leg_b.centerline.coords[0], dtype=float)
+        joint = (start_a + start_b) / 2
+        # The shared axis bisects the two halves: leg_b points the other way, so its direction
+        # is negated before averaging. Anti-parallel by construction, so the paint runs through.
+        axis = _unit(_near_direction(leg_a, blend_ft) - _near_direction(leg_b, blend_ft))
+
+        moved = []
+        for name, leg, heading in ((name_a, leg_a, axis), (name_b, leg_b, -axis)):
+            joined = _blend_onto(leg, joint, heading, blend_ft)
+            if joined is None:
+                continue
+            legs[name] = joined
+            moved.append(name)
+        if moved and not quiet:
+            gap_ft = float(np.hypot(*(start_a - start_b)))
+            print(f"  NOTE: {name_a} and {name_b} are one street through this junction, and their "
+                  f"NJDOT alignments ended {gap_ft:.1f} ft apart. Joined at a shared point and "
+                  f"tangent, easing back onto each half's own measured centre over "
+                  f"{blend_ft:.0f} ft - the street's real bend is kept, the joint between two "
+                  f"route lines is not.")
+
+
+def _blend_onto(leg, joint: np.ndarray, heading: np.ndarray, blend_ft: float):
+    """`leg` re-laid to start at `joint` heading `heading`, easing back to itself by blend_ft.
+
+    The correction is a lateral offset profile, so it can carry both requirements at once: its
+    VALUE at station 0 moves the end onto the shared point and its SLOPE there turns the
+    tangent onto the shared axis. A cubic Hermite with both zero at the far end returns the
+    line to its own alignment with no kink to show for it.
+    """
+    centerline = leg.centerline
+    stations0, offsets0 = station_offset_many(centerline, np.asarray([joint], dtype=float))
+    start_offset_ft = float(offsets0[0])
+    here = _near_direction(leg, blend_ft)
+    turn = np.arctan2(heading[1], heading[0]) - np.arctan2(here[1], here[0])
+    slope = float(np.tan((turn + np.pi) % (2 * np.pi) - np.pi))
+    if abs(start_offset_ft) < MATERIAL_SHIFT_FT and abs(slope * blend_ft) < MATERIAL_SHIFT_FT:
+        return None
+
+    own, _o = station_offset_many(centerline, np.asarray(centerline.coords, dtype=float))
+    total = centerline.length
+    stations = _thinned(np.unique(np.concatenate([
+        np.arange(0.0, blend_ft, THROUGH_JOIN_SAMPLE_FT), [blend_ft],
+        np.clip(own, 0.0, total), [total]])), MIN_CENTRE_VERTEX_GAP_FT)
+    t = np.clip(stations / blend_ft, 0.0, 1.0)
+    # Hermite basis for (value, slope) at t=0 easing to (0, 0) at t=1.
+    corrections = (start_offset_ft * (2 * t ** 3 - 3 * t ** 2 + 1)
+                   + slope * blend_ft * (t ** 3 - 2 * t ** 2 + t))
+    joined = Leg(name=leg.name, curb_to_curb_ft=leg.curb_to_curb_ft,
+                 centerline=LineString(_place_in_measured_frame(centerline, stations, corrections)),
+                 width_provenance=leg.width_provenance)
+    for side in leg.traced_sides:
+        setattr(joined, f"{side}_curb", getattr(leg, f"{side}_curb"))
+    joined.traced_sides = set(leg.traced_sides)
+    return joined
 
 
 def _traced_side_count(legs: dict) -> int:
@@ -1332,6 +1633,14 @@ def load_intersection_model(config: dict | None = None, site: str | None = None)
     # time round - the coverage it reports is about the final geometry, not the scaffold.
     near_coverage = _fit_legs_to_traced_kerbs(legs, kerb_ways, center_ft, legs_cfg)
     _extend_curbs_with_far_tracing(legs, center, center_ft, near_coverage)
+    # Last, on the settled widths and the fullest tracing: the alignment is bent onto the
+    # carriageway centre over the WHOLE leg. Everything below measures in this frame - the
+    # road match, the cross streets, the corner fillets - so it happens before any of them.
+    _centre_legs_on_traced_kerbs(legs)
+    # ...and then the two halves of a through street are made to agree with each other, which
+    # centring each on its own kerbs cannot do. Both run before anything below measures in
+    # this frame.
+    _join_through_legs(legs)
     leg_road_spans = _match_legs_to_osm_roads(legs, center, center_ft)
     # The way covering MOST of the leg carries its whole-leg tags. Not the way nearest the
     # leg's midpoint, which is what this used to pick: on a split leg those differ, and the

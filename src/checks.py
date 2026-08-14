@@ -28,6 +28,7 @@ import numpy as np
 from shapely.geometry import Point
 
 from src.geometry.markings import PARKING_EDGE_LINE, STALL_DIVIDER
+from src.geometry.targets import Side
 from src.geometry.model import curb_offsets_at_stations, station_offset_many
 
 if TYPE_CHECKING:                      # the runtime import is in _empty_state, below
@@ -53,9 +54,13 @@ CURB_BEHIND_JUNCTION_TOLERANCE_FT = 6.0
 # at every site measures 99.96% inside or better, and the loose bound was hiding exactly the
 # failure it was named for: end bars painted up the corner onto the sidewalk.
 MIN_CROSSWALK_IN_PAVEMENT = 0.99
-# A stop bar covers the entering half only. This much of it may cross the centerline before
-# it is genuinely painted across opposing lanes.
-MAX_STOP_BAR_OPPOSING_FRACTION = 0.15
+# A stop bar covers the entering half only, and it RESTS AGAINST the centreline rather than
+# crossing it - so this is float noise and the width of a polygon vertex, not a design margin.
+# It replaced a 15%-of-its-own-width fraction, which is a large real distance on a wide road
+# (4.9 ft on Broad St) and let a bar sit visibly across the double yellow. The bar is built to
+# start exactly at the line (crosswalks.stop_bar_band_geometry_ft), so anything past it is a
+# fault rather than a tolerance being used up.
+STOP_BAR_PAST_CENTERLINE_TOLERANCE_FT = 0.1
 # Paint is specified to a tenth of a foot; this absorbs float noise, nothing more.
 LANE_WIDTH_TOLERANCE_FT = 0.05
 # A marking may touch the kerb - that is what a curbside marking does - and may sit a hair
@@ -337,21 +342,21 @@ class TravelLanesKeepTheirWidth(SceneCheck):
     def run(self, scene: SceneContext) -> list[Violation]:
         state = scene.state
         from src.geometry.targets import BOTH_SIDES, LegSide, LegTarget
-        from src.geometry.treatments import LaneNarrowing, MarkedParking, TARGET_LANE_WIDTH_FT
+        from src.geometry.treatments import (TARGET_LANE_WIDTH_FT, LaneNarrowing,
+                                              MarkedParking, travel_lane_width_ft)
 
         violations = []
         for leg_name, leg in state.legs.items():
             if leg.curb_to_curb_ft is None:
                 continue
-            # NOMINAL half-width on purpose, and it must stay that way: `painted_ft` below is
-            # read straight off the treatments, which express their widths as offsets from
-            # this same datum (see apply_osm_parking's lane_edge_from_nominal_ft). Both sides
-            # of the subtraction are in one frame, so it measures what it says it measures.
-            # Swapping in the measured kerb here - kerbside_allowance_ft - would compare a
-            # traced offset against a nominal one and report a lane width that is neither.
-            # Whether the paint fits the real kerb is a different question, asked by
-            # check_paint_inside_the_curb.
-            half_ft = leg.curb_to_curb_ft / 2
+            # travel_lane_width_ft works in the NOMINAL frame on purpose, and it must stay that
+            # way: `painted_ft` below is read straight off the treatments, which express their
+            # widths as offsets from that same datum (see apply_osm_parking's
+            # lane_edge_from_nominal_ft). Both sides of the subtraction are in one frame, so it
+            # measures what it says it measures. Swapping in the measured kerb -
+            # kerbside_allowance_ft - would compare a traced offset against a nominal one and
+            # report a lane width that is neither. Whether the paint fits the real kerb is a
+            # different question, asked by check_paint_inside_the_curb.
             narrowing = state.treatment_for(LaneNarrowing, LegTarget(leg_name))
             for side in BOTH_SIDES:
                 painted_ft = 0.0
@@ -371,7 +376,7 @@ class TravelLanesKeepTheirWidth(SceneCheck):
                 # alignment; where a two-way bike lane has shifted them, ignoring it reported
                 # broad_st_west's correctly-sized 11.00 ft lane as 9.58 ft. Signed, so the shift
                 # is subtracted on the side it moved away from and added on the other.
-                lane_ft = half_ft - painted_ft - _divider_shift_toward_ft(state, leg_name, side)
+                lane_ft = travel_lane_width_ft(state, leg_name, side, painted_ft)
                 if lane_ft < TARGET_LANE_WIDTH_FT - LANE_WIDTH_TOLERANCE_FT:
                     violations.append(Violation(
                         "travel_lane_too_narrow",
@@ -557,26 +562,11 @@ def _boxes_apart(a: tuple, b: tuple) -> bool:
 
 
 def _divider_shift_toward_ft(state, leg_name: str, side: str) -> float:
-    """How far the travel-lane divider sits off the alignment, measured TOWARD `side`.
+    """Signed divider offset toward `side`. Delegates to src/geometry/treatments.py, which is
+    where the one definition lives - see divider_shift_toward_ft for why there is only one."""
+    from src.geometry.treatments import divider_shift_toward_ft
 
-    Zero on every leg whose travel lanes straddle the alignment, which is all of them until a
-    two-way bike lane takes width out of one kerbside. Signed, because the two sides of a leg
-    see the same shift in opposite directions and a check that ignores the sign is wrong on
-    exactly one of them.
-
-    ONE DEFINITION, read off the design, because two checks and two renderers all need it and a
-    check carrying its own copy of the arithmetic is the divergence this module exists to catch.
-    """
-    from src.geometry.treatments import AddTwoWayBikeLane, travel_lane_divider_shift_ft
-
-    for treatment in state.treatments_of(AddTwoWayBikeLane):
-        if treatment.target.leg != leg_name:
-            continue
-        shift_ft = travel_lane_divider_shift_ft(treatment.section(state))
-        # The treatment's own side is the side the lane is on; the shift is defined as positive
-        # AWAY from it.
-        return -shift_ft if str(treatment.target.side) == str(side) else shift_ft
-    return 0.0
+    return divider_shift_toward_ft(state, leg_name, side)
 
 
 def _travel_lane_target_ft(state, leg_name: str, side: str) -> float:
@@ -820,15 +810,22 @@ class StopBarsOnEnteringHalf(SceneCheck):
                 continue
             _stations, offsets = station_offset_many(
                 leg.centerline, np.asarray(bar.exterior.coords, dtype=float))
-            spans_both = offsets.min() < 0 < offsets.max()
-            if not spans_both:
-                continue
-            minority = min(abs(offsets.min()), abs(offsets.max())) / (offsets.max() - offsets.min())
-            if minority > MAX_STOP_BAR_OPPOSING_FRACTION:
+            # AGAINST THE PAINTED LINE, NOT THE ALIGNMENT. They coincide until a two-way bike
+            # lane shifts the travel lanes off the alignment, and then the line a driver actually
+            # sees is the divider. Measured from the alignment, a bar resting correctly against
+            # that divider looks like it crosses, and a bar genuinely painted 3.15 ft across it
+            # looks fine - which is what shipped on broad_st_east.
+            divider_ft = _divider_shift_toward_ft(scene.state, leg_name, Side.LEFT)
+            # Positive is the entering (LEFT) side, so anything below the divider is over the line.
+            past_ft = float(divider_ft - offsets.min())
+            if past_ft > STOP_BAR_PAST_CENTERLINE_TOLERANCE_FT:
                 violations.append(Violation(
                     "stop_bar_crosses_centerline",
-                    f"{leg_name}'s stop bar reaches {minority * 100:.0f}% of its width across the "
-                    f"centerline into opposing lanes - a stop bar covers the entering half only",
+                    f"{leg_name}'s stop bar is painted {past_ft:.2f} ft past the centreline into "
+                    f"the opposing lanes - it must rest AGAINST that line, not cross it. A stop "
+                    f"bar covers the entering half only (MUTCD), and where a two-way bike lane "
+                    f"has shifted the travel lanes the line to rest against is the divider, not "
+                    f"the NJDOT alignment",
                     (bar.centroid.x, bar.centroid.y)))
         return violations
 

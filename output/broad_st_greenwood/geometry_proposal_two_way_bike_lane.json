@@ -20859,8 +20859,8 @@
       "crosswalk_bar_count": 21,
       "stop_bar_offset_m": 11.220048947137697,
       "stop_bar_width_m": 6.7056000000000004,
-      "stop_bar_span_m": 3.3528000000000002,
-      "stop_bar_lateral_offset_m": 1.6764000000000001,
+      "stop_bar_span_m": 2.920166365592427,
+      "stop_bar_lateral_offset_m": 1.8927168172037865,
       "centerline_style": "double_yellow",
       "centerline_start_m": 11.220048947137697,
       "centerline_paint_m": [
@@ -21283,8 +21283,8 @@
       "crosswalk_bar_count": 20,
       "stop_bar_offset_m": 10.34103572377616,
       "stop_bar_width_m": 8.625783708959268,
-      "stop_bar_span_m": 4.312891854479634,
-      "stop_bar_lateral_offset_m": 2.156445927239817,
+      "stop_bar_span_m": 3.3528,
+      "stop_bar_lateral_offset_m": 2.6364918544796336,
       "centerline_style": "double_yellow",
       "centerline_start_m": 10.34103572377616,
       "centerline_paint_m": [

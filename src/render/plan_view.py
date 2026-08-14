@@ -727,16 +727,23 @@ def _label_paint(ax, state, paint):
     (a leg is not always narrowed on both sides).
     """
     from src.geometry.targets import LegSide
-    from src.geometry.treatments import LaneNarrowing, MarkedParking
+    from src.geometry.treatments import (LaneNarrowing, MarkedParking, divider_shift_toward_ft,
+                                          travel_lane_width_ft)
 
     for narrowing in state.treatments_of(LaneNarrowing):
         leg_name = narrowing.target.leg
         leg = state.legs[leg_name]
-        lane_ft = leg.curb_to_curb_ft / 2 - narrowing.stripe_width_ft
         along_ft = min(leg.centerline.length * 0.6, leg.centerline.length - 5)
         for side in narrowing.sides:
             sign = side.sign
-            at = leg.centerline.offset_curve(sign * lane_ft / 2).interpolate(along_ft)
+            # THE LANE IS MEASURED FROM THE DIVIDER, not from the alignment. Those coincide until
+            # a two-way bike lane shifts the travel lanes off it; ignoring that printed
+            # "lane 9.6 ft" next to a lane the geometry had built at 11.00, which is the number a
+            # reviewer would have taken away.
+            lane_ft = travel_lane_width_ft(state, leg_name, str(side), narrowing.stripe_width_ft)
+            # And the label belongs IN that lane, so its position takes the shift too.
+            shift_ft = divider_shift_toward_ft(state, leg_name, str(side))
+            at = leg.centerline.offset_curve(sign * (shift_ft + lane_ft / 2)).interpolate(along_ft)
             ax.annotate(f"lane {lane_ft:.1f} ft", (at.x, at.y), fontsize=6.5, color="goldenrod",
                         ha="center", bbox=dict(boxstyle="round,pad=0.15", fc="white", ec="none", alpha=0.75))
 

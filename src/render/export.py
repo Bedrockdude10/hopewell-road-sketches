@@ -32,8 +32,9 @@ from src.sources.assessor import (BuildingHeight, assessor_path, describe_buildi
 from src.sources.osm_context import (fetch_buildings, fetch_crossings, fetch_kerbs,
                                      fetch_street_furniture, fetch_traffic_control)
 from src.render.props import build_props, control_nodes_ft, osm_tree_points_ft
+from src.geometry.targets import Side
 from src.geometry.treatments import (DesignState, RaiseCrossing, RefugeIsland,
-                                      build_sidewalk_pieces)
+                                      build_sidewalk_pieces, divider_shift_toward_ft)
 
 BUILDING_CONTEXT_RADIUS_M = 130
 KERB_RADIUS_M = 120
@@ -108,7 +109,8 @@ def _stop_bar_span_m(state: DesignState, leg_name: str, has_bar: bool) -> dict:
     if not has_bar:
         return {}
     span_ft, lateral_ft = stop_bar_band_geometry_ft(
-        stop_bar_width_ft(state, leg_name), entering_lane_width_ft(state, leg_name) is None)
+        stop_bar_width_ft(state, leg_name), entering_lane_width_ft(state, leg_name) is None,
+        inner_ft=divider_shift_toward_ft(state, leg_name, Side.LEFT))
     return {"stop_bar_span_m": span_ft * FT_TO_M,
             "stop_bar_lateral_offset_m": lateral_ft * FT_TO_M}
 

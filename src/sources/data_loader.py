@@ -8,6 +8,7 @@ from geopy.geocoders import Nominatim
 from shapely.geometry import MultiLineString, MultiPolygon, Point, box
 
 from src.geometry.model import NJ_STATE_PLANE_FT, WGS84, buffer_point_wgs84, reproject_to_state_plane
+from src.sources.schemas import ParcelsSchema, RoadNetworkSchema, validate_layer
 
 
 class OfflineCacheMiss(RuntimeError):
@@ -279,10 +280,13 @@ def load_road_network(
     built (see _resolve_indexed_path / scripts/convert_road_network.py) - same data,
     dramatically faster bbox reads.
     """
-    network = gpd.read_file(_resolve_indexed_path(path), bbox=bbox)
+    resolved = _resolve_indexed_path(path)
+    network = gpd.read_file(resolved, bbox=bbox)
     if not network.empty:
         network = network.set_geometry(network.geometry.map(_unpack_single_part))
-    return network
+    # Validated at the boundary, once - see src/sources/schemas.py. A renamed SRI column is
+    # otherwise read downstream as "this leg matched no road", which is drawn, not raised.
+    return validate_layer(network, RoadNetworkSchema, resolved, expect_crs=WGS84)
 
 
 def load_parcels(
@@ -291,7 +295,10 @@ def load_parcels(
     """Load a parcels/MOD-IV shapefile (Mercer County by default; pass `path` for a
     different one), optionally filtered to a bbox (in the shapefile's native CRS -
     reproject the bbox first if querying in WGS84)."""
-    return gpd.read_file(path, bbox=bbox)
+    # The CRS check here is the one that has actually bitten: a WGS84 bbox against this
+    # State-Plane shapefile returns zero rows, which reads as "no parcels here".
+    return validate_layer(gpd.read_file(path, bbox=bbox), ParcelsSchema, path,
+                           expect_crs=NJ_STATE_PLANE_FT)
 
 
 def load_parcels_near(

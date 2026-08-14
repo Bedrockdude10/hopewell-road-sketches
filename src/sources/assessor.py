@@ -38,6 +38,8 @@ from pathlib import Path
 
 import geopandas as gpd
 
+from src.sources.schemas import TaxListSchema, validate_layer
+
 # The assessor counts storeys; this turns them into a height. Same figure OSM's building:levels is
 # read with (osm_context.METERS_PER_LEVEL), because they are counting the same thing and a house
 # should not change height depending on which source described it.
@@ -91,6 +93,11 @@ def storeys_by_pin(tax_list_path: str | Path) -> dict[str, float]:
     if not path.exists():
         return {}
     rows = gpd.read_file(path, columns=["GIS_PIN", "BLDG_DESC"])
+    # Validated here rather than trusted, because the failure is invisible in a render: if either
+    # column is renamed the join matches nothing, every building falls back to one default height,
+    # and the result is the field of identical boxes this module was written to fix. No CRS check -
+    # the tax list is a table, not a layer. See src/sources/schemas.py.
+    validate_layer(rows, TaxListSchema, path)
     out = {}
     for pin, description in zip(rows["GIS_PIN"], rows["BLDG_DESC"]):
         storeys = storeys_from_description(description)

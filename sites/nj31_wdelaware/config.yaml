@@ -1,0 +1,174 @@
+# NJ 31 & W Delaware Ave, Pennington Borough / Hopewell Township, NJ 08534.
+#
+# The SCHOOL CROSSING SITE, and the first one here that is not a small-borough local
+# junction: NJ 31 is a state trunk highway, 35 mph, on NJDOT's designated truck network
+# (STRAHNET, hgv=designated), with a left-turn lane on all four approaches. Hopewell Valley
+# Central High School's boundary is 510 ft west along W Delaware Ave, and The Pennington
+# School's is 814 ft; this junction is the crossing between them and the borough.
+#
+# Every leg's width is measured off the kerbs Danny traced in OSM on 2026-08-02 (24 ways,
+# 1,122 ft, raised/lowered tagged with tactile_paving on the crossing ramps), NOT field-
+# measured - see `width_provenance` on each leg and sites/README.md for what those tiers
+# mean. The pipeline re-measures each leg between its own two traced kerbs and that
+# measurement governs; the numbers below are what it settled on.
+#
+# See sites/README.md for the schema.
+
+data_sources:
+  road_network: data/NJ_Roadway_Network.geojson
+  parcels: data/MercerCountyParcels.shp
+  # MOD-IV property tax records for building heights (src/sources/assessor.py). Note this
+  # junction straddles a municipal line: MUN 1108 is Pennington Borough (east/north),
+  # MUN 1106 is Hopewell Township (west/south), and both are in this county-wide file.
+  tax_list: data/MercerTaxList.dbf
+
+intersection:
+  name: "NJ 31 & W Delaware Ave, Pennington, NJ 08534"
+  center_wgs84: [-74.7989728, 40.3272925]
+  street1: "NJ 31"
+  street2: "West Delaware Avenue"
+  anchor_query: "West Delaware Avenue, Pennington, NJ 08534"
+  resolution_method: >
+    OSM/Overpass shared-node match (src/sources/data_loader.py:geocode_intersection).
+    Node 104089792, which is also the highway=traffic_signals node - the two streets share
+    exactly ONE node within 1,500 m, so there is no ambiguity to resolve against the anchor.
+    NJDOT's own layer corroborates it: SRI 00000031__ (NJ 31) and the two local SRIs below
+    are the only three segments within 150 m.
+    RESOLVING THIS AT ALL NEEDED A FIX. NJ 31 carries `ref=NJ 31` and NO `name` tag, and
+    geocode_intersection matched OSM's `name` only, so the documented one-command
+    re-resolution failed here with "could not find OSM ways matching 'NJ 31'". It now
+    searches `name` and `ref` alike (tests/test_geocoding.py).
+  clip_radius_m: 150
+  leg_working_length_ft: 130
+  # All four legs are marked, and unusually well recorded: OSM maps four crossing ways here
+  # (365618075 / 376500674 / 1341100456 / 1341100457), every one crossing=marked with
+  # crossing:markings=yes, and Danny's kerb trace adds tactile_paving=yes on the dropped
+  # kerbs at the ramps. Sidewalk-to-sidewalk spans are 43.7-61.3 ft, an upper bound on the
+  # roadway, not a measurement of it.
+  #
+  # This junction is NOT in the July 2026 Hopewell Crosswalk Inventory - that survey covered
+  # Hopewell Borough, and this is Pennington. So unlike the other four sites there is no
+  # second, independent record of crossing condition here to cross-check OSM against, and
+  # nothing below reports one.
+  existing_marked_crosswalks:
+    ["nj31_north", "nj31_south", "w_delaware_east", "w_delaware_west"]
+
+corridor:
+  jurisdiction: "State (NJ 31, SRI 00000031__) x local (Pennington Boro / Hopewell Twp)"
+  speed_limit_mph: 35      # NJ 31; W Delaware Ave is signed 25 (OSM maxspeed:type=sign)
+  truck_route: "NJDOT designated state truck network - hgv=designated, NHS=STRAHNET"
+  lanes: 3                 # every approach: two through/turn lanes one way, one the other
+  turn_lanes: >
+    OSM records turn:lanes on all four approaches - `left|none` northbound and southbound on
+    NJ 31, and the same on both W Delaware approaches. So each approach has a left-turn
+    pocket, which is where the third lane goes and why these legs are wide for two-lane
+    streets.
+
+legs:
+  nj31_north:
+    sri: "00000031__"
+    bearing_deg: 5.9
+    street_name: "NJ 31 (north of W Delaware Ave, toward Pennington Circle)"
+    curb_to_curb_ft: 43.1  # measured between the traced kerbs; see source
+    width_provenance: osm_derived
+    confirmed: false
+    centerline_style: double_yellow
+    # NOT confirmed by street view. Asserted from OSM: this way is tagged `overtaking=no`
+    # on the approach, which src/geometry/intersection.py already reads as a double yellow
+    # elsewhere in this project. Confirm it and replace this comment with an observation.
+    source: >
+      OSM-DERIVED, not a field measurement. Measured between the two kerbs Danny traced on
+      2026-08-02 (ways 1546815167 / 1546815172 and the corner returns either side), at the
+      same station, by src/geometry/intersection.py:_resize_and_centre_from_traced_kerbs -
+      the same path every Broad St leg's width comes from. A trace off aerial imagery
+      carries the imagery's own registration error, call it +/- 1-2 ft, and it measures the
+      kerb face rather than the pavement edge. OSM crossing way 1341100456 spans 61.3 ft
+      sidewalk-to-sidewalk here, an upper bound only. No NJDOT straight-line diagram for
+      Route 31 is in data/ - see the README's data section; adding it would give this leg a
+      published cross-section to check against.
+
+  nj31_south:
+    sri: "00000031__"
+    bearing_deg: 186.1
+    street_name: "NJ 31 (south of W Delaware Ave, toward Pennington Road)"
+    curb_to_curb_ft: 41.8  # measured between the traced kerbs; see source
+    width_provenance: osm_derived
+    confirmed: false
+    centerline_style: double_yellow   # NOT confirmed - same basis as nj31_north
+    source: >
+      OSM-DERIVED, same methodology and the same trace as nj31_north. OSM crossing way
+      365618075 spans 50.6 ft sidewalk-to-sidewalk, an upper bound only. NOT a field
+      measurement.
+
+  w_delaware_east:
+    sri: "11081029__"   # NJDOT calls this "E DELAWARE AVE" - see the note below
+    bearing_deg: 82.5
+    street_name: "W Delaware Avenue (east of NJ 31, toward N Main St)"
+    curb_to_curb_ft: 30.7  # measured between the traced kerbs; see source
+    width_provenance: osm_derived
+    confirmed: false
+    centerline_style: single_yellow_dashed  # NOT confirmed - repo default, retained rather
+                                             # than guessed. Needs street-view review.
+    # NAME CONFLICT, unresolved and harmless: OSM names this leg "West Delaware Avenue" and
+    # splits W/E at N Main St further east, while NJDOT carries the whole borough stretch
+    # under one SRI named "E DELAWARE AVE". Both are describing this same roadway. The OSM
+    # name is the one used above because it is what the street signs say at this junction;
+    # the SRI is recorded as NJDOT has it so the linear reference still resolves. Compare
+    # the Columbia Ave / Greenwood Ave SRI collision in the main README's key findings.
+    source: >
+      OSM-DERIVED, same methodology and the same trace as nj31_north. OSM crossing way
+      1341100457 spans 48.2 ft sidewalk-to-sidewalk, an upper bound only. NOT a field
+      measurement.
+
+  w_delaware_west:
+    # NJDOT's SRI 11081029__ AGAIN, not PENNINGTON-TITUSVILLE RD (11061023__), and this is
+    # the one thing at this junction that is easy to get wrong. NJDOT's "E DELAWARE AVE"
+    # segment runs THROUGH the junction and supplies both Delaware approaches - it splits
+    # into two pieces here, at 81.9 and 263.9 deg. Pennington-Titusville Rd is the
+    # CONTINUATION: its own segment begins 334 ft west and never reaches this junction, so
+    # a leg pointed at it gets no centerline at all. The street sign and the school address
+    # both say Pennington-Titusville Road, and the linear reference here does not.
+    sri: "11081029__"
+    bearing_deg: 265.0
+    street_name: "W Delaware Avenue / Pennington-Titusville Rd (west of NJ 31, toward HVCHS)"
+    curb_to_curb_ft: 30.3  # measured between the traced kerbs; see source
+    width_provenance: osm_derived
+    confirmed: false
+    centerline_style: single_yellow_dashed  # NOT confirmed - same basis as w_delaware_east
+    # THE SCHOOL LEG. OSM tags this way `alt_name=Pennington-Titusville Road` and NJDOT
+    # names the SRI that outright; HVCHS (OSM way 515377049) fronts it 510 ft west. It is
+    # also the narrowest leg here, which is why the proposal in scenarios.py treats it
+    # rather than NJ 31.
+    source: >
+      OSM-DERIVED, same methodology and the same trace as nj31_north. OSM crossing way
+      376500674 spans 43.7 ft sidewalk-to-sidewalk, an upper bound only. NOT a field
+      measurement.
+
+# NO `signals` block, DELIBERATELY, and this is a known gap rather than a statement that the
+# junction is unsignalized - it plainly is signalized: OSM node 104089792 is
+# highway=traffic_signals with traffic_signals:direction=both, and there are no
+# highway=stop or give_way nodes on any approach.
+#
+# The block exists to record DIRECT OBSERVATION of signal hardware - pole type, whether each
+# pedestrian head shares the vehicle pole, which legs are no-turn-on-red - and nobody has
+# looked at this junction in street view yet. Writing a plausible-looking block would put
+# invented hardware in the render at the project's highest provenance tier, which is the one
+# thing src/render/props.py:build_props refuses to do. So the build will report
+# "OSM maps a traffic_signals node here but the site config has no `signals` block, so no
+# signal hardware will be drawn" (props.py:signalization_conflicts), which is the honest
+# state of knowledge. Confirm by street view and add the block.
+#
+# One consequence worth knowing: SceneGeometry.resolve only fetches and draws stop bars when
+# a `signals` block is present, so this junction renders without them until it is added.
+
+treatments:
+  existing_corner_radius_ft: 25  # ESTIMATE - overridden per corner where the trace allows
+  existing_corner_radius_source: >
+    No survey or field visit. Unlike the borough sites, the corner returns here ARE traced
+    (Danny's 2026-08-02 kerb trace includes the four returns), so
+    src/geometry/intersection.py:_corner_radii_from_osm fits each corner's radius from the
+    tracing and reports what it used; this 25 ft figure is only the fallback for a corner
+    whose arc is too short or too poor a fit to solve. It is larger than the 20 ft placeholder
+    the borough sites use because this is a designated truck route (hgv=designated) with
+    turning-truck returns, not an older small-borough corner - still an estimate, and one to
+    replace with the fitted value or a measurement.

@@ -1326,6 +1326,26 @@ BIKE_LANE_BUFFER_FT = 2.0
 # 5 ft of lane plus 2 ft of shy reads better than 6 ft of lane against the kerb.
 BIKE_LANE_DEFAULT_SHY_FT = 2.0
 
+# THE TWO-WAY (BIDIRECTIONAL) SECTION. A lane carrying riders in both directions on one side
+# of the street, which is a different object from two one-way lanes and not just a wider one:
+# it needs a centre stripe of its own, and it puts contraflow riders at every junction and
+# driveway on that kerb arriving from the direction a turning driver does not check. That is
+# why the corridor's side is chosen on how many streets cut the kerb rather than on width.
+#
+# NACTO's Urban Bikeway Design Guide: 12 ft desirable, 10 ft minimum, 8 ft in constrained
+# conditions. The 8 ft case is not offered here - at that width two riders cannot pass an
+# oncoming pair, which on a corridor route is the condition rather than the exception.
+TWO_WAY_BIKE_LANE_WIDTH_FT = 12.0
+MIN_TWO_WAY_BIKE_LANE_FT = 10.0
+# With vertical elements (flex posts) NACTO asks 3 ft where a two-way lane runs beside moving
+# traffic - more than the 2 ft a one-way lane gets, because a head-on error here is a closing
+# speed, not an overtaking one.
+TWO_WAY_BIKE_LANE_BUFFER_FT = 3.0
+# Below this the two travel lanes are no longer lanes. NACTO's urban minimum is 10 ft, and
+# TARGET_LANE_WIDTH_FT (11) is what this project designs to; a corridor that cannot hold two
+# 10 ft lanes beside the section is reported rather than drawn.
+MIN_TRAVEL_LANE_BESIDE_TWO_WAY_FT = 10.0
+
 
 def _feet(value: float) -> str:
     """A width for a note: a decimal only where the number has one. 5.0 -> "5", 4.4947 -> "4.5"."""
@@ -1356,6 +1376,12 @@ class BikeLane:
     buffer_ft: float = 0.0
     parking_ft: float = 0.0
     shy_ft: float = 0.0
+    # Where this side's section BEGINS, as a distance from the alignment. Normally the travel
+    # lane's own width, because the two travel lanes straddle the alignment symmetrically. A
+    # two-way lane on one side does not leave them straddling it - see TwoWayBikeLane - so the
+    # inner edge becomes a property of the section rather than a constant. Defaulted, so every
+    # existing one-way scenario is unchanged.
+    travel_edge_ft: float | None = None
 
     def __post_init__(self):
         if self.width_ft < MIN_BIKE_LANE_FT:
@@ -1409,7 +1435,7 @@ class BikeLane:
         width behind it stays whole.
         """
         line_ft = _lane_line_ft()
-        travel_edge = TARGET_LANE_WIDTH_FT
+        travel_edge = TARGET_LANE_WIDTH_FT if self.travel_edge_ft is None else self.travel_edge_ft
         # With a buffer the two stripes bounding it come out of the buffer's own width; without
         # one there is a single stripe and it comes out of nothing but itself.
         bike_inner = travel_edge + (self.buffer_ft if self.buffer_ft else line_ft)
@@ -1447,6 +1473,93 @@ def min_bike_lane_buffer_ft() -> float:
     lives in src/geometry/paint.py, which imports this module.
     """
     return 2 * _lane_line_ft()
+
+
+@dataclass(frozen=True)
+class TwoWayBikeLane(BikeLane):
+    """A bidirectional bike lane on ONE side of a leg, and the shifted section it implies.
+
+    THE ALIGNMENT DOES NOT MOVE. That is the whole trick, and it is why this is drawable at
+    all. The main README recorded parking-protected lanes as undrawable here because "fitting
+    it would mean shifting the travel lanes off the NJDOT alignment - a real design, but not
+    one this pipeline can draw, since the alignment is the datum every offset, stop bar and
+    crossing frame is measured from". The datum genuinely cannot move. But it never had to be
+    the middle of the travel lanes: it is the line stations are measured along, and a
+    cross-section is free to be asymmetric about it. So every station, every crossing frame and
+    every stop bar stays exactly where it was, and what changes is that this side's section
+    starts further out and the painted divider between the travel lanes sits off the alignment
+    by travel_lane_divider_shift_ft.
+
+    Across the road, from the FAR kerb: travel lane, the divider, travel lane, buffer, two-way
+    bike lane, whatever is left hatched to the near kerb.
+
+    `near_half_ft` is the distance from the alignment to the kerb this lane is on, and
+    `far_half_ft` to the opposite kerb - both measured at the leg's NARROWEST traced point, for
+    the reason AddBikeLane gives: a treatment applied to a kerb is a promise about the whole of
+    it. They are not interchangeable and the asymmetry is the point, so they are separate
+    fields rather than one width.
+    """
+    near_half_ft: float = 0.0
+    far_half_ft: float = 0.0
+
+    def __post_init__(self):
+        if self.width_ft < MIN_TWO_WAY_BIKE_LANE_FT:
+            raise ValueError(
+                f"A {self.width_ft:.2f} ft two-way bike lane is under NACTO's "
+                f"{MIN_TWO_WAY_BIKE_LANE_FT:.0f} ft minimum ({TWO_WAY_BIKE_LANE_WIDTH_FT:.0f} ft "
+                f"is the width to design to). Two riders meeting head-on need the width of two "
+                f"riders; a one-way lane's {AASHTO_MIN_BIKE_LANE_FT:.0f} ft floor does not apply "
+                f"to a lane carrying both directions.")
+        super().__post_init__()
+        travel_way_ft = self.near_half_ft + self.far_half_ft - self.section_ft
+        if travel_way_ft / 2 < MIN_TRAVEL_LANE_BESIDE_TWO_WAY_FT:
+            raise ValueError(
+                f"A {self.width_ft:.1f} ft lane and a {self.buffer_ft:.1f} ft buffer spend "
+                f"{self.section_ft:.2f} ft of the {self.near_half_ft + self.far_half_ft:.2f} ft "
+                f"this leg has between its kerbs at its narrowest, leaving {travel_way_ft:.2f} ft "
+                f"for traffic - {travel_way_ft / 2:.2f} ft per travel lane, under the "
+                f"{MIN_TRAVEL_LANE_BESIDE_TWO_WAY_FT:.0f} ft floor. Narrow the lane, drop the "
+                f"buffer, or put a conventional pair of one-way lanes on this leg instead.")
+
+    @property
+    def section_ft(self) -> float:
+        """What this side's section spends: the lane, its buffer and the stripes bounding them.
+
+        NOT `total_ft`, which is measured from the alignment and therefore already contains the
+        travel lane. This is the width taken OUT of the roadway, which is what the two travel
+        lanes have to be fitted around.
+        """
+        line_ft = _lane_line_ft()
+        return self.width_ft + (self.buffer_ft if self.buffer_ft else line_ft) + line_ft
+
+    def offsets_from_centerline_ft(self) -> dict:
+        """The one-way section's own arithmetic, re-anchored to where this section starts.
+
+        BikeLane already lays out every stripe from `travel_edge_ft` outward, so the two-way
+        case is that same layout with a different starting offset - not a second copy of the
+        ordering. Getting a second copy is exactly what offsets_from_centerline_ft exists to
+        prevent: the ordering across the road IS the design, and two of them can disagree.
+        """
+        return BikeLane(width_ft=self.width_ft, buffer_ft=self.buffer_ft,
+                         parking_ft=self.parking_ft, shy_ft=self.shy_ft,
+                         travel_edge_ft=self.near_half_ft - self.section_ft
+                         ).offsets_from_centerline_ft()
+
+
+def travel_lane_divider_shift_ft(section: TwoWayBikeLane) -> float:
+    """How far the painted divider between the travel lanes sits off the alignment.
+
+    Positive TOWARD THE FAR KERB - away from the side carrying the lane, which is the
+    direction traffic is pushed by taking width out of one kerbside.
+
+    Derived so the two travel lanes come out EQUAL, which is the only defensible answer: the
+    travel way runs from the section's inner edge to the far kerb, and the divider goes down
+    the middle of that. Splitting it any other way would hand one direction a wider lane for
+    no stated reason, and this project's rule is that a width in a drawing is a decision
+    somebody can read back.
+    """
+    travel_way_ft = section.near_half_ft + section.far_half_ft - section.section_ft
+    return section.far_half_ft - travel_way_ft / 2
 
 
 def bike_lane_spare_ft(state: DesignState, leg_name: str, side: str, width_ft: float,

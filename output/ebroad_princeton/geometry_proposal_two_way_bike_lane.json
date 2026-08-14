@@ -8,10 +8,10 @@
     "UpgradeCrosswalkMarkings(e_broad_st_east, style='continental')",
     "UpgradeCrosswalkMarkings(e_broad_st_west, style='continental')",
     "UpgradeCrosswalkMarkings(princeton_ave_south, style='continental')",
-    "AddTwoWayBikeLane(e_broad_st_east, right): 10 ft two-way lane, 3 ft buffer. Spends 13.82 ft of this leg's 35.90 ft between kerbs, leaving two 11.00 ft travel lanes with the centreline shifted 6.78 ft toward the left kerb, and 0.08 ft spare against that kerb. The NJDOT alignment does not move; every station and crossing frame is measured from it as before.",
+    "AddTwoWayBikeLane(e_broad_st_east, right): 10 ft two-way lane, 3 ft buffer. Spends 13.82 ft of this leg's 35.90 ft between kerbs, leaving two 11.00 ft travel lanes with the centreline shifted 6.78 ft toward the left kerb, and 0.08 ft spare against that kerb. The NJDOT alignment does not move; every station and crossing frame is measured from it as before. NOTE: NJDOT's Bicycle Compatible Roadways and Bikeways (1996) calls a two-way bike lane on one side of the roadway 'unacceptable'; that guidance predates separated bikeways and MUTCD 11th ed. 9E.06 now marks them, but the departure has to be argued, not assumed - see STANDARDS.md 4.",
     "AddBikeLaneBollards(e_broad_st_east, right): flex-post delineators at 8 ft in the 3 ft buffer between the travel lane and the bike lane - the traffic side, which is the side that needs protecting.",
     "LaneNarrowing(e_broad_st_east, stripe_width_ft=0.6754536223221237, line_only=False, sides=('left',))",
-    "AddTwoWayBikeLane(e_broad_st_west, left): 10 ft two-way lane, 3 ft buffer. Spends 13.82 ft of this leg's 37.85 ft between kerbs, leaving two 11.00 ft travel lanes with the centreline shifted 5.90 ft toward the right kerb, and 2.03 ft spare against that kerb. The NJDOT alignment does not move; every station and crossing frame is measured from it as before.",
+    "AddTwoWayBikeLane(e_broad_st_west, left): 10 ft two-way lane, 3 ft buffer. Spends 13.82 ft of this leg's 37.85 ft between kerbs, leaving two 11.00 ft travel lanes with the centreline shifted 5.90 ft toward the right kerb, and 2.03 ft spare against that kerb. The NJDOT alignment does not move; every station and crossing frame is measured from it as before. NOTE: NJDOT's Bicycle Compatible Roadways and Bikeways (1996) calls a two-way bike lane on one side of the roadway 'unacceptable'; that guidance predates separated bikeways and MUTCD 11th ed. 9E.06 now marks them, but the departure has to be argued, not assumed - see STANDARDS.md 4.",
     "AddBikeLaneBollards(e_broad_st_west, left): flex-post delineators at 8 ft in the 3 ft buffer between the travel lane and the bike lane - the traffic side, which is the side that needs protecting.",
     "LaneNarrowing(e_broad_st_west, stripe_width_ft=2.213717023991304, line_only=False, sides=('right',))"
   ],
@@ -13228,6 +13228,34 @@
     ],
     [
       [
+        -20.789805986432686,
+        -11.255063920572773
+      ],
+      [
+        -21.327813034108747,
+        -11.432442341930141
+      ],
+      [
+        -21.65823073158483,
+        -11.541360657340755
+      ]
+    ],
+    [
+      [
+        -23.105808163014007,
+        -12.017906043966674
+      ],
+      [
+        -23.636982031244088,
+        -12.192721565453523
+      ],
+      [
+        -23.974377934866865,
+        -12.303762496443372
+      ]
+    ],
+    [
+      [
         -25.42189587149103,
         -12.780488542633877
       ],
@@ -13280,6 +13308,20 @@
       [
         -33.23731438862183,
         -15.358384450985772
+      ]
+    ],
+    [
+      [
+        -34.68490501316577,
+        -15.834889722006954
+      ],
+      [
+        -35.17160064989403,
+        -15.995048333619442
+      ],
+      [
+        -35.55348464395437,
+        -16.120716216531584
       ]
     ]
   ],

@@ -1,0 +1,242 @@
+buildings:
+  count: 98
+  vertices: 1578
+channels:
+  bike_lane_edge_lines:
+    count: 0
+    extent: null
+    points: 0
+  bike_lane_hatch_lines:
+    count: 0
+    extent: null
+    points: 0
+  bike_lane_surface_polygons:
+    count: 0
+    extent: null
+    points: 0
+  corner_apron_polygons:
+    count: 0
+    extent: null
+    points: 0
+  corner_hatching_lines:
+    count: 0
+    extent: null
+    points: 0
+  corner_parcels:
+    count: 4
+    extent:
+      max:
+      - 41.654
+      - 35.983
+      min:
+      - -49.017
+      - -46.477
+    points: 23
+  kerbs:
+    count: 24
+    extent:
+      max:
+      - 54.86
+      - 113.957
+      min:
+      - -54.804
+      - -45.682
+    points: 100
+  lane_narrowing_edge_lines:
+    count: 8
+    extent:
+      max:
+      - 18.346
+      - 37.93
+      min:
+      - -18.354
+      - -37.934
+    points: 294
+  lane_narrowing_hatch_lines:
+    count: 37
+    extent:
+      max:
+      - 19.344
+      - 36.264
+      min:
+      - -19.035
+      - -36.12
+    points: 74
+  lane_narrowing_taper_lines:
+    count: 0
+    extent: null
+    points: 0
+  parking_buffer_edge_lines:
+    count: 0
+    extent: null
+    points: 0
+  parking_buffer_hatch_lines:
+    count: 0
+    extent: null
+    points: 0
+  parking_buffer_taper_lines:
+    count: 0
+    extent: null
+    points: 0
+  parking_edge_lines:
+    count: 0
+    extent: null
+    points: 0
+  parking_stall_divider_lines:
+    count: 0
+    extent: null
+    points: 0
+  paved_surfaces:
+    count: 14
+    extent:
+      max:
+      - 115.159
+      - 168.518
+      min:
+      - -115.332
+      - -123.331
+    points: 338
+  pavement_far:
+    count: 4
+    extent:
+      max:
+      - 44.204
+      - 38.333
+      min:
+      - -43.522
+      - -45.682
+    points: 64
+  pavement_near:
+    count: 1
+    extent:
+      max:
+      - 10.765
+      - 10.765
+      min:
+      - -10.765
+      - -10.765
+    points: 1333
+  raised_crossings:
+    count: 0
+    extent: null
+    points: 0
+  refuge_islands:
+    count: 0
+    extent: null
+    points: 0
+  sidewalks_far:
+    count: 12
+    extent:
+      max:
+      - 44.781
+      - 39.037
+      min:
+      - -44.092
+      - -46.376
+    points: 108
+  sidewalks_near:
+    count: 12
+    extent:
+      max:
+      - 10.743
+      - 10.738
+      min:
+      - -10.677
+      - -10.753
+    points: 1990
+  tree_points:
+    count: 0
+    extent: null
+    points: 0
+existing_marked_crosswalks:
+- columbia_ave_east
+- columbia_ave_west
+- princeton_ave_north
+- princeton_ave_south
+frame:
+  center_m:
+  - -1.99
+  - -0.086
+  radius_m: 46.104
+legs:
+  columbia_ave_east:
+    crosswalk_axis:
+    - 0.953
+    - 0.304
+    crosswalk_centre_m:
+    - 7.195
+    - 2.824
+    crosswalk_offset_m: 7.717
+    crosswalk_style: continental
+    far_m:
+    - 37.527
+    - 12.721
+    near_m:
+    - -0.145
+    - 0.44
+    width_m: 8.185
+  columbia_ave_west:
+    crosswalk_axis:
+    - -0.95
+    - -0.313
+    crosswalk_centre_m:
+    - -6.575
+    - -1.696
+    crosswalk_offset_m: 6.772
+    crosswalk_style: continental
+    far_m:
+    - -37.754
+    - -12.051
+    near_m:
+    - -0.149
+    - 0.438
+    width_m: 8.061
+  princeton_ave_north:
+    crosswalk_axis:
+    - -0.397
+    - 0.918
+    crosswalk_centre_m:
+    - -2.775
+    - 6.623
+    crosswalk_offset_m: 7.181
+    crosswalk_style: continental
+    far_m:
+    - -15.138
+    - 36.618
+    near_m:
+    - 0.03
+    - 0.012
+    width_m: 9.306
+  princeton_ave_south:
+    crosswalk_axis:
+    - 0.398
+    - -0.917
+    crosswalk_centre_m:
+    - 2.363
+    - -5.445
+    crosswalk_offset_m: 5.936
+    crosswalk_style: continental
+    far_m:
+    - 15.124
+    - -36.624
+    near_m:
+    - 0.03
+    - 0.013
+    width_m: 9.522
+name: Proposed Treatments
+props:
+- fire_hydrant@420202.49,567130.87
+- stop_sign@420303.20,566755.05
+- stop_sign@420356.71,566806.99
+- tactile_paving_pad@420300.94,566787.63
+- tactile_paving_pad@420302.74,566794.90
+- tactile_paving_pad@420312.82,566759.75
+- tactile_paving_pad@420321.85,566755.90
+- tactile_paving_pad@420336.49,566807.18
+- tactile_paving_pad@420346.51,566802.75
+- tactile_paving_pad@420355.05,566766.88
+- tactile_paving_pad@420359.19,566774.17
+scalars:
+  crosswalk_depth_m: 1.829
+  stop_bar_curb_clearance_m: 0.5
+units: meters

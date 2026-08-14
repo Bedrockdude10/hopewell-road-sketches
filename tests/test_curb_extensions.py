@@ -192,7 +192,7 @@ def test_greenwood_cannot_take_an_eight_foot_extension(site_models, leg_name):
     model = site_models["broad_st_greenwood"]
     with contextlib.redirect_stdout(io.StringIO()):
         base = DesignState.from_model(model)
-    with pytest.raises(ValueError, match="under the .* ft target"):
+    with pytest.raises(ValueError, match=r"under the .* ft target"):
         base.apply(AddCurbExtension(LegSide(leg_name, "left"), extension_ft=8.0, crossing_ft=30.0))
 
 
@@ -859,7 +859,7 @@ def test_a_kerb_under_the_floor_with_a_buffer_falls_back_to_a_conventional_lane(
     lane entirely would be the worse answer, and it is the one the code gave before the fallback
     existed.
     """
-    from src.geometry.treatments import (BIKE_LANE_BUFFER_FT, BIKE_LANE_WIDTH_FT,
+    from src.geometry.treatments import (BIKE_LANE_WIDTH_FT,
                                          MIN_BIKE_LANE_FT, widest_protected_lane_ft)
 
     # The protected section is 18.82 ft: 11 ft lane + 2 ft buffer + 5 ft lane + two 0.82 ft

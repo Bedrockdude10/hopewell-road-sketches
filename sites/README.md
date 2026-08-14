@@ -7,6 +7,14 @@ the step-by-step process. This file documents the `config.yaml` schema.
 
 Use `sites/broad_st_greenwood/config.yaml` as a working example of every field below.
 
+**This schema is enforced, not just documented.** `src/site_schema.py` states it as pydantic
+models and `src/site.py:load_site_config` validates against them on every load, so a config
+that disagrees with what follows fails immediately, naming the file and every problem in it at
+once. That includes the two failures this prose could never prevent: a MISSPELLED KEY (which
+otherwise reads downstream as "this fact was deliberately omitted") and a LEG NAME THAT MATCHES
+NOTHING (which otherwise draws nothing and says nothing). If you add a field here, add it
+there - an unrecognised key is an error.
+
 ## `config.yaml` schema
 
 ```yaml

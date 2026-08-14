@@ -1044,7 +1044,7 @@ def _blend_onto(leg, joint: np.ndarray, heading: np.ndarray, blend_ft: float):
     line to its own alignment with no kink to show for it.
     """
     centerline = leg.centerline
-    stations0, offsets0 = station_offset_many(centerline, np.asarray([joint], dtype=float))
+    _stations0, offsets0 = station_offset_many(centerline, np.asarray([joint], dtype=float))
     start_offset_ft = float(offsets0[0])
     here = _near_direction(leg, blend_ft)
     turn = np.arctan2(heading[1], heading[0]) - np.arctan2(here[1], here[0])
@@ -1176,7 +1176,7 @@ def _fit_legs_to_traced_kerbs(legs: dict, kerb_ways: list, center_ft: Point, leg
 
     apply_curbs(ratio_bounds=SEED_RATIO_BOUNDS)
     best, best_sides = snapshot(), _traced_side_count(legs)
-    for iteration in range(MAX_FIT_ITERATIONS):
+    for _iteration in range(MAX_FIT_ITERATIONS):
         # THE FIT MAY NEVER USE LESS GROUND TRUTH THAN IT ALREADY HAD. A width feeds the
         # window that decides which traced vertices the NEXT round may claim, so a round can
         # talk itself out of a kerb it was already using - and the loss compounds. At W Broad
@@ -1266,7 +1266,7 @@ def _match_legs_to_osm_roads(legs: dict, center_wgs84: Point, center_ft: Point) 
     """
     try:
         roads = fetch_roads(center_wgs84, radius_m=ROAD_CONTEXT_RADIUS_M)
-    except Exception as e:  # noqa: BLE001 - operational tags are an enhancement, not a dependency
+    except Exception as e:   # operational tags are an enhancement, not a dependency
         print(f"  NOTE: couldn't read OSM road tags ({type(e).__name__}); centerline styles "
               f"fall back to the site config.")
         return {}
@@ -1485,7 +1485,7 @@ def _apply_traced_curb_lines(legs: dict, kerb_ways: list, center_ft: Point,
     # the sides. That's the difference between "this junction isn't representable" and
     # "trace these two and it will be".
     gaps = []
-    for name, leg in legs.items():
+    for name in legs:
         for side in ("left", "right"):
             points = assigned.get(name, {}).get(side, [])
             if not points:

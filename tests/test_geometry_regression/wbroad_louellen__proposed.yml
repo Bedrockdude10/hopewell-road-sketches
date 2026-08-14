@@ -1,0 +1,260 @@
+buildings:
+  count: 55
+  vertices: 1263
+channels:
+  bike_lane_edge_lines:
+    count: 0
+    extent: null
+    points: 0
+  bike_lane_hatch_lines:
+    count: 0
+    extent: null
+    points: 0
+  bike_lane_surface_polygons:
+    count: 0
+    extent: null
+    points: 0
+  corner_apron_polygons:
+    count: 0
+    extent: null
+    points: 0
+  corner_hatching_lines:
+    count: 0
+    extent: null
+    points: 0
+  corner_parcels:
+    count: 4
+    extent:
+      max:
+      - 43.358
+      - 70.745
+      min:
+      - -142.934
+      - -87.441
+    points: 44
+  kerbs:
+    count: 15
+    extent:
+      max:
+      - 28.242
+      - 23.929
+      min:
+      - -54.331
+      - -44.219
+    points: 45
+  lane_narrowing_edge_lines:
+    count: 10
+    extent:
+      max:
+      - 33.375
+      - 27.111
+      min:
+      - -41.264
+      - -0.347
+    points: 346
+  lane_narrowing_hatch_lines:
+    count: 36
+    extent:
+      max:
+      - 33.952
+      - 27.963
+      min:
+      - -40.984
+      - -2.572
+    points: 72
+  lane_narrowing_taper_lines:
+    count: 0
+    extent: null
+    points: 0
+  parking_buffer_edge_lines:
+    count: 8
+    extent:
+      max:
+      - -0.444
+      - 8.46
+      min:
+      - -41.753
+      - -31.553
+    points: 135
+  parking_buffer_hatch_lines:
+    count: 24
+    extent:
+      max:
+      - 2.259
+      - -0.94
+      min:
+      - -36.023
+      - -31.49
+    points: 48
+  parking_buffer_taper_lines:
+    count: 0
+    extent: null
+    points: 0
+  parking_edge_lines:
+    count: 3
+    extent:
+      max:
+      - -13.437
+      - -0.044
+      min:
+      - -41.621
+      - -29.825
+    points: 73
+  parking_stall_divider_lines:
+    count: 7
+    extent:
+      max:
+      - -11.524
+      - -0.415
+      min:
+      - -37.055
+      - -27.597
+    points: 14
+  paved_surfaces:
+    count: 18
+    extent:
+      max:
+      - 191.936
+      - 121.472
+      min:
+      - -120.011
+      - -128.5
+    points: 613
+  pavement_far:
+    count: 2
+    extent:
+      max:
+      - 34.337
+      - 28.834
+      min:
+      - -54.331
+      - -44.219
+    points: 278
+  pavement_near:
+    count: 1
+    extent:
+      max:
+      - 11.987
+      - 12.053
+      min:
+      - -12.797
+      - -11.862
+    points: 201
+  raised_crossings:
+    count: 0
+    extent: null
+    points: 0
+  refuge_islands:
+    count: 0
+    extent: null
+    points: 0
+  sidewalks_far:
+    count: 10
+    extent:
+      max:
+      - 35.398
+      - 30.343
+      min:
+      - -54.425
+      - -45.433
+    points: 431
+  sidewalks_near:
+    count: 8
+    extent:
+      max:
+      - 12.558
+      - 12.638
+      min:
+      - -9.792
+      - -12.472
+    points: 353
+  tree_points:
+    count: 0
+    extent: null
+    points: 0
+existing_marked_crosswalks:
+- louellen_st_west
+frame:
+  center_m:
+  - -0.715
+  - 1.897
+  radius_m: 42.062
+legs:
+  louellen_st_west:
+    crosswalk_axis:
+    - -0.999
+    - 0.047
+    crosswalk_centre_m:
+    - -11.468
+    - 1.799
+    crosswalk_offset_m: 9.749
+    crosswalk_style: continental
+    far_m:
+    - -41.443
+    - 3.429
+    near_m:
+    - -2.407
+    - 4.035
+    stop_bar_axis:
+    - -0.999
+    - 0.052
+    stop_bar_centre_m:
+    - -18.75
+    - 2.159
+    width_m: 12.829
+  w_broad_st_northeast:
+    crosswalk_axis:
+    - 0.861
+    - 0.509
+    crosswalk_centre_m:
+    - 5.888
+    - 7.393
+    crosswalk_offset_m: 8.944
+    crosswalk_style: continental
+    far_m:
+    - 31.558
+    - 24.219
+    near_m:
+    - -1.485
+    - 2.35
+    stop_bar_axis:
+    - 0.865
+    - 0.502
+    stop_bar_centre_m:
+    - 7.129
+    - 8.115
+    width_m: 10.745
+  w_broad_st_southwest:
+    crosswalk_axis:
+    - -0.653
+    - -0.757
+    crosswalk_centre_m:
+    - -8.316
+    - -4.633
+    crosswalk_offset_m: 8.944
+    crosswalk_style: continental
+    far_m:
+    - -28.821
+    - -27.48
+    near_m:
+    - -2.125
+    - 1.813
+    stop_bar_axis:
+    - -0.666
+    - -0.746
+    stop_bar_centre_m:
+    - -15.833
+    - -13.435
+    width_m: 13.396
+name: Proposed Treatments
+props:
+- fire_hydrant@418080.91,566067.60
+- pedestrian_signal_head@417978.46,565991.47
+- pedestrian_signal_head@418029.05,566040.40
+- tactile_paving_pad@417980.76,565992.30
+- traffic_signal_pole@417978.46,565991.47
+- traffic_signal_pole@418029.05,566040.40
+scalars:
+  crosswalk_depth_m: 1.829
+  stop_bar_curb_clearance_m: 0.5
+units: meters

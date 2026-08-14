@@ -20,6 +20,7 @@ from src.site import load_site_scenarios, run_scenario
 
 from tests.conftest import needs_source_data
 from tests.test_sites import resolved_scene, scene_props
+import itertools
 
 
 def test_a_kerb_with_no_tag_is_unknown_and_not_assumed_raised():
@@ -117,7 +118,7 @@ def test_the_markings_break_over_a_dropped_kerb(site_models):
             f"a {hi - lo:.1f} ft run of green inside the opening, against a {DOTTED_MARK_FT} ft "
             f"mark - that is a slab painted through the driveway, not a dotted extension")
     runs.sort()
-    for (_lo, hi), (next_lo, _next_hi) in zip(runs, runs[1:]):
+    for (_lo, hi), (next_lo, _next_hi) in itertools.pairwise(runs):
         assert next_lo - hi >= DOTTED_GAP_FT - 0.5, (
             f"only {next_lo - hi:.1f} ft between two marks, against a {DOTTED_GAP_FT} ft gap")
 

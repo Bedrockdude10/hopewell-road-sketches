@@ -1,0 +1,304 @@
+buildings:
+  count: 79
+  vertices: 1497
+channels:
+  bike_lane_edge_lines:
+    count: 0
+    extent: null
+    points: 0
+  bike_lane_hatch_lines:
+    count: 0
+    extent: null
+    points: 0
+  bike_lane_surface_polygons:
+    count: 0
+    extent: null
+    points: 0
+  corner_apron_polygons:
+    count: 0
+    extent: null
+    points: 0
+  corner_hatching_lines:
+    count: 0
+    extent: null
+    points: 0
+  corner_parcels:
+    count: 4
+    extent:
+      max:
+      - 75.11
+      - 63.652
+      min:
+      - -62.309
+      - -73.255
+    points: 38
+  kerbs:
+    count: 29
+    extent:
+      max:
+      - 129.748
+      - 62.117
+      min:
+      - -43.367
+      - -36.217
+    points: 112
+  lane_narrowing_edge_lines:
+    count: 11
+    extent:
+      max:
+      - 22.027
+      - 36.042
+      min:
+      - -34.634
+      - -36.487
+    points: 395
+  lane_narrowing_hatch_lines:
+    count: 50
+    extent:
+      max:
+      - 22.913
+      - 34.882
+      min:
+      - -36.234
+      - -34.545
+    points: 100
+  lane_narrowing_taper_lines:
+    count: 0
+    extent: null
+    points: 0
+  parking_buffer_edge_lines:
+    count: 7
+    extent:
+      max:
+      - 48.638
+      - 29.131
+      min:
+      - 1.768
+      - -4.393
+    points: 337
+  parking_buffer_hatch_lines:
+    count: 28
+    extent:
+      max:
+      - 48.236
+      - 29.544
+      min:
+      - 2.345
+      - -2.904
+    points: 56
+  parking_buffer_taper_lines:
+    count: 0
+    extent: null
+    points: 0
+  parking_edge_lines:
+    count: 2
+    extent:
+      max:
+      - 47.533
+      - 26.818
+      min:
+      - 19.739
+      - 8.47
+    points: 94
+  parking_stall_divider_lines:
+    count: 10
+    extent:
+      max:
+      - 47.957
+      - 28.806
+      min:
+      - 18.632
+      - 6.158
+    points: 20
+  paved_surfaces:
+    count: 26
+    extent:
+      max:
+      - 132.043
+      - 107.054
+      min:
+      - -143.302
+      - -125.466
+    points: 1031
+  pavement_far:
+    count: 4
+    extent:
+      max:
+      - 51.412
+      - 43.969
+      min:
+      - -43.367
+      - -37.161
+    points: 199
+  pavement_near:
+    count: 1
+    extent:
+      max:
+      - 15.747
+      - 15.187
+      min:
+      - -15.717
+      - -15.606
+    points: 969
+  raised_crossings:
+    count: 0
+    extent: null
+    points: 0
+  refuge_islands:
+    count: 0
+    extent: null
+    points: 0
+  sidewalks_far:
+    count: 15
+    extent:
+      max:
+      - 52.252
+      - 44.884
+      min:
+      - -44.414
+      - -38.07
+    points: 538
+  sidewalks_near:
+    count: 10
+    extent:
+      max:
+      - 15.715
+      - 15.657
+      min:
+      - -15.747
+      - -15.747
+    points: 1555
+  tree_points:
+    count: 0
+    extent: null
+    points: 0
+existing_marked_crosswalks:
+- broad_st_east
+- broad_st_west
+- greenwood_ave_north
+- greenwood_ave_south
+frame:
+  center_m:
+  - 0.439
+  - 3.404
+  radius_m: 52.567
+legs:
+  broad_st_east:
+    crosswalk_axis:
+    - 0.848
+    - 0.53
+    crosswalk_centre_m:
+    - 5.527
+    - 3.42
+    crosswalk_offset_m: 6.501
+    crosswalk_style: continental
+    far_m:
+    - 46.034
+    - 23.68
+    near_m:
+    - 0.076
+    - -0.121
+    stop_bar_axis:
+    - 0.851
+    - 0.526
+    stop_bar_centre_m:
+    - 8.79
+    - 5.445
+    width_m: 15.853
+  broad_st_west:
+    crosswalk_axis:
+    - -0.824
+    - -0.566
+    crosswalk_centre_m:
+    - -5.197
+    - -3.604
+    crosswalk_offset_m: 6.327
+    crosswalk_style: continental
+    far_m:
+    - -32.68
+    - -22.407
+    near_m:
+    - 0.082
+    - -0.117
+    stop_bar_axis:
+    - -0.819
+    - -0.573
+    stop_bar_centre_m:
+    - -9.217
+    - -6.394
+    width_m: 16.916
+  greenwood_ave_north:
+    crosswalk_axis:
+    - -0.467
+    - 0.884
+    crosswalk_centre_m:
+    - -5.709
+    - 9.554
+    crosswalk_offset_m: 11.132
+    crosswalk_style: continental
+    far_m:
+    - -19.811
+    - 34.316
+    near_m:
+    - -0.458
+    - -0.261
+    stop_bar_axis:
+    - -0.487
+    - 0.873
+    stop_bar_centre_m:
+    - -7.915
+    - 13.647
+    width_m: 8.095
+  greenwood_ave_south:
+    crosswalk_axis:
+    - 0.473
+    - -0.881
+    crosswalk_centre_m:
+    - 5.529
+    - -11.46
+    crosswalk_offset_m: 12.699
+    crosswalk_style: continental
+    far_m:
+    - 19.016
+    - -34.77
+    near_m:
+    - -0.458
+    - -0.261
+    stop_bar_axis:
+    - 0.49
+    - -0.872
+    stop_bar_centre_m:
+    - 6.873
+    - -13.926
+    width_m: 9.518
+name: Proposed Treatments
+props:
+- fire_hydrant@419118.63,566794.48
+- fire_hydrant@419457.92,566946.33
+- no_turn_on_red_sign@419148.67,566741.60
+- no_turn_on_red_sign@419165.76,566829.29
+- pedestrian_pushbutton@419124.78,566806.27
+- pedestrian_pushbutton@419125.17,566807.70
+- pedestrian_pushbutton@419160.37,566829.00
+- pedestrian_pushbutton@419160.37,566829.00
+- pedestrian_pushbutton@419160.44,566739.31
+- pedestrian_pushbutton@419160.44,566739.31
+- pedestrian_pushbutton@419196.32,566761.17
+- pedestrian_pushbutton@419196.32,566761.17
+- pedestrian_signal_head@419122.33,566810.35
+- pedestrian_signal_head@419146.78,566836.12
+- pedestrian_signal_head@419161.22,566735.12
+- pedestrian_signal_head@419196.48,566763.71
+- tactile_paving_pad@419124.16,566807.11
+- tactile_paving_pad@419159.99,566737.88
+- tactile_paving_pad@419160.62,566830.48
+- tactile_paving_pad@419193.88,566758.67
+- tactile_paving_pad@419194.81,566766.51
+- traffic_signal_pole@419122.33,566810.35
+- traffic_signal_pole@419149.72,566836.68
+- traffic_signal_pole@419161.22,566735.12
+- traffic_signal_pole@419196.48,566763.71
+scalars:
+  crosswalk_depth_m: 1.829
+  stop_bar_curb_clearance_m: 0.5
+units: meters

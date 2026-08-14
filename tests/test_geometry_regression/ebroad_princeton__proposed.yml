@@ -1,0 +1,250 @@
+buildings:
+  count: 75
+  vertices: 1425
+channels:
+  bike_lane_edge_lines:
+    count: 0
+    extent: null
+    points: 0
+  bike_lane_hatch_lines:
+    count: 0
+    extent: null
+    points: 0
+  bike_lane_surface_polygons:
+    count: 0
+    extent: null
+    points: 0
+  corner_apron_polygons:
+    count: 0
+    extent: null
+    points: 0
+  corner_hatching_lines:
+    count: 0
+    extent: null
+    points: 0
+  corner_parcels:
+    count: 4
+    extent:
+      max:
+      - 32.003
+      - 57.206
+      min:
+      - -34.888
+      - -74.099
+    points: 26
+  kerbs:
+    count: 33
+    extent:
+      max:
+      - 77.762
+      - 33.438
+      min:
+      - -142.259
+      - -116.73
+    points: 106
+  lane_narrowing_edge_lines:
+    count: 25
+    extent:
+      max:
+      - 38.746
+      - 15.594
+      min:
+      - -39.345
+      - -38.139
+    points: 939
+  lane_narrowing_hatch_lines:
+    count: 40
+    extent:
+      max:
+      - 39.23
+      - 17.386
+      min:
+      - -36.002
+      - -36.35
+    points: 80
+  lane_narrowing_taper_lines:
+    count: 0
+    extent: null
+    points: 0
+  parking_buffer_edge_lines:
+    count: 1
+    extent:
+      max:
+      - 11.088
+      - -0.416
+      min:
+      - 10.434
+      - -2.371
+    points: 2
+  parking_buffer_hatch_lines:
+    count: 0
+    extent: null
+    points: 0
+  parking_buffer_taper_lines:
+    count: 0
+    extent: null
+    points: 0
+  parking_edge_lines:
+    count: 0
+    extent: null
+    points: 0
+  parking_stall_divider_lines:
+    count: 0
+    extent: null
+    points: 0
+  paved_surfaces:
+    count: 28
+    extent:
+      max:
+      - 145.456
+      - 146.288
+      min:
+      - -115.458
+      - -146.87
+    points: 453
+  pavement_far:
+    count: 3
+    extent:
+      max:
+      - 46.62
+      - 21.326
+      min:
+      - -121.049
+      - -56.998
+    points: 113
+  pavement_near:
+    count: 1
+    extent:
+      max:
+      - 11.554
+      - 8.505
+      min:
+      - -11.554
+      - -11.554
+    points: 668
+  raised_crossings:
+    count: 0
+    extent: null
+    points: 0
+  refuge_islands:
+    count: 0
+    extent: null
+    points: 0
+  sidewalks_far:
+    count: 10
+    extent:
+      max:
+      - 47.241
+      - 23.047
+      min:
+      - -121.632
+      - -57.71
+    points: 404
+  sidewalks_near:
+    count: 8
+    extent:
+      max:
+      - 11.323
+      - 9.844
+      min:
+      - -11.334
+      - -11.51
+    points: 838
+  tree_points:
+    count: 0
+    extent: null
+    points: 0
+existing_marked_crosswalks:
+- e_broad_st_west
+- princeton_ave_south
+frame:
+  center_m:
+  - 0.344
+  - -2.633
+  radius_m: 41.682
+legs:
+  e_broad_st_east:
+    crosswalk_axis:
+    - 0.948
+    - 0.317
+    crosswalk_centre_m:
+    - 6.797
+    - 2.166
+    crosswalk_offset_m: 7.134
+    crosswalk_style: continental
+    far_m:
+    - 37.671
+    - 12.286
+    near_m:
+    - 0.029
+    - -0.089
+    stop_bar_axis:
+    - 0.949
+    - 0.314
+    stop_bar_centre_m:
+    - 15.318
+    - 5.008
+    width_m: 11.253
+  e_broad_st_west:
+    crosswalk_axis:
+    - -0.948
+    - -0.319
+    crosswalk_centre_m:
+    - -6.508
+    - -2.273
+    crosswalk_offset_m: 6.893
+    crosswalk_style: continental
+    far_m:
+    - -37.573
+    - -12.583
+    near_m:
+    - 0.029
+    - -0.089
+    stop_bar_axis:
+    - -0.948
+    - -0.319
+    stop_bar_centre_m:
+    - -11.019
+    - -3.792
+    width_m: 11.654
+  princeton_ave_south:
+    crosswalk_axis:
+    - 0.363
+    - -0.932
+    crosswalk_centre_m:
+    - 3.008
+    - -7.959
+    crosswalk_offset_m: 8.506
+    crosswalk_style: continental
+    far_m:
+    - 14.697
+    - -36.8
+    near_m:
+    - -0.113
+    - -0.046
+    stop_bar_axis:
+    - 0.363
+    - -0.932
+    stop_bar_centre_m:
+    - 5.221
+    - -13.64
+    width_m: 9.208
+name: Proposed Treatments
+props:
+- fire_hydrant@420202.49,567130.87
+- pedestrian_pushbutton@420138.78,567184.10
+- pedestrian_pushbutton@420155.82,567135.85
+- pedestrian_pushbutton@420155.82,567135.85
+- pedestrian_pushbutton@420200.03,567147.42
+- pedestrian_signal_head@420158.27,567137.80
+- pedestrian_signal_head@420201.17,567146.98
+- tactile_paving_pad@420140.54,567179.30
+- tactile_paving_pad@420154.14,567140.28
+- tactile_paving_pad@420161.03,567136.87
+- tactile_paving_pad@420198.68,567146.46
+- traffic_signal_pole@420158.27,567137.80
+- traffic_signal_pole@420201.17,567146.98
+scalars:
+  crosswalk_depth_m: 1.829
+  stop_bar_curb_clearance_m: 0.5
+units: meters

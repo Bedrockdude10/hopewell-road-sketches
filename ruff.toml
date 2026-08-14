@@ -1,0 +1,70 @@
+# Lint configuration. Enforced by tests/test_lint.py, so this file IS the build gate -
+# `ruff check` passing here and the suite passing are the same statement.
+#
+# This replaces a `python -m pyflakes` subprocess whose findings were filtered by matching
+# substrings ("undefined name") against stdout. Rule CODES say the same thing without
+# depending on message wording, and ruff exits 2 - distinguishably - when it is the tool
+# that is broken rather than the code.
+#
+# The selection principle is unchanged from the pyflakes era: a rule earns its place by
+# catching something that is WRONG, not something that is unfashionable. This codebase
+# deliberately writes long aligned lines and long explanatory comments; nothing here has an
+# opinion about that.
+
+target-version = "py313"
+
+# Only for the formatter's benefit (not run) and for rules that consult it. E501 is
+# deliberately NOT selected: 398 lines here exceed 100 columns, nearly all of them aligned
+# continuations or prose comments that reflowing would make worse.
+line-length = 110
+
+exclude = [".venv", "output", "data", "__pycache__"]
+
+[lint]
+select = [
+    "F",     # pyflakes - what this file replaces. F821 undefined-name is the original reason.
+    "E9",    # syntax / IO errors: a file that does not parse at all.
+    "B",     # flake8-bugbear - the real-bug half of it (mutable defaults, loop-variable capture).
+    "SIM",   # flake8-simplify
+    "C4",    # flake8-comprehensions
+    "UP",    # pyupgrade
+    "RUF",   # ruff's own rules
+]
+
+ignore = [
+    # zip() without strict=. This is a genuine correctness rule for geometry code - a zip
+    # over a stations list and an offsets list that silently truncates is exactly this
+    # project's failure mode - but there are 37 of them and turning it on means asserting
+    # equal length at 37 call sites that have never been checked. Doing that blind would
+    # convert "quietly wrong" into "raises in the middle of a render" without anyone having
+    # confirmed which length is correct. Worth doing deliberately, per call site, later.
+    "B905",
+    # Mutable class defaults want a ClassVar annotation. Every instance here is a module-level
+    # style/constant table on a dataclass, read-only after definition.
+    "RUF012",
+    # dict(a=1) instead of {"a": 1}. Used for readability where keys are identifiers.
+    "C408",
+    # A `raise ... from err` inside except. The project raises plenty of errors that are
+    # translations, not wrappings, and chaining them adds a traceback nobody reads.
+    "B904",
+    # "int() around an already-integer value". Ruff infers that from builtin round(), but the
+    # values here are frequently numpy scalars, where round() returns np.float64 - and the very
+    # next line does `width | 1`, which raises on a float. The int() is load-bearing.
+    "RUF046",
+    # "return the negated condition directly". is_carriageway() reads as a list of
+    # disqualifications, one guard clause each; collapsing the last pair into
+    # `return not (a and b)` makes it a double negative to save one line.
+    "SIM103",
+    # An empty method in an ABC without @abstractmethod. Treatment.paint is deliberately a
+    # no-op default - most treatments move geometry rather than paint - and marking it
+    # abstract would force every subclass to implement a method it does not need.
+    "B027",
+]
+
+[lint.per-file-ignores]
+# Blender scripts run inside Blender's own interpreter, which has `bpy`/`mathutils` but not
+# this repo on its path. The star-import guards and conditional imports that makes necessary
+# are not errors here.
+"scripts/blender/*.py" = ["F403", "F405"]
+# Tests assert on private helpers and construct deliberately-degenerate inputs.
+"tests/*.py" = ["B011"]

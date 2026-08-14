@@ -1268,7 +1268,7 @@ def curb_edge_by_station(leg: "Leg", side: str, lo_ft: float, hi_ft: float) -> l
               if lo_ft < curb_stations[i] < hi_ft]
     ends = _place_in_measured_frame(leg.centerline, np.array([lo_ft, hi_ft]),
                                     np.interp([lo_ft, hi_ft], curb_stations, curb_offsets))
-    return [ends[0]] + inside + [ends[1]]
+    return [ends[0], *inside, ends[1]]
 
 
 def _traced_curb_station_order(leg: "Leg", side: str) -> np.ndarray:

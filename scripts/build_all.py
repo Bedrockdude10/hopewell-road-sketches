@@ -135,7 +135,7 @@ def refresh_osm_serially() -> None:
         snapshot = fetch_borough_osm()
         print(f"  OSM snapshot: {len(snapshot['nodes'])} nodes, {len(snapshot['ways'])} ways "
               f"in {time.perf_counter() - started:.1f}s", flush=True)
-    except Exception as e:  # noqa: BLE001 - an outage must not sink a build that can use the cache
+    except Exception as e:   # an outage must not sink a build that can use the cache
         print(f"  OSM refresh FAILED ({type(e).__name__}: {e}). Building from the cached "
               f"snapshot instead - your latest tracing is NOT in this build.", flush=True)
     finally:
@@ -285,7 +285,7 @@ def main():
             for future in [pool.submit(render_all, blender_bin, chunk) for chunk in chunks if chunk]:
                 try:
                     future.result()
-                except Exception as e:  # noqa: BLE001 - one bad render shouldn't sink the rest
+                except Exception as e:   # one bad render shouldn't sink the rest
                     failures.append(f"Blender: {e}")
 
     elapsed = time.perf_counter() - started

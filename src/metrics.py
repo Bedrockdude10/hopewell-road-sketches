@@ -25,6 +25,7 @@ itself says are not there.
 Nothing here decides anything. Every value comes from geometry some other module resolved;
 this module only measures it and says what changed.
 """
+import itertools
 from dataclasses import dataclass
 from math import sqrt
 
@@ -234,10 +235,10 @@ def split_at_surveyed_end(geometry: LineString, leg, surveyed_length_ft: float |
     coords = list(geometry.coords)
     if len(coords) < 2:
         return geometry.length, 0.0
-    mids = np.asarray([((a[0] + b[0]) / 2, (a[1] + b[1]) / 2) for a, b in zip(coords, coords[1:])])
+    mids = np.asarray([((a[0] + b[0]) / 2, (a[1] + b[1]) / 2) for a, b in itertools.pairwise(coords)])
     stations, _offsets = station_offset_many(leg.centerline, mids)
     measured = projected = 0.0
-    for (a, b), station in zip(zip(coords, coords[1:]), stations):
+    for (a, b), station in zip(itertools.pairwise(coords), stations):
         seg = float(np.hypot(b[0] - a[0], b[1] - a[1]))
         if station <= surveyed_length_ft:
             measured += seg

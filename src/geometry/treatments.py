@@ -1531,7 +1531,7 @@ class AddBikeLane(Treatment):
                          parking_ft=self.parking_ft, shy_ft=self.shy_ft)
 
     def __post_init__(self):
-        self.lane        # raises for a lane under AASHTO's minimum, before anything is applied
+        self.lane   # noqa: B018 - evaluated for its exception: raises for a lane under AASHTO's minimum
 
     def describe(self) -> str:
         # leg, side rather than str(target): a note is meant to read as the constructor call
@@ -1894,7 +1894,7 @@ def build_sidewalk_pieces(state: DesignState, sidewalk_width_ft: float = 6) -> l
         return []   # no closed roadway to lay a sidewalk against
 
     pieces = []
-    for corner, parts in state.corner_fillets.items():
+    for _corner, parts in state.corner_fillets.items():
         if "error" in parts:
             continue
         for key in ("trimmed_a", "arc", "trimmed_b"):
@@ -1984,6 +1984,24 @@ class ProtectDaylightZone(Treatment):
                    "rather than 25 ft" if self.kind in CURB_EXTENSION_DEVICES else ""))
 
 
+def _kerb_already_treated(state: DesignState, leg_name: str, side: str) -> bool:
+    """Has a scenario already decided what happens on this kerb?
+
+    Asked of the treatments rather than of the dicts they write, so it is a question about
+    decisions someone made: apply_osm_parking fills in what OSM says about kerbs a proposal
+    has not spoken for, and it must not paint over one that it has.
+
+    Takes the state explicitly rather than closing over the caller's loop variable. The state
+    is rebound on every iteration there, so a closure would read whatever it happened to be at
+    call time - correct today only because the call is in the same iteration, and silently
+    wrong the moment it isn't.
+    """
+    if state.treatment_for(MarkedParking, LegSide(leg_name, side)) is not None:
+        return True
+    narrowing = state.treatment_for(LaneNarrowing, LegTarget(leg_name))
+    return narrowing is not None and Side(side) in narrowing.sides
+
+
 def apply_osm_parking(state: DesignState, model, depth_ft: float = PARKING_STALL_DEPTH_DEFAULT_FT,
                        stripe_width_ft: float = LANE_NARROWING_DEFAULT_STRIPE_FT,
                        legs: tuple | None = None) -> DesignState:
@@ -2030,19 +2048,8 @@ def apply_osm_parking(state: DesignState, model, depth_ft: float = PARKING_STALL
         sides = {side: _restriction_summary(state, leg_name, side, leg_length_ft)
                  for side in ("left", "right")}
 
-        def already_treated(side):
-            """Has a scenario already decided what happens on this kerb?
-
-            Asked of the treatments rather than of the dicts they write, so it is a question
-            about decisions someone made: this policy fills in what OSM says about kerbs a
-            proposal has not spoken for, and it must not paint over one that it has.
-            """
-            if new_state.treatment_for(MarkedParking, LegSide(leg_name, side)) is not None:
-                return True
-            narrowing = new_state.treatment_for(LaneNarrowing, LegTarget(leg_name))
-            return narrowing is not None and Side(side) in narrowing.sides
-
-        untouched = [s for s in ("left", "right") if not already_treated(s)]
+        untouched = [s for s in ("left", "right")
+                     if not _kerb_already_treated(new_state, leg_name, s)]
 
         # Two questions here, and one number was answering both.
         #

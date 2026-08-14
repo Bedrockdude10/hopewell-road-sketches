@@ -295,7 +295,7 @@ def export_scenario(model: IntersectionModel, state: DesignState, name: str, out
             verts_ft, faces = mesh
             building_entries.append({
                 "mesh": True,
-                "vertices_m": [pt_to_local_m(x, y, center_ft)[:2] + [z * FT_TO_M] for x, y, z in verts_ft],
+                "vertices_m": [[*pt_to_local_m(x, y, center_ft)[:2], z * FT_TO_M] for x, y, z in verts_ft],
                 "faces": faces,
                 "height_source": height.source,
             })

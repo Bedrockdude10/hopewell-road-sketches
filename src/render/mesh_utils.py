@@ -1,6 +1,8 @@
 """3D mesh utilities for background/context geometry (OSM buildings) that isn't
 the subject of the render and doesn't need full poly density. Not used for the
 authoritative pavement/curb geometry - see src/geometry/model.py for that."""
+import contextlib
+
 from shapely.geometry import Polygon
 
 # When a building is heavy enough to be worth simplifying, and what to simplify it to.
@@ -45,9 +47,8 @@ def build_decimated_building_mesh(footprint: Polygon, height: float) -> tuple[li
         return None  # malformed footprint (self-intersecting, etc.) - let the caller fall back
 
     if len(mesh.faces) > MAX_BUILDING_FACES_BEFORE_DECIMATION:
-        try:
+        # A missing/failed decimation backend exports the un-decimated mesh rather than nothing.
+        with contextlib.suppress(Exception):
             mesh = mesh.simplify_quadric_decimation(face_count=DECIMATE_TARGET_FACES)
-        except Exception:
-            pass  # decimation backend missing/failed - export the un-decimated mesh rather than nothing
 
     return mesh.vertices.tolist(), mesh.faces.tolist()

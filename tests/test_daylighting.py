@@ -76,7 +76,7 @@ def test_a_curb_extension_reduces_both_setbacks_to_ten_feet(monkeypatch):
     # The kind has to be constructible as well as recognised: a Treatment validates itself, so
     # "built_bulbout" would be refused by ProtectDaylightZone's own constructor otherwise.
     monkeypatch.setattr(treatments, "VALID_DAYLIGHT_DEVICES",
-                        treatments.VALID_DAYLIGHT_DEVICES + ("built_bulbout",))
+                        (*treatments.VALID_DAYLIGHT_DEVICES, "built_bulbout"))
     state = with_device(a_state(), "built_bulbout", spacing_ft=5.0)
     start = legal_parking_start_ft(state, "east", "left", {"east": (30.0,)})
     assert start == pytest.approx(30.0 + CROSSWALK_SETBACK_WITH_BULBOUT_FT)
@@ -100,7 +100,7 @@ def test_only_a_built_curb_extension_buys_back_the_setback():
     """
     from src.geometry.treatments import CURB_EXTENSION_DEVICES, VALID_DAYLIGHT_DEVICES
 
-    assert CURB_EXTENSION_DEVICES == {"curb_extension"}
+    assert {"curb_extension"} == CURB_EXTENSION_DEVICES
     for kind in VALID_DAYLIGHT_DEVICES:
         state = with_device(a_state(), kind)
         start = legal_parking_start_ft(state, "east", "left", {"east": (30.0,)})

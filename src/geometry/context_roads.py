@@ -40,7 +40,6 @@ no coplanar z-fighting in Blender - the rule parking aisles already follow again
 """
 import numpy as np
 from shapely.geometry import LineString, Polygon
-from shapely.ops import unary_union
 
 from src.geometry.model import station_offset_many
 

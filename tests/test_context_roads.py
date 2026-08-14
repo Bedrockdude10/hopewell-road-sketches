@@ -110,7 +110,7 @@ def test_a_kerb_goes_to_the_nearest_street_not_to_every_street_in_reach():
     """
     near, far = straight_street(), LineString([(0.0, 60.0), (400.0, 60.0)])
     shared = kerb_along(18.0)
-    (near_st, near_off), (far_st, far_off) = assign_kerbs_to_roads([near, far], kerb_points([shared]))
+    (near_st, _near_off), (far_st, _far_off) = assign_kerbs_to_roads([near, far], kerb_points([shared]))
     assert len(near_st) > 0, "the nearer street did not claim the kerb beside it"
     assert len(far_st) == 0, "a street 42 ft away also claimed it"
 

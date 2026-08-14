@@ -480,7 +480,7 @@ def plot_design_state(ax, model: IntersectionModel, state: DesignState, title: s
         _draw(ax, curbs, linewidth=2, zorder=3, **PLOT_STYLE[tier])
 
     arcs = []
-    for corner, pieces in state.corner_fillets.items():
+    for _corner, pieces in state.corner_fillets.items():
         if "error" in pieces:
             continue
         arcs.append(pieces["arc"])

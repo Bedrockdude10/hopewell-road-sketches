@@ -140,7 +140,7 @@ CROSSWALK_STYLES = {
 
 def add_crosswalk(name: str, near, u, n, width_m: float, material, offset_m: float = 3.0, style: str = "lines",
                    depth_m: float = CROSSWALK_DEPTH_FALLBACK_M, skew_deg: float = 0.0,
-                   reach_left_m: float = None, reach_right_m: float = None, n_stripes=None):
+                   reach_left_m: float | None = None, reach_right_m: float | None = None, n_stripes=None):
     """`depth_m` is forwarded from the geometry JSON's `crosswalk_depth_m`, which
     src/render/export.py writes from src/render/crosswalks.py:CROSSWALK_DEPTH_M - the
     same constant src/render/plan_view.py draws the 2D crosswalk from, so the plan
@@ -169,7 +169,7 @@ def add_crosswalk(name: str, near, u, n, width_m: float, material, offset_m: flo
 
 def add_stop_bar(name: str, near, u, n, width_m: float, material, offset_m: float, line_width_m: float = 0.5,
                   skew_deg: float = 0.0, curb_clearance_m: float = 0.5,
-                  span_m: float = None, lateral_offset_m: float = None):
+                  span_m: float | None = None, lateral_offset_m: float | None = None):
     """Stop bar: a single transverse line telling drivers where to stop for the
     signal, drawn just behind (intersection side of) the leg's crosswalk.
     Spans only the entering half of the road - `n` is the leg's own 'left'

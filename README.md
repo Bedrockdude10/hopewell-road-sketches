@@ -42,9 +42,17 @@ It writes the same files the phase scripts do, runs sites in parallel (`--jobs`)
 ./scripts/test.sh          # takes pytest's arguments:  ./scripts/test.sh -k traced_curbs -x
 ```
 
+The test tooling (`ruff`, `pytest-regressions`, `hypothesis`) is in `requirements.txt` alongside everything else rather than in a separate dev file, because `tests/test_lint.py` *fails* rather than skips when its linter is missing — deliberately, since its predecessor skipped and so reported success on every machine that hadn't installed pyflakes by hand. A guard that strict has to be installed by the same one command as everything else, or the split just recreates the bug it was meant to prevent. (`pytest` itself was missing from `requirements.txt` too, so the documented install could never run the suite.)
+
 This runs `.venv/bin/python -m pytest` and works whether or not the venv is active. Plain `python -m pytest` only works once you've run `source .venv/bin/activate` — without it, `python` is whatever is on your PATH, and if that interpreter happens to have pytest but not geopandas the suite fails at collection. The root `conftest.py` detects that case and prints one message telling you which interpreter you're on and what to run instead, rather than five `ModuleNotFoundError` tracebacks.
 
-384 tests, ~15 s, **no network**: they run against a committed snapshot of the OSM responses in `tests/fixtures/osm_cache/`, and `HOPEWELL_OFFLINE=1` makes any un-snapshotted fetch fail loudly rather than reach Overpass. Refresh the snapshot with `cp output/.cache/borough_*.json tests/fixtures/osm_cache/` — it does NOT update itself when you re-pull, so after editing OSM you have to do both (see "Kerbside parking varies ALONG a leg" below).
+526 tests, ~85 s, **no network**: they run against a committed snapshot of the OSM responses in `tests/fixtures/osm_cache/`, and `HOPEWELL_OFFLINE=1` makes any un-snapshotted fetch fail loudly rather than reach Overpass. Refresh the snapshot with `cp output/.cache/borough_*.json tests/fixtures/osm_cache/` — it does NOT update itself when you re-pull, so after editing OSM you have to do both (see "Kerbside parking varies ALONG a leg" below).
+
+Three of them are not ordinary example-based tests, and are worth knowing about before a failure surprises you:
+
+- **`tests/test_lint.py`** runs `ruff` over `src/ scripts/ tests/ conftest.py`, configured by `ruff.toml`. Undefined names are reported separately from everything else, because they are a guaranteed crash on whatever branch reaches them — which is the whole reason the file exists (an import collapse dropped `fetch_buildings`, referenced only under `--render-3d`, and it surfaced as a `NameError` inside a worker process). Every `ignore` in `ruff.toml` carries the argument for it.
+- **`tests/test_geometry_regression.py`** is a golden-file test: it exports every site's baseline and demo scenario and compares a digest against committed files in `tests/test_geometry_regression/`. It fails on any unexplained change to the drawn geometry. **A failure is not automatically a bug** — read the diff, confirm every moved number is one you meant to move, then `./scripts/test.sh tests/test_geometry_regression.py --force-regen` and commit the regenerated goldens *in the same commit as the change that moved them*.
+- **`tests/test_frame_properties.py`** is property-based (hypothesis) over the station/offset frame in `src/geometry/model.py`. It asserts the transform's contracts on generated centerlines rather than on the four that exist, so a failure will name a shape nobody wrote down. It has already been useful for what it *disproved*: it established that a polyline kink makes a band of stations around the vertex genuinely unreachable at any offset, which is a fact about the geometry that the placement code works around rather than a defect.
 
 `tests/test_kerbs.py` covers the raised/lowered tagging and the openings it puts in the markings, `tests/test_checks.py` covers the scene invariants (see below), `tests/test_traced_curbs.py` covers building curb lines from traced OSM kerbs, `tests/test_curb_extensions.py` covers curb extensions and bike lanes (and pins what a corner-radius change does *not* do), and `tests/test_sites.py` asserts all four real junctions and every proposal satisfy the invariants.
 
@@ -311,7 +319,7 @@ In this order, because each step is cheaper than the next:
 
 1. **Write the test first, and confirm it fails against the pre-change code** (`git stash`, or a worktree — if you use a worktree, symlink the gitignored `data/` into it, or every run crashes in 0.6 s and you will read that as a result).
 2. `scripts/export_all_scenarios.py /tmp/before` → change → `/tmp/after` → `scripts/diff_exports.py`. Thirteen scenes, ~2 s, key by key. This runs `export_scenario`, so it resolves the scene, builds the paint and the props and asserts every invariant.
-3. `scripts/test.sh` and `pyflakes $(git ls-files '*.py')`.
+3. `scripts/test.sh` — which now includes the lint pass (`ruff`, via `tests/test_lint.py`) and the golden geometry comparison, so there is no separate linting step to remember. `.venv/bin/ruff check src scripts tests conftest.py` on its own is the sub-second version while you are still editing.
 4. `scripts/build_all.py --render-3d`, and then **look at the PNGs** — the only check on the Blender seam.
 
 ### Small gotchas that cost real time
@@ -378,6 +386,9 @@ sites/
 src/                              General-purpose library - no data specific to any one intersection
   site.py            Site discovery/loading (config.yaml + dynamic import of scenarios.py) - see src/site.py
   config.py          Generic YAML loader (no knowledge of sites)
+  site_schema.py     What a site's config.yaml must contain, as pydantic models - validated on
+                      every load, so a misspelled key or a leg name matching nothing fails
+                      immediately instead of drawing something wrong. sites/README.md is its prose.
   geometry/                       Core domain model - pure geometry, no I/O
     model.py         CRS/clipping utilities, Leg dataclass, corner fillets, pavement polygon, leg_clearance_ft
     intersection.py  load_intersection_model() - THE entry point every phase script uses
@@ -405,7 +416,8 @@ scripts/
   phase4_export_geometry.py  Export-only (no Blender) - useful for debugging the JSON
   phase4_render_3d.py    Full Phase 4 pipeline: fetch theme + export + shell out to Blender
   export_all_scenarios.py  Every site's every scenario through export_scenario, into a directory
-  diff_exports.py         Diff two such directories key by key - the cheap regression check
+  diff_exports.py         Diff two such directories key by key - says WHAT changed, in full detail,
+                           once tests/test_geometry_regression.py has told you THAT something did
   test.sh                 Run the suite under .venv/bin/python, activated or not
   blender/                Runs INSIDE Blender's own Python (no network, no venv) - add a new prop/marking
                            DRAWING function here (its placement lives in src/render/ above)

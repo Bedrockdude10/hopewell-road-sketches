@@ -30,6 +30,7 @@ from src.geometry.markings import (BUFFER_EDGE_LINE, BUFFER_FILL, CORNER_HATCH_F
 from src.geometry.paint import PaintPiece
 from src.geometry.treatments import DesignState
 from src.render.crosswalks import CrosswalkOffset
+import itertools
 
 
 def crossing_at(station_ft, source="geometric_estimate"):
@@ -878,7 +879,7 @@ def test_the_delineator_post_is_42_inches_tall():
     """Specified, not derived - so the test states the number rather than a formula that
     would agree with whatever the constant happens to be."""
     props = blender_props_module()
-    assert props.BOLLARD_HEIGHT_M / IN_TO_M == pytest.approx(42.0, abs=0.01)
+    assert pytest.approx(42.0, abs=0.01) == props.BOLLARD_HEIGHT_M / IN_TO_M
 
 
 def test_the_post_carries_several_hi_vis_bands_near_its_top():
@@ -898,7 +899,7 @@ def test_the_post_carries_several_hi_vis_bands_near_its_top():
     top_gap = props.BOLLARD_HEIGHT_M - (centres[0] + band / 2)
     assert top_gap == pytest.approx(props.BOLLARD_TOP_TO_FIRST_BAND_M, abs=1e-9)
     assert top_gap / IN_TO_M <= 2.01, f"top band sits {top_gap / IN_TO_M:.1f} in below the top"
-    for upper, lower in zip(centres, centres[1:]):
+    for upper, lower in itertools.pairwise(centres):
         gap = (upper - band / 2) - (lower + band / 2)
         assert 0 < gap / IN_TO_M <= 6.01, f"bands {gap / IN_TO_M:.1f} in apart"
     assert min(centres) - band / 2 > 0, "a band is buried in the asphalt"

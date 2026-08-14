@@ -10,6 +10,7 @@ from pathlib import Path
 from types import ModuleType
 
 from src.config import load_config
+from src.site_schema import SiteConfig, validate_site_config
 
 SITES_DIR = Path(__file__).resolve().parent.parent / "sites"
 OUTPUT_ROOT = Path(__file__).resolve().parent.parent / "output"
@@ -31,9 +32,28 @@ def site_dir(site: str) -> Path:
 
 
 def load_site_config(site: str) -> dict:
-    config = load_config(site_dir(site) / "config.yaml")
+    """The site's config.yaml as a plain dict, after it has been validated.
+
+    Validation happens on the raw YAML, before `_site` is stashed, and raises rather than
+    warns: everything downstream treats this file as ground truth about a real street, so a
+    config that doesn't say what it appears to say produces a confident, wrong drawing rather
+    than a crash. See src/site_schema.py for what is checked and why.
+
+    Still a dict, not the model. The schema is a gate at the boundary; the ~15k lines that
+    read `config["intersection"][...]` are unaffected. load_site_schema() below returns the
+    typed view of the same file for code that wants it.
+    """
+    path = site_dir(site) / "config.yaml"
+    config = load_config(path)
+    validate_site_config(config, path)
     config["_site"] = site  # stashed for scripts that want to name output dirs etc.
     return config
+
+
+def load_site_schema(site: str) -> "SiteConfig":
+    """The same config.yaml as a validated SiteConfig, with typed attribute access."""
+    path = site_dir(site) / "config.yaml"
+    return validate_site_config(load_config(path), path)
 
 
 def site_output_dir(site: str) -> Path:

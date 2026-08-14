@@ -18,21 +18,21 @@ from src.geometry.daylighting import no_parking_zones_ft
 from src.geometry.model import (build_pavement_polygon, narrowest_half_width_ft,
                                 station_offset_many)
 from src.geometry.targets import LegSide, LegTarget, Side
-from src.geometry.treatments import (AddCurbExtension, DesignState, LaneNarrowing, MarkedParking,
+from src.geometry.treatments import (DesignState, LaneNarrowing, MarkedParking,
                                      UpgradeCrosswalkMarkings)
 from src.render.crosswalks import (CROSSWALK_DEPTH_M, STOP_BAR_CURB_CLEARANCE_M,
                                    crosswalk_bands_ft, resolve_crosswalk_offsets,
                                    resolve_crosswalk_skews, resolve_stop_bar_offsets)
 from src.render.coords import FT_TO_M
 from src.render.props import build_props
-from src.geometry.markings import (DAYLIGHT_EDGE_LINE, DAYLIGHT_FILL, PARKING_EDGE_LINE,
-                                   STALL_DIVIDER)
+from src.geometry.markings import (DAYLIGHT_EDGE_LINE, DAYLIGHT_FILL)
 from src.geometry.paint import curbside_paint_ft
 from src.site import load_site_scenarios, run_scenario
 from src.sources.osm_context import (fetch_crossings, fetch_kerbs, fetch_stop_lines,
                                      fetch_street_furniture, fetch_traffic_control)
 
 from tests.conftest import SITES, needs_source_data
+import itertools
 
 # Whatever each site's scenarios.py actually defines. Naming the scenarios here instead
 # meant that when the proposals were cleared out for re-auditing, nine tests started
@@ -1106,7 +1106,7 @@ def test_every_declared_marking_is_something_paint_can_build():
     from src.geometry.markings import KINDS
 
     source = inspect.getsource(paint_module) + inspect.getsource(treatments_module)
-    for name, kind in KINDS.items():
+    for name, _kind in KINDS.items():
         constant = name.upper()
         assert constant in source, (
             f"src/geometry/markings.py declares {name!r} but nothing in src/geometry/paint.py or "
@@ -1990,7 +1990,7 @@ def test_a_split_leg_keeps_every_way_that_covers_it(site_models):
     assert covered[-1][1] >= model.legs["broad_st_east"].centerline.length - 1.0, (
         "the spans stop short of the far end of the leg")
     # Contiguous: OSM splits a way at a node, so one span ends where the next begins.
-    for (_lo, hi), (next_lo, _next_hi) in zip(covered, covered[1:]):
+    for (_lo, hi), (next_lo, _next_hi) in itertools.pairwise(covered):
         assert next_lo == pytest.approx(hi, abs=1.0), f"gap in coverage at {hi:.1f} ft"
 
     restricted = [s for s in spans if s.tags.get("parking:both:restriction") == "no_parking"]

@@ -298,3 +298,23 @@ def test_every_restriped_lane_holds_the_target_everywhere(site_models):
     assert checked > 20, f"only {checked} lanes swept - the sweep stopped finding scenarios"
     assert not over, "travel lanes left over target on legs the design restriped:\n  " + \
                      "\n  ".join(over)
+
+
+def test_a_two_way_design_carries_the_njdot_objection(site_models):
+    """NJDOT's own guidance calls this facility unacceptable, so every design that uses it says so
+    in its provenance.
+
+    An invariant about DOCUMENTS rather than geometry, and the reason it is a test: a render that
+    omits the objection claims more consensus than exists, and this is the state's published
+    guidance for the state the project is in. The counter-argument - 1996 predates separated
+    bikeways, MUTCD 11th ed. 9E.06 now marks them - belongs in the submission, not in silence.
+    """
+    from src.geometry.treatments import NJDOT_TWO_WAY_OBJECTION
+
+    _model, state, _paint = _two_way_scene(site_models)
+    two_way_notes = [n for n in state.notes if "AddTwoWayBikeLane" in n]
+    assert two_way_notes, "this scenario should record a two-way lane"
+    for note in two_way_notes:
+        assert NJDOT_TWO_WAY_OBJECTION in note, (
+            f"a two-way lane's note omits the NJDOT objection, so the render ships without it:\n"
+            f"  {note}")

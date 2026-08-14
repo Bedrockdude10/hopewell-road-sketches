@@ -1518,6 +1518,24 @@ def min_bike_lane_buffer_ft() -> float:
     return 2 * _lane_line_ft()
 
 
+# THE STATE'S OWN GUIDANCE RULES THIS FACILITY OUT, and every design that uses it carries this
+# sentence in its provenance note as a result. NJDOT's Bicycle Compatible Roadways and Bikeways
+# (1996): "Two-way bicycle lanes on one side of the roadway are unacceptable because they promote
+# riding against the flow of motor vehicle traffic."
+#
+# Not a caveat to bury. It is the published guidance for the state this project is in, a county
+# engineer may cite it first, and a render that omits it is claiming more consensus than exists.
+# The counter-argument - 1996 predates separated bikeways entirely, and MUTCD 11th ed. §9E.06 now
+# provides markings for exactly this facility - belongs in the submission, not in the drawing's
+# silence. STANDARDS.md §4 carries the full text and the case either way.
+NJDOT_TWO_WAY_OBJECTION = (
+    "NOTE: NJDOT's Bicycle Compatible Roadways and Bikeways (1996) calls a two-way bike lane on "
+    "one side of the roadway 'unacceptable'; that guidance predates separated bikeways and MUTCD "
+    "11th ed. 9E.06 now marks them, but the departure has to be argued, not assumed - see "
+    "STANDARDS.md 4."
+)
+
+
 @dataclass(frozen=True)
 class TwoWayBikeLane(BikeLane):
     """A bidirectional bike lane on ONE side of a leg, and the shifted section it implies.
@@ -1993,7 +2011,7 @@ class AddTwoWayBikeLane(AddBikeLane):
                      f"{TARGET_LANE_WIDTH_FT - lane_ft:.2f} ft, which is this leg's width rather "
                      f"than a choice, so the travel way is split equally")
         return (note + ". The NJDOT alignment does not move; every station and crossing frame is "
-                "measured from it as before.")
+                "measured from it as before. " + NJDOT_TWO_WAY_OBJECTION)
 
     def paint(self, ctx) -> None:
         """The one-way section's markings, plus the yellow stripe down the middle of the lane."""

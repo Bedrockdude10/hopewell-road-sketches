@@ -194,9 +194,56 @@ Three answers to one conflict point, and that one belonged to nobody. Fixed 2026
 > a new marking rather than a parameter - see the "new marking touches six places" checklist in
 > README.md.
 
-> **Still unread: NJDOT.** *Bicycle Compatible Roadways and Bikeways* has not been opened. NJ
-> adopts the federal MUTCD with a state supplement, so §9E above is the governing text unless the
-> supplement diverges - which nobody here has checked.
+### NJDOT says this facility is unacceptable — **Verified 2026-08-14**
+
+*Bicycle Compatible Roadways and Bikeways: Planning and Design Guidelines*, NJDOT, 1996
+([source](https://nj.gov/transportation/about/publicat/pdf/BikeComp/introtofac.pdf)), read
+2026-08-14. **It rules out the corridor treatment this repo draws**, in terms:
+
+> "Bicycle lanes should always be one-way facilities and carry traffic in the same direction as
+> adjacent motor vehicle traffic. **Two-way bicycle lanes on one side of the roadway are
+> unacceptable** because they promote riding against the flow of motor vehicle traffic.
+> Wrong-way riding is a major cause of bicycle accidents and violates the Rules of the Road
+> stated in the Uniform Vehicle code."
+
+And separately, on the adjacent-path form of the same idea: *"Two-way bicycle paths located
+immediately adjacent to a roadway are not generally recommended."*
+
+**This is not a technicality and it must be stated in any submission.** It is the state DOT's
+published guidance for the state the project is in, and a county engineer may cite it directly.
+
+What can honestly be said against it:
+
+- **It is from 1996** and predates the modern separated-bikeway evidence base entirely. Its
+  vocabulary has no "protected", "buffered" or "separated" bike lane — it addresses shared lanes,
+  paved shoulders and painted one-way bike lanes only. The facility it calls unacceptable is a
+  *painted contraflow lane*, not a vertically separated two-way lane with its own signal phasing.
+- **Federal guidance has since moved.** MUTCD 11th ed. Part 9E provides markings for
+  buffer-separated and separated bike lanes (§9E.06), and NACTO's Urban Bikeway Design Guide
+  treats bidirectional protected lanes as a standard facility.
+- **NJ adopts the federal MUTCD**, so §9E governs the *markings* regardless. The 1996 document is
+  guidance on facility *selection*, and that is where the conflict lives.
+
+None of that makes the objection go away. It means the corridor proposal has to argue the case
+explicitly rather than assume it: **cite the 1996 guidance, say why it is being departed from,
+and expect that to be the first question asked.** Recorded here so the argument is made once and
+found again, rather than rediscovered under scrutiny.
+
+### NJDOT figures actually usable here — **Verified 2026-08-14**
+
+From the same document:
+
+| figure | value | note |
+|---|---|---|
+| Unpaved driveway/street paved back from the ROW or curb line | **10 ft (3.0 m)** | §6 "Intersections and Driveways" — the concern is debris drawn onto the bicyclist's path, not markings |
+| Edge line warranted when total lane width ≥ | **15 ft (4.5 m)** | |
+| NJDOT minimum shoulder width on state highways | **8 ft (2.4 m)** | relevant to NJ 31, not to borough streets |
+| Assumed parking lane width | **8 ft (2.4 m)** | agrees with `PARKING_STALL_DEPTH_DEFAULT_FT` |
+| Width increase where trucks exceed 15% of the mix | **+1 ft (0.3 m) minimum** | E Broad and NJ 31 are truck routes |
+
+The driveway row is the only one bearing on the driveway question, and it is about **surface**,
+not striping: the markings question is settled by MUTCD §9E above. The truck row is an open
+item - both truck routes in this project are drawn without that additional foot.
 
 `CONTRAFLOW_DASH_FT` (3 ft) and `CONTRAFLOW_GAP_FT` (5 ft) in the same file are **Modelled** -
 chosen to read at this drawing's scale, not taken from any document. See §7.

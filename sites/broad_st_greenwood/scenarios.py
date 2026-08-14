@@ -329,9 +329,10 @@ def build_proposal_two_way_bike_lane(baseline: DesignState, model=None) -> Desig
                                                sides=(str(other),)))
             print(f"  NOTE: {leg_name} {other} is freed up by {surplus_ft:.2f} ft, but OSM "
                   f"restricts parking along the WHOLE of that kerb, so it is HATCHED rather than "
-                  f"marked. Using this width for parking needs the prohibition lifted - a borough "
-                  f"decision, not a drawing one. Worth checking against Schedule I, which bans "
-                  f"parking 100 ft each way from the junction rather than end to end.")
+                  f"marked. CONFIRMED CORRECT - the prohibition follows actual sign placement "
+                  f"(Danny, 2026-08-14), so this is the finished treatment for this kerb and not "
+                  f"a gap waiting on better data. Using the width for parking would need the "
+                  f"signs changed, which is a borough decision rather than a drawing one.")
             continue
         # MIN_USABLE_STALL_FT, not src's MIN_MARKED_PARKING_DEPTH_FT. That 8 ft figure is the
         # threshold for marking a STANDARD stall where the width is there for the asking, and

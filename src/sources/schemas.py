@@ -21,13 +21,44 @@ and already owns `config.yaml` (src/site_schema.py), while these are tabular and
 thousands of rows, a CRS, a geometry type - which is what a DataFrame schema is for. The two do
 not overlap and neither replaces the other.
 
-DELIBERATELY A FLOOR, NOT A CONTRACT. Only the columns this repo actually reads are declared,
-and unknown ones pass: NJDOT ships 16 attributes and we use 6, so pinning all 16 would fail the
-build the next time NJDOT adds one. `strict=False` is the point, not an omission.
+TWO SEPARATE QUESTIONS, AND ONLY ONE OF THEM IS "FLOOR VS CONTRACT".
+
+  1. WHICH COLUMNS MAY EXIST. `strict=False`: a column this repo does not read is allowed to
+     appear. These are third-party files on somebody else's release schedule - NJDOT ships 16
+     attributes and we read 3 - so an additive upstream change is not a defect here, and failing
+     the build for one would be a false positive that blocks every site. That matters more than
+     it sounds: a validator that cries wolf on a benign change gets deleted, which is how you
+     end up with no validator at all. This module's own CRS check did exactly that on its first
+     version - it rejected the correct parcels file and produced 241 errors, and the obvious
+     response was to remove it.
+
+  2. WHAT THE COLUMNS WE READ MUST CONTAIN. Here it IS a contract, and the first version of this
+     file was far too weak - every field was `nullable=True` with no constraint, so a column of
+     ALL NULLS would have passed. That is not a lax contract, it is the absence of one: an
+     all-null SRI passes validation and then matches no road on any leg, which is precisely the
+     silent failure this module was written to stop. Measured against the real files, none of
+     these columns is ever null except BLDG_DESC (12.4%, genuinely - vacant land has no
+     building), so that is what they now declare.
+
+The join keys carry a format check for the same reason. PAMS_PIN and GIS_PIN are the same
+municipality_block_lot identifier in two different files, and nothing else in the pipeline
+compares them: if one side's format changes the join simply matches nothing, every building
+falls back to one height, and the render is a field of identical boxes. A regex on both is the
+cheapest place to catch a break that is otherwise invisible.
 """
 from pathlib import Path
 
 import pandera.pandas as pa
+
+# THE PARCEL KEY, in both files that carry it. `1106_18_14` and `1106_18_14_Q0009` - municipality,
+# block, lot, and an optional qualifier. Declared once and used by both schemas, because the whole
+# value of checking it is that the two sides of the join agree; two regexes that could drift would
+# defeat the point of writing one at all.
+PIN_PATTERN = r"^\d{4}_[^_]+_[^_]+(_.+)?$"
+# A four-digit NJ municipality code (1106 Hopewell Twp, 1108 Pennington Boro, and neighbours).
+MUN_PATTERN = r"^\d{4}$"
+# NJDOT's Standard Route Identifier: 10 or 17 characters, no spaces.
+SRI_PATTERN = r"^\S{10}(\S{7})?$"
 
 # NO CRS CONSTANTS HERE. src/geometry/model.py already owns WGS84 and NJ_STATE_PLANE_FT, and
 # `validate_layer` takes the expected one as an argument, so each caller passes the datum it
@@ -46,9 +77,14 @@ class RoadNetworkSchema(pa.DataFrameModel):
     NOT declared: lane count, width, surface. They are genuinely absent from this layer, which
     is the whole reason config.yaml carries field measurements - see the main README.
     """
-    SRI: pa.typing.Series[str] = pa.Field(nullable=True)
-    SLD_NAME: pa.typing.Series[str] = pa.Field(nullable=True)
-    ROUTE_SUBTYPE: pa.typing.Series[int] = pa.Field(nullable=True, coerce=True)
+    # Never null in the real file (0.0% across a 5,000-row sample), and an all-null SRI would
+    # match no road on any leg while passing a nullable check.
+    SRI: pa.typing.Series[str] = pa.Field(nullable=False, str_matches=SRI_PATTERN)
+    SLD_NAME: pa.typing.Series[str] = pa.Field(nullable=False)
+    # NJDOT's functional class. 2-8 in the statewide file; 1 is allowed as headroom since the
+    # domain is theirs, but a 0 or a 99 means the column is not what we think it is.
+    ROUTE_SUBTYPE: pa.typing.Series[int] = pa.Field(nullable=False, coerce=True,
+                                                     in_range={"min_value": 1, "max_value": 8})
 
     class Config:
         strict = False          # NJDOT ships more columns than we read; that is fine
@@ -62,8 +98,8 @@ class ParcelsSchema(pa.DataFrameModel):
     MUN is what tells one municipality's parcels from another's - this project spans Hopewell
     Borough, Hopewell Township and Pennington Borough, and the NJ 31 junction sits on a boundary.
     """
-    PAMS_PIN: pa.typing.Series[str] = pa.Field(nullable=True)
-    MUN: pa.typing.Series[str] = pa.Field(nullable=True)
+    PAMS_PIN: pa.typing.Series[str] = pa.Field(nullable=False, str_matches=PIN_PATTERN)
+    MUN: pa.typing.Series[str] = pa.Field(nullable=False, str_matches=MUN_PATTERN)
 
     class Config:
         strict = False
@@ -78,7 +114,10 @@ class TaxListSchema(pa.DataFrameModel):
     join matches nothing, every building falls back to one default height, and the render is a
     field of identical boxes - which is exactly the thing assessor.py was written to fix.
     """
-    GIS_PIN: pa.typing.Series[str] = pa.Field(nullable=True)
+    GIS_PIN: pa.typing.Series[str] = pa.Field(nullable=False, str_matches=PIN_PATTERN)
+    # THE ONE GENUINELY NULLABLE FIELD HERE, and it is measured rather than assumed: 12.4% of
+    # rows have no building description, because vacant land has no building. That is a fact
+    # about the county, not slack in the schema.
     BLDG_DESC: pa.typing.Series[str] = pa.Field(nullable=True)
 
     class Config:

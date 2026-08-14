@@ -481,6 +481,23 @@ class PaintContext:
         added = []
         if geometry is None or geometry.is_empty:
             return added
+        # CONFINED TO THE OPENING'S OWN GROUND, which is what "laid IN an opening" means. The
+        # caller builds this from the STATION SPAN of the opening (opening_dash_spans), and a
+        # station span is a band right across the marking: where a driveway meets the street at a
+        # skew, the span reaches further along the kerb than the driveway's own polygon does, by
+        # more the wider the marking is. `add` removed the polygon, so the difference between the
+        # two is ground painted twice - 10 sq ft of it on e_broad_st_west's 12 ft two-way lane,
+        # which markings_collide reported. A 5 ft one-way lane skews little enough to stay inside
+        # the tolerance, so this was latent rather than absent.
+        #
+        # `driven` rather than against(kind): the entrance itself is the definition of where an
+        # extension may lie. Where the complementary cut used the wider rounded run-out, not
+        # filling that run-out is correct - a taper is not something you paint dashes across.
+        driven = self.openings.driven if self.openings else None
+        if driven is not None:
+            geometry = geometry.intersection(driven)
+            if geometry.is_empty:
+                return added
         for clear in clip_paint_clear_of(geometry, self.surfaces):
             for part in clip_paint_clear_of(clear, self.keep_clear):
                 if kind.covers_area and part.area < MIN_ZONE_AREA_SQ_FT:

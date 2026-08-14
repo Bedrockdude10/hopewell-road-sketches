@@ -432,7 +432,11 @@ def export_scenario(model: IntersectionModel, state: DesignState, name: str, out
                         centerline_start_ft(crosswalk_offsets[leg_name].offset_ft,
                                             stop_bar_offsets.get(leg_name),
                                             leg_name in marked_crosswalks),
-                        state.centerline_style(leg_name))
+                        state.centerline_style(leg_name),
+                        # Same shift the plan view applies, off the same DesignState - a two-way
+                        # bike lane on one side moves this line, and the two views must move it
+                        # together or the render's lanes come out unequal.
+                        *(state.travel_lane_divider_shift(leg_name) or (0.0, None)))
                 ],
             }
             for leg_name, leg in state.legs.items()

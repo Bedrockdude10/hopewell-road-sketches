@@ -132,6 +132,12 @@ BIKE_LANE_HATCH_LINES = Channel("bike_lane_hatch_lines", Role.FILL)
 # striping alone and the two views disagreed about what the proposal looked like. It is a real
 # treatment and a widely used one, so it now travels to the render as the polygon it is.
 BIKE_LANE_SURFACE_POLYGONS = Channel("bike_lane_surface_polygons", Role.COLOUR)
+# The YELLOW centre stripe of a two-way bike lane, separating opposing riders. Its own channel
+# rather than more BIKE_LANE_EDGE_LINES, because the channel is what decides the colour at the
+# far end: blender_scene.py draws every edge-line channel in the white marking material, and a
+# yellow line is not a white line that happens to be somewhere else. It is the same distinction
+# the road's own centreline gets, for the same reason - yellow means opposing directions.
+BIKE_LANE_CONTRAFLOW_LINES = Channel("bike_lane_contraflow_lines", Role.LINE)
 CORNER_APRON_POLYGONS = Channel("corner_apron_polygons", Role.SURFACE)
 
 CHANNELS: tuple[Channel, ...] = (
@@ -139,7 +145,7 @@ CHANNELS: tuple[Channel, ...] = (
     CORNER_HATCHING_LINES, PARKING_EDGE_LINES, PARKING_STALL_DIVIDER_LINES,
     PARKING_BUFFER_HATCH_LINES, PARKING_BUFFER_EDGE_LINES, PARKING_BUFFER_TAPER_LINES,
     BIKE_LANE_EDGE_LINES, BIKE_LANE_HATCH_LINES, BIKE_LANE_SURFACE_POLYGONS,
-    CORNER_APRON_POLYGONS,
+    BIKE_LANE_CONTRAFLOW_LINES, CORNER_APRON_POLYGONS,
 )
 
 
@@ -206,6 +212,10 @@ BIKE_BUFFER_FILL = _kind("bike_buffer_fill", Role.FILL, BIKE_LANE_HATCH_LINES)
 # The green a bike lane's asphalt is painted, between its two edge stripes - the lane itself
 # rather than anything beside it.
 BIKE_LANE_SURFACE = _kind("bike_lane_surface", Role.COLOUR, BIKE_LANE_SURFACE_POLYGONS)
+# The centre stripe of a TWO-WAY bike lane. Yellow and broken, following MUTCD's rule for a
+# two-way bikeway: yellow because it divides opposing traffic (the same meaning it carries on
+# the roadway), broken because passing is permitted where sight distance allows.
+BIKE_CONTRAFLOW_DIVIDER = _kind("bike_contraflow_divider", Role.LINE, BIKE_LANE_CONTRAFLOW_LINES)
 # Built ground rather than paint: a flush, drivable corner surface.
 APRON = _kind("apron", Role.SURFACE, CORNER_APRON_POLYGONS)
 # A flex-post delineator. Paint draws the plan view's marker; the render needs a prop.

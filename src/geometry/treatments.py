@@ -7,6 +7,7 @@ from dataclasses import dataclass, field
 from typing import ClassVar
 
 import numpy as np
+import shapely.ops
 from shapely.geometry import Polygon
 
 from src.geometry.cross_streets import cross_streets_from_model
@@ -351,6 +352,26 @@ class DesignState:
         if treatment is not None:
             return treatment.style
         return self.existing_centerline_styles.get(leg_name, DEFAULT_CENTERLINE_STYLE)
+
+    def travel_lane_divider_shift(self, leg_name: str) -> tuple[float, str] | None:
+        """How far off the alignment this leg's centreline paint sits, and toward which side.
+
+        None where nothing moved it, which is every leg in every other scenario - the alignment
+        IS the divider unless a two-way bike lane on one side has pushed the travel lanes over.
+        Returns the distance and the side it moves toward, because a distance with no side is
+        half a fact and the sign convention has bitten this project before (see Side.sign).
+
+        Read by BOTH the plan view and the 3D export, which is the point of it being here rather
+        than computed in either: a shift one view honours and the other does not is a render
+        whose two travel lanes are different widths, and the seam where that would hide is
+        exactly the one src/render/crosswalks.py:centerline_paint_ft was written to close.
+        """
+        for treatment in self.treatments_of(AddTwoWayBikeLane):
+            if treatment.target.leg != leg_name:
+                continue
+            side = Side(str(treatment.target.side))
+            return travel_lane_divider_shift_ft(treatment.section(self)), str(side.other)
+        return None
 
     def treatment_for(self, kind, target):
         """The treatment of `kind` applied at `target`, or None if there is none.
@@ -1341,6 +1362,11 @@ MIN_TWO_WAY_BIKE_LANE_FT = 10.0
 # traffic - more than the 2 ft a one-way lane gets, because a head-on error here is a closing
 # speed, not an overtaking one.
 TWO_WAY_BIKE_LANE_BUFFER_FT = 3.0
+# The contraflow stripe's cadence. Shorter than the roadway's dashed centreline, because it is
+# read at bicycle speed over a 12 ft lane rather than at 25 mph over a 40 ft one, and a stripe
+# scaled to the road reads as two or three marks over a whole block.
+CONTRAFLOW_DASH_FT = 3.0
+CONTRAFLOW_GAP_FT = 5.0
 # Below this the two travel lanes are no longer lanes. NACTO's urban minimum is 10 ft, and
 # TARGET_LANE_WIDTH_FT (11) is what this project designs to; a corridor that cannot hold two
 # 10 ft lanes beside the section is reported rather than drawn.
@@ -1643,6 +1669,16 @@ class AddBikeLane(Treatment):
         return BikeLane(width_ft=self.width_ft, buffer_ft=self.buffer_ft,
                          parking_ft=self.parking_ft, shy_ft=self.shy_ft)
 
+    def section(self, state: "DesignState") -> BikeLane:
+        """The cross-section to paint, given the design.
+
+        A hook, because a two-way lane's section depends on BOTH of the leg's half-widths and so
+        cannot be known without the state, while a one-way lane's is fixed at construction. Both
+        views and every check read the section through here, so a subclass cannot end up
+        validated against one cross-section and drawn at another.
+        """
+        return self.lane
+
     def __post_init__(self):
         self.lane   # noqa: B018 - evaluated for its exception: raises for a lane under AASHTO's minimum
 
@@ -1693,7 +1729,7 @@ class AddBikeLane(Treatment):
 
         leg_name, side = self.target.leg, str(self.target.side)
         leg = ctx.state.legs[leg_name]
-        lane = self.lane
+        lane = self.section(ctx.state)
         at = ctx.anchors(leg_name, side, inner_offset_ft=(
             leg.curb_to_curb_ft / 2 - lane.total_ft + TARGET_LANE_WIDTH_FT))
         # A bike lane RUNS INTO its crossing and is cut by it, like every other kerbside zone
@@ -1841,6 +1877,113 @@ def bulb_out_corner_pair(state: DesignState, leg_name: str, extension_ft: float,
                               crossing_ft=crossing_ft, swept_radius_ft=swept_radius_ft),
             ProtectDaylightZone(LegSide(leg_name, side), kind="curb_extension"))
     return state
+
+
+@dataclass(frozen=True)
+class AddTwoWayBikeLane(AddBikeLane):
+    """A bidirectional bike lane along ONE side of a leg, with the travel lanes shifted off it.
+
+    Subclasses AddBikeLane because everything about painting the section is the same problem -
+    two edge stripes, a hatched buffer, the green surface, the dotted extension across every
+    driveway, all cut around the crossing bands. Only two things differ, and both are additions
+    rather than changes: the section starts further out (TwoWayBikeLane resolves that), and the
+    lane carries a yellow centre stripe because it holds opposing riders.
+
+    THE SIDE IS A CORRIDOR DECISION, NOT A PER-JUNCTION ONE. A two-way lane that changes sides
+    mid-corridor makes riders cross the street to stay on it, so the side is chosen once for the
+    whole route from how many streets cut each kerb - see sites/*/scenarios.py for Broad St's.
+    """
+    paint_group: ClassVar[int] = 30
+    paint_rank: ClassVar[int] = 0
+
+    def __post_init__(self):
+        """The width floor, checked without a street.
+
+        NOT by constructing a TwoWayBikeLane - that also checks the fit against two half-widths
+        this treatment does not carry, and feeding it invented ones to get at the width check
+        would be a validation passing on made-up geometry. A 6 ft two-way lane is wrong before
+        any street is consulted, so that part is checked here and the fit is checked in apply_to
+        where the real half-widths exist.
+        """
+        if self.width_ft < MIN_TWO_WAY_BIKE_LANE_FT:
+            raise ValueError(
+                f"A {self.width_ft:.2f} ft two-way bike lane is under NACTO's "
+                f"{MIN_TWO_WAY_BIKE_LANE_FT:.0f} ft minimum ({TWO_WAY_BIKE_LANE_WIDTH_FT:.0f} ft "
+                f"is the width to design to). Two riders meeting head-on need the width of two "
+                f"riders; a one-way lane's {AASHTO_MIN_BIKE_LANE_FT:.0f} ft floor does not apply "
+                f"to a lane carrying both directions.")
+
+    def section(self, state: "DesignState") -> TwoWayBikeLane:
+        """The section as this leg's own kerbs make it - measured at the NARROWEST traced point on
+        each side, which is where a promise about the whole kerb has to hold.
+
+        Raises through TwoWayBikeLane when the leg cannot hold two travel lanes beside it.
+        """
+        leg = state.legs[self.target.leg]
+        side = Side(str(self.target.side))
+        return TwoWayBikeLane(
+            width_ft=self.width_ft, buffer_ft=self.buffer_ft,
+            near_half_ft=narrowest_half_width_ft(leg, str(side)),
+            far_half_ft=narrowest_half_width_ft(leg, str(side.other)))
+
+    def describe(self) -> str:
+        return (f"AddTwoWayBikeLane({self.target.leg}, {self.target.side}): "
+                f"{_feet(self.width_ft)} ft two-way lane"
+                + (f", {_feet(self.buffer_ft)} ft buffer" if self.buffer_ft else ""))
+
+    def apply_to(self, state: "DesignState", model=None) -> str:
+        leg = state.legs[self.target.leg]
+        if leg.curb_to_curb_ft is None:
+            raise ValueError(f"Leg {self.target.leg!r} has no width - nothing to fit a lane into.")
+        # Building the section IS the fit check: TwoWayBikeLane refuses one that leaves less than
+        # two travel lanes, and it does so carrying the measurement. Reraised untouched.
+        section = self.section(state)
+        shift_ft = travel_lane_divider_shift_ft(section)
+        travel_way_ft = section.near_half_ft + section.far_half_ft - section.section_ft
+        return (f". Spends {section.section_ft:.2f} ft of this leg's "
+                f"{section.near_half_ft + section.far_half_ft:.2f} ft between kerbs, leaving "
+                f"{travel_way_ft:.2f} ft for traffic - two {travel_way_ft / 2:.2f} ft lanes, with "
+                f"the centreline shifted {shift_ft:.2f} ft toward the "
+                f"{Side(str(self.target.side)).other} kerb. The NJDOT alignment does not move; "
+                f"every station and crossing frame is measured from it as before.")
+
+    def paint(self, ctx) -> None:
+        """The one-way section's markings, plus the yellow stripe down the middle of the lane."""
+        from src.geometry.markings import BIKE_CONTRAFLOW_DIVIDER
+        from src.geometry.model import inset_line_ft
+
+        # Everything AddBikeLane paints, at this section's own offsets. Reached through the
+        # resolved lane, so the stripes land where the shifted section actually is.
+        section = self.section(ctx.state)
+        super().paint(ctx)
+
+        leg_name, side = self.target.leg, str(self.target.side)
+        leg = ctx.state.legs[leg_name]
+        bounds = section.offsets_from_centerline_ft()
+        centre_ft = (bounds["bike_inner_ft"] + bounds["bike_outer_ft"]) / 2
+        at = ctx.anchors(leg_name, side, inner_offset_ft=centre_ft)
+        if (leg_name, side) in ctx.straight_through:
+            start_ft, beyond_ft = 0.0, None
+        elif leg_name in ctx.marked:
+            from src.geometry.paint import end_against_crossing
+            start_ft, beyond_ft = end_against_crossing(at)
+        else:
+            start_ft, beyond_ft = at.target_ft, None
+        # BROKEN, not continuous - passing is permitted in a two-way bikeway where sight
+        # distance allows, and MUTCD's yellow-broken is what says so. Cut into dashes here
+        # rather than left to a line style, for the reason every other dashed marking in this
+        # project is: a style is a 2D property and the 3D render gets geometry, so a continuous
+        # line with a dashed style renders solid.
+        axis = inset_line_ft(leg, side, centre_ft, start_ft)
+        if axis is None or axis.is_empty:
+            return
+        period_ft = CONTRAFLOW_DASH_FT + CONTRAFLOW_GAP_FT
+        at_ft = 0.0
+        while at_ft + CONTRAFLOW_DASH_FT <= axis.length:
+            dash = shapely.ops.substring(axis, at_ft, at_ft + CONTRAFLOW_DASH_FT)
+            if dash.geom_type == "LineString" and dash.length > 0:
+                ctx.add(BIKE_CONTRAFLOW_DIVIDER, dash, leg_name, side, beyond_ft)
+            at_ft += period_ft
 
 
 @dataclass(frozen=True)

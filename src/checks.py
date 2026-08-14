@@ -551,6 +551,26 @@ def _boxes_apart(a: tuple, b: tuple) -> bool:
     return a[2] < b[0] or b[2] < a[0] or a[3] < b[1] or b[3] < a[1]
 
 
+def _travel_lane_target_ft(state, leg_name: str, side: str) -> float:
+    """How far from the alignment this kerb's travel lane reaches, for the paint checks.
+
+    TARGET_LANE_WIDTH_FT everywhere the travel lanes straddle the alignment, which is every leg
+    of every scenario but one. Where a two-way bike lane occupies this side, the travel way has
+    been shifted off the alignment and its edge on this side is the section's own inner edge -
+    so that is what paint has to stay outside of.
+
+    Reads the shift off the DESIGN rather than recomputing it, so a check and a renderer cannot
+    disagree about where the lane edge is. That divergence is the failure this module exists to
+    catch, and a check carrying its own copy of the arithmetic would be an instance of it.
+    """
+    from src.geometry.treatments import TARGET_LANE_WIDTH_FT, AddTwoWayBikeLane
+
+    for treatment in state.treatments_of(AddTwoWayBikeLane):
+        if treatment.target.leg == leg_name and str(treatment.target.side) == str(side):
+            return treatment.section(state).offsets_from_centerline_ft()["travel_lane_edge_ft"]
+    return TARGET_LANE_WIDTH_FT
+
+
 class PaintClearOfTheTravelLane(SceneCheck):
     """The travel lane is clear asphalt, all the way to the target width.
 
@@ -565,7 +585,6 @@ class PaintClearOfTheTravelLane(SceneCheck):
     def run(self, scene: SceneContext) -> list[Violation]:
         state, paint = scene.state, scene.paint
         from src.geometry.paint import LANE_EDGE_LINE_WIDTH_FT
-        from src.geometry.treatments import TARGET_LANE_WIDTH_FT
 
         violations = []
         for piece in paint:
@@ -588,7 +607,19 @@ class PaintClearOfTheTravelLane(SceneCheck):
             # and 25-31 ft from its left, so on that side there is no 11 ft lane to protect and
             # the paint correctly clamps to the kerb. Comparing against the NOMINAL half-width
             # instead would call that a violation on every vertex.
-            entitled = np.minimum(TARGET_LANE_WIDTH_FT,
+            #
+            # AND THE TARGET ITSELF MOVES WHERE THE TRAVEL LANES DO. This check measures the lane
+            # from the alignment, which is right only while the two travel lanes straddle it. A
+            # two-way bike lane on one side shifts them off it (see TwoWayBikeLane), so on that
+            # kerb the lane a rider is protected from does not begin at 11 ft from the alignment
+            # - it begins at the section's inner edge, and paint outside that is in the lane the
+            # design actually drew rather than in a travel lane.
+            #
+            # Re-expressed rather than skipped. The property being checked is unchanged - no
+            # paint inside the travel lane - and dropping the check on these legs would have
+            # dropped it on precisely the design most likely to get the arithmetic wrong.
+            target_ft = _travel_lane_target_ft(state, piece.leg, piece.side)
+            entitled = np.minimum(target_ft,
                                    np.abs(curb_offsets) - LANE_EDGE_LINE_WIDTH_FT)
             # The painted body reaches half a stripe width inside its own centreline.
             shortfall = entitled - (np.abs(offsets) - LANE_EDGE_LINE_WIDTH_FT / 2)

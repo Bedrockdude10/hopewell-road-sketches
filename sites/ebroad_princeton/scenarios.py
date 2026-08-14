@@ -209,3 +209,47 @@ def build_proposal_bike_lanes(baseline: DesignState, model=None) -> DesignState:
                   f"{MIN_BIKE_LANE_FT - (BIKE_LANE_WIDTH_FT + spare_ft):.2f} ft would buy a "
                   f"protected lane.")
     return state
+
+
+# --- The borough two-way corridor -----------------------------------------------------------
+#
+# The same route as sites/broad_st_greenwood/scenarios.py - one two-way lane along the SOUTH
+# kerb for the whole borough length of Broad St. See that file for the measurements the side was
+# chosen on (10 side streets cutting the north kerb against 7 on the south, over a corridor
+# where the parking difference is 2% and the driveway data is 29% complete).
+CORRIDOR_SIDE = "south"
+
+
+def build_proposal_two_way_bike_lane(baseline: DesignState, model=None) -> DesignState:
+    """A 12 ft two-way protected bike lane along the south kerb of both E Broad St legs.
+
+    E Broad is the corridor's narrow end - 36.0 and 37.9 ft between traced kerbs against Broad &
+    Greenwood's 43.3 and 52.5 - so this is where the section is most likely not to fit, and the
+    refusal carries the measurement when it does not. Both legs are already no_stopping on both
+    sides, so unlike the rest of the corridor this stretch displaces no parking at all.
+
+    Princeton Ave gets none: it has 4.1 ft per side spare beside an 11 ft lane, under AASHTO's
+    minimum for even a one-way lane.
+    """
+    from src.geometry.model import side_facing
+    from src.geometry.treatments import (TWO_WAY_BIKE_LANE_BUFFER_FT, TWO_WAY_BIKE_LANE_WIDTH_FT,
+                                          AddTwoWayBikeLane)
+
+    if model is None:
+        return baseline
+    state = apply_osm_parking(baseline, model, legs=("princeton_ave_south",))
+    state = complete_centerlines(state)
+    state = all_crosswalks_continental(state)
+    for leg_name in E_BROAD_LEGS:
+        side = side_facing(state.legs[leg_name], CORRIDOR_SIDE)
+        try:
+            state = state.apply(AddTwoWayBikeLane(LegSide(leg_name, side),
+                                                  width_ft=TWO_WAY_BIKE_LANE_WIDTH_FT,
+                                                  buffer_ft=TWO_WAY_BIKE_LANE_BUFFER_FT))
+        except ValueError as too_narrow:
+            print(f"  NOTE: no two-way lane on {leg_name} {side} ({CORRIDOR_SIDE} kerb) - "
+                  f"{too_narrow}")
+            continue
+        state = state.apply(AddBikeLaneBollards(LegSide(leg_name, side),
+                                                 spacing_ft=BIKE_LANE_BOLLARD_SPACING_FT))
+    return state

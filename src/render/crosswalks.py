@@ -12,7 +12,7 @@ from shapely.ops import unary_union
 from shapely.geometry import LineString, Polygon
 
 from src.render.coords import FT_TO_M, wgs84_to_state_plane
-from src.geometry.model import crosswalk_estimate_ft, leg_clearance_ft
+from src.geometry.model import crosswalk_estimate_ft, inset_line_ft, leg_clearance_ft
 from src.geometry.targets import LegSide, LegTarget, Side
 from src.geometry.treatments import (AddBikeLane, DesignState, LaneNarrowing, MarkedParking,
                                      ShiftCrosswalk, UpgradeCrosswalkMarkings)
@@ -574,7 +574,8 @@ CENTERLINE_DASH_FT = 1.0 / FT_TO_M
 CENTERLINE_GAP_FT = 1.0 / FT_TO_M
 
 
-def centerline_paint_ft(leg, start_ft: float, style: str) -> list[LineString]:
+def centerline_paint_ft(leg, start_ft: float, style: str,
+                         shift_ft: float = 0.0, shift_side: str | None = None) -> list[LineString]:
     """The stripes actually painted down this leg's middle, from `start_ft` to its far end.
 
     ONE definition for both views, because they had two and only one of them followed the road.
@@ -593,7 +594,23 @@ def centerline_paint_ft(leg, start_ft: float, style: str) -> list[LineString]:
     """
     if style == "none" or start_ft >= leg.centerline.length:
         return []
-    painted = shapely.ops.substring(leg.centerline, start_ft, leg.centerline.length)
+    if shift_ft and shift_side is not None:
+        # A TWO-WAY BIKE LANE ON ONE SIDE PUSHES THE TRAVEL LANES OFF THE ALIGNMENT, so the
+        # divider between them is no longer the alignment itself - see
+        # treatments.travel_lane_divider_shift_ft for where the distance comes from and why the
+        # two lanes come out equal.
+        #
+        # Through inset_line_ft rather than offset_curve, for the reason this function exists at
+        # all: it is the same lateral-offset machinery the bike lane's own stripes use, on the
+        # same station grid, with the same clamping inside the traced kerb. An offset curve's arc
+        # length differs from the centerline's, so stationing along it is not stationing along
+        # the road - which is what put the stall ticks adrift before - and a second mechanism for
+        # "a line N ft to one side" is exactly the divergence the single-definition rule forbids.
+        painted = inset_line_ft(leg, shift_side, abs(shift_ft), start_ft)
+        if painted is None or painted.is_empty or painted.geom_type != "LineString":
+            return []
+    else:
+        painted = shapely.ops.substring(leg.centerline, start_ft, leg.centerline.length)
     if painted.is_empty or painted.geom_type != "LineString":
         return []
     if style == "double_yellow":

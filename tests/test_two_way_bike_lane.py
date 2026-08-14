@@ -71,9 +71,58 @@ def test_a_section_that_leaves_no_room_for_two_travel_lanes_is_refused():
         TwoWayBikeLane(width_ft=12.0, buffer_ft=3.0, near_half_ft=17.26, far_half_ft=14.84)
 
 
+def test_the_divider_shift_reaches_both_views(site_models):
+    """The contraflow stripe and the shifted double yellow are the SAME decision reaching two
+    renderers, which is the seam every marking in this project has shipped a bug at.
+
+    Asserted through the design rather than by calling the paint helpers: what matters is that
+    a scenario applying the treatment produces a shift both views can read, because a shift the
+    plan view honours and the export does not is a render whose lanes are different widths.
+    """
+    from src.geometry.targets import LegSide
+    from src.geometry.treatments import AddTwoWayBikeLane, DesignState
+
+    model = site_models["broad_st_greenwood"]
+    state = DesignState.from_model(model)
+    lane = state.legs["broad_st_east"]
+    south = "left" if lane.centerline.coords[-1][1] < lane.centerline.coords[0][1] else "right"
+    state = state.apply(AddTwoWayBikeLane(LegSide("broad_st_east", south), width_ft=12.0,
+                                          buffer_ft=3.0))
+    shift = state.travel_lane_divider_shift("broad_st_east")
+    assert shift is not None, "a two-way lane must record a divider shift"
+    shift_ft, shift_side = shift
+    assert shift_ft > 0
+    assert shift_side != south, "the divider shifts AWAY from the side carrying the lane"
+    # A leg with no two-way lane keeps the alignment as its divider - nothing else moves.
+    assert state.travel_lane_divider_shift("greenwood_ave_north") is None
+
+
 def test_a_lane_under_the_two_way_floor_is_refused():
     """A two-way lane carries opposing traffic, so it has its own floor - a 5 ft one-way
     width is not a two-way lane however much the arithmetic fits."""
     with pytest.raises(ValueError, match="two-way"):
         TwoWayBikeLane(width_ft=6.0, buffer_ft=3.0,
                        near_half_ft=SOUTH_HALF_FT, far_half_ft=NORTH_HALF_FT)
+
+
+def test_the_south_side_is_resolved_per_leg(site_models):
+    """A corridor decision ("the south kerb") is not a leg decision ("left"). The same real kerb
+    is left on one approach and right on the other, and translating it by hand is how a corridor
+    treatment lands on the north kerb of one leg and the south kerb of the next."""
+    from src.geometry.model import side_facing
+
+    state_legs = site_models["broad_st_greenwood"].legs
+    east, west = state_legs["broad_st_east"], state_legs["broad_st_west"]
+    # Opposite approaches of one street: the same ground is the other hand on each.
+    assert side_facing(east, "south") != side_facing(west, "south")
+    assert side_facing(east, "south") != side_facing(east, "north")
+
+
+def test_a_north_south_leg_has_no_compass_side(site_models):
+    """Greenwood Ave runs north-south. It has an east and a west kerb, and answering "which is
+    the south side" with whichever way its lean falls would be a guess presented as a fact."""
+    from src.geometry.model import side_facing
+
+    greenwood = site_models["broad_st_greenwood"].legs["greenwood_ave_north"]
+    with pytest.raises(ValueError, match="north-south"):
+        side_facing(greenwood, "south")

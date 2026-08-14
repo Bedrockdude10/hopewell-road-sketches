@@ -659,6 +659,68 @@ class PaintClearOfTheTravelLane(SceneCheck):
         return violations
 
 
+class TravelLanesHoldTheTarget(SceneCheck):
+    """A leg the design has RESTRIPED must not leave a travel lane wider than the target.
+
+    An 11 ft lane is the cheapest safety intervention this project has - paint - and a wide one
+    invites exactly the speed every other treatment here is trying to reduce. So it is not a
+    per-proposal nicety: wherever a design has already decided to restripe a leg, leaving the
+    other side over-wide is an omission rather than a choice.
+
+    ONLY LEGS THAT CARRY PAINT. A leg nobody has touched is the street as it is, and existing
+    conditions must be drawable however wide the road happens to be - failing that would be
+    reporting reality as a defect. What this catches is a design that narrowed one kerb and
+    forgot the other, which is what shipped: the two-way corridor held Broad & Greenwood's lanes
+    at 11.00 ft and left E Broad's at 11.68 and 13.21, because the far-kerb rule was written
+    inline in one site's scenarios.py and not the other's.
+
+    Distinct from TravelLanesKeepTheirWidth, which is the same measurement in the other
+    direction - that one catches paint that leaves TOO LITTLE lane. Together they pin the lane
+    to the target from both sides.
+    """
+
+    def run(self, scene: SceneContext) -> list[Violation]:
+        from src.geometry.targets import LegSide, LegTarget
+        from src.geometry.treatments import (TARGET_LANE_WIDTH_FT, AddBikeLane, LaneNarrowing,
+                                              MarkedParking, travel_lane_width_ft)
+
+        state = scene.state
+        violations = []
+        for leg_name, leg in state.legs.items():
+            if leg.curb_to_curb_ft is None:
+                continue
+            narrowing = state.treatment_for(LaneNarrowing, LegTarget(leg_name))
+            sides = ("left", "right")
+
+            def painted_ft(side, narrowing=narrowing, leg_name=leg_name):
+                parking = state.treatment_for(MarkedParking, LegSide(leg_name, side))
+                if parking is not None:
+                    return parking.depth_ft + parking.curb_offset_ft
+                if narrowing is not None and side in narrowing.sides:
+                    return narrowing.stripe_width_ft
+                return 0.0
+
+            restriped = any(painted_ft(side) > 0
+                            or state.treatment_for(AddBikeLane, LegSide(leg_name, side)) is not None
+                            for side in sides)
+            if not restriped:
+                continue        # untouched leg - the street as it is, not a design
+            for side in sides:
+                if state.treatment_for(AddBikeLane, LegSide(leg_name, side)) is not None:
+                    continue    # the lane's own cross-section defines this edge
+                lane_ft = travel_lane_width_ft(state, leg_name, side, painted_ft(side))
+                if lane_ft > TARGET_LANE_WIDTH_FT + LANE_WIDTH_TOLERANCE_FT:
+                    violations.append(Violation(
+                        "travel_lane_over_target",
+                        f"{leg_name} {side} is left {lane_ft:.2f} ft wide on a leg this design has "
+                        f"already restriped - {lane_ft - TARGET_LANE_WIDTH_FT:.2f} ft over the "
+                        f"{TARGET_LANE_WIDTH_FT:.0f} ft target. Spare width beside a travel lane "
+                        f"is parking or hatching, never lane; call "
+                        f"treatments.hold_travel_lane_at_target for this kerb",
+                        tuple(leg.centerline.interpolate(leg.centerline.length / 2).coords[0])))
+        return violations
+
+
 class BollardsStandInTheirBuffer(SceneCheck):
     """A flex post protecting a bike lane must stand in the BUFFER, not in the lane.
 

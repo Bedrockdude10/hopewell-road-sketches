@@ -2573,6 +2573,56 @@ def travel_lane_width_ft(state: DesignState, leg_name: str, side: str, painted_f
     return half_ft - painted_ft - divider_shift_toward_ft(state, leg_name, side)
 
 
+# The narrowest parallel stall worth marking. Below 7 ft a car cannot sit clear of the travel
+# lane, so it is not a stall; MIN_MARKED_PARKING_DEPTH_FT (8 ft) is the width to mark when the
+# street can spare it, not the floor for whether parking exists at all.
+MIN_USABLE_STALL_FT = 7.0
+
+
+def hold_travel_lane_at_target(state: DesignState, leg_name: str, side: str) -> DesignState:
+    """Bring ONE kerb's travel lane down to TARGET_LANE_WIDTH_FT, spending the surplus.
+
+    An 11 ft lane is the point of the exercise, not a detail of one proposal: a wide lane invites
+    the speed every treatment here exists to reduce, and it is the cheapest intervention
+    available - paint. So wherever a design has decided to restripe a leg, both of its lanes get
+    held at the target and the leftover becomes parking (where the kerb may legally hold it and
+    there is room for a usable stall) or hatching (where it may not).
+
+    ONE DEFINITION, because this was written twice. sites/broad_st_greenwood/scenarios.py grew it
+    inline for the two-way corridor and sites/ebroad_princeton/scenarios.py did not, so the same
+    corridor treatment left E Broad with 11.68 ft and 13.21 ft lanes while Broad & Greenwood held
+    11.00 - the "two records of one decision" failure, in the layer that is supposed to be one
+    decision. TravelLanesHoldTheTarget now fails the build for it.
+
+    THE TWO DATUMS ARE BOTH HERE, and confusing them draws a 20 ft hatch. WHETHER there is room
+    is a measurement of the traced kerb; WHERE the paint goes is an offset from the NOMINAL
+    half-width, because that is the datum MarkedParking and LaneNarrowing subtract from. On
+    broad_st_east those differ by 25 ft.
+    """
+    leg = state.legs[leg_name]
+    if leg.curb_to_curb_ft is None:
+        return state
+    if state.treatment_for(AddBikeLane, LegSide(leg_name, side)) is not None:
+        return state          # a bike lane already defines this side's edge
+    divider_ft = divider_shift_toward_ft(state, leg_name, side)
+    lane_edge_ft = divider_ft + TARGET_LANE_WIDTH_FT
+    # Room beyond the travel lane, measured where the kerb comes closest - a promise about a
+    # whole kerb has to hold at its narrowest.
+    surplus_ft = narrowest_half_width_ft(leg, side) - lane_edge_ft
+    if surplus_ft <= LANE_WIDTH_SLACK_FT:
+        return state          # the street has nothing spare; the lane is already at or under target
+    zone_from_nominal_ft = leg.curb_to_curb_ft / 2 - lane_edge_ft
+    if zone_from_nominal_ft <= 0:
+        return state
+    if kerb_may_hold_parking(state, leg_name, side) and surplus_ft >= MIN_USABLE_STALL_FT:
+        depth_ft = min(surplus_ft, PARKING_STALL_DEPTH_DEFAULT_FT)
+        return state.apply(MarkedParking(LegSide(leg_name, side), depth_ft=depth_ft,
+                                          curb_offset_ft=max(zone_from_nominal_ft - depth_ft, 0.0)))
+    return state.apply(LaneNarrowing(LegTarget(leg_name),
+                                      stripe_width_ft=max(zone_from_nominal_ft, 0.5),
+                                      sides=(side,)))
+
+
 def kerb_may_hold_parking(state: DesignState, leg_name: str, side: str) -> bool:
     """Whether stalls may be marked on this kerb at all, by OSM's own restrictions.
 

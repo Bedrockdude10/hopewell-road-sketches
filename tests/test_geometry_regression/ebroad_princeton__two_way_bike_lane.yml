@@ -71,25 +71,25 @@ channels:
       - -116.73
     points: 106
   lane_narrowing_edge_lines:
-    count: 8
+    count: 17
     extent:
       max:
-      - 17.906
-      - -7.626
+      - 36.019
+      - 17.369
       min:
-      - -1.441
+      - -39.345
       - -38.139
-    points: 287
+    points: 485
   lane_narrowing_hatch_lines:
-    count: 14
+    count: 17
     extent:
       max:
       - 18.767
-      - -8.296
+      - -1.563
       min:
-      - -0.871
+      - -29.394
       - -36.35
-    points: 28
+    points: 34
   lane_narrowing_taper_lines:
     count: 0
     extent: null
@@ -375,10 +375,10 @@ legs:
     stop_bar_centre_m:
     - 15.318
     - 5.008
-    stop_bar_lateral_offset_m: 3.597
+    stop_bar_lateral_offset_m: 3.744
     stop_bar_offset_m: 16.116
-    stop_bar_span_m: 3.059
-    stop_bar_width_m: 11.253
+    stop_bar_span_m: 3.353
+    stop_bar_width_m: 10.841
     width_m: 11.253
   e_broad_st_west:
     centerline_paint_m:

@@ -243,3 +243,58 @@ def test_the_drawn_centreline_sits_on_the_divider(site_models):
             f"{leg_name}: the divider belongs {want_ft:+.2f} ft from the alignment (+ = left) and "
             f"the centreline is drawn at {drawn_ft:+.2f} ft - {abs(drawn_ft - want_ft):.2f} ft "
             f"away from it, so the two travel lanes are not the widths the design says")
+
+
+def test_every_restriped_lane_holds_the_target_everywhere(site_models):
+    """An 11 ft lane is the easy win, so it has to be the rule and not a per-scenario habit.
+
+    Swept across every site and every scenario rather than the two-way one, because that is the
+    claim: wherever a design has restriped a leg, both its travel lanes come out at the target
+    and the surplus is parking or hatching. It was NOT true when written - E Broad's two-way
+    scenario left 11.68 ft and 13.21 ft lanes, because the far-kerb rule was written inline in
+    one site's scenarios.py and never reached the other's.
+    """
+    import contextlib
+    import io
+
+    from scripts.build_all import scenarios_for
+    from src.geometry.targets import LegSide, LegTarget
+    from src.geometry.treatments import (TARGET_LANE_WIDTH_FT, AddBikeLane, DesignState,
+                                          LaneNarrowing, MarkedParking, travel_lane_width_ft)
+    from src.site import load_site_scenarios, run_scenario
+
+    over, checked = [], 0
+    for site, model in site_models.items():
+        with contextlib.redirect_stdout(io.StringIO()):
+            scenarios = load_site_scenarios(site)
+        for name in scenarios_for(site, scenarios):
+            with contextlib.redirect_stdout(io.StringIO()):
+                state = run_scenario(getattr(scenarios, name),
+                                      DesignState.from_model(model), model)
+            for leg_name, leg in sorted(state.legs.items()):
+                if leg.curb_to_curb_ft is None:
+                    continue
+                narrowing = state.treatment_for(LaneNarrowing, LegTarget(leg_name))
+
+                def painted(side, narrowing=narrowing, leg_name=leg_name, state=state):
+                    parking = state.treatment_for(MarkedParking, LegSide(leg_name, side))
+                    if parking is not None:
+                        return parking.depth_ft + parking.curb_offset_ft
+                    return (narrowing.stripe_width_ft
+                            if narrowing and side in narrowing.sides else 0.0)
+
+                sides = ("left", "right")
+                if not any(painted(s) > 0
+                           or state.treatment_for(AddBikeLane, LegSide(leg_name, s))
+                           for s in sides):
+                    continue        # untouched leg - the street as it is, not a design
+                for side in sides:
+                    if state.treatment_for(AddBikeLane, LegSide(leg_name, side)):
+                        continue
+                    checked += 1
+                    lane_ft = travel_lane_width_ft(state, leg_name, side, painted(side))
+                    if lane_ft > TARGET_LANE_WIDTH_FT + 0.05:
+                        over.append(f"{site}/{name} {leg_name} {side}: {lane_ft:.2f} ft")
+    assert checked > 20, f"only {checked} lanes swept - the sweep stopped finding scenarios"
+    assert not over, "travel lanes left over target on legs the design restriped:\n  " + \
+                     "\n  ".join(over)

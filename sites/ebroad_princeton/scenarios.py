@@ -10,7 +10,7 @@ see this site config.yaml. Every width here is osm_derived or estimated, NOT fie
 measured, so treat the lane/parking dimensions below as a design study rather than a
 construction drawing.
 """
-from src.geometry.targets import LegSide, LegTarget
+from src.geometry.targets import LegSide, LegTarget, Side
 from src.geometry.treatments import (
     MIN_BIKE_LANE_FT, MIN_TWO_WAY_BIKE_LANE_FT, widest_protected_lane_ft,BIKE_LANE_BUFFER_FT, BIKE_LANE_WIDTH_FT,
     LANE_WIDTH_SLACK_FT, TARGET_LANE_WIDTH_FT, AddBikeLane, AddBikeLaneBollards, DesignState,
@@ -245,7 +245,8 @@ def build_proposal_two_way_bike_lane(baseline: DesignState, model=None) -> Desig
     minimum for even a one-way lane.
     """
     from src.geometry.model import side_facing
-    from src.geometry.treatments import TWO_WAY_BIKE_LANE_BUFFER_FT, AddTwoWayBikeLane
+    from src.geometry.treatments import (TWO_WAY_BIKE_LANE_BUFFER_FT, AddTwoWayBikeLane,
+                                          hold_travel_lane_at_target)
 
     if model is None:
         return baseline
@@ -264,4 +265,9 @@ def build_proposal_two_way_bike_lane(baseline: DesignState, model=None) -> Desig
             continue
         state = state.apply(AddBikeLaneBollards(LegSide(leg_name, side),
                                                  spacing_ft=BIKE_LANE_BOLLARD_SPACING_FT))
+        # And hold the OPPOSITE kerb's travel lane at 11 ft, spending the surplus on parking or
+        # hatching. Missing here while broad_st_greenwood had it inline is exactly what left this
+        # site with 11.68 ft and 13.21 ft lanes; TravelLanesHoldTheTarget now fails the build for
+        # it, and the rule lives in src so there is one of it.
+        state = hold_travel_lane_at_target(state, leg_name, str(Side(side).other))
     return state

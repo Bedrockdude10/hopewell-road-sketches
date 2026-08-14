@@ -272,10 +272,8 @@ def build_proposal_two_way_bike_lane(baseline: DesignState, model=None) -> Desig
     overtaking one.
     """
     from src.geometry.model import side_facing
-    from src.geometry.treatments import (PARKING_STALL_DEPTH_DEFAULT_FT,
-                                          TWO_WAY_BIKE_LANE_BUFFER_FT,
-                                          AddTwoWayBikeLane, far_kerb_surplus_ft,
-                                          kerb_may_hold_parking, travel_lane_divider_shift_ft)
+    from src.geometry.treatments import (TWO_WAY_BIKE_LANE_BUFFER_FT, AddTwoWayBikeLane,
+                                          hold_travel_lane_at_target)
 
     if model is None:
         return baseline
@@ -297,65 +295,12 @@ def build_proposal_two_way_bike_lane(baseline: DesignState, model=None) -> Desig
             continue
         state = state.apply(AddBikeLaneBollards(LegSide(leg_name, side),
                                                  spacing_ft=BIKE_LANE_BOLLARD_SPACING_FT))
-        # THE FAR KERB GETS THE PARKING, and this is why the two belong in one proposal rather
-        # than two: the kerb that loses its parking to the bike lane is not the kerb that gains
-        # this. The travel lanes hold 11 ft (travel_lane_divider_shift_ft), so what the section
-        # does not spend ends up against the opposite kerb, where a stall can use it.
-        section = lane.section(state)
-        surplus_ft = far_kerb_surplus_ft(section)
-        other = Side(side).other
-        # TWO DATUMS, AND THEY ARE NOT INTERCHANGEABLE - the same split apply_osm_parking spells
-        # out. WHETHER there is room is a measurement of the traced kerb (far_kerb_surplus_ft, off
-        # narrowest_half_width_ft). WHERE the paint goes is an offset from the NOMINAL half-width,
-        # because that is the datum MarkedParking and LaneNarrowing subtract their own widths from.
-        # Here those differ by 25 ft - broad_st_east's config says 68.0 against 43.26 ft between
-        # its traced kerbs - so sizing the paint off the surplus put the hatch 20.6 ft wide and
-        # let daylighting swallow the whole kerb, which is how this was caught.
-        #
-        # The far travel lane's outer edge is the divider plus a lane, so that is where this kerb's
-        # zone begins, and its width in the nominal frame is what is left out to the nominal kerb.
-        half_ft = state.legs[leg_name].curb_to_curb_ft / 2
-        zone_from_nominal_ft = half_ft - (travel_lane_divider_shift_ft(section)
-                                           + TARGET_LANE_WIDTH_FT)
-        # AND THE FAR KERB HAS TO BE ALLOWED TO PARK - but "allowed" is per STRETCH, not per
-        # kerb. OSM expresses the corner prohibition by splitting the way, so broad_st_east is
-        # no_parking over its first 79.6 ft and explicitly restriction=none for the 90.4 ft
-        # beyond; treating any prohibiting span as closing the whole kerb hatched all of it.
-        # kerb_may_hold_parking applies the same three-outcome rule apply_osm_parking does, and
-        # daylighting carves the restricted stretch back out of the stalls by itself.
-        if not kerb_may_hold_parking(state, leg_name, str(other)):
-            state = state.apply(LaneNarrowing(LegTarget(leg_name),
-                                               stripe_width_ft=max(zone_from_nominal_ft, 0.5),
-                                               sides=(str(other),)))
-            print(f"  NOTE: {leg_name} {other} is freed up by {surplus_ft:.2f} ft, but OSM "
-                  f"restricts parking along the WHOLE of that kerb, so it is HATCHED rather than "
-                  f"marked. CONFIRMED CORRECT - the prohibition follows actual sign placement "
-                  f"(Danny, 2026-08-14), so this is the finished treatment for this kerb and not "
-                  f"a gap waiting on better data. Using the width for parking would need the "
-                  f"signs changed, which is a borough decision rather than a drawing one.")
-            continue
-        # MIN_USABLE_STALL_FT, not src's MIN_MARKED_PARKING_DEPTH_FT. That 8 ft figure is the
-        # threshold for marking a STANDARD stall where the width is there for the asking, and
-        # applying it here rejected the 7.44 ft broad_st_east frees - returning no parking at all
-        # on the one Broad St kerb that is legally allowed to have it. A 7 ft parallel stall is
-        # narrow but usable, which is the same call sites/ebroad_princeton/scenarios.py already
-        # makes with its own MIN_PARKING_DEPTH_FT, and on this corridor the alternative to a
-        # narrow stall is no stall.
-        if surplus_ft >= MIN_USABLE_STALL_FT:
-            depth_ft = min(surplus_ft, PARKING_STALL_DEPTH_DEFAULT_FT)
-            state = state.apply(MarkedParking(LegSide(leg_name, str(other)), depth_ft=depth_ft,
-                                               curb_offset_ft=max(zone_from_nominal_ft - depth_ft,
-                                                                   0.0)))
-            print(f"  NOTE: {leg_name} {other} ({'north' if CORRIDOR_SIDE == 'south' else 'south'} "
-                  f"kerb) gains {depth_ft:.1f} ft of marked parking from the "
-                  f"{surplus_ft:.2f} ft the two-way section leaves.")
-        else:
-            # Under a stall, so hatched rather than left bare - beside a travel lane that reads
-            # as a shoulder, which is what it is. apply_osm_parking makes the same call.
-            state = state.apply(LaneNarrowing(LegTarget(leg_name),
-                                               stripe_width_ft=max(zone_from_nominal_ft, 0.5),
-                                               sides=(str(other),)))
-            print(f"  NOTE: {leg_name} {other} has only {surplus_ft:.2f} ft spare beside an "
-                  f"{TARGET_LANE_WIDTH_FT:.0f} ft lane - under the {MIN_USABLE_STALL_FT:.0f} ft "
-                  f"minimum for a usable stall, so it is hatched rather than marked for parking.")
+        # THE FAR KERB GETS THE SURPLUS, and this is why the two belong in one proposal
+        # rather than two: the kerb that loses its parking to the bike lane is not the kerb that
+        # gains this. hold_travel_lane_at_target holds the lane at 11 ft and spends what is left
+        # on parking where the kerb may legally hold it, hatching where it may not - the same
+        # rule every other kerb in the project gets, in src rather than written out here. It
+        # WAS written out here, and sites/ebroad_princeton/scenarios.py did not have it, which
+        # is how the same corridor treatment left E Broad with 11.68 ft lanes.
+        state = hold_travel_lane_at_target(state, leg_name, str(Side(side).other))
     return state

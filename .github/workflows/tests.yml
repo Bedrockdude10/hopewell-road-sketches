@@ -27,9 +27,9 @@ jobs:
   test:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v6
         with:
           # Matches the local venv. The code uses 3.10+ syntax throughout (X | None, match) and
           # itertools.pairwise, so this is a floor as well as a preference.

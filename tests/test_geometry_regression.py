@@ -68,7 +68,17 @@ LEG_FIELDS = ("width_m", "near_m", "far_m", "crosswalk_centre_m", "crosswalk_axi
               # so changing where it starts - from the alignment to the painted centreline, which
               # moved it 3.15 ft on broad_st_east - left every golden identical. A marking's
               # extent is as much of the drawn result as its position.
-              "stop_bar_span_m", "stop_bar_lateral_offset_m")
+              "stop_bar_span_m", "stop_bar_lateral_offset_m",
+              # THE CENTRELINE'S ACTUAL DRAWN GEOMETRY, which had no golden coverage at all until
+              # a sign error moved it 2.84 ft on broad_st_west - onto the wrong side of the
+              # alignment, 8.16 ft from one kerb-side edge and 13.84 from the other, while every
+              # check reported two 11.00 ft lanes. Nothing failed, because every check measured
+              # the divider the design INTENDED and none compared it against the line drawn.
+              #
+              # This is the marking the README already devotes a section to ("The centerline
+              # follows the road"), where the 3D render drew the leg's chord and was up to 7.58 ft
+              # out. Twice now the double yellow has moved feet with the suite green.
+              "centerline_paint_m")
 
 
 def _round(value):

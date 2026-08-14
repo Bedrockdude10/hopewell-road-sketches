@@ -201,3 +201,45 @@ def test_the_far_kerb_keeps_its_parking(site_models):
     assert on_broad, (
         "the two-way corridor scenario marks no parking on either Broad St leg - the freed width "
         "on the far kerb is the whole reason the pair of treatments belongs in one proposal")
+
+
+def test_the_drawn_centreline_sits_on_the_divider(site_models):
+    """The painted centreline must be WHERE THE DIVIDER IS, and this is checked against the
+    drawn geometry rather than against the arithmetic that was supposed to produce it.
+
+    Everything else validated the intention: PaintClearOfTheTravelLane and
+    TravelLanesKeepTheirWidth both measure against divider_shift_toward_ft, the stop bar rests
+    against divider_shift_toward_ft, and all of them agreed. Nothing asked whether the line the
+    renderer actually drew landed there. It did not on broad_st_west - the shift is NEGATIVE
+    there, centerline_paint_ft took abs() of it, and the double yellow was drawn 1.42 ft on the
+    WRONG side of the alignment, 2.84 ft from the stop bar it is supposed to meet. The travel
+    lanes either side of it came out 13.84 ft and 8.16 ft against a reported 11.00.
+
+    That is this project's signature failure - two derivations of one fact, agreeing with each
+    other and not with the picture - and it is why the render is checked and not just the model.
+    """
+    import numpy as np
+
+    from src.geometry.model import station_offset_many
+    from src.geometry.treatments import divider_shift_toward_ft
+    from src.geometry.targets import Side
+    from src.render.crosswalks import centerline_paint_ft
+
+    _model, state, _paint = _two_way_scene(site_models)
+    for leg_name in ("broad_st_east", "broad_st_west"):
+        leg = state.legs[leg_name]
+        want_ft = divider_shift_toward_ft(state, leg_name, Side.LEFT)
+        shift = state.travel_lane_divider_shift(leg_name)
+        shift_ft, shift_side = shift if shift else (0.0, None)
+        stripes = centerline_paint_ft(leg, 60.0, state.centerline_style(leg_name),
+                                       shift_ft, shift_side)
+        assert stripes, f"{leg_name} should have centreline paint"
+        offsets = []
+        for stripe in stripes:
+            _st, off = station_offset_many(leg.centerline, np.asarray(stripe.coords, dtype=float))
+            offsets.append(float(off.mean()))
+        drawn_ft = sum(offsets) / len(offsets)      # midway between a double yellow's two lines
+        assert drawn_ft == pytest.approx(want_ft, abs=0.15), (
+            f"{leg_name}: the divider belongs {want_ft:+.2f} ft from the alignment (+ = left) and "
+            f"the centreline is drawn at {drawn_ft:+.2f} ft - {abs(drawn_ft - want_ft):.2f} ft "
+            f"away from it, so the two travel lanes are not the widths the design says")

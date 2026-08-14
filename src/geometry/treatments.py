@@ -369,8 +369,25 @@ class DesignState:
         for treatment in self.treatments_of(AddTwoWayBikeLane):
             if treatment.target.leg != leg_name:
                 continue
-            side = Side(str(treatment.target.side))
-            return travel_lane_divider_shift_ft(treatment.section(self)), str(side.other)
+            # CANONICAL FORM: a NON-NEGATIVE distance and the side it is actually on. The sign is
+            # resolved here, once, rather than travelling alongside a side that may contradict it.
+            #
+            # It used to return the raw signed shift paired with "the side away from the lane",
+            # and those two disagree whenever the shift is negative - which happens on a street
+            # wide enough that the near travel lane still does not reach the alignment.
+            # broad_st_west is exactly that: -1.42 paired with "right", where the divider is
+            # really 1.42 ft to the LEFT. centerline_paint_ft took abs() of the distance and drew
+            # the double yellow 1.42 ft to the right - 2.84 ft from the divider, and from the stop
+            # bar resting against it. Its travel lanes came out 13.84 and 8.16 ft while every
+            # check, measuring the intention rather than the drawing, reported 11.00.
+            #
+            # Note the divider is NOT always on the far side. It is wherever a target-width lane
+            # from the section's inner edge lands, and on a wide leg that is still short of the
+            # alignment.
+            toward_left_ft = divider_shift_toward_ft(self, leg_name, Side.LEFT)
+            if toward_left_ft >= 0:
+                return toward_left_ft, str(Side.LEFT)
+            return -toward_left_ft, str(Side.RIGHT)
         return None
 
     def treatment_for(self, kind, target):

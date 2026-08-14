@@ -616,7 +616,14 @@ def centerline_paint_ft(leg, start_ft: float, style: str,
         # length differs from the centerline's, so stationing along it is not stationing along
         # the road - which is what put the stall ticks adrift before - and a second mechanism for
         # "a line N ft to one side" is exactly the divergence the single-definition rule forbids.
-        painted = inset_line_ft(leg, shift_side, abs(shift_ft), start_ft)
+        # A NEGATIVE shift means the other side, not the same distance on this one. Callers pass
+        # the canonical non-negative form (DesignState.travel_lane_divider_shift), but abs() alone
+        # silently mirrored a negative one onto the wrong side of the road, so the sign is
+        # resolved here too rather than assumed away.
+        if shift_ft < 0:
+            shift_side = str(Side(shift_side).other)
+            shift_ft = -shift_ft
+        painted = inset_line_ft(leg, shift_side, shift_ft, start_ft)
         if painted is None or painted.is_empty or painted.geom_type != "LineString":
             return []
     else:

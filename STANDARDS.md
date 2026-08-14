@@ -132,6 +132,41 @@ Two of these carry project decisions worth knowing:
 | Urban minimum travel lane (with AASHTO) | 11 ft | `TARGET_LANE_WIDTH_FT` | `src/geometry/treatments.py` |
 | Crosswalk visibility ranking | continental > ladder > transverse | — | `src/render/crosswalks.py` |
 
+### Two-way (bidirectional) bikeway — *as cited, and NONE OF IT CHECKED*
+
+Added 2026-08-14 for the Broad St corridor. **Every figure below was written into a code comment
+from memory and never opened against the Urban Bikeway Design Guide**, which is exactly the
+failure this file's preamble describes. They are plausible and they are load-bearing - the 10 ft
+row is what the corridor's lane width was reduced TO in order to free parking - so they need
+checking before any of this goes to a county engineer.
+
+| figure | value | constant | file |
+|---|---|---|---|
+| Two-way lane width, desirable | 12 ft | `TWO_WAY_BIKE_LANE_WIDTH_FT` | `src/geometry/treatments.py` |
+| Two-way lane width, minimum | 10 ft | `MIN_TWO_WAY_BIKE_LANE_FT` | `src/geometry/treatments.py` |
+| Buffer beside moving traffic, with vertical elements | 3 ft | `TWO_WAY_BIKE_LANE_BUFFER_FT` | `src/geometry/treatments.py` |
+| Travel lane floor beside a two-way lane | 10 ft | `MIN_TRAVEL_LANE_BESIDE_TWO_WAY_FT` | `src/geometry/treatments.py` |
+
+**OPEN QUESTION, and the reason this section is flagged rather than merely unverified: how a
+two-way bikeway's markings cross a DRIVEWAY is not established here.** The repo currently draws
+three different answers to the same conflict point on the same lane -
+
+| marking | what it does at a driveway | authority |
+|---|---|---|
+| edge lines | break, continue as a dotted extension | MUTCD conflict-area principle, §2 — *as cited* |
+| green surface | continues across | our choice — **Modelled** |
+| yellow contraflow centre stripe | stops dead, no continuation | **nobody's** — an omission, not a decision |
+
+The centre stripe's behaviour is a bug rather than a standard: it was added after the inherited
+paint and never given the opening handling the other two markings have. Before fixing it the
+right way, the actual rule has to be read - candidates are MUTCD 11th ed. Part 9 (bicycle
+facility markings through conflict areas), NJDOT's *Bicycle Compatible Roadways and Bikeways*
+guidance, and NACTO's two-way cycle track chapter. Guessing here would put an invented striping
+detail in front of a reviewer, which is worse than the current visible gap.
+
+`CONTRAFLOW_DASH_FT` (3 ft) and `CONTRAFLOW_GAP_FT` (5 ft) in the same file are **Modelled** -
+chosen to read at this drawing's scale, not taken from any document. See §7.
+
 `TARGET_LANE_WIDTH_FT` is the single most load-bearing number in the repo — every kerbside
 treatment is measured as "what is left beside an 11 ft lane". It lives in `src/` rather than in
 each site's `scenarios.py` precisely because four copies is how nothing ends up enforcing it.

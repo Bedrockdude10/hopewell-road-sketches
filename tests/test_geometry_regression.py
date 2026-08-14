@@ -194,13 +194,30 @@ def digests(site_models):
     out = {}
     for site in SITES:
         model = site_models[site]
+        scenarios = load_site_scenarios(site)
         with contextlib.redirect_stdout(io.StringIO()):    # phase notes are noise here
             baseline = DesignState.from_model(model)
             out[(site, "existing")] = _export_digest(model, baseline, "Existing Conditions")
-            builder = load_site_scenarios(site).build_demo_scenario
-            proposed = run_scenario(builder, DesignState.from_model(model), model)
+            proposed = run_scenario(scenarios.build_demo_scenario,
+                                     DesignState.from_model(model), model)
             out[(site, "proposed")] = _export_digest(model, proposed, "Proposed Treatments")
+            # AND THE TWO-WAY CORRIDOR, where a site has one. Covered explicitly rather than left
+            # to build_demo_scenario because it is the one design here that is ASYMMETRIC about
+            # the alignment - it shifts the travel lanes, moves the centreline paint off the
+            # datum, and sizes a stall from what it leaves on the far kerb. Every one of those is
+            # a number no other scenario exercises, so without a golden of its own the whole
+            # asymmetric path had nothing to differ from, which is exactly how 30 flex posts came
+            # to be drawn inside the bike lane with a green suite.
+            builder = getattr(scenarios, "build_proposal_two_way_bike_lane", None)
+            if builder is not None:
+                two_way = run_scenario(builder, DesignState.from_model(model), model)
+                out[(site, "two_way_bike_lane")] = _export_digest(model, two_way,
+                                                                   "Two-Way Bike Lane")
     return out
+
+
+TWO_WAY_SITES = [site for site in SITES
+                 if hasattr(load_site_scenarios(site), "build_proposal_two_way_bike_lane")]
 
 
 @needs_source_data
@@ -208,6 +225,14 @@ def digests(site_models):
 @pytest.mark.parametrize("scenario", ["existing", "proposed"])
 def test_exported_geometry_is_unchanged(digests, data_regression, site, scenario):
     data_regression.check(digests[(site, scenario)], basename=f"{site}__{scenario}")
+
+
+@needs_source_data
+@pytest.mark.parametrize("site", TWO_WAY_SITES)
+def test_the_two_way_corridor_geometry_is_unchanged(digests, data_regression, site):
+    """A golden for the asymmetric design specifically - see the note in `digests`."""
+    data_regression.check(digests[(site, "two_way_bike_lane")],
+                           basename=f"{site}__two_way_bike_lane")
 
 
 @needs_source_data

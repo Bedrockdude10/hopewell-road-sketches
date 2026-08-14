@@ -1,7 +1,7 @@
 """Example treatment scenarios, shared by the Phase 3 plan-view render and the
 Phase 4 3D export so both phases show the exact same design."""
 from src.geometry.targets import LegSide, LegTarget, Side
-from src.geometry.treatments import (BIKE_LANE_BUFFER_FT,
+from src.geometry.treatments import (BIKE_LANE_BUFFER_FT, MIN_TWO_WAY_BIKE_LANE_FT,
     MIN_BIKE_LANE_FT, widest_protected_lane_ft,
     TARGET_LANE_WIDTH_FT, AddBikeLane, AddBikeLaneBollards, DesignState, LaneNarrowing,
     MarkedParking, ProtectDaylightZone, all_crosswalks_continental, apply_osm_parking,
@@ -234,6 +234,23 @@ def build_proposal_bike_lanes(baseline: DesignState, model=None) -> DesignState:
 # kerb of one leg and the south kerb of the next.
 CORRIDOR_SIDE = "south"
 
+# TEN FEET, NOT THE 12 FT DESIGN WIDTH, AND PARKING IS WHY. Hopewell Borough is car-dependent;
+# a corridor plan that removes a kerb of parking and returns none is not viable here whatever it
+# does for riders. broad_st_east has 43.26 ft between its traced kerbs, and 12 ft of lane plus a
+# 3 ft buffer plus two 11 ft travel lanes leaves 5.44 ft against the far kerb - under a stall, so
+# the whole leg came out with no parking at all. At 10 ft the section leaves 7.44 ft, which is a
+# usable stall.
+#
+# 10 ft is NACTO's MINIMUM for a two-way lane (12 ft desirable): two riders can pass, but an
+# oncoming pair is tight. That is the cost, it is real, and it is the one being paid deliberately
+# to keep the parking. The alternative on the table was narrowing the travel lanes to 10 ft
+# instead, which would have kept the lane at 12 - not taken, so the travel lanes hold 11 ft.
+CORRIDOR_LANE_WIDTH_FT = MIN_TWO_WAY_BIKE_LANE_FT
+# The narrowest parallel stall worth marking. Below 7 ft a car cannot sit clear of the travel
+# lane, so it is not a stall; src's MIN_MARKED_PARKING_DEPTH_FT (8 ft) is the width to mark when
+# the street can spare it, not the floor for whether parking exists at all.
+MIN_USABLE_STALL_FT = 7.0
+
 
 def build_proposal_two_way_bike_lane(baseline: DesignState, model=None) -> DesignState:
     """A 12 ft two-way protected bike lane along the south kerb of both Broad St legs.
@@ -255,10 +272,10 @@ def build_proposal_two_way_bike_lane(baseline: DesignState, model=None) -> Desig
     overtaking one.
     """
     from src.geometry.model import side_facing
-    from src.geometry.treatments import (MIN_MARKED_PARKING_DEPTH_FT, PARKING_STALL_DEPTH_DEFAULT_FT,
-                                          TWO_WAY_BIKE_LANE_BUFFER_FT, TWO_WAY_BIKE_LANE_WIDTH_FT,
+    from src.geometry.treatments import (PARKING_STALL_DEPTH_DEFAULT_FT,
+                                          TWO_WAY_BIKE_LANE_BUFFER_FT,
                                           AddTwoWayBikeLane, far_kerb_surplus_ft,
-                                          travel_lane_divider_shift_ft)
+                                          kerb_may_hold_parking, travel_lane_divider_shift_ft)
 
     if model is None:
         return baseline
@@ -268,7 +285,7 @@ def build_proposal_two_way_bike_lane(baseline: DesignState, model=None) -> Desig
     state = all_crosswalks_continental(state)
     for leg_name in ("broad_st_east", "broad_st_west"):
         side = side_facing(state.legs[leg_name], CORRIDOR_SIDE)
-        lane = AddTwoWayBikeLane(LegSide(leg_name, side), width_ft=TWO_WAY_BIKE_LANE_WIDTH_FT,
+        lane = AddTwoWayBikeLane(LegSide(leg_name, side), width_ft=CORRIDOR_LANE_WIDTH_FT,
                                   buffer_ft=TWO_WAY_BIKE_LANE_BUFFER_FT)
         try:
             state = state.apply(lane)
@@ -300,25 +317,30 @@ def build_proposal_two_way_bike_lane(baseline: DesignState, model=None) -> Desig
         half_ft = state.legs[leg_name].curb_to_curb_ft / 2
         zone_from_nominal_ft = half_ft - (travel_lane_divider_shift_ft(section)
                                            + TARGET_LANE_WIDTH_FT)
-        # AND THE FAR KERB HAS TO BE ALLOWED TO PARK. Freeing the width does not repeal the
-        # restriction on it: OSM tags broad_st_west's north kerb no_parking for its whole length,
-        # so marking stalls there would be drawing something illegal - the same thing
-        # apply_osm_parking refuses to do. Left as the finding it is, because "this treatment
-        # frees 14.7 ft that the borough would have to lift a parking prohibition to use" is a
-        # real and actionable result, and a render showing stalls there is not.
-        prohibited = [r for r in state.parking_restrictions.get((leg_name, str(other)), [])
-                      if r.prohibits]
-        if prohibited:
+        # AND THE FAR KERB HAS TO BE ALLOWED TO PARK - but "allowed" is per STRETCH, not per
+        # kerb. OSM expresses the corner prohibition by splitting the way, so broad_st_east is
+        # no_parking over its first 79.6 ft and explicitly restriction=none for the 90.4 ft
+        # beyond; treating any prohibiting span as closing the whole kerb hatched all of it.
+        # kerb_may_hold_parking applies the same three-outcome rule apply_osm_parking does, and
+        # daylighting carves the restricted stretch back out of the stalls by itself.
+        if not kerb_may_hold_parking(state, leg_name, str(other)):
             state = state.apply(LaneNarrowing(LegTarget(leg_name),
                                                stripe_width_ft=max(zone_from_nominal_ft, 0.5),
                                                sides=(str(other),)))
-            print(f"  NOTE: {leg_name} {other} is freed up by {surplus_ft:.2f} ft, enough for "
-                  f"{int(surplus_ft // MIN_MARKED_PARKING_DEPTH_FT)} stall-width(s), but OSM tags "
-                  f"it '{prohibited[0].value}' - so it is HATCHED, not marked. Using this width "
-                  f"for parking needs the prohibition lifted, which is a borough decision, not a "
-                  f"drawing one.")
+            print(f"  NOTE: {leg_name} {other} is freed up by {surplus_ft:.2f} ft, but OSM "
+                  f"restricts parking along the WHOLE of that kerb, so it is HATCHED rather than "
+                  f"marked. Using this width for parking needs the prohibition lifted - a borough "
+                  f"decision, not a drawing one. Worth checking against Schedule I, which bans "
+                  f"parking 100 ft each way from the junction rather than end to end.")
             continue
-        if surplus_ft >= MIN_MARKED_PARKING_DEPTH_FT:
+        # MIN_USABLE_STALL_FT, not src's MIN_MARKED_PARKING_DEPTH_FT. That 8 ft figure is the
+        # threshold for marking a STANDARD stall where the width is there for the asking, and
+        # applying it here rejected the 7.44 ft broad_st_east frees - returning no parking at all
+        # on the one Broad St kerb that is legally allowed to have it. A 7 ft parallel stall is
+        # narrow but usable, which is the same call sites/ebroad_princeton/scenarios.py already
+        # makes with its own MIN_PARKING_DEPTH_FT, and on this corridor the alternative to a
+        # narrow stall is no stall.
+        if surplus_ft >= MIN_USABLE_STALL_FT:
             depth_ft = min(surplus_ft, PARKING_STALL_DEPTH_DEFAULT_FT)
             state = state.apply(MarkedParking(LegSide(leg_name, str(other)), depth_ft=depth_ft,
                                                curb_offset_ft=max(zone_from_nominal_ft - depth_ft,
@@ -333,6 +355,6 @@ def build_proposal_two_way_bike_lane(baseline: DesignState, model=None) -> Desig
                                                stripe_width_ft=max(zone_from_nominal_ft, 0.5),
                                                sides=(str(other),)))
             print(f"  NOTE: {leg_name} {other} has only {surplus_ft:.2f} ft spare beside an "
-                  f"{TARGET_LANE_WIDTH_FT:.0f} ft lane - under one {MIN_MARKED_PARKING_DEPTH_FT:.0f} ft "
-                  f"stall, so it is hatched rather than marked for parking.")
+                  f"{TARGET_LANE_WIDTH_FT:.0f} ft lane - under the {MIN_USABLE_STALL_FT:.0f} ft "
+                  f"minimum for a usable stall, so it is hatched rather than marked for parking.")
     return state

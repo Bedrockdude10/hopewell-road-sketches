@@ -1,0 +1,288 @@
+buildings:
+  count: 75
+  vertices: 1425
+channels:
+  bike_lane_edge_lines:
+    count: 13
+    extent:
+      max:
+      - 39.332
+      - 10.946
+      min:
+      - -37.048
+      - -17.941
+    points: 343
+  bike_lane_hatch_lines:
+    count: 18
+    extent:
+      max:
+      - 38.158
+      - 10.788
+      min:
+      - -34.223
+      - -13.815
+    points: 36
+  bike_lane_surface_polygons:
+    count: 7
+    extent:
+      max:
+      - 39.293
+      - 10.195
+      min:
+      - -36.802
+      - -17.822
+    points: 243
+  corner_apron_polygons:
+    count: 0
+    extent: null
+    points: 0
+  corner_hatching_lines:
+    count: 0
+    extent: null
+    points: 0
+  corner_parcels:
+    count: 4
+    extent:
+      max:
+      - 32.003
+      - 57.206
+      min:
+      - -34.888
+      - -74.099
+    points: 26
+  kerbs:
+    count: 33
+    extent:
+      max:
+      - 77.762
+      - 33.438
+      min:
+      - -142.259
+      - -116.73
+    points: 106
+  lane_narrowing_edge_lines:
+    count: 8
+    extent:
+      max:
+      - 17.906
+      - -7.626
+      min:
+      - -1.441
+      - -38.139
+    points: 287
+  lane_narrowing_hatch_lines:
+    count: 14
+    extent:
+      max:
+      - 18.767
+      - -8.296
+      min:
+      - -0.871
+      - -36.35
+    points: 28
+  lane_narrowing_taper_lines:
+    count: 0
+    extent: null
+    points: 0
+  parking_buffer_edge_lines:
+    count: 0
+    extent: null
+    points: 0
+  parking_buffer_hatch_lines:
+    count: 0
+    extent: null
+    points: 0
+  parking_buffer_taper_lines:
+    count: 0
+    extent: null
+    points: 0
+  parking_edge_lines:
+    count: 0
+    extent: null
+    points: 0
+  parking_stall_divider_lines:
+    count: 0
+    extent: null
+    points: 0
+  paved_surfaces:
+    count: 28
+    extent:
+      max:
+      - 145.456
+      - 146.288
+      min:
+      - -115.458
+      - -146.87
+    points: 453
+  pavement_far:
+    count: 3
+    extent:
+      max:
+      - 46.62
+      - 21.326
+      min:
+      - -121.049
+      - -56.998
+    points: 113
+  pavement_near:
+    count: 1
+    extent:
+      max:
+      - 11.554
+      - 8.505
+      min:
+      - -11.554
+      - -11.554
+    points: 668
+  raised_crossings:
+    count: 0
+    extent: null
+    points: 0
+  refuge_islands:
+    count: 0
+    extent: null
+    points: 0
+  sidewalks_far:
+    count: 10
+    extent:
+      max:
+      - 47.241
+      - 23.047
+      min:
+      - -121.632
+      - -57.71
+    points: 404
+  sidewalks_near:
+    count: 8
+    extent:
+      max:
+      - 11.323
+      - 9.844
+      min:
+      - -11.334
+      - -11.51
+    points: 838
+  tree_points:
+    count: 0
+    extent: null
+    points: 0
+existing_marked_crosswalks:
+- e_broad_st_west
+- princeton_ave_south
+frame:
+  center_m:
+  - 0.344
+  - -2.633
+  radius_m: 41.682
+legs:
+  e_broad_st_east:
+    crosswalk_axis:
+    - 0.948
+    - 0.317
+    crosswalk_centre_m:
+    - 6.797
+    - 2.166
+    crosswalk_offset_m: 7.134
+    crosswalk_style: continental
+    far_m:
+    - 37.671
+    - 12.286
+    near_m:
+    - 0.029
+    - -0.089
+    stop_bar_axis:
+    - 0.949
+    - 0.314
+    stop_bar_centre_m:
+    - 15.318
+    - 5.008
+    width_m: 11.253
+  e_broad_st_west:
+    crosswalk_axis:
+    - -0.948
+    - -0.319
+    crosswalk_centre_m:
+    - -6.508
+    - -2.273
+    crosswalk_offset_m: 6.893
+    crosswalk_style: continental
+    far_m:
+    - -37.573
+    - -12.583
+    near_m:
+    - 0.029
+    - -0.089
+    stop_bar_axis:
+    - -0.948
+    - -0.319
+    stop_bar_centre_m:
+    - -11.019
+    - -3.792
+    width_m: 11.654
+  princeton_ave_south:
+    crosswalk_axis:
+    - 0.363
+    - -0.932
+    crosswalk_centre_m:
+    - 3.008
+    - -7.959
+    crosswalk_offset_m: 8.506
+    crosswalk_style: continental
+    far_m:
+    - 14.697
+    - -36.8
+    near_m:
+    - -0.113
+    - -0.046
+    stop_bar_axis:
+    - 0.363
+    - -0.932
+    stop_bar_centre_m:
+    - 5.221
+    - -13.64
+    width_m: 9.208
+name: Two-Way Bike Lane
+props:
+- bollard@420049.83,567120.57
+- bollard@420057.43,567123.07
+- bollard@420065.03,567125.58
+- bollard@420072.63,567128.09
+- bollard@420080.22,567130.59
+- bollard@420087.82,567133.10
+- bollard@420095.42,567135.60
+- bollard@420103.02,567138.10
+- bollard@420110.62,567140.62
+- bollard@420118.22,567143.15
+- bollard@420125.82,567145.69
+- bollard@420133.41,567148.24
+- bollard@420140.99,567150.80
+- bollard@420200.91,567171.75
+- bollard@420208.49,567174.28
+- bollard@420216.08,567176.81
+- bollard@420223.66,567179.32
+- bollard@420231.26,567181.82
+- bollard@420238.85,567184.30
+- bollard@420246.44,567186.78
+- bollard@420254.05,567189.25
+- bollard@420261.66,567191.71
+- bollard@420269.27,567194.18
+- bollard@420276.89,567196.65
+- bollard@420284.50,567199.12
+- bollard@420292.11,567201.59
+- fire_hydrant@420202.49,567130.87
+- pedestrian_pushbutton@420138.78,567184.10
+- pedestrian_pushbutton@420155.82,567135.85
+- pedestrian_pushbutton@420155.82,567135.85
+- pedestrian_pushbutton@420200.03,567147.42
+- pedestrian_signal_head@420158.27,567137.80
+- pedestrian_signal_head@420201.17,567146.98
+- tactile_paving_pad@420140.54,567179.30
+- tactile_paving_pad@420154.14,567140.28
+- tactile_paving_pad@420161.03,567136.87
+- tactile_paving_pad@420198.68,567146.46
+- traffic_signal_pole@420158.27,567137.80
+- traffic_signal_pole@420201.17,567146.98
+scalars:
+  crosswalk_depth_m: 1.829
+  stop_bar_curb_clearance_m: 0.5
+units: meters

@@ -12,7 +12,7 @@ construction drawing.
 """
 from src.geometry.targets import LegSide, LegTarget
 from src.geometry.treatments import (
-    MIN_BIKE_LANE_FT, widest_protected_lane_ft,BIKE_LANE_BUFFER_FT, BIKE_LANE_WIDTH_FT,
+    MIN_BIKE_LANE_FT, MIN_TWO_WAY_BIKE_LANE_FT, widest_protected_lane_ft,BIKE_LANE_BUFFER_FT, BIKE_LANE_WIDTH_FT,
     LANE_WIDTH_SLACK_FT, TARGET_LANE_WIDTH_FT, AddBikeLane, AddBikeLaneBollards, DesignState,
     LaneNarrowing, MarkedParking, ProtectDaylightZone, UpgradeCrosswalkMarkings,
     all_crosswalks_continental, apply_osm_parking, bike_lane_spare_ft, complete_centerlines)
@@ -219,6 +219,19 @@ def build_proposal_bike_lanes(baseline: DesignState, model=None) -> DesignState:
 # where the parking difference is 2% and the driveway data is 29% complete).
 CORRIDOR_SIDE = "south"
 
+# TEN FEET, NOT THE 12 FT DESIGN WIDTH, AND PARKING IS WHY. Hopewell Borough is car-dependent;
+# a corridor plan that removes a kerb of parking and returns none is not viable here whatever it
+# does for riders. broad_st_east has 43.26 ft between its traced kerbs, and 12 ft of lane plus a
+# 3 ft buffer plus two 11 ft travel lanes leaves 5.44 ft against the far kerb - under a stall, so
+# the whole leg came out with no parking at all. At 10 ft the section leaves 7.44 ft, which is a
+# usable stall.
+#
+# 10 ft is NACTO's MINIMUM for a two-way lane (12 ft desirable): two riders can pass, but an
+# oncoming pair is tight. That is the cost, it is real, and it is the one being paid deliberately
+# to keep the parking. The alternative on the table was narrowing the travel lanes to 10 ft
+# instead, which would have kept the lane at 12 - not taken, so the travel lanes hold 11 ft.
+CORRIDOR_LANE_WIDTH_FT = MIN_TWO_WAY_BIKE_LANE_FT
+
 
 def build_proposal_two_way_bike_lane(baseline: DesignState, model=None) -> DesignState:
     """A 12 ft two-way protected bike lane along the south kerb of both E Broad St legs.
@@ -232,8 +245,7 @@ def build_proposal_two_way_bike_lane(baseline: DesignState, model=None) -> Desig
     minimum for even a one-way lane.
     """
     from src.geometry.model import side_facing
-    from src.geometry.treatments import (TWO_WAY_BIKE_LANE_BUFFER_FT, TWO_WAY_BIKE_LANE_WIDTH_FT,
-                                          AddTwoWayBikeLane)
+    from src.geometry.treatments import TWO_WAY_BIKE_LANE_BUFFER_FT, AddTwoWayBikeLane
 
     if model is None:
         return baseline
@@ -244,7 +256,7 @@ def build_proposal_two_way_bike_lane(baseline: DesignState, model=None) -> Desig
         side = side_facing(state.legs[leg_name], CORRIDOR_SIDE)
         try:
             state = state.apply(AddTwoWayBikeLane(LegSide(leg_name, side),
-                                                  width_ft=TWO_WAY_BIKE_LANE_WIDTH_FT,
+                                                  width_ft=CORRIDOR_LANE_WIDTH_FT,
                                                   buffer_ft=TWO_WAY_BIKE_LANE_BUFFER_FT))
         except ValueError as too_narrow:
             print(f"  NOTE: no two-way lane on {leg_name} {side} ({CORRIDOR_SIDE} kerb) - "

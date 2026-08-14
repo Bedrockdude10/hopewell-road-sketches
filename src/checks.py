@@ -366,7 +366,12 @@ class TravelLanesKeepTheirWidth(SceneCheck):
                     painted_ft = parking.depth_ft + parking.curb_offset_ft
                 if painted_ft <= 0:
                     continue
-                lane_ft = half_ft - painted_ft
+                # The travel lane runs from the DIVIDER to the paint, not from the alignment to
+                # the paint. Those are the same thing only while the two lanes straddle the
+                # alignment; where a two-way bike lane has shifted them, ignoring it reported
+                # broad_st_west's correctly-sized 11.00 ft lane as 9.58 ft. Signed, so the shift
+                # is subtracted on the side it moved away from and added on the other.
+                lane_ft = half_ft - painted_ft - _divider_shift_toward_ft(state, leg_name, side)
                 if lane_ft < TARGET_LANE_WIDTH_FT - LANE_WIDTH_TOLERANCE_FT:
                     violations.append(Violation(
                         "travel_lane_too_narrow",
@@ -551,24 +556,51 @@ def _boxes_apart(a: tuple, b: tuple) -> bool:
     return a[2] < b[0] or b[2] < a[0] or a[3] < b[1] or b[3] < a[1]
 
 
+def _divider_shift_toward_ft(state, leg_name: str, side: str) -> float:
+    """How far the travel-lane divider sits off the alignment, measured TOWARD `side`.
+
+    Zero on every leg whose travel lanes straddle the alignment, which is all of them until a
+    two-way bike lane takes width out of one kerbside. Signed, because the two sides of a leg
+    see the same shift in opposite directions and a check that ignores the sign is wrong on
+    exactly one of them.
+
+    ONE DEFINITION, read off the design, because two checks and two renderers all need it and a
+    check carrying its own copy of the arithmetic is the divergence this module exists to catch.
+    """
+    from src.geometry.treatments import AddTwoWayBikeLane, travel_lane_divider_shift_ft
+
+    for treatment in state.treatments_of(AddTwoWayBikeLane):
+        if treatment.target.leg != leg_name:
+            continue
+        shift_ft = travel_lane_divider_shift_ft(treatment.section(state))
+        # The treatment's own side is the side the lane is on; the shift is defined as positive
+        # AWAY from it.
+        return -shift_ft if str(treatment.target.side) == str(side) else shift_ft
+    return 0.0
+
+
 def _travel_lane_target_ft(state, leg_name: str, side: str) -> float:
     """How far from the alignment this kerb's travel lane reaches, for the paint checks.
 
     TARGET_LANE_WIDTH_FT everywhere the travel lanes straddle the alignment, which is every leg
-    of every scenario but one. Where a two-way bike lane occupies this side, the travel way has
-    been shifted off the alignment and its edge on this side is the section's own inner edge -
-    so that is what paint has to stay outside of.
+    of every scenario but one. Where a two-way bike lane is involved the travel way has been
+    shifted off the alignment, and the two sides of the leg are different questions:
 
-    Reads the shift off the DESIGN rather than recomputing it, so a check and a renderer cannot
-    disagree about where the lane edge is. That divergence is the failure this module exists to
-    catch, and a check carrying its own copy of the arithmetic would be an instance of it.
+      * the side CARRYING the lane - the travel way stops at the section's own inner edge, and
+        that is what the lane's paint has to stay outside of.
+      * the side OPPOSITE it - the travel lane still holds its target width, but it is measured
+        from the shifted divider rather than from the alignment, so the offset paint must clear
+        is the target plus however far the divider moved this way.
+
+    Missing that second case reported broad_st_west's own correctly-sized 11.00 ft lane as a
+    9.58 ft violation, because the divider there sits 1.42 ft on the far side of the alignment.
     """
     from src.geometry.treatments import TARGET_LANE_WIDTH_FT, AddTwoWayBikeLane
 
     for treatment in state.treatments_of(AddTwoWayBikeLane):
         if treatment.target.leg == leg_name and str(treatment.target.side) == str(side):
             return treatment.section(state).offsets_from_centerline_ft()["travel_lane_edge_ft"]
-    return TARGET_LANE_WIDTH_FT
+    return TARGET_LANE_WIDTH_FT + _divider_shift_toward_ft(state, leg_name, side)
 
 
 class PaintClearOfTheTravelLane(SceneCheck):
@@ -634,6 +666,66 @@ class PaintClearOfTheTravelLane(SceneCheck):
                     f"{float(entitled[index]):.2f} ft was available - the stripe's own width has "
                     f"to come out of the treatment, not out of the lane",
                     tuple(points[index])))
+        return violations
+
+
+class BollardsStandInTheirBuffer(SceneCheck):
+    """A flex post protecting a bike lane must stand in the BUFFER, not in the lane.
+
+    A post inside the lane is worse than no post: it removes ridable width, it is an obstacle
+    exactly where a rider is meant to be, and the drawing still reads as a protected lane. This
+    is the invariant that was missing when a two-way lane's posts were drawn 12.5 ft from the
+    alignment on broad_st_east, inside a lane spanning 8.85-20.85 ft - 30 posts down the middle
+    of the ridable surface, in both views.
+
+    NOTHING CAUGHT IT, and the reason is worth stating. post_not_in_the_render compares the paint
+    against the props, and both were derived from the same wrong cross-section, so they agreed.
+    PaintClearOfTheTravelLane looks at the other edge. The geometry goldens would have caught a
+    CHANGE, but this scenario was new, so there was no golden to differ from. Two consistent views
+    of a wrong design is precisely the failure mode this module exists for, and the guard has to
+    compare a post against the lane it protects rather than against another derivation of itself.
+
+    Checked against the painted lane SURFACE rather than recomputed offsets, deliberately: the
+    surface is what a rider rides on and what the render draws, so a post outside it is genuinely
+    clear of the lane however the arithmetic got there.
+    """
+
+    def run(self, scene: SceneContext) -> list[Violation]:
+        from shapely.ops import unary_union
+
+        from src.geometry.markings import BIKE_LANE_SURFACE
+
+        paint = scene.paint
+        violations = []
+        # Per kerb, so a post is only ever tested against the lane on its own side of its own leg.
+        surfaces: dict[tuple, list] = {}
+        for piece in paint:
+            if piece.kind is BIKE_LANE_SURFACE and piece.leg is not None and piece.side is not None:
+                surfaces.setdefault((piece.leg, piece.side), []).append(piece.geometry)
+        if not surfaces:
+            return violations
+        merged = {kerb: unary_union(polys) for kerb, polys in surfaces.items()}
+        for piece in paint:
+            if not piece.kind.is_object or piece.leg is None or piece.side is None:
+                continue
+            lane = merged.get((piece.leg, piece.side))
+            if lane is None:
+                continue        # no bike lane on this kerb - a daylight or parking-buffer post
+            post = piece.geometry.centroid
+            if not lane.contains(post):
+                continue
+            # How far in, so the report says whether this is a rounding error or a row of posts
+            # down the middle of the lane.
+            depth_ft = post.distance(lane.exterior)
+            violations.append(Violation(
+                "bollard_in_the_bike_lane",
+                f"{piece.leg} {piece.side}: a flex post stands {depth_ft:.2f} ft INSIDE the bike "
+                f"lane surface, not in the buffer beside it - it removes ridable width and puts an "
+                f"obstacle where a rider belongs, while the drawing still reads as protected. A "
+                f"protecting post belongs in the buffer on the traffic side; see "
+                f"AddBikeLaneBollards.paint, which must read section(state) rather than the "
+                f"declared cross-section",
+                (post.x, post.y)))
         return violations
 
 

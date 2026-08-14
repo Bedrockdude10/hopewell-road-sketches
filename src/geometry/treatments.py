@@ -2052,7 +2052,7 @@ class AddBikeLaneBollards(Treatment):
         bike_lane = state.treatment_for(AddBikeLane, self.target)
         if bike_lane is None:
             raise KeyError(f"{self.target} has no bike lane - apply AddBikeLane first.")
-        lane = bike_lane.lane
+        lane = bike_lane.section(state)   # resolved, not declared - see this class's paint()
         if not lane.buffer_ft:
             raise ValueError(
                 f"{self.target}'s bike lane has no buffer, so there is nowhere to stand a "
@@ -2083,7 +2083,14 @@ class AddBikeLaneBollards(Treatment):
 
         leg_name, side = self.target.leg, str(self.target.side)
         leg = ctx.state.legs[leg_name]
-        lane = ctx.state.treatment_for(AddBikeLane, self.target).lane
+        # section(state), NOT .lane. The declared cross-section starts at TARGET_LANE_WIDTH_FT by
+        # definition, and for a TWO-WAY lane that is not where the section is - it starts wherever
+        # the shifted travel lanes end. Reading the declared one put this row of posts 12.5 ft from
+        # the alignment on broad_st_east, INSIDE a lane spanning 8.85-20.85 ft: flex posts standing
+        # in the bike lane they are supposed to protect. BollardsStandInTheirBuffer now fails the
+        # build for it, and src/render/props.py had the same mistake, which is why the 2D and 3D
+        # views agreed and post_not_in_the_render stayed green.
+        lane = ctx.state.treatment_for(AddBikeLane, self.target).section(ctx.state)
         bounds = lane.offsets_from_centerline_ft()
         at = ctx.anchors(leg_name, side, inner_offset_ft=(
             leg.curb_to_curb_ft / 2 - lane.total_ft + TARGET_LANE_WIDTH_FT))
@@ -2512,6 +2519,26 @@ def _merged_length_ft(intervals: list[tuple[float, float]]) -> float:
             total += hi - reach
             reach = hi
     return total
+
+
+def kerb_may_hold_parking(state: DesignState, leg_name: str, side: str) -> bool:
+    """Whether stalls may be marked on this kerb at all, by OSM's own restrictions.
+
+    THE SAME THREE-OUTCOME RULE apply_osm_parking applies, in one place so a scenario cannot
+    invent a fourth. A restriction over PART of a kerb does not close it: OSM expresses "no
+    parking for the first 100 ft from the junction" by splitting the way, so a kerb is commonly
+    restricted at the corner and open beyond it, and daylighting carves the restricted stretch
+    back out of the stalls by itself.
+
+    Getting this wrong is not a small error. A scenario here treated any prohibiting span as
+    closing the whole kerb, and so hatched 90.4 ft of explicitly `restriction=none` kerb on
+    broad_st_east while reporting it as "OSM tags it no_parking" - when OSM tags 79.6 of that
+    leg's 170 ft that way and positively permits the rest. On a corridor whose viability depends
+    on keeping parking, that is the difference between a plan and a non-starter.
+    """
+    summary = _restriction_summary(state, leg_name, side, state.legs[leg_name].centerline.length)
+    return not (summary.restricted_throughout
+                or (summary.restricted_in_part and summary.holds_no_stall))
 
 
 def complete_centerlines(state: DesignState, style: str = "double_yellow") -> DesignState:

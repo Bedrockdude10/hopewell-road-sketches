@@ -140,3 +140,64 @@ def test_a_north_south_leg_has_no_compass_side(site_models):
     greenwood = site_models["broad_st_greenwood"].legs["greenwood_ave_north"]
     with pytest.raises(ValueError, match="north-south"):
         side_facing(greenwood, "south")
+
+
+def _two_way_scene(site_models, site="broad_st_greenwood"):
+    """Build the two-way corridor scenario and hand back (model, state, paint pieces)."""
+    import contextlib
+    import io
+
+    from src.geometry.treatments import DesignState
+    from src.render.scene import SceneGeometry
+    from src.site import load_site_scenarios, run_scenario
+    from src.sources.osm_context import fetch_crossings
+
+    model = site_models[site]
+    builder = load_site_scenarios(site).build_proposal_two_way_bike_lane
+    with contextlib.redirect_stdout(io.StringIO()):
+        state = run_scenario(builder, DesignState.from_model(model), model)
+        crossings = fetch_crossings(model.center_wgs84, radius_m=130)
+        scene = SceneGeometry.resolve(model, state, crossings)
+        return model, state, scene.build_paint()
+
+
+def test_no_flex_post_stands_in_the_bike_lane(site_models):
+    """The invariant Danny asked for, asserted on the real scenario.
+
+    A post inside the lane is worse than no post: it removes ridable width and puts an obstacle
+    where a rider belongs, while the drawing still reads as protected. Thirty of them were drawn
+    down the middle of broad_st_east's lane and nothing failed - post_not_in_the_render compared
+    the paint against the props, and both came off the same wrong cross-section, so they agreed.
+    """
+    from shapely.ops import unary_union
+
+    from src.geometry.markings import BIKE_LANE_SURFACE
+
+    _model, _state, paint = _two_way_scene(site_models)
+    posts = [p for p in paint if p.kind.is_object]
+    surfaces = [p.geometry for p in paint if p.kind is BIKE_LANE_SURFACE]
+    assert posts, "this scenario is supposed to place flex posts - nothing to check otherwise"
+    assert surfaces, "and to paint a two-way lane surface"
+    lane = unary_union(surfaces)
+    inside = [p for p in posts if lane.contains(p.geometry.centroid)]
+    assert not inside, (
+        f"{len(inside)} of {len(posts)} flex posts stand inside the bike lane surface rather than "
+        f"in the buffer beside it")
+
+
+def test_the_far_kerb_keeps_its_parking(site_models):
+    """Hopewell Borough is car-dependent, so a corridor plan that returns no parking is not
+    viable here however good it is for riders. This pins that the plan returns some.
+
+    It also pins the bug that made it return none: a restriction over PART of a kerb was read as
+    closing all of it, which hatched 90.4 ft of explicitly `restriction=none` kerb on
+    broad_st_east.
+    """
+    from src.geometry.treatments import MarkedParking
+
+    _model, state, _paint = _two_way_scene(site_models)
+    parking = state.treatments_of(MarkedParking)
+    on_broad = [p for p in parking if "broad_st" in p.target.leg]
+    assert on_broad, (
+        "the two-way corridor scenario marks no parking on either Broad St leg - the freed width "
+        "on the far kerb is the whole reason the pair of treatments belongs in one proposal")

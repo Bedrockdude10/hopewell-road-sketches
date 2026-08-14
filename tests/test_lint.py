@@ -11,8 +11,15 @@ second, without importing anything or running Blender. That is the right shape o
 a repo with slow, rarely-exercised branches (3D rendering, the network paths, one scenario
 per site that only one site defines).
 
-The checker is ruff, configured in ruff.toml at the repo root. Two things changed when it
-replaced a `python -m pyflakes` subprocess:
+Two checkers run here, both configured at the repo root and both treated the same way - if the
+tool cannot run, that is a failure, not a pass:
+
+  * RUFF (ruff.toml), over every .py file, for what one file gets wrong on its own.
+  * IMPORT-LINTER (.importlinter), over the import graph, for what no single file can show you -
+    a blender script reaching into the venv, a config read dragging in shapely, geometry
+    importing the thing that draws it.
+
+Two things changed when ruff replaced a `python -m pyflakes` subprocess:
 
   * FINDINGS ARE RULE CODES, NOT SUBSTRINGS. The old version decided what was fatal by
     matching "undefined name" against stdout, so a reworded message would have silently
@@ -33,6 +40,7 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parent.parent
 TARGETS = ["src", "scripts", "tests", "conftest.py"]
 RUFF = Path(sys.executable).parent / "ruff"
+LINT_IMPORTS = Path(sys.executable).parent / "lint-imports"
 
 # The subset that is a guaranteed crash on whatever path reaches it, as opposed to the rest
 # of ruff.toml's selection, which is code that works but shouldn't be written that way.
@@ -93,3 +101,34 @@ def test_lint_clean():
     assert not findings, (
         f"{len(findings)} lint finding(s) - fix, or argue the rule down in ruff.toml:\n  "
         + _format(findings))
+
+
+def test_import_contracts_hold():
+    """The architectural rules in .importlinter - which one file's imports cannot show you.
+
+    Each of the three is a rule the README already stated in prose, and each has the same shape:
+    an import added in the wrong place works perfectly for whoever added it and breaks on a path
+    they were not running. The blender one is the sharpest - `scripts/blender/*.py` execute in
+    Blender's own interpreter, so importing anything from the venv is an error that first appears
+    minutes into a 3D render, inside a subprocess.
+
+    Runs the checker as a subprocess for the same reason the ruff tests do, and fails the same
+    way if it cannot run: a contract nobody checked is not a contract that held.
+    """
+    if not LINT_IMPORTS.exists():
+        raise AssertionError(
+            f"import-linter is not installed in this interpreter's environment ({sys.executable}).\n"
+            f"  expected: {LINT_IMPORTS}\n\n"
+            "Install it with everything else:\n\n"
+            "  .venv/bin/pip install -r requirements.txt"
+        )
+    result = subprocess.run([str(LINT_IMPORTS)], cwd=REPO_ROOT, capture_output=True, text=True)
+    if result.returncode == 0:
+        return
+    # Its own report is already the readable thing - contract by contract, with the offending
+    # import chain and line numbers under each - so it is passed through rather than reformatted.
+    report = result.stdout.strip() or result.stderr.strip()
+    raise AssertionError(
+        "import contract(s) broken - see .importlinter for what each rule is for:\n\n"
+        + "\n".join(line for line in report.splitlines() if not line.startswith(("╔", "╚", "║", " ║", "  └", "      ╚")))
+    )

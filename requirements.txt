@@ -48,21 +48,28 @@ requests==2.34.2
 #     its linter is missing, which is the whole point (see that file's docstring). ---
 pytest==9.1.1
 ruff==0.16.3
+import-linter==2.13
 pytest-regressions==2.11.0
+pytest-randomly==4.1.0
 hypothesis==6.165.5
 
 # --- Transitive, pinned so an install reproduces ---
 annotated-types==0.8.0
 certifi==2026.6.17
 charset-normalizer==3.4.7
+click==8.4.2
+grimp==3.15
 idna==3.18
 iniconfig==2.3.0
+markdown-it-py==4.2.0
+mdurl==0.1.2
 packaging==26.2
 pluggy==1.6.0
 pydantic_core==2.46.4
 Pygments==2.20.0
 pytest-datadir==1.8.0
 python-dateutil==2.9.0.post0
+rich==15.0.0
 six==1.17.0
 sortedcontainers==2.4.0
 typing-inspection==0.4.4

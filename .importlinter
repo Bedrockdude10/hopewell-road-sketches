@@ -1,0 +1,87 @@
+# Architectural rules that were documentation only, made executable.
+#
+# Enforced by tests/test_lint.py, the same way ruff.toml is. Each contract below is a rule the
+# README already states in prose; none of them was checked, and all three have the same failure
+# signature - an import added in the wrong place works fine for whoever added it and breaks on a
+# path they were not running.
+#
+#   lint-imports          # to run it directly
+
+[importlinter]
+root_packages =
+    src
+    scripts
+# Required for the blender contract, which forbids the project's own third-party dependencies
+# and not just first-party modules.
+include_external_packages = True
+
+
+[importlinter:contract:blender-is-not-in-the-venv]
+name = Blender scripts import nothing from this project or its venv
+type = forbidden
+source_modules =
+    scripts.blender
+forbidden_modules =
+    src
+    requests
+    geopandas
+    shapely
+    numpy
+    matplotlib
+    trimesh
+    pydantic
+    pyproj
+    yaml
+# scripts/blender/*.py run inside BLENDER'S OWN interpreter (blender --background --python),
+# which has bpy and mathutils and none of this. There is no import error to discover here at
+# edit time, at test time, or during a 2D build: the first thing that fails is a 3D render,
+# minutes in, and the traceback comes back through a subprocess. That is the same shape as the
+# `fetch_buildings` miss that tests/test_lint.py exists for.
+#
+# The sibling blender_*.py modules are imported by bare name after a sys.path insert, so they
+# read as external here and are deliberately not listed.
+
+
+[importlinter:contract:config-path-stays-light]
+name = Reading a site config does not drag in the geometry stack
+type = forbidden
+source_modules =
+    src.site
+    src.site_schema
+    src.config
+    src.provenance
+forbidden_modules =
+    src.geometry
+    src.render
+# src/site_schema.py copies VALID_CENTERLINE_STYLES instead of importing it from
+# src.geometry.treatments, ON THE GROUNDS that importing it would pull shapely, geopandas and
+# numpy into the import path of every script that only wanted to read a config.yaml. That
+# reasoning is load-bearing - it is why a constant is duplicated - so it should be a rule rather
+# than a comment somebody later "tidies up".
+
+
+[importlinter:contract:geometry-does-not-know-how-it-is-drawn]
+name = Geometry does not import the output stages
+type = forbidden
+source_modules =
+    src.geometry
+forbidden_modules =
+    src.render.plan_view
+    src.render.export
+    src.render.scene
+    src.render.theme
+    src.render.assets
+# NOT "src.geometry must not import src.render", which is the rule you would guess and which is
+# false: geometry imports src.render.frame, src.render.coords and src.render.crosswalks today,
+# and those are shared measurement and placement helpers that happen to live under render/ - a
+# real finding, but a naming problem, not a layering violation.
+#
+# The layering rule that IS true, and is the one the architecture rests on (README, "One
+# resolution, three consumers"): geometry never reaches the stages that PRODUCE output. The 2D
+# plan view, the 3D export and the scene resolution all read geometry; none of them is read back.
+# Geometry importing one of them is how "the 2D and 3D views agree because they read one
+# geometry" quietly stops being true.
+#
+# src.render.props is deliberately absent from this list: geometry reaches it indirectly, via
+# src.geometry.paint -> src.checks -> src.render.props. Forbidding it would be asserting a rule
+# the code does not follow.

@@ -1,0 +1,60 @@
+# Runs the guards that were previously only run when someone remembered to type the command.
+#
+# WHAT THIS CAN AND CANNOT SEE. data/ is a 391 MB licensed download (NJDOT road network, Mercer
+# County parcels) kept out of git, so it is absent here and 236 of the 527 tests skip - every
+# test that builds a real junction, including the golden geometry comparison. What DOES run is
+# everything that needs no source data: the lint and import contracts, the config schema, the
+# frame property tests, the scene invariants, metrics, treatments and the leg frame. 291 tests,
+# about two seconds.
+#
+# That is worth being explicit about rather than reading a green tick as "the renders are fine".
+# The geometry goldens are still a local-only guard; this catches the class of break that does
+# not need a junction to demonstrate - which, judging by what this repo has actually shipped, is
+# most of them.
+
+name: tests
+
+on:
+  push:
+  pull_request:
+
+# A second push to the same branch makes the first run's answer irrelevant.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          # Matches the local venv. The code uses 3.10+ syntax throughout (X | None, match) and
+          # itertools.pairwise, so this is a floor as well as a preference.
+          python-version: "3.13"
+          cache: pip
+          cache-dependency-path: requirements.txt
+
+      - name: Install
+        # One file, deliberately - the test tooling is in requirements.txt alongside everything
+        # else, because a linter that lives in a file people forget to install is how the
+        # undefined-name guard in tests/test_lint.py came to be silently dead. See that file.
+        run: python -m pip install --upgrade pip && pip install -r requirements.txt
+
+      # Run separately from pytest as well as inside it. tests/test_lint.py covers both of these,
+      # but a dedicated failed step names the problem on the summary page instead of burying it
+      # in a test report, and both finish in under a second.
+      - name: Lint
+        run: ruff check src scripts tests conftest.py
+
+      - name: Import contracts
+        run: lint-imports
+
+      - name: Tests
+        # -o addopts= drops the -q in pytest.ini ON PURPOSE. pytest-randomly shuffles the order
+        # every run, and the seed that produced a given order is printed in the header that -q
+        # suppresses. Without it a shuffle-dependent failure here is not reproducible - rerun it
+        # locally with `./scripts/test.sh -p randomly --randomly-seed=<the number in the log>`.
+        run: pytest -o addopts="--strict-markers"

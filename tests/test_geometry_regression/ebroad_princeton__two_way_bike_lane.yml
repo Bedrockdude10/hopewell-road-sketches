@@ -13,7 +13,7 @@ channels:
       - -16.121
     points: 75
   bike_lane_edge_lines:
-    count: 13
+    count: 27
     extent:
       max:
       - 39.332
@@ -21,9 +21,9 @@ channels:
       min:
       - -37.048
       - -17.941
-    points: 343
+    points: 403
   bike_lane_hatch_lines:
-    count: 18
+    count: 14
     extent:
       max:
       - 38.158
@@ -31,9 +31,9 @@ channels:
       min:
       - -34.223
       - -13.815
-    points: 36
+    points: 28
   bike_lane_surface_polygons:
-    count: 7
+    count: 8
     extent:
       max:
       - 39.293
@@ -41,7 +41,7 @@ channels:
       min:
       - -36.802
       - -17.822
-    points: 243
+    points: 221
   corner_apron_polygons:
     count: 0
     extent: null
@@ -79,7 +79,7 @@ channels:
       min:
       - -39.345
       - -38.139
-    points: 485
+    points: 529
   lane_narrowing_hatch_lines:
     count: 17
     extent:
@@ -689,8 +689,6 @@ props:
 - bollard@420065.03,567125.58
 - bollard@420072.63,567128.09
 - bollard@420080.22,567130.59
-- bollard@420087.82,567133.10
-- bollard@420095.42,567135.60
 - bollard@420103.02,567138.10
 - bollard@420110.62,567140.62
 - bollard@420118.22,567143.15

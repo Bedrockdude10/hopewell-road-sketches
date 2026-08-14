@@ -103,7 +103,7 @@ channels:
       min:
       - -2.543
       - -13.981
-    points: 280
+    points: 284
   parking_buffer_hatch_lines:
     count: 26
     extent:

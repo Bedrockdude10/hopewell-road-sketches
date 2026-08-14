@@ -846,7 +846,7 @@ def kerb_opening_bands(state) -> KerbOpenings:
     _opening_run_out, and the lines and the green against `driven`.
     """
     from src.geometry.model import offset_band_polygon
-    from src.geometry.treatments import TARGET_LANE_WIDTH_FT
+    from src.geometry.treatments import TARGET_LANE_WIDTH_FT, divider_shift_toward_ft
 
     driven, tapered = [], []
     for (leg_name, side), openings in getattr(state, "kerb_openings", {}).items():
@@ -857,10 +857,17 @@ def kerb_opening_bands(state) -> KerbOpenings:
         # offset is deliberately past the nominal half-width: offset_band_polygon clamps it to
         # the traced kerb, so asking for more than the road has means "out to the kerb, wherever
         # it really is" rather than to a mid-block cross-section.
-        kerbside = offset_band_polygon(leg, side, TARGET_LANE_WIDTH_FT, leg.curb_to_curb_ft,
-                                        0.0, None)
+        # WHERE THE KERBSIDE ZONE BEGINS, which is where the travel lane ENDS on this side - not
+        # a fixed TARGET_LANE_WIDTH_FT from the alignment. Those coincide only while the two travel
+        # lanes straddle the alignment. Under a two-way bike lane the section starts far closer in
+        # (4.22 ft from the alignment on e_broad_st_east against 11), so a region beginning at 11
+        # covered only the OUTER part of the lane: the driveway break was drawn across some of the
+        # bike lane and not the rest of it, which is visible in the render as striping that stops
+        # part way across. Same signed definition every check and both renderers use.
+        inner_ft = divider_shift_toward_ft(state, leg_name, side) + TARGET_LANE_WIDTH_FT
+        kerbside = offset_band_polygon(leg, side, inner_ft, leg.curb_to_curb_ft, 0.0, None)
         for opening in openings:
-            band = offset_band_polygon(leg, side, TARGET_LANE_WIDTH_FT, leg.curb_to_curb_ft,
+            band = offset_band_polygon(leg, side, inner_ft, leg.curb_to_curb_ft,
                                         opening.start_ft, opening.end_ft)
             if band is None or band.is_empty:
                 continue
@@ -876,7 +883,7 @@ def kerb_opening_bands(state) -> KerbOpenings:
             mouth = band.buffer(OPENING_TRIM_FT, join_style=1, cap_style=1)
             # Grown from the TRIMMED mouth, so the arc's square end lands exactly on the entrance's
             # edge and the two join without a step.
-            run_out = _opening_run_out(leg, side, TARGET_LANE_WIDTH_FT,
+            run_out = _opening_run_out(leg, side, inner_ft,
                                        float(np.abs(offsets).max()),
                                        opening.start_ft - OPENING_TRIM_FT,
                                        opening.end_ft + OPENING_TRIM_FT)

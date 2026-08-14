@@ -2,6 +2,10 @@ buildings:
   count: 75
   vertices: 1425
 channels:
+  bike_lane_contraflow_lines:
+    count: 0
+    extent: null
+    points: 0
   bike_lane_edge_lines:
     count: 0
     extent: null
@@ -213,13 +217,21 @@ legs:
         - 11.297
       - - 37.687
         - 12.239
+    centerline_start_m: 16.116
+    centerline_style: double_yellow
+    confirmed: false
     crosswalk_axis:
     - 0.948
     - 0.317
+    crosswalk_bar_count: 12
     crosswalk_centre_m:
     - 6.797
     - 2.166
     crosswalk_offset_m: 7.134
+    crosswalk_offset_source: geometric_estimate
+    crosswalk_reach_left_m: 5.639
+    crosswalk_reach_right_m: 6.096
+    crosswalk_skew_deg: 0.0
     crosswalk_style: continental
     far_m:
     - 37.671
@@ -234,7 +246,9 @@ legs:
     - 15.318
     - 5.008
     stop_bar_lateral_offset_m: 1.676
+    stop_bar_offset_m: 16.116
     stop_bar_span_m: 3.353
+    stop_bar_width_m: 6.706
     width_m: 11.253
   e_broad_st_west:
     centerline_paint_m:
@@ -296,13 +310,21 @@ legs:
         - -11.583
       - - -37.589
         - -12.536
+    centerline_start_m: 11.653
+    centerline_style: double_yellow
+    confirmed: false
     crosswalk_axis:
     - -0.948
     - -0.319
+    crosswalk_bar_count: 12
     crosswalk_centre_m:
     - -6.508
     - -2.273
     crosswalk_offset_m: 6.893
+    crosswalk_offset_source: osm_survey
+    crosswalk_reach_left_m: 5.791
+    crosswalk_reach_right_m: 5.715
+    crosswalk_skew_deg: 0.853
     crosswalk_style: continental
     far_m:
     - -37.573
@@ -317,7 +339,9 @@ legs:
     - -11.019
     - -3.792
     stop_bar_lateral_offset_m: 1.676
+    stop_bar_offset_m: 11.653
     stop_bar_span_m: 3.353
+    stop_bar_width_m: 6.706
     width_m: 11.654
   princeton_ave_south:
     centerline_paint_m:
@@ -373,13 +397,21 @@ legs:
         - -34.006
       - - 14.651
         - -36.819
+    centerline_start_m: 14.602
+    centerline_style: double_yellow
+    confirmed: false
     crosswalk_axis:
     - 0.363
     - -0.932
+    crosswalk_bar_count: 10
     crosswalk_centre_m:
     - 3.008
     - -7.959
     crosswalk_offset_m: 8.506
+    crosswalk_offset_source: osm_survey
+    crosswalk_reach_left_m: 5.563
+    crosswalk_reach_right_m: 4.877
+    crosswalk_skew_deg: -6.631
     crosswalk_style: continental
     far_m:
     - 14.697
@@ -394,7 +426,9 @@ legs:
     - 5.221
     - -13.64
     stop_bar_lateral_offset_m: 1.676
+    stop_bar_offset_m: 14.602
     stop_bar_span_m: 3.353
+    stop_bar_width_m: 6.706
     width_m: 9.208
 name: Proposed Treatments
 props:

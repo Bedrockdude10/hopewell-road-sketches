@@ -2,6 +2,10 @@ buildings:
   count: 98
   vertices: 1578
 channels:
+  bike_lane_contraflow_lines:
+    count: 0
+    extent: null
+    points: 0
   bike_lane_edge_lines:
     count: 0
     extent: null
@@ -201,13 +205,21 @@ legs:
         - 6.011
       - - 37.543
         - 12.674
+    centerline_start_m: 9.717
+    centerline_style: double_yellow
+    confirmed: false
     crosswalk_axis:
     - 0.953
     - 0.304
+    crosswalk_bar_count: 8
     crosswalk_centre_m:
     - 7.195
     - 2.824
     crosswalk_offset_m: 7.717
+    crosswalk_offset_source: osm_survey
+    crosswalk_reach_left_m: 3.962
+    crosswalk_reach_right_m: 4.191
+    crosswalk_skew_deg: 5.723
     crosswalk_style: continental
     far_m:
     - 37.527
@@ -215,6 +227,8 @@ legs:
     near_m:
     - -0.145
     - 0.44
+    stop_bar_offset_m: null
+    stop_bar_width_m: 8.185
     width_m: 8.185
   columbia_ave_west:
     centerline_paint_m:
@@ -286,13 +300,21 @@ legs:
         - -11.05
       - - -37.77
         - -12.003
+    centerline_start_m: 8.772
+    centerline_style: double_yellow
+    confirmed: false
     crosswalk_axis:
     - -0.95
     - -0.313
+    crosswalk_bar_count: 8
     crosswalk_centre_m:
     - -6.575
     - -1.696
     crosswalk_offset_m: 6.772
+    crosswalk_offset_source: osm_survey
+    crosswalk_reach_left_m: 3.962
+    crosswalk_reach_right_m: 4.191
+    crosswalk_skew_deg: 5.378
     crosswalk_style: continental
     far_m:
     - -37.754
@@ -300,6 +322,8 @@ legs:
     near_m:
     - -0.149
     - 0.438
+    stop_bar_offset_m: null
+    stop_bar_width_m: 8.061
     width_m: 8.061
   princeton_ave_north:
     centerline_paint_m:
@@ -371,13 +395,21 @@ legs:
         - 33.814
       - - -15.092
         - 36.637
+    centerline_start_m: 9.181
+    centerline_style: double_yellow
+    confirmed: false
     crosswalk_axis:
     - -0.397
     - 0.918
+    crosswalk_bar_count: 10
     crosswalk_centre_m:
     - -2.775
     - 6.623
     crosswalk_offset_m: 7.181
+    crosswalk_offset_source: osm_survey
+    crosswalk_reach_left_m: 5.029
+    crosswalk_reach_right_m: 4.648
+    crosswalk_skew_deg: -5.183
     crosswalk_style: continental
     far_m:
     - -15.138
@@ -385,6 +417,8 @@ legs:
     near_m:
     - 0.03
     - 0.012
+    stop_bar_offset_m: null
+    stop_bar_width_m: 6.706
     width_m: 9.306
   princeton_ave_south:
     centerline_paint_m:
@@ -470,13 +504,21 @@ legs:
         - -33.82
       - - 15.078
         - -36.643
+    centerline_start_m: 7.936
+    centerline_style: double_yellow
+    confirmed: false
     crosswalk_axis:
     - 0.398
     - -0.917
+    crosswalk_bar_count: 9
     crosswalk_centre_m:
     - 2.363
     - -5.445
     crosswalk_offset_m: 5.936
+    crosswalk_offset_source: osm_survey
+    crosswalk_reach_left_m: 5.105
+    crosswalk_reach_right_m: 4.343
+    crosswalk_skew_deg: -3.911
     crosswalk_style: continental
     far_m:
     - 15.124
@@ -484,6 +526,8 @@ legs:
     near_m:
     - 0.03
     - 0.013
+    stop_bar_offset_m: null
+    stop_bar_width_m: 6.706
     width_m: 9.522
 name: Proposed Treatments
 props:

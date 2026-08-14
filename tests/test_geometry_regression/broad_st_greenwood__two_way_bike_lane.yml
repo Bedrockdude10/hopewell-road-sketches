@@ -2,6 +2,16 @@ buildings:
   count: 79
   vertices: 1497
 channels:
+  bike_lane_contraflow_lines:
+    count: 30
+    extent:
+      max:
+      - 47.383
+      - 18.97
+      min:
+      - -27.817
+      - -26.624
+    points: 100
   bike_lane_edge_lines:
     count: 10
     extent:
@@ -469,13 +479,21 @@ legs:
         - 24.242
       - - 45.642
         - 24.501
+    centerline_start_m: 10.341
+    centerline_style: double_yellow
+    confirmed: true
     crosswalk_axis:
     - 0.848
     - 0.53
+    crosswalk_bar_count: 20
     crosswalk_centre_m:
     - 5.527
     - 3.42
     crosswalk_offset_m: 6.501
+    crosswalk_offset_source: osm_survey
+    crosswalk_reach_left_m: 10.211
+    crosswalk_reach_right_m: 9.601
+    crosswalk_skew_deg: -4.061
     crosswalk_style: continental
     far_m:
     - 46.034
@@ -490,7 +508,9 @@ legs:
     - 8.79
     - 5.445
     stop_bar_lateral_offset_m: 2.636
+    stop_bar_offset_m: 10.341
     stop_bar_span_m: 3.353
+    stop_bar_width_m: 8.626
     width_m: 15.853
   broad_st_west:
     centerline_paint_m:
@@ -684,13 +704,21 @@ legs:
         - -22.352
       - - -32.422
         - -22.691
+    centerline_start_m: 11.22
+    centerline_style: double_yellow
+    confirmed: true
     crosswalk_axis:
     - -0.824
     - -0.566
+    crosswalk_bar_count: 21
     crosswalk_centre_m:
     - -5.197
     - -3.604
     crosswalk_offset_m: 6.327
+    crosswalk_offset_source: osm_survey
+    crosswalk_reach_left_m: 11.201
+    crosswalk_reach_right_m: 9.982
+    crosswalk_skew_deg: -7.189
     crosswalk_style: continental
     far_m:
     - -32.68
@@ -705,7 +733,9 @@ legs:
     - -9.217
     - -6.394
     stop_bar_lateral_offset_m: 1.891
+    stop_bar_offset_m: 11.22
     stop_bar_span_m: 2.923
+    stop_bar_width_m: 6.706
     width_m: 16.916
   greenwood_ave_north:
     centerline_paint_m:
@@ -757,13 +787,21 @@ legs:
         - 31.695
       - - -19.768
         - 34.341
+    centerline_start_m: 15.781
+    centerline_style: double_yellow
+    confirmed: false
     crosswalk_axis:
     - -0.467
     - 0.884
+    crosswalk_bar_count: 9
     crosswalk_centre_m:
     - -5.709
     - 9.554
     crosswalk_offset_m: 11.132
+    crosswalk_offset_source: osm_survey
+    crosswalk_reach_left_m: 4.724
+    crosswalk_reach_right_m: 4.496
+    crosswalk_skew_deg: 4.733
     crosswalk_style: continental
     far_m:
     - -19.811
@@ -778,7 +816,9 @@ legs:
     - -7.915
     - 13.647
     stop_bar_lateral_offset_m: 1.676
+    stop_bar_offset_m: 15.781
     stop_bar_span_m: 3.353
+    stop_bar_width_m: 6.706
     width_m: 8.095
   greenwood_ave_south:
     centerline_paint_m:
@@ -836,13 +876,21 @@ legs:
         - -32.156
       - - 18.973
         - -34.795
+    centerline_start_m: 15.508
+    centerline_style: double_yellow
+    confirmed: false
     crosswalk_axis:
     - 0.473
     - -0.881
+    crosswalk_bar_count: 10
     crosswalk_centre_m:
     - 5.529
     - -11.46
     crosswalk_offset_m: 12.699
+    crosswalk_offset_source: osm_survey
+    crosswalk_reach_left_m: 4.953
+    crosswalk_reach_right_m: 5.334
+    crosswalk_skew_deg: 3.102
     crosswalk_style: continental
     far_m:
     - 19.016
@@ -857,7 +905,9 @@ legs:
     - 6.873
     - -13.926
     stop_bar_lateral_offset_m: 1.676
+    stop_bar_offset_m: 15.508
     stop_bar_span_m: 3.353
+    stop_bar_width_m: 6.706
     width_m: 9.518
 name: Two-Way Bike Lane
 props:

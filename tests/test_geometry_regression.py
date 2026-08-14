@@ -36,6 +36,7 @@ from pathlib import Path
 import pytest
 
 from src.geometry.treatments import DesignState
+from src.geometry.markings import CHANNELS
 from src.render.export import export_scenario
 from src.site import load_site_scenarios, run_scenario
 from tests.conftest import SITES, needs_source_data
@@ -48,15 +49,20 @@ PLACES = 3
 
 # Channels that are lists of polylines/polygons: summarised by shape rather than listed. A
 # name here that is missing from an export is itself a finding - see _digest.
-POLYLINE_CHANNELS = (
+# Context geometry - the street itself rather than anything painted on it. Listed, because
+# these are not markings and there is no registry to derive them from.
+CONTEXT_CHANNELS = (
     "kerbs", "pavement_near", "pavement_far", "sidewalks_near", "sidewalks_far",
-    "paved_surfaces", "corner_parcels", "corner_apron_polygons", "corner_hatching_lines",
-    "parking_edge_lines", "parking_stall_divider_lines", "parking_buffer_edge_lines",
-    "parking_buffer_hatch_lines", "parking_buffer_taper_lines",
-    "lane_narrowing_edge_lines", "lane_narrowing_hatch_lines", "lane_narrowing_taper_lines",
-    "bike_lane_edge_lines", "bike_lane_hatch_lines", "bike_lane_surface_polygons",
-    "refuge_islands", "raised_crossings", "tree_points",
+    "paved_surfaces", "corner_parcels", "refuge_islands", "raised_crossings", "tree_points",
 )
+
+# EVERY PAINT CHANNEL, DERIVED FROM THE REGISTRY rather than listed. A hardcoded list is a second
+# record of which markings exist, and it drifted the first time it was tested: the two-way lane's
+# contraflow stripe was declared in src/geometry/markings.py, exported with 30 segments, drawn in
+# both views - and absent from this tuple, so it had no golden at all. Derived, a new marking
+# cannot be added without one, which is the same argument markings.CHANNELS already wins for
+# export.PAINT_KIND_LISTS.
+POLYLINE_CHANNELS = CONTEXT_CHANNELS + tuple(channel.key for channel in CHANNELS)
 
 # Per-leg fields worth pinning: the frame every marking on that leg is placed in. A crosswalk
 # drawn off the wrong axis is the specific 2D/3D disagreement this project has already shipped
@@ -78,7 +84,24 @@ LEG_FIELDS = ("width_m", "near_m", "far_m", "crosswalk_centre_m", "crosswalk_axi
               # This is the marking the README already devotes a section to ("The centerline
               # follows the road"), where the 3D render drew the leg's chord and was up to 7.58 ft
               # out. Twice now the double yellow has moved feet with the suite green.
-              "centerline_paint_m")
+              "centerline_paint_m",
+              # THE SWEEP FOR EXTENT-WITHOUT-FRAME, after the stop bar and the centreline each
+              # turned out to be pinned by position and not by size. A crosswalk had the same
+              # shape of hole: its centre and axis were pinned and how far it REACHES was not, so
+              # it could stretch, shrink or change bar count silently.
+              "crosswalk_reach_left_m", "crosswalk_reach_right_m", "crosswalk_skew_deg",
+              "crosswalk_bar_count",
+              # Where the centreline paint starts, and in which style. "double_yellow" quietly
+              # becoming "none" would erase a marking from both views with nothing to say so.
+              "centerline_start_m", "centerline_style",
+              # The stop bar's station and the width it is sized against - the two inputs to the
+              # span already pinned above.
+              "stop_bar_offset_m", "stop_bar_width_m",
+              # PROVENANCE, not geometry, and pinned for that reason: these say whether a
+              # crossing sits where OSM surveyed it or where this project guessed, and whether a
+              # width was field-measured. A render silently downgrading from surveyed to
+              # estimated is asserting something weaker about itself than it did yesterday.
+              "crosswalk_offset_source", "confirmed")
 
 
 def _round(value):

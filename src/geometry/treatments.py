@@ -2025,12 +2025,33 @@ class AddTwoWayBikeLane(AddBikeLane):
         axis = inset_line_ft(leg, side, centre_ft, start_ft)
         if axis is None or axis.is_empty:
             return
+        # AND IT CARRIES THROUGH EVERY DRIVEWAY, like the lane's other markings.
+        #
+        # MUTCD 11th ed. §9E.04 Option 02 permits a bicycle lane to be continued through a
+        # driveway with solid or dotted longitudinal lines, and §9E.06 Guidance 15 says lane
+        # extension markings SHOULD be used to extend a buffer-separated bicycle lane across
+        # intersections and driveways. NACTO's Urban Bikeway Design Guide is more specific for
+        # this facility: contraflow and bidirectional protected lanes must continue through
+        # intersections and driveways, with a DOTTED YELLOW CENTRELINE along the lane and through
+        # the crossings. See STANDARDS.md §4.
+        #
+        # This stripe used to simply stop at each driveway - 22 dashes on a kerb with two of them
+        # against 30 on a kerb with none - while the edge lines continued dotted and the green
+        # carried across. Three answers to one conflict point, and this was the one that belonged
+        # to nobody: it was an omission, not a design.
+        #
+        # `add` keeps the part of each dash OUTSIDE the openings and `emit_across_opening` the
+        # part inside, and the two are exact complements (see PaintContext.emit_across_opening),
+        # so the cadence never breaks phase across an entrance. Being already a broken line, it
+        # needs no separate dotted pattern - the standard's "dotted extension" is what it already
+        # looks like.
         period_ft = CONTRAFLOW_DASH_FT + CONTRAFLOW_GAP_FT
         at_ft = 0.0
         while at_ft + CONTRAFLOW_DASH_FT <= axis.length:
             dash = shapely.ops.substring(axis, at_ft, at_ft + CONTRAFLOW_DASH_FT)
             if dash.geom_type == "LineString" and dash.length > 0:
                 ctx.add(BIKE_CONTRAFLOW_DIVIDER, dash, leg_name, side, beyond_ft)
+                ctx.emit_across_opening(BIKE_CONTRAFLOW_DIVIDER, dash, leg_name, side)
             at_ft += period_ft
 
 

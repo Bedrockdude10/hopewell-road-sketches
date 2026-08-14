@@ -147,22 +147,56 @@ checking before any of this goes to a county engineer.
 | Buffer beside moving traffic, with vertical elements | 3 ft | `TWO_WAY_BIKE_LANE_BUFFER_FT` | `src/geometry/treatments.py` |
 | Travel lane floor beside a two-way lane | 10 ft | `MIN_TRAVEL_LANE_BESIDE_TWO_WAY_FT` | `src/geometry/treatments.py` |
 
-**OPEN QUESTION, and the reason this section is flagged rather than merely unverified: how a
-two-way bikeway's markings cross a DRIVEWAY is not established here.** The repo currently draws
-three different answers to the same conflict point on the same lane -
+### Driveways across a protected bike lane — **Verified 2026-08-14**
 
-| marking | what it does at a driveway | authority |
+**The lane continues through the driveway. Nobody loses a driveway.** That is the standard
+condition for this facility, not a compromise it tolerates, and it is worth stating plainly
+because the opposite assumption kills the proposal politically before it is ever drawn.
+
+**MUTCD 11th ed. Part 9E** ([source](https://www.roundabout.tech/mutcd/11r1/part-9e-markings/)):
+
+| section | force | wording |
 |---|---|---|
-| edge lines | break, continue as a dotted extension | MUTCD conflict-area principle, §2 — *as cited* |
-| green surface | continues across | our choice — **Modelled** |
-| yellow contraflow centre stripe | stops dead, no continuation | **nobody's** — an omission, not a decision |
+| §9E.03(07) | **Standard** | "Extensions of bicycle lanes through intersections **shall** use dotted line patterns." |
+| §9E.04(02) | Option | "Bicycle lanes **may** be continued through a driveway using solid or dotted longitudinal lines." |
+| §9E.04(03) | Option | Bicycle symbol, arrow, or word markings **may** be used in bicycle lane extensions through driveways. |
+| §9E.06(15) | **Guidance** | "Lane extension markings **should** be used to extend a buffer-separated bicycle lane across intersections and driveways." |
 
-The centre stripe's behaviour is a bug rather than a standard: it was added after the inherited
-paint and never given the opening handling the other two markings have. Before fixing it the
-right way, the actual rule has to be read - candidates are MUTCD 11th ed. Part 9 (bicycle
-facility markings through conflict areas), NJDOT's *Bicycle Compatible Roadways and Bikeways*
-guidance, and NACTO's two-way cycle track chapter. Guessing here would put an invented striping
-detail in front of a reviewer, which is worse than the current visible gap.
+So a driveway is NOT an intersection for §9E.03 purposes - the Standard there is about
+intersections, and driveways fall under §9E.04's Option. But §9E.06's Guidance is the operative
+one for what this project draws, because ours is buffer-separated: extension markings *should*
+carry across driveways.
+
+**NACTO Urban Bikeway Design Guide**, contraflow and bidirectional protected lanes
+([source](https://nacto.org/publication/urban-bikeway-design-guide/designing-bikeways-for-all-ages-and-abilities/protected-bike-lanes/designing-protected-bike-lanes/)
+- page returns 403 to automated fetches; figures below are from NACTO's own indexed summary, so
+treat as *as cited* until someone opens the guide):
+
+- bidirectional protected lanes **must continue through intersections and driveways**
+- **dotted yellow centrelines** along bidirectional lanes and through the associated crossbikes
+- BIKE LANE symbol or marking **after driveways**, after intersections, and at least every 500 ft
+- crossbikes through all crossings including driveways; cities *may* apply them at busier driveways
+
+What this repo now draws, and where each answer comes from:
+
+| marking | at a driveway | authority |
+|---|---|---|
+| edge lines | break, continue as a dotted extension | §9E.06(15) Guidance |
+| yellow contraflow centre stripe | **carries through as its own dashes** | NACTO dotted yellow centreline; §9E.06(15) |
+| green surface | continues across | our choice — **Modelled**; colour is not specified |
+
+The centre stripe used to stop dead at each driveway - 22 dashes on a kerb with two of them
+against 30 on a kerb with none - while the edge lines continued and the green carried across.
+Three answers to one conflict point, and that one belonged to nobody. Fixed 2026-08-14.
+
+> **Still missing: the BIKE LANE symbol after each driveway**, which NACTO asks for and
+> §9E.04(03) permits. Nothing in this repo draws a pavement word or bike symbol at all, so it is
+> a new marking rather than a parameter - see the "new marking touches six places" checklist in
+> README.md.
+
+> **Still unread: NJDOT.** *Bicycle Compatible Roadways and Bikeways* has not been opened. NJ
+> adopts the federal MUTCD with a state supplement, so §9E above is the governing text unless the
+> supplement diverges - which nobody here has checked.
 
 `CONTRAFLOW_DASH_FT` (3 ft) and `CONTRAFLOW_GAP_FT` (5 ft) in the same file are **Modelled** -
 chosen to read at this drawing's scale, not taken from any document. See §7.

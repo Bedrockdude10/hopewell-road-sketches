@@ -3,7 +3,7 @@ buildings:
   vertices: 1425
 channels:
   bike_lane_contraflow_lines:
-    count: 23
+    count: 25
     extent:
       max:
       - 36.833
@@ -11,7 +11,7 @@ channels:
       min:
       - -35.553
       - -16.121
-    points: 69
+    points: 75
   bike_lane_edge_lines:
     count: 13
     extent:

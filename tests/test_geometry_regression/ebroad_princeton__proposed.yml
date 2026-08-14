@@ -184,6 +184,8 @@ legs:
     stop_bar_centre_m:
     - 15.318
     - 5.008
+    stop_bar_lateral_offset_m: 1.676
+    stop_bar_span_m: 3.353
     width_m: 11.253
   e_broad_st_west:
     crosswalk_axis:
@@ -206,6 +208,8 @@ legs:
     stop_bar_centre_m:
     - -11.019
     - -3.792
+    stop_bar_lateral_offset_m: 1.676
+    stop_bar_span_m: 3.353
     width_m: 11.654
   princeton_ave_south:
     crosswalk_axis:
@@ -228,6 +232,8 @@ legs:
     stop_bar_centre_m:
     - 5.221
     - -13.64
+    stop_bar_lateral_offset_m: 1.676
+    stop_bar_span_m: 3.353
     width_m: 9.208
 name: Proposed Treatments
 props:

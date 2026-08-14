@@ -165,6 +165,8 @@ legs:
     stop_bar_centre_m:
     - -18.75
     - 2.159
+    stop_bar_lateral_offset_m: 2.957
+    stop_bar_span_m: 5.914
     width_m: 12.829
   w_broad_st_northeast:
     crosswalk_axis:
@@ -187,6 +189,8 @@ legs:
     stop_bar_centre_m:
     - 7.129
     - 8.115
+    stop_bar_lateral_offset_m: 2.436
+    stop_bar_span_m: 4.872
     width_m: 10.745
   w_broad_st_southwest:
     crosswalk_axis:
@@ -209,6 +213,8 @@ legs:
     stop_bar_centre_m:
     - -15.833
     - -13.435
+    stop_bar_lateral_offset_m: 3.099
+    stop_bar_span_m: 6.198
     width_m: 13.396
 name: Existing Conditions
 props:

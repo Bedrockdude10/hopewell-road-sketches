@@ -201,6 +201,8 @@ legs:
     stop_bar_centre_m:
     - -18.75
     - 2.159
+    stop_bar_lateral_offset_m: 1.676
+    stop_bar_span_m: 3.353
     width_m: 12.829
   w_broad_st_northeast:
     crosswalk_axis:
@@ -223,6 +225,8 @@ legs:
     stop_bar_centre_m:
     - 7.129
     - 8.115
+    stop_bar_lateral_offset_m: 1.676
+    stop_bar_span_m: 3.353
     width_m: 10.745
   w_broad_st_southwest:
     crosswalk_axis:
@@ -245,6 +249,8 @@ legs:
     stop_bar_centre_m:
     - -15.833
     - -13.435
+    stop_bar_lateral_offset_m: 1.676
+    stop_bar_span_m: 3.353
     width_m: 13.396
 name: Proposed Treatments
 props:

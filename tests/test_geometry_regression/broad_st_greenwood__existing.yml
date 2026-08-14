@@ -168,6 +168,8 @@ legs:
     stop_bar_centre_m:
     - 8.79
     - 5.445
+    stop_bar_lateral_offset_m: 3.713
+    stop_bar_span_m: 7.427
     width_m: 15.853
   broad_st_west:
     crosswalk_axis:
@@ -190,6 +192,8 @@ legs:
     stop_bar_centre_m:
     - -9.217
     - -6.394
+    stop_bar_lateral_offset_m: 3.979
+    stop_bar_span_m: 7.958
     width_m: 16.916
   greenwood_ave_north:
     crosswalk_axis:
@@ -212,6 +216,8 @@ legs:
     stop_bar_centre_m:
     - -7.915
     - 13.647
+    stop_bar_lateral_offset_m: 1.774
+    stop_bar_span_m: 3.547
     width_m: 8.095
   greenwood_ave_south:
     crosswalk_axis:
@@ -234,6 +240,8 @@ legs:
     stop_bar_centre_m:
     - 6.873
     - -13.926
+    stop_bar_lateral_offset_m: 2.129
+    stop_bar_span_m: 4.259
     width_m: 9.518
 name: Existing Conditions
 props:

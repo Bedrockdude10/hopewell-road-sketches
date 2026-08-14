@@ -62,7 +62,13 @@ POLYLINE_CHANNELS = (
 # drawn off the wrong axis is the specific 2D/3D disagreement this project has already shipped
 # once (see scripts/blender/blender_scene.py:_marking_frame).
 LEG_FIELDS = ("width_m", "near_m", "far_m", "crosswalk_centre_m", "crosswalk_axis",
-              "crosswalk_offset_m", "crosswalk_style", "stop_bar_centre_m", "stop_bar_axis")
+              "crosswalk_offset_m", "crosswalk_style", "stop_bar_centre_m", "stop_bar_axis",
+              # A bar's SPAN and LATERAL OFFSET, not just the frame it sits in. Pinning the frame
+              # alone said where the bar is and nothing about how far across the road it reaches,
+              # so changing where it starts - from the alignment to the painted centreline, which
+              # moved it 3.15 ft on broad_st_east - left every golden identical. A marking's
+              # extent is as much of the drawn result as its position.
+              "stop_bar_span_m", "stop_bar_lateral_offset_m")
 
 
 def _round(value):

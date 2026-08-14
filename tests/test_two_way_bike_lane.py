@@ -14,7 +14,7 @@ stays where it is, and the cross-section is simply described asymmetrically abou
 import pytest
 
 from src.geometry.treatments import (TARGET_LANE_WIDTH_FT, BikeLane, TwoWayBikeLane,
-                                      travel_lane_divider_shift_ft)
+                                      far_kerb_surplus_ft, travel_lane_divider_shift_ft)
 
 # Broad & Greenwood's east leg, measured: 21.59 ft to the north kerb, 21.67 to the south.
 NORTH_HALF_FT, SOUTH_HALF_FT = 21.59, 21.67
@@ -43,18 +43,32 @@ def test_a_two_way_section_is_measured_from_its_own_inner_edge():
     assert bounds["bike_outer_ft"] <= SOUTH_HALF_FT + 0.01, "the lane must not cross the kerb"
 
 
-def test_the_two_travel_lanes_come_out_equal():
-    """The whole point of the shift. Total travel way is what is left after the section, and
-    the divider sits in the middle of THAT, not in the middle of the road."""
+def test_the_travel_lanes_hold_the_target_width_and_the_far_kerb_keeps_the_surplus():
+    """An equal split is the obvious rule and it is wrong on a wide street: Broad St's west leg
+    gave two 18.35 ft lanes that way, and an 18 ft lane invites the speed this project exists to
+    reduce. Spare width beside a travel lane is parking or hatching, never lane."""
     section = TwoWayBikeLane(width_ft=12.0, buffer_ft=3.0,
-                             near_half_ft=SOUTH_HALF_FT, far_half_ft=NORTH_HALF_FT)
+                             near_half_ft=26.24, far_half_ft=26.29)
     shift_ft = travel_lane_divider_shift_ft(section)
-    travel_way_ft = NORTH_HALF_FT + SOUTH_HALF_FT - section.section_ft
-    # Distance from the divider to each kerb-side edge of the travel way.
-    to_far_kerb = NORTH_HALF_FT - shift_ft
-    to_section = shift_ft + (SOUTH_HALF_FT - section.section_ft)
-    assert to_far_kerb == pytest.approx(travel_way_ft / 2, abs=0.01)
-    assert to_section == pytest.approx(travel_way_ft / 2, abs=0.01)
+    inner_edge_ft = 26.24 - section.section_ft
+    # The near travel lane runs from the section's inner edge to the divider.
+    assert shift_ft + inner_edge_ft == pytest.approx(TARGET_LANE_WIDTH_FT, abs=0.01)
+    # And the surplus lands against the far kerb, where parking can use it.
+    assert far_kerb_surplus_ft(section) == pytest.approx(
+        26.29 + inner_edge_ft - 2 * TARGET_LANE_WIDTH_FT, abs=0.01)
+    assert far_kerb_surplus_ft(section) > 8.0, "this leg should free a stall's worth and more"
+
+
+def test_a_leg_too_narrow_for_two_target_lanes_splits_what_it_has():
+    """E Broad's east leg cannot hold two 11 ft lanes beside the section, so the shortfall is the
+    street's and there is nothing to allocate - it splits equally and reports the width."""
+    section = TwoWayBikeLane(width_ft=12.0, buffer_ft=3.0,
+                             near_half_ft=18.04, far_half_ft=17.86)
+    shift_ft = travel_lane_divider_shift_ft(section)
+    travel_way_ft = 18.04 + 17.86 - section.section_ft
+    assert travel_way_ft < 2 * TARGET_LANE_WIDTH_FT
+    assert 17.86 - shift_ft == pytest.approx(travel_way_ft / 2, abs=0.01)
+    assert far_kerb_surplus_ft(section) < 0
 
 
 def test_the_divider_shifts_toward_the_far_kerb():

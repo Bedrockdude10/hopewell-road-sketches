@@ -1,6 +1,6 @@
 """Example treatment scenarios, shared by the Phase 3 plan-view render and the
 Phase 4 3D export so both phases show the exact same design."""
-from src.geometry.targets import LegSide, LegTarget
+from src.geometry.targets import LegSide, LegTarget, Side
 from src.geometry.treatments import (BIKE_LANE_BUFFER_FT,
     MIN_BIKE_LANE_FT, widest_protected_lane_ft,
     TARGET_LANE_WIDTH_FT, AddBikeLane, AddBikeLaneBollards, DesignState, LaneNarrowing,
@@ -255,8 +255,10 @@ def build_proposal_two_way_bike_lane(baseline: DesignState, model=None) -> Desig
     overtaking one.
     """
     from src.geometry.model import side_facing
-    from src.geometry.treatments import (TWO_WAY_BIKE_LANE_BUFFER_FT, TWO_WAY_BIKE_LANE_WIDTH_FT,
-                                          AddTwoWayBikeLane)
+    from src.geometry.treatments import (MIN_MARKED_PARKING_DEPTH_FT, PARKING_STALL_DEPTH_DEFAULT_FT,
+                                          TWO_WAY_BIKE_LANE_BUFFER_FT, TWO_WAY_BIKE_LANE_WIDTH_FT,
+                                          AddTwoWayBikeLane, far_kerb_surplus_ft,
+                                          travel_lane_divider_shift_ft)
 
     if model is None:
         return baseline
@@ -266,10 +268,10 @@ def build_proposal_two_way_bike_lane(baseline: DesignState, model=None) -> Desig
     state = all_crosswalks_continental(state)
     for leg_name in ("broad_st_east", "broad_st_west"):
         side = side_facing(state.legs[leg_name], CORRIDOR_SIDE)
+        lane = AddTwoWayBikeLane(LegSide(leg_name, side), width_ft=TWO_WAY_BIKE_LANE_WIDTH_FT,
+                                  buffer_ft=TWO_WAY_BIKE_LANE_BUFFER_FT)
         try:
-            state = state.apply(AddTwoWayBikeLane(LegSide(leg_name, side),
-                                                  width_ft=TWO_WAY_BIKE_LANE_WIDTH_FT,
-                                                  buffer_ft=TWO_WAY_BIKE_LANE_BUFFER_FT))
+            state = state.apply(lane)
         except ValueError as too_narrow:
             # Reported, not silently narrowed or dropped: which legs of the corridor can carry
             # the section IS the finding this scenario exists to produce.
@@ -278,4 +280,59 @@ def build_proposal_two_way_bike_lane(baseline: DesignState, model=None) -> Desig
             continue
         state = state.apply(AddBikeLaneBollards(LegSide(leg_name, side),
                                                  spacing_ft=BIKE_LANE_BOLLARD_SPACING_FT))
+        # THE FAR KERB GETS THE PARKING, and this is why the two belong in one proposal rather
+        # than two: the kerb that loses its parking to the bike lane is not the kerb that gains
+        # this. The travel lanes hold 11 ft (travel_lane_divider_shift_ft), so what the section
+        # does not spend ends up against the opposite kerb, where a stall can use it.
+        section = lane.section(state)
+        surplus_ft = far_kerb_surplus_ft(section)
+        other = Side(side).other
+        # TWO DATUMS, AND THEY ARE NOT INTERCHANGEABLE - the same split apply_osm_parking spells
+        # out. WHETHER there is room is a measurement of the traced kerb (far_kerb_surplus_ft, off
+        # narrowest_half_width_ft). WHERE the paint goes is an offset from the NOMINAL half-width,
+        # because that is the datum MarkedParking and LaneNarrowing subtract their own widths from.
+        # Here those differ by 25 ft - broad_st_east's config says 68.0 against 43.26 ft between
+        # its traced kerbs - so sizing the paint off the surplus put the hatch 20.6 ft wide and
+        # let daylighting swallow the whole kerb, which is how this was caught.
+        #
+        # The far travel lane's outer edge is the divider plus a lane, so that is where this kerb's
+        # zone begins, and its width in the nominal frame is what is left out to the nominal kerb.
+        half_ft = state.legs[leg_name].curb_to_curb_ft / 2
+        zone_from_nominal_ft = half_ft - (travel_lane_divider_shift_ft(section)
+                                           + TARGET_LANE_WIDTH_FT)
+        # AND THE FAR KERB HAS TO BE ALLOWED TO PARK. Freeing the width does not repeal the
+        # restriction on it: OSM tags broad_st_west's north kerb no_parking for its whole length,
+        # so marking stalls there would be drawing something illegal - the same thing
+        # apply_osm_parking refuses to do. Left as the finding it is, because "this treatment
+        # frees 14.7 ft that the borough would have to lift a parking prohibition to use" is a
+        # real and actionable result, and a render showing stalls there is not.
+        prohibited = [r for r in state.parking_restrictions.get((leg_name, str(other)), [])
+                      if r.prohibits]
+        if prohibited:
+            state = state.apply(LaneNarrowing(LegTarget(leg_name),
+                                               stripe_width_ft=max(zone_from_nominal_ft, 0.5),
+                                               sides=(str(other),)))
+            print(f"  NOTE: {leg_name} {other} is freed up by {surplus_ft:.2f} ft, enough for "
+                  f"{int(surplus_ft // MIN_MARKED_PARKING_DEPTH_FT)} stall-width(s), but OSM tags "
+                  f"it '{prohibited[0].value}' - so it is HATCHED, not marked. Using this width "
+                  f"for parking needs the prohibition lifted, which is a borough decision, not a "
+                  f"drawing one.")
+            continue
+        if surplus_ft >= MIN_MARKED_PARKING_DEPTH_FT:
+            depth_ft = min(surplus_ft, PARKING_STALL_DEPTH_DEFAULT_FT)
+            state = state.apply(MarkedParking(LegSide(leg_name, str(other)), depth_ft=depth_ft,
+                                               curb_offset_ft=max(zone_from_nominal_ft - depth_ft,
+                                                                   0.0)))
+            print(f"  NOTE: {leg_name} {other} ({'north' if CORRIDOR_SIDE == 'south' else 'south'} "
+                  f"kerb) gains {depth_ft:.1f} ft of marked parking from the "
+                  f"{surplus_ft:.2f} ft the two-way section leaves.")
+        else:
+            # Under a stall, so hatched rather than left bare - beside a travel lane that reads
+            # as a shoulder, which is what it is. apply_osm_parking makes the same call.
+            state = state.apply(LaneNarrowing(LegTarget(leg_name),
+                                               stripe_width_ft=max(zone_from_nominal_ft, 0.5),
+                                               sides=(str(other),)))
+            print(f"  NOTE: {leg_name} {other} has only {surplus_ft:.2f} ft spare beside an "
+                  f"{TARGET_LANE_WIDTH_FT:.0f} ft lane - under one {MIN_MARKED_PARKING_DEPTH_FT:.0f} ft "
+                  f"stall, so it is hatched rather than marked for parking.")
     return state

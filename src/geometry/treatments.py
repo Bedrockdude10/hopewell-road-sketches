@@ -1575,17 +1575,36 @@ class TwoWayBikeLane(BikeLane):
 def travel_lane_divider_shift_ft(section: TwoWayBikeLane) -> float:
     """How far the painted divider between the travel lanes sits off the alignment.
 
-    Positive TOWARD THE FAR KERB - away from the side carrying the lane, which is the
-    direction traffic is pushed by taking width out of one kerbside.
+    Positive TOWARD THE FAR KERB - away from the side carrying the lane, which is the direction
+    traffic is pushed by taking width out of one kerbside.
 
-    Derived so the two travel lanes come out EQUAL, which is the only defensible answer: the
-    travel way runs from the section's inner edge to the far kerb, and the divider goes down
-    the middle of that. Splitting it any other way would hand one direction a wider lane for
-    no stated reason, and this project's rule is that a width in a drawing is a decision
-    somebody can read back.
+    THE TRAVEL LANES HOLD TARGET_LANE_WIDTH_FT AND THE FAR KERB KEEPS THE SURPLUS. Placing the
+    divider mid-way through whatever the section leaves is the obvious rule and it is the wrong
+    one on a wide street: Broad St's west leg has 52.5 ft between kerbs, so an equal split gave
+    two 18.35 ft travel lanes, and an 18 ft lane invites exactly the speed this whole project
+    exists to reduce. Spare width beside a travel lane is not the travel lane's - it is parking,
+    or it is hatched - which is the same accounting a bike lane and an 8 ft stall already get.
+
+    Where the leg cannot hold two target-width lanes beside the section, it falls back to an
+    equal split, because then the shortfall is the street's and there is nothing to allocate.
+    E Broad's east leg is that case at 10.04 ft a lane.
     """
+    inner_edge_ft = section.near_half_ft - section.section_ft
     travel_way_ft = section.near_half_ft + section.far_half_ft - section.section_ft
-    return section.far_half_ft - travel_way_ft / 2
+    if travel_way_ft < 2 * TARGET_LANE_WIDTH_FT:
+        return section.far_half_ft - travel_way_ft / 2
+    return TARGET_LANE_WIDTH_FT - inner_edge_ft
+
+
+def far_kerb_surplus_ft(section: TwoWayBikeLane) -> float:
+    """Width left against the FAR kerb once the section and two target-width lanes are placed.
+
+    What a two-way lane on one side frees up on the other, and the reason the pair belongs in one
+    proposal: the kerb losing its parking to the bike lane is not the kerb that gains this. Zero
+    or negative where the leg has nothing spare.
+    """
+    inner_edge_ft = section.near_half_ft - section.section_ft
+    return section.far_half_ft + inner_edge_ft - 2 * TARGET_LANE_WIDTH_FT
 
 
 def bike_lane_spare_ft(state: DesignState, leg_name: str, side: str, width_ft: float,
@@ -1939,13 +1958,25 @@ class AddTwoWayBikeLane(AddBikeLane):
         # two travel lanes, and it does so carrying the measurement. Reraised untouched.
         section = self.section(state)
         shift_ft = travel_lane_divider_shift_ft(section)
-        travel_way_ft = section.near_half_ft + section.far_half_ft - section.section_ft
-        return (f". Spends {section.section_ft:.2f} ft of this leg's "
-                f"{section.near_half_ft + section.far_half_ft:.2f} ft between kerbs, leaving "
-                f"{travel_way_ft:.2f} ft for traffic - two {travel_way_ft / 2:.2f} ft lanes, with "
-                f"the centreline shifted {shift_ft:.2f} ft toward the "
-                f"{Side(str(self.target.side)).other} kerb. The NJDOT alignment does not move; "
-                f"every station and crossing frame is measured from it as before.")
+        surplus_ft = far_kerb_surplus_ft(section)
+        other = Side(str(self.target.side)).other
+        # The ACTUAL lane width, not half the travel way. Those are the same number only on a leg
+        # too narrow to hold the target, and reporting the equal-split figure on a leg that holds
+        # 11 ft lanes plus a stall's worth of surplus described a design nobody drew.
+        lane_ft = (TARGET_LANE_WIDTH_FT if surplus_ft >= 0
+                   else (section.near_half_ft + section.far_half_ft - section.section_ft) / 2)
+        note = (f". Spends {section.section_ft:.2f} ft of this leg's "
+                f"{section.near_half_ft + section.far_half_ft:.2f} ft between kerbs, leaving two "
+                f"{lane_ft:.2f} ft travel lanes with the centreline shifted {shift_ft:.2f} ft "
+                f"toward the {other} kerb")
+        if surplus_ft >= 0:
+            note += f", and {surplus_ft:.2f} ft spare against that kerb"
+        else:
+            note += (f" - under the {TARGET_LANE_WIDTH_FT:.0f} ft target by "
+                     f"{TARGET_LANE_WIDTH_FT - lane_ft:.2f} ft, which is this leg's width rather "
+                     f"than a choice, so the travel way is split equally")
+        return (note + ". The NJDOT alignment does not move; every station and crossing frame is "
+                "measured from it as before.")
 
     def paint(self, ctx) -> None:
         """The one-way section's markings, plus the yellow stripe down the middle of the lane."""

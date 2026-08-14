@@ -51,9 +51,20 @@ def _band_across_the_road(centerline, from_ft: float, to_ft: float, half_width_f
 NACTO_MIN_REFUGE_ISLAND_WIDTH_FT = 6
 LANE_NARROWING_DEFAULT_STRIPE_FT = 5.0  # common low-cost NACTO paint buffer/shoulder-stripe width
 
-# The travel lane width every road diet here aims at: NACTO/AASHTO urban minimum. Defined
-# once, in src, because it is a standard rather than a per-site choice - it was previously
-# redeclared in each site's scenarios.py, which is how nothing ended up enforcing it.
+# The travel lane width every road diet here aims at. Defined once, in src, because it is a
+# standard rather than a per-site choice - it was previously redeclared in each site's
+# scenarios.py, which is how nothing ended up enforcing it.
+#
+# ELEVEN FEET IS TWO NUMBERS, AND THAT IS THE POINT (Danny, 2026-08-14). It is the 10 ft
+# NACTO/AASHTO urban minimum PLUS the 1 ft NJDOT asks for where trucks exceed 15% of the traffic
+# mix - and they do here: Broad St is CR 518 and E Broad and NJ 31 both carry hgv=designated,
+# with NJ 31 on the state truck network. So the truck allowance is not an outstanding item to
+# add on top of 11 ft; it is already inside it, and narrowing to 10 ft anywhere would be
+# spending it.
+#
+# Worth stating because the arithmetic is invisible in the number. Reading "11 ft urban minimum"
+# and then reading NJDOT's "+1 ft on truck routes" leads straight to proposing 12 ft lanes on
+# this corridor, which is a wider road drawn in the name of a standard already satisfied.
 TARGET_LANE_WIDTH_FT = 11.0
 # A parking lane is a STANDARD width, not "whatever is left over". Anything wider than this
 # isn't a wider parking space, it's a parking space plus unmarked asphalt - which is what

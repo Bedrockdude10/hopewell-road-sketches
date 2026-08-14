@@ -129,7 +129,8 @@ Two of these carry project decisions worth knowing:
 |---|---|---|---|
 | Minimum pedestrian refuge island width | 6 ft | `NACTO_MIN_REFUGE_ISLAND_WIDTH_FT` | `src/geometry/treatments.py` |
 | Typical low-cost paint buffer / shoulder stripe | 5 ft | `LANE_NARROWING_DEFAULT_STRIPE_FT` | `src/geometry/treatments.py` |
-| Urban minimum travel lane (with AASHTO) | 11 ft | `TARGET_LANE_WIDTH_FT` | `src/geometry/treatments.py` |
+| Urban minimum travel lane (with AASHTO) | 10 ft | — | see `TARGET_LANE_WIDTH_FT` below |
+| …**plus** NJDOT's truck-route allowance (§6) | **11 ft** | `TARGET_LANE_WIDTH_FT` | `src/geometry/treatments.py` |
 | Crosswalk visibility ranking | continental > ladder > transverse | — | `src/render/crosswalks.py` |
 
 ### Two-way (bidirectional) bikeway — *as cited, and NONE OF IT CHECKED*
@@ -239,11 +240,18 @@ From the same document:
 | Edge line warranted when total lane width ≥ | **15 ft (4.5 m)** | |
 | NJDOT minimum shoulder width on state highways | **8 ft (2.4 m)** | relevant to NJ 31, not to borough streets |
 | Assumed parking lane width | **8 ft (2.4 m)** | agrees with `PARKING_STALL_DEPTH_DEFAULT_FT` |
-| Width increase where trucks exceed 15% of the mix | **+1 ft (0.3 m) minimum** | E Broad and NJ 31 are truck routes |
+| Width increase where trucks exceed 15% of the mix | **+1 ft (0.3 m) minimum** | **already applied** — see below |
 
 The driveway row is the only one bearing on the driveway question, and it is about **surface**,
-not striping: the markings question is settled by MUTCD §9E above. The truck row is an open
-item - both truck routes in this project are drawn without that additional foot.
+not striping: the markings question is settled by MUTCD §9E above.
+
+**The truck row is already satisfied, and this is easy to get wrong** (Danny, 2026-08-14).
+`TARGET_LANE_WIDTH_FT` is 11 ft = the 10 ft NACTO/AASHTO urban minimum **plus** this 1 ft. Broad
+St is CR 518; E Broad and NJ 31 both carry `hgv=designated`, NJ 31 on the state truck network. So
+the allowance is inside the number rather than outstanding on top of it — reading "11 ft urban
+minimum" beside "+1 ft on truck routes" leads straight to proposing 12 ft lanes on a corridor
+whose whole purpose is to stop being over-wide. Corollary: **narrowing any lane here to 10 ft
+would be spending the truck allowance**, not trimming fat.
 
 `CONTRAFLOW_DASH_FT` (3 ft) and `CONTRAFLOW_GAP_FT` (5 ft) in the same file are **Modelled** -
 chosen to read at this drawing's scale, not taken from any document. See §7.

@@ -230,6 +230,56 @@ explicitly rather than assume it: **cite the 1996 guidance, say why it is being 
 and expect that to be the first question asked.** Recorded here so the argument is made once and
 found again, rather than rediscovered under scrutiny.
 
+### Skewed intersections, and what a bikeway does at one — **Verified 2026-08-15**
+
+W Broad & Louellen is not a plain T, and treating it as one is why its render looks wrong.
+Measured from the site config:
+
+| | |
+|---|---|
+| Louellen St west × W Broad south-west | **43.6°** |
+| Louellen St west × W Broad north-east | 145.5° |
+| W Broad north-east × south-west | 170.9° |
+
+And the route TURNS here: `louellen_st_west` and `w_broad_st_northeast` are both SRI
+`00000518__`, while the south-west leg is `11000654__`. So CR 518 arrives on W Broad from the
+north-east and turns west onto Louellen, bending **34.5°**, and CR 654 joins at 43.6°. This is a
+**skewed (oblique) junction where the numbered route turns** - not a crossroads, and not a
+symmetric T.
+
+**AASHTO** *(as cited, via [intersection geometric design summary](https://www.cedengineering.com/userfiles/C04-033%20-%20Intersection%20Geometric%20Design%20-%20US.pdf))*: roadways
+should ideally cross at 90° and **not less than 75°**; **skew beyond 60° is to be avoided**.
+Severely skewed intersections have restricted sight distance - worse for vans and trucks, and
+worse when skewed to the left. At 43.6° this junction is well outside that guidance before any
+treatment is drawn.
+
+**Channelization principle** *(as cited)*: channelization separates and defines points of
+conflict so that **"bicyclists, pedestrians and motorists are exposed to only one conflict, or
+confronted with one decision, at a time."** That is the sentence this project's Louellen
+treatment currently fails: a two-way lane through a 43.6° skew where the county route turns asks
+a rider to resolve several conflicts at once.
+
+**TxDOT Roadway Design Manual §18.5**, bicycle facilities at intersections
+*(Verified 2026-08-15, [source](https://www.txdot.gov/manuals/des/rdw/chapter-18-bicycle-facilities-/18-5-intersections-and-crossings.html))* - the operative guidance for what to
+DRAW where a two-way lane cannot continue:
+
+- crossings should meet the roadway **at 90°** to minimise crossing distance and maximise sight
+  distance;
+- transitioning from a two-way to a one-way separated lane: **"the use of directional, tapered
+  islands can provide positive direction for bicyclists to follow the desired transition route"**;
+- **corner islands** position waiting riders **in front of** stopped motorists, improving
+  visibility, and create queuing space for a two-stage turn clear of through riders;
+- where width is insufficient, designers should consider **transitions to protected
+  intersections, to sidewalk via bike ramps, or to shared lanes**.
+
+> **What this means for our Louellen render, which is currently wrong.** The scenario draws
+> NOTHING there and prints the refusal to the console. But "the section does not fit" is not the
+> same as "no treatment" - the standards describe a specific thing to draw: a **transition**,
+> channelized with directional tapered islands, squaring the crossing toward 90°, with a corner
+> island for visibility and two-stage turns, ending in a marked shared-lane transition where the
+> separated facility genuinely runs out. That is what a designer would put on the sheet, and it
+> is what makes the corridor read as continuous-with-a-transition rather than as a gap.
+
 ### NJDOT figures actually usable here — **Verified 2026-08-14**
 
 From the same document:

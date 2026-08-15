@@ -72,7 +72,7 @@ def test_the_markings_break_over_a_dropped_kerb(site_models):
     """
     model = site_models["ebroad_princeton"]
     with contextlib.redirect_stdout(io.StringIO()):
-        state = run_scenario(load_site_scenarios("ebroad_princeton").build_proposal_bike_lanes,
+        state = run_scenario(load_site_scenarios("ebroad_princeton")._one_way_bike_lanes_reference,
                              DesignState.from_model(model), model)
         scene = resolved_scene(model, state)
         paint = scene.build_paint(scene_props(model, state, scene))
@@ -182,7 +182,7 @@ def test_the_opening_is_trimmed_back_and_rounded(site_models):
 
     model = site_models["ebroad_princeton"]
     with contextlib.redirect_stdout(io.StringIO()):
-        state = run_scenario(load_site_scenarios("ebroad_princeton").build_proposal_bike_lanes,
+        state = run_scenario(load_site_scenarios("ebroad_princeton")._one_way_bike_lanes_reference,
                              DesignState.from_model(model), model)
         scene = resolved_scene(model, state)
         paint = scene.build_paint(scene_props(model, state, scene))
@@ -240,7 +240,7 @@ def test_no_flex_post_stands_in_a_driveway(site, site_models):
 
     model = site_models[site]
     with contextlib.redirect_stdout(io.StringIO()):
-        state = run_scenario(load_site_scenarios(site).build_proposal_bike_lanes,
+        state = run_scenario(load_site_scenarios(site)._one_way_bike_lanes_reference,
                              DesignState.from_model(model), model)
         scene = resolved_scene(model, state)
         paint, props = scene.build_paint_and_posts(scene_props(model, state, scene))
@@ -279,7 +279,7 @@ def test_a_lane_line_goes_dotted_across_a_driveway_rather_than_stopping(site_mod
 
     model = site_models["ebroad_princeton"]
     with contextlib.redirect_stdout(io.StringIO()):
-        state = run_scenario(load_site_scenarios("ebroad_princeton").build_proposal_bike_lanes,
+        state = run_scenario(load_site_scenarios("ebroad_princeton")._one_way_bike_lanes_reference,
                              DesignState.from_model(model), model)
         scene = resolved_scene(model, state)
         paint = scene.build_paint(scene_props(model, state, scene))
@@ -345,7 +345,7 @@ def test_a_hatched_zone_tapers_off_at_an_opening_where_a_lane_line_stops_dead(si
 
     model = site_models["ebroad_princeton"]
     with contextlib.redirect_stdout(io.StringIO()):
-        state = run_scenario(load_site_scenarios("ebroad_princeton").build_proposal_bike_lanes,
+        state = run_scenario(load_site_scenarios("ebroad_princeton")._one_way_bike_lanes_reference,
                              DesignState.from_model(model), model)
     openings = kerb_opening_bands(state)
     leg = state.legs["e_broad_st_east"]

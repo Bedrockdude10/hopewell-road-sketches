@@ -148,7 +148,7 @@ BIKE_LANE_BOLLARD_SPACING_FT = 8.0  # matches Broad & Greenwood's pitch - reads 
 E_BROAD_LEGS = ("e_broad_st_east", "e_broad_st_west")
 
 
-def build_proposal_bike_lanes(baseline: DesignState, model=None) -> DesignState:
+def _one_way_bike_lanes_reference(baseline: DesignState, model=None) -> DesignState:
     """Bike lanes both sides of both E Broad St legs - protected on the leg that can hold a
     buffer. Princeton Ave gets none.
 

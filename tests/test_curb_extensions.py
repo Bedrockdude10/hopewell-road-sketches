@@ -540,7 +540,7 @@ def test_a_stop_bar_stops_where_the_bike_lane_starts(site_models):
 
     model = site_models["broad_st_greenwood"]
     with contextlib.redirect_stdout(io.StringIO()):
-        builder = load_site_scenarios("broad_st_greenwood").build_proposal_bike_lanes
+        builder = load_site_scenarios("broad_st_greenwood")._one_way_bike_lanes_reference
         state = run_scenario(builder, DesignState.from_model(model), model)
         scene = resolved_scene(model, state)
 
@@ -577,7 +577,7 @@ def test_bike_lane_bollards_stand_in_the_buffer_on_the_traffic_side(site_models)
 
     model = site_models["broad_st_greenwood"]
     with contextlib.redirect_stdout(io.StringIO()):
-        builder = load_site_scenarios("broad_st_greenwood").build_proposal_bike_lanes
+        builder = load_site_scenarios("broad_st_greenwood")._one_way_bike_lanes_reference
         state = run_scenario(builder, DesignState.from_model(model), model)
         scene = resolved_scene(model, state)
         paint = scene.build_paint(scene_props(model, state, scene))
@@ -642,7 +642,7 @@ def test_the_green_surface_covers_the_bike_lane_and_nothing_else(site, site_mode
 
     model = site_models[site]
     with contextlib.redirect_stdout(io.StringIO()):
-        builder = load_site_scenarios(site).build_proposal_bike_lanes
+        builder = load_site_scenarios(site)._one_way_bike_lanes_reference
         state = run_scenario(builder, DesignState.from_model(model), model)
         scene = resolved_scene(model, state)
         paint = scene.build_paint(scene_props(model, state, scene))
@@ -679,7 +679,7 @@ def test_the_kerb_hatching_beside_a_bike_lane_is_actually_drawn(site_models):
 
     model = site_models["broad_st_greenwood"]
     with contextlib.redirect_stdout(io.StringIO()):
-        builder = load_site_scenarios("broad_st_greenwood").build_proposal_bike_lanes
+        builder = load_site_scenarios("broad_st_greenwood")._one_way_bike_lanes_reference
         state = run_scenario(builder, DesignState.from_model(model), model)
         scene = resolved_scene(model, state)
         paint = scene.build_paint(scene_props(model, state, scene))
@@ -713,7 +713,7 @@ def test_the_bike_lanes_bollards_reach_the_3d_render(site_models):
     """
     model = site_models["broad_st_greenwood"]
     with contextlib.redirect_stdout(io.StringIO()):
-        builder = load_site_scenarios("broad_st_greenwood").build_proposal_bike_lanes
+        builder = load_site_scenarios("broad_st_greenwood")._one_way_bike_lanes_reference
         state = run_scenario(builder, DesignState.from_model(model), model)
         scene = resolved_scene(model, state)
         paint, props = scene.build_paint_and_posts(scene_props(model, state, scene))
@@ -739,7 +739,7 @@ def test_a_post_drawn_only_in_paint_is_an_invariant_failure(site_models):
     """
     model = site_models["broad_st_greenwood"]
     with contextlib.redirect_stdout(io.StringIO()):
-        builder = load_site_scenarios("broad_st_greenwood").build_proposal_bike_lanes
+        builder = load_site_scenarios("broad_st_greenwood")._one_way_bike_lanes_reference
         state = run_scenario(builder, DesignState.from_model(model), model)
         scene = resolved_scene(model, state)
         paint, props = scene.build_paint_and_posts(scene_props(model, state, scene))
@@ -763,7 +763,7 @@ def test_the_kerb_hatching_beside_a_bike_lane_is_trimmed_where_the_crossing_cuts
 
     model = site_models["broad_st_greenwood"]
     with contextlib.redirect_stdout(io.StringIO()):
-        builder = load_site_scenarios("broad_st_greenwood").build_proposal_bike_lanes
+        builder = load_site_scenarios("broad_st_greenwood")._one_way_bike_lanes_reference
         state = run_scenario(builder, DesignState.from_model(model), model)
         scene = resolved_scene(model, state)
         paint, _props = scene.build_paint_and_posts(scene_props(model, state, scene))
@@ -831,7 +831,7 @@ def test_the_buffer_is_kept_and_the_lane_gives(site_models):
 
     model = site_models["ebroad_princeton"]
     with contextlib.redirect_stdout(io.StringIO()):
-        state = run_scenario(load_site_scenarios("ebroad_princeton").build_proposal_bike_lanes,
+        state = run_scenario(load_site_scenarios("ebroad_princeton")._one_way_bike_lanes_reference,
                              DesignState.from_model(model), model)
 
     for side in ("left", "right"):

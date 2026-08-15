@@ -85,3 +85,75 @@ def build_demo_scenario(baseline: DesignState, model=None) -> DesignState:
     state = complete_centerlines(state)
     return all_crosswalks_continental(state)
 
+
+
+# --- The borough two-way corridor -----------------------------------------------------------
+#
+# The same route as the other two Broad St sites - one two-way protected lane along the SOUTH
+# kerb for the whole borough length. See sites/broad_st_greenwood/scenarios.py for the
+# measurements the side was chosen on.
+#
+# THIS IS THE CORRIDOR'S PINCH POINT, and the scenario exists to show it rather than to hide it.
+# W Broad's north-east approach has 15.13 ft to its nearest traced kerb - the narrowest of the
+# twelve Broad St kerbs - and 32.35 ft between kerbs in total. The standard section needs 13.82
+# ft of that, which leaves 18.53 ft for traffic: 9.27 ft a lane, under the 10 ft floor. So the
+# section fits the KERB here and fails on the TRAVEL LANES, which is a different constraint from
+# the one that stops it elsewhere and worth reading in the output.
+CORRIDOR_SIDE = "south"
+
+
+def build_proposal_two_way_bike_lane(baseline: DesignState, model=None) -> DesignState:
+    """The corridor's two-way lane, attempted along W Broad's south kerb.
+
+    Expect refusals. This junction is where the borough-length facility runs out of street, and
+    the render's job is to say so precisely - a corridor plan that quietly stops at its hardest
+    point is the plan nobody costed.
+
+    Tries the standard 10 ft + 3 ft section first, then the unbuffered fallback, and reports
+    what each one costs. An unbuffered two-way lane is not a protected lane: there is nowhere to
+    stand a flex post that is not in the bike lane or the travel lane, so it would be paint
+    beside 30 mph traffic and the note says as much.
+    """
+    from src.geometry.model import side_facing
+    from src.geometry.targets import LegSide, Side
+    from src.geometry.treatments import (MIN_TWO_WAY_BIKE_LANE_FT, TWO_WAY_BIKE_LANE_BUFFER_FT,
+                                          AddBikeLaneBollards, AddTwoWayBikeLane,
+                                          hold_travel_lane_at_target)
+
+    if model is None:
+        return baseline
+    state = apply_osm_parking(baseline, model, legs=("louellen_st_west",))
+    state = complete_centerlines(state)
+    state = all_crosswalks_continental(state)
+    for leg_name in sorted(state.legs):
+        if "broad" not in leg_name:
+            continue
+        try:
+            side = side_facing(state.legs[leg_name], CORRIDOR_SIDE)
+        except ValueError:
+            continue
+        placed = False
+        # ONE SECTION, NOT A LADDER OF FALLBACKS. An unbuffered fallback was tried and removed:
+        # it fits the kerb but leaves the opposing travel lane 13.02 ft wide with no room to
+        # narrow it (TravelLanesHoldTheTarget fails the build), and an unbuffered two-way lane is
+        # paint beside 30 mph traffic rather than a protected one. Drawing it would have shown a
+        # facility nobody should build, at the one junction whose whole finding is that the
+        # corridor does not fit here.
+        for width_ft, buffer_ft in ((MIN_TWO_WAY_BIKE_LANE_FT, TWO_WAY_BIKE_LANE_BUFFER_FT),):
+            try:
+                state = state.apply(AddTwoWayBikeLane(LegSide(leg_name, side), width_ft=width_ft,
+                                                       buffer_ft=buffer_ft))
+            except ValueError as too_narrow:
+                print(f"  NOTE: {leg_name} {side} cannot take a {width_ft:.0f} ft lane with a "
+                      f"{buffer_ft:.0f} ft buffer - {too_narrow}")
+                continue
+            placed = True
+            state = state.apply(AddBikeLaneBollards(LegSide(leg_name, side), spacing_ft=8.0))
+            state = hold_travel_lane_at_target(state, leg_name, str(Side(side).other))
+            break
+        if not placed:
+            print(f"  NOTE: {leg_name} {side} carries NO two-way lane. THIS IS WHERE THE "
+                  f"BOROUGH-LENGTH CORRIDOR BREAKS - the section fits the kerb here and fails on "
+                  f"the travel lanes, which is a different limit from the one that stops it "
+                  f"elsewhere. Riders would rejoin the carriageway through this junction.")
+    return state

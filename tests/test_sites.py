@@ -1946,7 +1946,7 @@ def test_the_bike_lane_proposal_treats_only_the_legs_wide_enough(site_models, si
 
     model = site_models[site]
     with contextlib.redirect_stdout(io.StringIO()):
-        builder = load_site_scenarios(site).build_proposal_bike_lanes
+        builder = load_site_scenarios(site)._one_way_bike_lanes_reference
         state = run_scenario(builder, DesignState.from_model(model), model)
 
     for leg_name in treated:

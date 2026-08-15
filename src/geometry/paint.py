@@ -494,10 +494,17 @@ class PaintContext:
         # extension may lie. Where the complementary cut used the wider rounded run-out, not
         # filling that run-out is correct - a taper is not something you paint dashes across.
         driven = self.openings.driven if self.openings else None
-        if driven is not None:
-            geometry = geometry.intersection(driven)
-            if geometry.is_empty:
-                return added
+        if driven is None:
+            # NO OPENINGS ON THIS KERB, so there is no opening to extend across and this call has
+            # nothing to place. Returning the geometry unclipped instead emitted the whole mark a
+            # SECOND time - `add` had already laid the part outside the openings, which on a kerb
+            # with none is all of it - so every dash was painted twice down the same stretch.
+            # Invisible until a kerb had zero driveways: w_broad_st_northeast is the first, and
+            # markings_collide reported the contraflow stripe overlapping itself for 3.0 ft.
+            return added
+        geometry = geometry.intersection(driven)
+        if geometry.is_empty:
+            return added
         for clear in clip_paint_clear_of(geometry, self.surfaces):
             for part in clip_paint_clear_of(clear, self.keep_clear):
                 if kind.covers_area and part.area < MIN_ZONE_AREA_SQ_FT:

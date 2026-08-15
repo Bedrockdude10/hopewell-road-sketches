@@ -149,8 +149,21 @@ BIKE_LANE_BOLLARD_SPACING_FT = 8.0  # same flex-post pitch a daylight zone uses 
                                      # continuous delineator rather than a row of dots
 
 
-def build_proposal_bike_lanes(baseline: DesignState, model=None) -> DesignState:
-    """Buffered bike lanes both sides of both Broad St legs. Greenwood Ave gets none.
+def _one_way_bike_lanes_reference(baseline: DesignState, model=None) -> DesignState:
+    """NOT RENDERED - kept as the reference one-way section the tests pin.
+
+    Removed from the render set 2026-08-15: measured against the corridor, one-way lanes do not
+    fit ANY continuous run of Broad St. The binding kerb has 15.13 ft and the narrowest one-way
+    section - a 4 ft lane with no buffer, already below AASHTO's floor - needs 15.82 ft. So this
+    was a proposal that could only ever be built in fragments, and a 500 yard bike lane is not a
+    bike lane. The two-way section needs 13.82 ft on ONE kerb and does fit the whole length.
+
+    The TREATMENT is still valid and still used elsewhere; it is this corridor that cannot take
+    it. Kept under a non-build_ name so tests/test_curb_extensions.py can still pin the one-way
+    rules (the buffer-is-kept-and-the-lane-gives fallback, the green surface bounds) without the
+    scenario appearing in any render.
+
+    Buffered bike lanes both sides of both Broad St legs. Greenwood Ave gets none.
 
     Per side, outward from the centerline: 11 ft travel lane, 3 ft painted buffer with flex-post
     delineators down it, 5 ft bike lane, then the leftover asphalt HATCHED to the kerb. That last

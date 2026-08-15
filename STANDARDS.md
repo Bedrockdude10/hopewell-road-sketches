@@ -241,11 +241,28 @@ Measured from the site config:
 | Louellen St west × W Broad north-east | 145.5° |
 | W Broad north-east × south-west | 170.9° |
 
-And the route TURNS here: `louellen_st_west` and `w_broad_st_northeast` are both SRI
-`00000518__`, while the south-west leg is `11000654__`. So CR 518 arrives on W Broad from the
-north-east and turns west onto Louellen, bending **34.5°**, and CR 654 joins at 43.6°. This is a
-**skewed (oblique) junction where the numbered route turns** - not a crossroads, and not a
-symmetric T.
+**The STREET goes through; the ROUTE NUMBER turns.** Those are different facts and conflating
+them was an error (corrected 2026-08-15):
+
+- **Geometrically the north-east and south-west legs are 170.9° apart** - a 9.1° bend, which is
+  a straight-through movement by any practical reading. Whatever it is called, traffic runs
+  through this junction.
+- **Louellen St west is the skewed third leg**, 43.6° off the south-west leg. That is the skew,
+  and it is a property of the geometry, independent of any naming.
+- **The CR 518 designation does turn.** `louellen_st_west` and `w_broad_st_northeast` are both
+  SRI `00000518__`; the south-west leg is `11000654__`, and OSM near the junction carries only
+  *Louellen Street (CR 518)* and *West Broad Street (CR 654)*. So the county route follows the
+  north-east leg and turns west onto Louellen, while the street continues south-west as CR 654.
+
+**UNRESOLVED, and it should be settled on the ground rather than from a desk.** The repo's config
+names the north-east leg `w_broad_st_northeast`; OSM names the CR 518 through-way *Louellen
+Street*; Danny reports W Broad St signed on both sides. All three can only be reconciled by
+looking at the signs. Nothing in the treatment depends on the answer - the skew and the widths
+are measured, not named - but the drawing's labels do, and a plan sheet that calls a leg by the
+wrong street name is the kind of error a reviewer stops reading at.
+
+So: a **skewed (oblique) T** - a through movement with a 43.6° third leg - not a crossroads and
+not a symmetric T.
 
 **AASHTO** *(as cited, via [intersection geometric design summary](https://www.cedengineering.com/userfiles/C04-033%20-%20Intersection%20Geometric%20Design%20-%20US.pdf))*: roadways
 should ideally cross at 90° and **not less than 75°**; **skew beyond 60° is to be avoided**.

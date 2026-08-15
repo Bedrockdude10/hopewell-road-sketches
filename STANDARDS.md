@@ -276,26 +276,30 @@ confronted with one decision, at a time."** That is the sentence this project's 
 treatment currently fails: a two-way lane through a 43.6° skew where the county route turns asks
 a rider to resolve several conflicts at once.
 
-**TxDOT Roadway Design Manual §18.5**, bicycle facilities at intersections
-*(Verified 2026-08-15, [source](https://www.txdot.gov/manuals/des/rdw/chapter-18-bicycle-facilities-/18-5-intersections-and-crossings.html))* - the operative guidance for what to
-DRAW where a two-way lane cannot continue:
+**WHAT ACTUALLY GOVERNS HERE, in order.** Broad St is **CR 518 / CR 654 — a MERCER COUNTY
+route**, in Hopewell Borough, New Jersey. The authorities are, in descending order of standing:
 
-- crossings should meet the roadway **at 90°** to minimise crossing distance and maximise sight
-  distance;
-- transitioning from a two-way to a one-way separated lane: **"the use of directional, tapered
-  islands can provide positive direction for bicyclists to follow the desired transition route"**;
-- **corner islands** position waiting riders **in front of** stopped motorists, improving
-  visibility, and create queuing space for a two-stage turn clear of through riders;
-- where width is insufficient, designers should consider **transitions to protected
-  intersections, to sidewalk via bike ramps, or to shared lanes**.
+| | who | standing on this street |
+|---|---|---|
+| 1 | **MUTCD 11th ed.** | federally adopted; NJ adopts it. **Governs the markings**, and Part 9E is already cited above |
+| 2 | **NJDOT** — [Roadway Design Manual (2015)](https://dot.nj.gov/transportation/eng/documents/RDM/documents/2015RoadwayDesignManual_20231226.pdf), *Bicycle Compatible Roadways* | state DOT; NJ agencies design to it. §1 above records what its bike guidance says |
+| 3 | **AASHTO** — Green Book; *Guide for the Development of Bicycle Facilities* (2012) | **NJDOT's own guidance defers to it by name** |
+| 4 | **Mercer County engineering** | **owns this road.** No county standard sheet has been located — see §5, which is an open item and matters more than it looked |
+| 5 | NACTO | not a jurisdiction; widely referenced, and NJDOT's wording ("or other best practices") leaves room for it |
 
-> **What this means for our Louellen render, which is currently wrong.** The scenario draws
-> NOTHING there and prints the refusal to the console. But "the section does not fit" is not the
-> same as "no treatment" - the standards describe a specific thing to draw: a **transition**,
-> channelized with directional tapered islands, squaring the crossing toward 90°, with a corner
-> island for visibility and two-stage turns, ending in a marked shared-lane transition where the
-> separated facility genuinely runs out. That is what a designer would put on the sheet, and it
-> is what makes the corridor read as continuous-with-a-transition rather than as a gap.
+> **A citation error worth keeping, because it is the kind this file exists to stop.** An earlier
+> version of this section quoted **TxDOT's Roadway Design Manual §18.5** for the transition
+> treatment. TxDOT has **no jurisdiction in New Jersey**. It was reached for because a search
+> returned it and it had usable specifics - which is the same failure as writing a NACTO figure
+> from memory, in a document whose entire purpose is recording what actually governs. Its
+> substance (directional tapered islands, corner islands, squaring the crossing) is ordinary
+> practice and probably right, but it is **not authority here** and must not be cited as such.
+> The equivalent NJ/AASHTO provisions have NOT yet been read.
+
+> **Still to read, and none of it optional before a transition is drawn at Louellen:** the NJDOT
+> Roadway Design Manual's intersection and bicycle-facility sections (link above, in `data/`
+> reach), AASHTO's *Guide for the Development of Bicycle Facilities* on separated-lane
+> transitions, and whatever Mercer County holds - since the county, not the state, owns CR 518.
 
 ### NJDOT figures actually usable here — **Verified 2026-08-14**
 

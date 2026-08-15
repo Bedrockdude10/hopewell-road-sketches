@@ -335,6 +335,40 @@ vehicles, appropriate sight distance should be provided."* The same section rest
 extensions may reduce them - which is what `src/geometry/daylighting.py` already encodes, now
 with the state manual behind it rather than the statute alone.
 
+#### NJDOT RDM on lane width — **Verified 2026-08-15**
+
+Direct on `TARGET_LANE_WIDTH_FT` and on the 10 ft floor this project falls back to:
+
+> "While lane widths of 12 feet are desirable on land service highways... **Lane widths of 11
+> feet in urban areas are acceptable.** Existing lane widths of 10 feet have been provided in
+> certain locations where right of way and existing development became stringent controls and
+> where truck volumes were limited. However, **new or reconstructed 10 foot wide lanes would not
+> be proposed today, except in traffic calming areas.**"
+
+Two consequences, both load-bearing:
+
+1. **11 ft is affirmatively acceptable here** - Broad St is urban land service highway. The
+   target is not a NACTO borrowing this project has to defend; the state manual states it.
+2. **`MIN_TRAVEL_LANE_BESIDE_TWO_WAY_FT` (10 ft) is defensible ONLY as traffic calming.** NJDOT
+   would not propose a new 10 ft lane otherwise. Every scenario here IS a traffic calming
+   proposal, so the exception applies - but it has to be *claimed* in the submission, not
+   assumed, and a 10 ft lane drawn without that framing is outside current NJDOT practice.
+
+And on the outside lane, which is what a bikeway changes:
+
+> "**where it is not practical to provide a shoulder adjacent to the outside lane** (design
+> exception required), **the outside lane width shall be 15 feet to accommodate bicyclists.**
+> Where alternate bike access is provided, the outside lane width **should be 1 foot wider than
+> the adjacent through lane width.** The designer should strive to accommodate the bicyclist and
+> pedestrian on all projects."
+
+> **This is a second, independent basis for the +1 ft already inside our 11 ft** - and it is a
+> BICYCLE provision, not the truck one recorded in §6. The two are not the same rule and should
+> not be conflated: *Bicycle Compatible Roadways* adds a foot where trucks exceed 15% of the mix;
+> the RDM adds a foot to the outside lane where alternate bike access exists. Which one our 11 ft
+> is spending has not been established, and it matters - if both apply, 11 ft may be a foot short
+> rather than a foot generous. Worth resolving before the section is presented as compliant.
+
 > **Still unread:** AASHTO's *Guide for the Development of Bicycle Facilities* on separated-lane
 > transitions, and whatever Mercer County holds. The county owns CR 518, but NJDOT §6 above is
 > the design authority NJ agencies work to, so the county call is no longer a precondition for

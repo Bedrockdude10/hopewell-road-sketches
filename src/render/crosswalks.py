@@ -12,10 +12,12 @@ from shapely.ops import unary_union
 from shapely.geometry import LineString, Polygon
 
 from src.render.coords import FT_TO_M, wgs84_to_state_plane
-from src.geometry.model import crosswalk_estimate_ft, leg_clearance_ft
+from src.geometry.model import (crosswalk_estimate_ft, inset_line_ft, leg_clearance_ft,
+                                station_offset_many)
 from src.geometry.targets import LegSide, LegTarget, Side
 from src.geometry.treatments import (AddBikeLane, DesignState, LaneNarrowing, MarkedParking,
-                                     ShiftCrosswalk, UpgradeCrosswalkMarkings)
+                                     ShiftCrosswalk, UpgradeCrosswalkMarkings,
+                                     divider_shift_toward_ft)
 
 # OSM crossing:markings values -> our 3 rendered styles. "lines" (two simple
 # transverse boundary lines) is the least visible; FHWA/NACTO guidance treats
@@ -76,7 +78,8 @@ STOP_BAR_CURB_CLEARANCE_M = 0.5
 STOP_BAR_PLAN_DEPTH_FT = 1.5
 
 
-def stop_bar_band_geometry_ft(width_ft: float, edge_is_kerb: bool = True) -> tuple[float, float]:
+def stop_bar_band_geometry_ft(width_ft: float, edge_is_kerb: bool = True,
+                               inner_ft: float = 0.0) -> tuple[float, float]:
     """(span_ft, lateral_offset_ft) for a stop bar on a roadway `width_ft` wide.
 
     The bar spans the entering half, from the road centerline out to the edge of the lane the
@@ -96,8 +99,15 @@ def stop_bar_band_geometry_ft(width_ft: float, edge_is_kerb: bool = True) -> tup
     """
     clearance_ft = STOP_BAR_CURB_CLEARANCE_M / FT_TO_M
     outer_ft = width_ft / 2 - (clearance_ft if edge_is_kerb else 0.0)
-    span_ft = max(outer_ft, clearance_ft)
-    return span_ft, span_ft / 2
+    # IT STARTS AT THE PAINTED CENTRELINE, WHICH IS NOT ALWAYS THE ALIGNMENT. `inner_ft` is where
+    # that line actually is - zero while the two travel lanes straddle the alignment, and the
+    # divider's own offset where a two-way bike lane has shifted them (see
+    # treatments.divider_shift_toward_ft). Starting at the alignment regardless ran the bar
+    # 3.15 ft past the double yellow on broad_st_east and 1.42 ft on broad_st_west, painting a
+    # stop line across the opposing lanes - which is the same striping error this function's
+    # docstring already describes at the other end, in the other direction.
+    span_ft = max(outer_ft - inner_ft, clearance_ft)
+    return span_ft, inner_ft + span_ft / 2
 
 
 def travel_lane_edge_ft(state: DesignState, leg_name: str, side) -> float | None:
@@ -574,7 +584,8 @@ CENTERLINE_DASH_FT = 1.0 / FT_TO_M
 CENTERLINE_GAP_FT = 1.0 / FT_TO_M
 
 
-def centerline_paint_ft(leg, start_ft: float, style: str) -> list[LineString]:
+def centerline_paint_ft(leg, start_ft: float, style: str,
+                         shift_ft: float = 0.0, shift_side: str | None = None) -> list[LineString]:
     """The stripes actually painted down this leg's middle, from `start_ft` to its far end.
 
     ONE definition for both views, because they had two and only one of them followed the road.
@@ -593,7 +604,30 @@ def centerline_paint_ft(leg, start_ft: float, style: str) -> list[LineString]:
     """
     if style == "none" or start_ft >= leg.centerline.length:
         return []
-    painted = shapely.ops.substring(leg.centerline, start_ft, leg.centerline.length)
+    if shift_ft and shift_side is not None:
+        # A TWO-WAY BIKE LANE ON ONE SIDE PUSHES THE TRAVEL LANES OFF THE ALIGNMENT, so the
+        # divider between them is no longer the alignment itself - see
+        # treatments.travel_lane_divider_shift_ft for where the distance comes from and why the
+        # two lanes come out equal.
+        #
+        # Through inset_line_ft rather than offset_curve, for the reason this function exists at
+        # all: it is the same lateral-offset machinery the bike lane's own stripes use, on the
+        # same station grid, with the same clamping inside the traced kerb. An offset curve's arc
+        # length differs from the centerline's, so stationing along it is not stationing along
+        # the road - which is what put the stall ticks adrift before - and a second mechanism for
+        # "a line N ft to one side" is exactly the divergence the single-definition rule forbids.
+        # A NEGATIVE shift means the other side, not the same distance on this one. Callers pass
+        # the canonical non-negative form (DesignState.travel_lane_divider_shift), but abs() alone
+        # silently mirrored a negative one onto the wrong side of the road, so the sign is
+        # resolved here too rather than assumed away.
+        if shift_ft < 0:
+            shift_side = str(Side(shift_side).other)
+            shift_ft = -shift_ft
+        painted = inset_line_ft(leg, shift_side, shift_ft, start_ft)
+        if painted is None or painted.is_empty or painted.geom_type != "LineString":
+            return []
+    else:
+        painted = shapely.ops.substring(leg.centerline, start_ft, leg.centerline.length)
     if painted.is_empty or painted.geom_type != "LineString":
         return []
     if style == "double_yellow":
@@ -907,7 +941,8 @@ def stop_bar_bands_ft(state, stop_bar_offsets: dict, skews: dict) -> dict:
         if leg is None:
             continue
         span_ft, lateral_ft = stop_bar_band_geometry_ft(
-            stop_bar_width_ft(state, name), entering_lane_width_ft(state, name) is None)
+            stop_bar_width_ft(state, name), entering_lane_width_ft(state, name) is None,
+            inner_ft=divider_shift_toward_ft(state, name, Side.LEFT))
         # The band runs from lateral_offset - half to lateral_offset + half along the SKEWED
         # across-axis, and crosswalk_band_ft already stretches the half-span by 1/cos(skew) so
         # a rotated bar still reaches the lane edge. It does not stretch the offset, so the two
@@ -918,7 +953,73 @@ def stop_bar_bands_ft(state, stop_bar_offsets: dict, skews: dict) -> dict:
         # stop_bar_band_geometry_ft exists to prevent. Both ends live in the same rotated
         # frame, so the offset takes the same stretch the span already got.
         stretch = 1.0 / max(math.cos(math.radians(abs(skews.get(name, 0.0)))), 0.2)
-        bands[name] = crosswalk_band_ft(leg, offset_ft, STOP_BAR_PLAN_DEPTH_FT, skews.get(name, 0.0),
-                                         span_ft=span_ft,
-                                         lateral_offset_ft=lateral_ft * stretch)
+        band = crosswalk_band_ft(leg, offset_ft, STOP_BAR_PLAN_DEPTH_FT, skews.get(name, 0.0),
+                                  span_ft=span_ft, lateral_offset_ft=lateral_ft * stretch)
+        bands[name] = _trim_to_the_entering_side(
+            leg, band, divider_shift_toward_ft(state, name, Side.LEFT))
     return bands
+
+
+# How far past the centreline a straight bar's corner may fall on a CURVING leg before the bar is
+# trimmed. A stop bar is a straight stripe and a centreline is not always straight, so the two
+# genuinely cross by a little wherever the road bends: 0.52 ft on louellen_st_west, whose
+# centerline kinks. That is a real overhang - it is drawn, and a reviewer sees a stop bar over the
+# double yellow - so it is trimmed rather than tolerated.
+TRIM_STOP_BAR_BEYOND_FT = 0.05
+
+
+def _trim_to_the_entering_side(leg, band, divider_ft: float):
+    """Cut `band` back so none of it lies past the painted centreline.
+
+    A stop bar RESTS AGAINST that line; it never crosses it (MUTCD - the bar covers the entering
+    approach only). Sizing alone cannot guarantee that: the bar is a straight quadrilateral and
+    the line it stops at follows a centreline that bends, so on a curving leg the bar's inner
+    corner falls the wrong side of it however carefully the span is computed. So the shape is
+    trimmed to the region it is allowed to occupy, which is the one construction that cannot be
+    defeated by curvature.
+
+    `divider_ft` is where that line sits, signed toward the entering (LEFT) side - normally zero,
+    and the two-way bike lane's divider offset where the travel lanes have been shifted.
+    """
+    if band is None or band.is_empty:
+        return band
+    _stations, offsets = station_offset_many(leg.centerline,
+                                             np.asarray(band.exterior.coords, dtype=float))
+    if float(divider_ft - offsets.min()) <= TRIM_STOP_BAR_BEYOND_FT:
+        return band                      # already clear of the line
+    # From the CENTRELINE, over the whole leg - NOT inset_line_ft, which clamps to the traced
+    # kerb's station span. louellen_st_west's left kerb is traced only from station 60 and its
+    # stop bar sits at ~50, so the clamped line stopped short of the bar, never crossed it, and
+    # the trim silently did nothing. A dividing line has to span whatever it is dividing.
+    line = leg.centerline
+    if abs(divider_ft) > 1e-9:
+        # offset_curve's sign convention depends on the line's direction, so pick the candidate
+        # that actually lands on the entering side rather than assuming which one it is.
+        for candidate in (leg.centerline.offset_curve(abs(divider_ft)),
+                          leg.centerline.offset_curve(-abs(divider_ft))):
+            if candidate.is_empty or candidate.geom_type != "LineString":
+                continue
+            _st, off = station_offset_many(
+                leg.centerline,
+                np.asarray(candidate.interpolate(0.5, normalized=True).coords, dtype=float))
+            if abs(float(off[0]) - divider_ft) < abs(divider_ft) * 0.5 + 0.1:
+                line = candidate
+                break
+    if line is None or line.is_empty:
+        return band
+    try:
+        pieces = list(shapely.ops.split(band, line).geoms)
+    except Exception:
+        return band                      # not splittable - leave it for the invariant to report
+    keep = []
+    for piece in pieces:
+        if piece.is_empty or piece.area <= 0:
+            continue
+        _st, off = station_offset_many(leg.centerline,
+                                        np.asarray(piece.representative_point().coords,
+                                                   dtype=float))
+        if float(off[0]) >= divider_ft:
+            keep.append(piece)
+    if not keep:
+        return band
+    return unary_union(keep) if len(keep) > 1 else keep[0]

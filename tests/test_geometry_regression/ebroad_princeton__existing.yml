@@ -2,6 +2,10 @@ buildings:
   count: 75
   vertices: 1425
 channels:
+  bike_lane_contraflow_lines:
+    count: 0
+    extent: null
+    points: 0
   bike_lane_edge_lines:
     count: 0
     extent: null
@@ -146,13 +150,70 @@ frame:
   radius_m: 41.682
 legs:
   e_broad_st_east:
+    centerline_paint_m:
+    - - - 15.303
+        - 5.056
+      - - 15.918
+        - 5.259
+      - - 15.918
+        - 5.259
+      - - 17.365
+        - 5.736
+      - - 17.365
+        - 5.736
+      - - 20.261
+        - 6.686
+      - - 20.261
+        - 6.686
+      - - 23.159
+        - 7.632
+      - - 23.159
+        - 7.632
+      - - 26.058
+        - 8.572
+      - - 28.958
+        - 9.511
+      - - 31.858
+        - 10.451
+      - - 34.757
+        - 11.392
+      - - 37.656
+        - 12.334
+    - - - 15.334
+        - 4.961
+      - - 15.949
+        - 5.164
+      - - 17.396
+        - 5.641
+      - - 20.292
+        - 6.591
+      - - 23.19
+        - 7.537
+      - - 26.089
+        - 8.477
+      - - 28.989
+        - 9.416
+      - - 31.889
+        - 10.356
+      - - 34.788
+        - 11.297
+      - - 37.687
+        - 12.239
+    centerline_start_m: 16.116
+    centerline_style: double_yellow
+    confirmed: false
     crosswalk_axis:
     - 0.948
     - 0.317
+    crosswalk_bar_count: 12
     crosswalk_centre_m:
     - 6.797
     - 2.166
     crosswalk_offset_m: 7.134
+    crosswalk_offset_source: geometric_estimate
+    crosswalk_reach_left_m: 5.639
+    crosswalk_reach_right_m: 6.096
+    crosswalk_skew_deg: 0.0
     crosswalk_style: lines
     far_m:
     - 37.671
@@ -166,15 +227,86 @@ legs:
     stop_bar_centre_m:
     - 15.318
     - 5.008
+    stop_bar_lateral_offset_m: 2.563
+    stop_bar_offset_m: 16.116
+    stop_bar_span_m: 5.127
+    stop_bar_width_m: 11.253
     width_m: 11.253
   e_broad_st_west:
+    centerline_paint_m:
+    - - - -11.004
+        - -3.839
+      - - -11.515
+        - -4.011
+      - - -12.959
+        - -4.497
+      - - -14.404
+        - -4.981
+      - - -15.849
+        - -5.465
+      - - -15.849
+        - -5.465
+      - - -17.295
+        - -5.947
+      - - -17.295
+        - -5.947
+      - - -20.188
+        - -6.906
+      - - -20.188
+        - -6.906
+      - - -23.083
+        - -7.861
+      - - -25.978
+        - -8.814
+      - - -28.873
+        - -9.768
+      - - -31.768
+        - -10.723
+      - - -34.662
+        - -11.678
+      - - -37.557
+        - -12.631
+    - - - -11.035
+        - -3.744
+      - - -11.546
+        - -3.916
+      - - -12.991
+        - -4.402
+      - - -14.436
+        - -4.887
+      - - -15.881
+        - -5.371
+      - - -17.327
+        - -5.853
+      - - -20.22
+        - -6.812
+      - - -23.114
+        - -7.766
+      - - -26.01
+        - -8.719
+      - - -28.904
+        - -9.673
+      - - -31.799
+        - -10.628
+      - - -34.694
+        - -11.583
+      - - -37.589
+        - -12.536
+    centerline_start_m: 11.653
+    centerline_style: double_yellow
+    confirmed: false
     crosswalk_axis:
     - -0.948
     - -0.319
+    crosswalk_bar_count: 12
     crosswalk_centre_m:
     - -6.508
     - -2.273
     crosswalk_offset_m: 6.893
+    crosswalk_offset_source: osm_survey
+    crosswalk_reach_left_m: 5.791
+    crosswalk_reach_right_m: 5.715
+    crosswalk_skew_deg: 0.853
     crosswalk_style: lines
     far_m:
     - -37.573
@@ -188,15 +320,80 @@ legs:
     stop_bar_centre_m:
     - -11.019
     - -3.792
+    stop_bar_lateral_offset_m: 2.664
+    stop_bar_offset_m: 11.653
+    stop_bar_span_m: 5.327
+    stop_bar_width_m: 11.654
     width_m: 11.654
   princeton_ave_south:
+    centerline_paint_m:
+    - - - 5.267
+        - -13.621
+      - - 5.5
+        - -14.218
+      - - 6.61
+        - -17.056
+      - - 7.724
+        - -19.893
+      - - 8.865
+        - -22.719
+      - - 10.035
+        - -25.534
+      - - 11.213
+        - -28.345
+      - - 12.392
+        - -31.156
+      - - 13.569
+        - -33.967
+      - - 13.569
+        - -33.967
+      - - 14.743
+        - -36.78
+    - - - 5.174
+        - -13.658
+      - - 5.406
+        - -14.254
+      - - 5.406
+        - -14.254
+      - - 6.517
+        - -17.093
+      - - 6.517
+        - -17.093
+      - - 7.631
+        - -19.93
+      - - 7.632
+        - -19.931
+      - - 8.773
+        - -22.757
+      - - 8.773
+        - -22.758
+      - - 9.943
+        - -25.572
+      - - 9.943
+        - -25.572
+      - - 11.121
+        - -28.384
+      - - 12.299
+        - -31.195
+      - - 13.477
+        - -34.006
+      - - 14.651
+        - -36.819
+    centerline_start_m: 14.602
+    centerline_style: double_yellow
+    confirmed: false
     crosswalk_axis:
     - 0.363
     - -0.932
+    crosswalk_bar_count: 10
     crosswalk_centre_m:
     - 3.008
     - -7.959
     crosswalk_offset_m: 8.506
+    crosswalk_offset_source: osm_survey
+    crosswalk_reach_left_m: 5.563
+    crosswalk_reach_right_m: 4.877
+    crosswalk_skew_deg: -6.631
     crosswalk_style: lines
     far_m:
     - 14.697
@@ -210,6 +407,10 @@ legs:
     stop_bar_centre_m:
     - 5.221
     - -13.64
+    stop_bar_lateral_offset_m: 2.052
+    stop_bar_offset_m: 14.602
+    stop_bar_span_m: 4.104
+    stop_bar_width_m: 9.208
     width_m: 9.208
 name: Existing Conditions
 props:

@@ -2,6 +2,8 @@
 
 Parametric pedestrian-safety visualization for real intersections — real-world geometry (NJDOT + field measurements + OSM), not hand-drawn sketches. Produces to-scale 2D plan-view before/after comparisons and presentation-quality 3D renders. Currently has one site configured: **Broad St (CR 518) & Greenwood Ave, Hopewell Borough, NJ 08525**.
 
+**[.claude/SKILLS.md](.claude/SKILLS.md)** is the first thing to read before changing geometry. This README explains how the pipeline works; that file lists what people (and agents) actually get wrong in it, with the place each answer already lives — the two datums that are 25 ft apart, the constants that already exist so you don't write a second copy, and the rule that matters most: measure the DRAWN output, not the arithmetic that was supposed to produce it.
+
 **[STANDARDS.md](STANDARDS.md)** indexes every published figure the geometry relies on — the R.S. 39:4-138 setbacks, the MUTCD and AASHTO numbers, which constant encodes each one, and which have actually been checked against their source rather than written from memory.
 
 ## Quick start

@@ -498,6 +498,41 @@ def curb_station_span(leg: "Leg", side: str) -> tuple[float, float] | None:
     return (lo, hi) if hi > lo else None
 
 
+def side_facing(leg: "Leg", compass: str) -> str:
+    """Which of this leg's two sides ("left"/"right") faces `compass` ("north"/"south").
+
+    A leg's left/right is in the LEG'S OWN frame - the sign of a lateral offset, outward along
+    its bearing - so the same kerb of an east-west street is "left" on one approach and "right"
+    on the other. Any decision about a real side of a real street therefore has to be
+    translated per leg, and doing it by hand is how a corridor treatment ends up on the north
+    kerb of one leg and the south kerb of the next.
+
+    Taken from the centerline's own geometry rather than from config's bearing_deg: the bearing
+    is the outward direction, but the centerline is what offsets are actually measured from, and
+    on a leg with a kink the two differ. Measured at the leg's midpoint, where a lateral offset
+    is least affected by either end.
+
+    ONLY MEANINGFUL FOR A ROUGHLY EAST-WEST LEG, which is what "north side" means at all. A leg
+    running north-south has an east and a west side and this would answer with whichever way its
+    slight lean happens to fall, so it raises instead of guessing.
+    """
+    if compass not in ("north", "south"):
+        raise ValueError(f"side_facing takes 'north' or 'south', not {compass!r}")
+    line = leg.centerline
+    ahead = line.interpolate(min(line.length * 0.55, line.length))
+    behind = line.interpolate(max(line.length * 0.45, 0.0))
+    dx, dy = ahead.x - behind.x, ahead.y - behind.y
+    if abs(dx) <= abs(dy):
+        raise ValueError(
+            f"Leg {leg.name!r} runs more north-south than east-west (its midpoint heading moves "
+            f"{dx:+.1f} ft east for {dy:+.1f} ft north), so it has no 'north side' to speak of. "
+            f"A compass side is only meaningful across a roughly east-west leg.")
+    # The left side is the +offset side, 90 degrees anticlockwise of the heading: (-dy, dx). Its
+    # northing component is dx, so the left side faces north exactly when the leg heads east.
+    left_faces = "north" if dx > 0 else "south"
+    return "left" if left_faces == compass else "right"
+
+
 def narrowest_half_width_ft(leg: "Leg", side: str, from_ft: float = 0.0,
                              to_ft: float | None = None) -> float:
     """The least room this side has between the centerline and the real kerb, over a span.

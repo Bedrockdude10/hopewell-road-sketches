@@ -180,7 +180,8 @@ def _snap_to_center(piece, center_ft: Point):
     return affinity.translate(piece, xoff=center_ft.x - x0, yoff=center_ft.y - y0)
 
 
-def _assign_leg_pieces(pieces: list, leg_names: list[str], legs_cfg: dict, center_ft: Point) -> dict[str, object]:
+def _assign_leg_pieces(pieces: list, leg_names: list[str], legs_cfg: dict, center_ft: Point,
+                        sri: str = "?") -> dict[str, object]:
     """
     Match centerline pieces (all sharing one SRI, split at the intersection) to
     the configured leg names that reference that SRI, by nearest compass bearing.
@@ -188,7 +189,43 @@ def _assign_leg_pieces(pieces: list, leg_names: list[str], legs_cfg: dict, cente
     dead-end/stub leg) and any intersection shape - nothing here assumes a
     4-way or perpendicular roads, only that each leg's config entry has an
     accurate `bearing_deg`.
+
+    THE COUNTS HAVE TO MATCH, and when they do not it is a config error worth naming.
+    A road network splits an SRI at the junction into as many pieces as there are
+    approaches on it; the config says how many legs it has there. A disagreement means
+    one of two mistakes, and both used to be silent or near-silent:
+
+      MORE PIECES THAN LEGS - the road runs through the junction but the config only
+      declares one side of it. This raised `min() iterable argument is empty` from the
+      matcher below, naming neither the SRI nor the config. It is an easy mistake where
+      NJDOT's name for an SRI describes only part of what it covers: at NJ 31 & W
+      Delaware Ave, NJDOT carries the whole of Delaware Ave under one SRI called
+      "E DELAWARE AVE", so the obvious reading puts the west leg on the neighbouring
+      "PENNINGTON-TITUSVILLE RD" SRI - whose segment begins 334 ft west and never
+      reaches this junction.
+
+      MORE LEGS THAN PIECES - a leg declared on an SRI that has no approach for it here.
+      That one never raised at all: the leg was simply absent from the returned dict, so
+      it got no centerline, no curb line, no crossing and no mention.
+
+    The leftover piece's bearing is reported because it IS the `bearing_deg` the missing
+    leg needs, so the message contains the fix rather than just the diagnosis.
     """
+    if len(pieces) != len(leg_names):
+        bearings = [_bearing_deg((center_ft.x, center_ft.y), p.coords[-1]) for p in pieces]
+        declared = ", ".join(f"{n} ({legs_cfg[n]['bearing_deg']:.1f} deg)" for n in leg_names)
+        raise ValueError(
+            f"SRI {sri} splits into {len(pieces)} piece(s) at this junction "
+            f"(bearings {', '.join(f'{b:.1f}' for b in bearings)} deg) but the config declares "
+            f"{len(leg_names)} leg(s) on it: {declared}. "
+            + ("Add the missing leg(s) to config.yaml with the unmatched bearing(s) above - a "
+               "road that runs THROUGH the junction has two approaches on one SRI, and NJDOT's "
+               "name for an SRI may describe only part of what it covers."
+               if len(pieces) > len(leg_names) else
+               "Remove the extra leg(s), or move them to the SRI that actually carries them - "
+               "a leg on an SRI with no piece here is drawn as nothing at all.")
+        )
+
     assigned = {}
     remaining_names = list(leg_names)
     for piece in pieces:
@@ -1611,7 +1648,7 @@ def load_intersection_model(config: dict | None = None, site: str | None = None)
         if snap_ft > SNAP_REPORT_THRESHOLD_FT:
             print(f"  NOTE: SRI {sri} centerline passes {snap_ft:.1f} ft from the resolved intersection "
                   f"node - snapped onto it (legs {', '.join(leg_names)}).")
-        for name, piece in _assign_leg_pieces(pieces, leg_names, legs_cfg, center_ft).items():
+        for name, piece in _assign_leg_pieces(pieces, leg_names, legs_cfg, center_ft, sri).items():
             # Trimmed from the snapped junction end outward, so a shortened leg keeps the
             # station-0 origin every measurement in the project is taken from.
             if piece.length > leg_lengths[name]:

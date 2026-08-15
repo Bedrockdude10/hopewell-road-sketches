@@ -2,6 +2,10 @@ buildings:
   count: 79
   vertices: 1497
 channels:
+  bike_lane_contraflow_lines:
+    count: 0
+    extent: null
+    points: 0
   bike_lane_edge_lines:
     count: 0
     extent: null
@@ -184,13 +188,124 @@ frame:
   radius_m: 52.567
 legs:
   broad_st_east:
+    centerline_paint_m:
+    - - - 8.764
+        - 5.488
+      - - 9.043
+        - 5.66
+      - - 9.043
+        - 5.66
+      - - 10.341
+        - 6.459
+      - - 11.159
+        - 6.963
+      - - 11.165
+        - 6.966
+      - - 13.065
+        - 7.834
+      - - 14.449
+        - 8.47
+      - - 15.833
+        - 9.109
+      - - 18.604
+        - 10.399
+      - - 21.353
+        - 11.715
+      - - 24.086
+        - 13.064
+      - - 26.818
+        - 14.416
+      - - 26.818
+        - 14.416
+      - - 29.551
+        - 15.766
+      - - 29.551
+        - 15.766
+      - - 32.288
+        - 17.108
+      - - 32.288
+        - 17.108
+      - - 35.028
+        - 18.443
+      - - 35.028
+        - 18.443
+      - - 37.771
+        - 19.771
+      - - 37.772
+        - 19.771
+      - - 40.517
+        - 21.095
+      - - 40.517
+        - 21.095
+      - - 43.265
+        - 22.413
+      - - 43.265
+        - 22.413
+      - - 46.013
+        - 23.725
+    - - - 8.817
+        - 5.403
+      - - 9.096
+        - 5.575
+      - - 10.394
+        - 6.374
+      - - 11.209
+        - 6.877
+      - - 13.106
+        - 7.743
+      - - 13.106
+        - 7.743
+      - - 14.491
+        - 8.379
+      - - 14.491
+        - 8.38
+      - - 15.875
+        - 9.019
+      - - 15.875
+        - 9.019
+      - - 18.646
+        - 10.308
+      - - 18.647
+        - 10.309
+      - - 21.396
+        - 11.625
+      - - 21.397
+        - 11.625
+      - - 24.13
+        - 12.974
+      - - 24.13
+        - 12.974
+      - - 26.862
+        - 14.327
+      - - 29.595
+        - 15.676
+      - - 32.332
+        - 17.018
+      - - 35.072
+        - 18.353
+      - - 37.815
+        - 19.681
+      - - 40.561
+        - 21.004
+      - - 43.309
+        - 22.323
+      - - 46.056
+        - 23.635
+    centerline_start_m: 10.341
+    centerline_style: double_yellow
+    confirmed: true
     crosswalk_axis:
     - 0.848
     - 0.53
+    crosswalk_bar_count: 20
     crosswalk_centre_m:
     - 5.527
     - 3.42
     crosswalk_offset_m: 6.501
+    crosswalk_offset_source: osm_survey
+    crosswalk_reach_left_m: 10.211
+    crosswalk_reach_right_m: 9.601
+    crosswalk_skew_deg: -4.061
     crosswalk_style: continental
     far_m:
     - 46.034
@@ -204,15 +319,96 @@ legs:
     stop_bar_centre_m:
     - 8.79
     - 5.445
+    stop_bar_lateral_offset_m: 1.676
+    stop_bar_offset_m: 10.341
+    stop_bar_span_m: 3.353
+    stop_bar_width_m: 6.706
     width_m: 15.853
   broad_st_west:
+    centerline_paint_m:
+    - - - -9.188
+        - -6.435
+      - - -9.985
+        - -6.993
+      - - -9.985
+        - -6.993
+      - - -11.235
+        - -7.865
+      - - -11.235
+        - -7.865
+      - - -12.487
+        - -8.734
+      - - -12.488
+        - -8.734
+      - - -13.744
+        - -9.597
+      - - -13.745
+        - -9.597
+      - - -15.007
+        - -10.45
+      - - -15.008
+        - -10.45
+      - - -17.542
+        - -12.146
+      - - -20.066
+        - -13.854
+      - - -22.581
+        - -15.576
+      - - -25.097
+        - -17.296
+      - - -27.614
+        - -19.016
+      - - -30.13
+        - -20.736
+      - - -30.13
+        - -20.736
+      - - -32.652
+        - -22.448
+    - - - -9.246
+        - -6.353
+      - - -10.042
+        - -6.911
+      - - -11.292
+        - -7.783
+      - - -12.544
+        - -8.652
+      - - -13.801
+        - -9.514
+      - - -15.063
+        - -10.367
+      - - -17.598
+        - -12.063
+      - - -17.598
+        - -12.063
+      - - -20.122
+        - -13.772
+      - - -20.123
+        - -13.772
+      - - -22.638
+        - -15.494
+      - - -25.154
+        - -17.214
+      - - -27.67
+        - -18.934
+      - - -30.187
+        - -20.654
+      - - -32.708
+        - -22.366
+    centerline_start_m: 11.22
+    centerline_style: double_yellow
+    confirmed: true
     crosswalk_axis:
     - -0.824
     - -0.566
+    crosswalk_bar_count: 21
     crosswalk_centre_m:
     - -5.197
     - -3.604
     crosswalk_offset_m: 6.327
+    crosswalk_offset_source: osm_survey
+    crosswalk_reach_left_m: 11.201
+    crosswalk_reach_right_m: 9.982
+    crosswalk_skew_deg: -7.189
     crosswalk_style: continental
     far_m:
     - -32.68
@@ -226,15 +422,76 @@ legs:
     stop_bar_centre_m:
     - -9.217
     - -6.394
+    stop_bar_lateral_offset_m: 1.676
+    stop_bar_offset_m: 11.22
+    stop_bar_span_m: 3.353
+    stop_bar_width_m: 6.706
     width_m: 16.916
   greenwood_ave_north:
+    centerline_paint_m:
+    - - - -7.958
+        - 13.622
+      - - -8.439
+        - 14.485
+      - - -9.198
+        - 15.806
+      - - -10.736
+        - 18.438
+      - - -12.275
+        - 21.07
+      - - -12.275
+        - 21.07
+      - - -13.803
+        - 23.707
+      - - -13.803
+        - 23.707
+      - - -15.317
+        - 26.353
+      - - -16.83
+        - 28.999
+      - - -18.343
+        - 31.645
+      - - -19.855
+        - 34.292
+    - - - -7.871
+        - 13.671
+      - - -8.352
+        - 14.534
+      - - -8.353
+        - 14.535
+      - - -9.112
+        - 15.856
+      - - -9.112
+        - 15.856
+      - - -10.65
+        - 18.489
+      - - -12.188
+        - 21.12
+      - - -13.716
+        - 23.757
+      - - -15.23
+        - 26.403
+      - - -16.743
+        - 29.049
+      - - -18.256
+        - 31.695
+      - - -19.768
+        - 34.341
+    centerline_start_m: 15.781
+    centerline_style: double_yellow
+    confirmed: false
     crosswalk_axis:
     - -0.467
     - 0.884
+    crosswalk_bar_count: 9
     crosswalk_centre_m:
     - -5.709
     - 9.554
     crosswalk_offset_m: 11.132
+    crosswalk_offset_source: osm_survey
+    crosswalk_reach_left_m: 4.724
+    crosswalk_reach_right_m: 4.496
+    crosswalk_skew_deg: 4.733
     crosswalk_style: continental
     far_m:
     - -19.811
@@ -248,15 +505,82 @@ legs:
     stop_bar_centre_m:
     - -7.915
     - 13.647
+    stop_bar_lateral_offset_m: 1.676
+    stop_bar_offset_m: 15.781
+    stop_bar_span_m: 3.353
+    stop_bar_width_m: 6.706
     width_m: 8.095
   greenwood_ave_south:
+    centerline_paint_m:
+    - - - 6.916
+        - -13.902
+      - - 7.534
+        - -15.001
+      - - 8.296
+        - -16.32
+      - - 9.845
+        - -18.947
+      - - 11.396
+        - -21.571
+      - - 11.396
+        - -21.571
+      - - 12.941
+        - -24.199
+      - - 12.941
+        - -24.199
+      - - 14.476
+        - -26.832
+      - - 14.476
+        - -26.833
+      - - 16.006
+        - -29.469
+      - - 17.534
+        - -32.106
+      - - 17.534
+        - -32.106
+      - - 19.059
+        - -34.745
+    - - - 6.829
+        - -13.951
+      - - 7.447
+        - -15.051
+      - - 7.447
+        - -15.051
+      - - 8.21
+        - -16.37
+      - - 8.21
+        - -16.371
+      - - 9.758
+        - -18.997
+      - - 9.759
+        - -18.998
+      - - 11.31
+        - -21.621
+      - - 12.854
+        - -24.249
+      - - 14.389
+        - -26.883
+      - - 15.92
+        - -29.519
+      - - 17.448
+        - -32.156
+      - - 18.973
+        - -34.795
+    centerline_start_m: 15.508
+    centerline_style: double_yellow
+    confirmed: false
     crosswalk_axis:
     - 0.473
     - -0.881
+    crosswalk_bar_count: 10
     crosswalk_centre_m:
     - 5.529
     - -11.46
     crosswalk_offset_m: 12.699
+    crosswalk_offset_source: osm_survey
+    crosswalk_reach_left_m: 4.953
+    crosswalk_reach_right_m: 5.334
+    crosswalk_skew_deg: 3.102
     crosswalk_style: continental
     far_m:
     - 19.016
@@ -270,6 +594,10 @@ legs:
     stop_bar_centre_m:
     - 6.873
     - -13.926
+    stop_bar_lateral_offset_m: 1.676
+    stop_bar_offset_m: 15.508
+    stop_bar_span_m: 3.353
+    stop_bar_width_m: 6.706
     width_m: 9.518
 name: Proposed Treatments
 props:

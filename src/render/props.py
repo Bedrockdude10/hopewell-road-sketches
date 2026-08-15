@@ -903,7 +903,7 @@ def bollard_props_from_paint(state: DesignState, paint: list) -> list[dict]:
         if bollards is None:
             continue        # a lane-narrowing or parking-buffer post - already a prop above
         spacing_ft = bollards.spacing_ft
-        lane = state.treatment_for(AddBikeLane, kerb).lane
+        lane = state.treatment_for(AddBikeLane, kerb).section(state)
         point = piece.geometry.centroid
         posts.append({
             "type": "bollard", "position_ft": (point.x, point.y), "heading_deg": 0.0,

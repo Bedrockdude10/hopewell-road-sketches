@@ -1,7 +1,7 @@
 """Example treatment scenarios, shared by the Phase 3 plan-view render and the
 Phase 4 3D export so both phases show the exact same design."""
-from src.geometry.targets import LegSide, LegTarget
-from src.geometry.treatments import (BIKE_LANE_BUFFER_FT,
+from src.geometry.targets import LegSide, LegTarget, Side
+from src.geometry.treatments import (BIKE_LANE_BUFFER_FT, MIN_TWO_WAY_BIKE_LANE_FT,
     MIN_BIKE_LANE_FT, widest_protected_lane_ft,
     TARGET_LANE_WIDTH_FT, AddBikeLane, AddBikeLaneBollards, DesignState, LaneNarrowing,
     MarkedParking, ProtectDaylightZone, all_crosswalks_continental, apply_osm_parking,
@@ -200,4 +200,107 @@ def build_proposal_bike_lanes(baseline: DesignState, model=None) -> DesignState:
                                              buffer_ft=BIKE_LANE_BUFFER_FT))
             state = state.apply(AddBikeLaneBollards(LegSide(leg_name, side),
                                                     spacing_ft=BIKE_LANE_BOLLARD_SPACING_FT))
+    return state
+
+
+# --- The borough two-way corridor -----------------------------------------------------------
+#
+# A single two-way protected bike lane on ONE side of Broad St, running the length of Hopewell
+# Borough - 6,871 ft of W Broad + E Broad - rather than a pair of one-way lanes on each leg.
+#
+# THE SIDE IS A CORRIDOR DECISION AND IT IS THE SOUTH KERB. Measured over the whole borough
+# length from OSM, 2026-08-13:
+#
+#   * side streets cutting the kerb   north 10, SOUTH 7. Five crossings cut both kerbs whichever
+#     side is chosen (Eaton/Ege, Lanning, Greenwood, Maple, Elm); the difference is one-sided
+#     T-junctions - Windsor Way, Louellen, Mercer, Blackwell and Hamilton on the north against
+#     Seminary and Princeton on the south.
+#   * parking capacity lost           north 246 stalls, SOUTH 241. A 2% difference, and derived
+#     from geometry rather than counted: OSM carries no parking:* tag anywhere on this corridor,
+#     and the borough's Schedule I restrictions are not loaded as a data source. Treat it as a
+#     tie, not as a finding.
+#   * mapped driveways                north 20, south 21 - and NOT usable either way. OSM has a
+#     driveway for 29% of the parcels fronting Broad St, so both figures are roughly threefold
+#     undercounts and the undercount rate is the same on both sides.
+#
+# So the crossings decided it, because that is the count OSM records completely. Junctions are
+# also the hazard that matters most for this treatment specifically: a two-way lane puts
+# contraflow riders at every one of them, arriving from the direction a turning driver does not
+# check.
+#
+# The side is chosen ONCE for the route and then translated per leg by side_facing() - a leg's
+# left/right is in its own frame, so the same real kerb is "left" on the east approach and
+# "right" on the west, and hand-translating it is how a corridor treatment ends up on the north
+# kerb of one leg and the south kerb of the next.
+CORRIDOR_SIDE = "south"
+
+# TEN FEET, NOT THE 12 FT DESIGN WIDTH, AND PARKING IS WHY. Hopewell Borough is car-dependent;
+# a corridor plan that removes a kerb of parking and returns none is not viable here whatever it
+# does for riders. broad_st_east has 43.26 ft between its traced kerbs, and 12 ft of lane plus a
+# 3 ft buffer plus two 11 ft travel lanes leaves 5.44 ft against the far kerb - under a stall, so
+# the whole leg came out with no parking at all. At 10 ft the section leaves 7.44 ft, which is a
+# usable stall.
+#
+# 10 ft is NACTO's MINIMUM for a two-way lane (12 ft desirable): two riders can pass, but an
+# oncoming pair is tight. That is the cost, it is real, and it is the one being paid deliberately
+# to keep the parking. The alternative on the table was narrowing the travel lanes to 10 ft
+# instead, which would have kept the lane at 12 - not taken, so the travel lanes hold 11 ft.
+CORRIDOR_LANE_WIDTH_FT = MIN_TWO_WAY_BIKE_LANE_FT
+# The narrowest parallel stall worth marking. Below 7 ft a car cannot sit clear of the travel
+# lane, so it is not a stall; src's MIN_MARKED_PARKING_DEPTH_FT (8 ft) is the width to mark when
+# the street can spare it, not the floor for whether parking exists at all.
+MIN_USABLE_STALL_FT = 7.0
+
+
+def build_proposal_two_way_bike_lane(baseline: DesignState, model=None) -> DesignState:
+    """A 12 ft two-way protected bike lane along the south kerb of both Broad St legs.
+
+    Across the road from the NORTH kerb: travel lane, the double yellow, travel lane, a 3 ft
+    buffer with flex posts in it, the 12 ft two-way lane with its yellow contraflow stripe, and
+    the leftover hatched to the south kerb.
+
+    THE ALIGNMENT DOES NOT MOVE, and that is what makes this drawable at all - see
+    TwoWayBikeLane. The travel lanes shift north because 15.8 ft comes out of the south
+    kerbside, so the double yellow between them shifts with them; every station, crossing frame
+    and stop bar is still measured from the NJDOT alignment exactly as before.
+
+    Greenwood Ave gets none, for the same reason it gets no one-way lane: 2.3 and 4.6 ft spare
+    per side beside an 11 ft lane. Its kerbs keep the OSM-derived markings.
+
+    The 3 ft buffer is NACTO's figure for a two-way lane beside moving traffic, wider than the
+    2 ft a one-way lane gets, because a head-on error here is a closing speed rather than an
+    overtaking one.
+    """
+    from src.geometry.model import side_facing
+    from src.geometry.treatments import (TWO_WAY_BIKE_LANE_BUFFER_FT, AddTwoWayBikeLane,
+                                          hold_travel_lane_at_target)
+
+    if model is None:
+        return baseline
+    # Greenwood keeps its OSM-derived kerb paint; the Broad legs are re-striped entirely.
+    state = apply_osm_parking(baseline, model, legs=GREENWOOD_LEGS)
+    state = complete_centerlines(state)
+    state = all_crosswalks_continental(state)
+    for leg_name in ("broad_st_east", "broad_st_west"):
+        side = side_facing(state.legs[leg_name], CORRIDOR_SIDE)
+        lane = AddTwoWayBikeLane(LegSide(leg_name, side), width_ft=CORRIDOR_LANE_WIDTH_FT,
+                                  buffer_ft=TWO_WAY_BIKE_LANE_BUFFER_FT)
+        try:
+            state = state.apply(lane)
+        except ValueError as too_narrow:
+            # Reported, not silently narrowed or dropped: which legs of the corridor can carry
+            # the section IS the finding this scenario exists to produce.
+            print(f"  NOTE: no two-way lane on {leg_name} {side} ({CORRIDOR_SIDE} kerb) - "
+                  f"{too_narrow}")
+            continue
+        state = state.apply(AddBikeLaneBollards(LegSide(leg_name, side),
+                                                 spacing_ft=BIKE_LANE_BOLLARD_SPACING_FT))
+        # THE FAR KERB GETS THE SURPLUS, and this is why the two belong in one proposal
+        # rather than two: the kerb that loses its parking to the bike lane is not the kerb that
+        # gains this. hold_travel_lane_at_target holds the lane at 11 ft and spends what is left
+        # on parking where the kerb may legally hold it, hatching where it may not - the same
+        # rule every other kerb in the project gets, in src rather than written out here. It
+        # WAS written out here, and sites/ebroad_princeton/scenarios.py did not have it, which
+        # is how the same corridor treatment left E Broad with 11.68 ft lanes.
+        state = hold_travel_lane_at_target(state, leg_name, str(Side(side).other))
     return state

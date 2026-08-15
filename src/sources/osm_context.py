@@ -171,33 +171,76 @@ def _humanize_age(seconds: float) -> str:
 # is healthy.
 OSM_API_MAP = "https://api.openstreetmap.org/api/0.6/map.json"
 
-# Hopewell Borough, with margin for the context radii (130 m) at the edge sites. 0.000364
-# sq deg against the API's 0.25 limit. Sites outside it are refused loudly rather than
+# ONE AREA PER TOWN, not one bbox. Each is downloaded and cached separately, and a site is
+# served from whichever area fully contains its context window.
+#
+# It was a single bbox over Hopewell Borough, and the refusal message for a site outside it
+# said to widen that bbox. Taking that advice for a junction in the next town is the wrong
+# move three times over: the cache key is a hash of the bbox, so re-keying it re-downloads
+# every existing site and orphans the committed fixture the offline suite reads
+# (tests/fixtures/osm_cache/borough_33409013af7cbb1a.json - named for Hopewell's hash, which
+# is why tests/test_snapshot_areas.py pins it); a bbox spanning both boroughs pulls the three
+# miles of township farmland between them to reach one junction; and every future town would
+# enlarge it again. Adding an area costs one download and disturbs nothing already cached.
+#
+# Each bbox has margin for the context radii (up to 250 m) at the sites inside it, and each is
+# far under the API's 0.25 sq deg limit. Sites in NO area are refused loudly rather than
 # silently returning nothing - see assert_within_snapshot.
-BOROUGH_BBOX = (-74.7760, 40.3830, -74.7500, 40.3970)   # west, south, east, north
+SNAPSHOT_AREAS: dict[str, tuple[float, float, float, float]] = {
+    # west, south, east, north
+    "hopewell_borough": (-74.7760, 40.3830, -74.7500, 40.3970),    # 0.000364 sq deg
+    "pennington_borough": (-74.8120, 40.3180, -74.7830, 40.3420),  # 0.000696 sq deg
+}
+
+# The Hopewell bbox under its old name. Kept because the cache key is a hash of this exact
+# tuple and the committed fixture is named after it - see test_hopewells_cache_key_is_unchanged.
+BOROUGH_BBOX = SNAPSHOT_AREAS["hopewell_borough"]
 
 
 class SiteOutsideSnapshotError(RuntimeError):
-    """A site's context window reaches outside the downloaded borough bbox."""
+    """A site's context window reaches outside every downloaded snapshot area."""
 
 
-def _snapshot_path() -> Path:
-    key = hashlib.sha1(f"borough,v1,{BOROUGH_BBOX}".encode()).hexdigest()[:16]
+def _snapshot_path(bbox: tuple | None = None) -> Path:
+    # The key format is unchanged, so Hopewell's cache file and the committed fixture keep
+    # the name they already have.
+    bbox = BOROUGH_BBOX if bbox is None else bbox
+    key = hashlib.sha1(f"borough,v1,{tuple(bbox)}".encode()).hexdigest()[:16]
     return CACHE_DIR / f"borough_{key}.json"
 
 
-def _download_snapshot() -> list[dict]:
-    """The whole borough from the OSM API, falling back to Overpass."""
+def _area_for(center_wgs84: Point, radius_m: float) -> tuple[float, float, float, float]:
+    """The snapshot area whose bbox fully contains this site's context window.
+
+    FULLY contains, not "is nearest to" or "overlaps": a window half inside an area is served
+    the elements that fall inside it and nothing for the rest, which arrives downstream as
+    geometry rather than as an error. That is the exact failure this module exists to refuse.
+    """
+    west, south, east, north = buffer_point_wgs84(center_wgs84, radius_m)
+    for bbox in SNAPSHOT_AREAS.values():
+        bw, bs, be, bn = bbox
+        if west >= bw and south >= bs and east <= be and north <= bn:
+            return bbox
+    areas = "; ".join(f"{name} {bbox}" for name, bbox in SNAPSHOT_AREAS.items())
+    raise SiteOutsideSnapshotError(
+        f"this site's {radius_m:.0f} m context window ({west:.5f},{south:.5f},{east:.5f},"
+        f"{north:.5f}) is not fully inside any downloaded snapshot area. Areas: {areas}. "
+        f"Add one for this site to SNAPSHOT_AREAS in src/sources/osm_context.py - a new area "
+        f"is a separate download and leaves every existing cache and fixture untouched.")
+
+
+def _download_snapshot(bbox: tuple | None = None) -> list[dict]:
+    """One whole snapshot area from the OSM API, falling back to Overpass."""
     if os.environ.get("HOPEWELL_OFFLINE"):
         # The Overpass path is guarded inside query_overpass, but this one calls requests
         # directly - without this the test suite would reach the network for the snapshot
         # and quietly depend on OSM's uptime and current contents.
         from src.sources.data_loader import OfflineCacheMiss
         raise OfflineCacheMiss(
-            "HOPEWELL_OFFLINE is set and the borough snapshot is not in the fixture cache. "
-            "Refresh it with: cp output/.cache/borough_*.json tests/fixtures/osm_cache/")
+            "HOPEWELL_OFFLINE is set and the snapshot for this area is not in the fixture "
+            "cache. Refresh it with: cp output/.cache/borough_*.json tests/fixtures/osm_cache/")
 
-    west, south, east, north = BOROUGH_BBOX
+    west, south, east, north = BOROUGH_BBOX if bbox is None else bbox
     try:
         resp = requests.get(f"{OSM_API_MAP}?bbox={west},{south},{east},{north}",
                             headers={"User-Agent": OVERPASS_USER_AGENT}, timeout=(5, 120))
@@ -215,18 +258,21 @@ def _download_snapshot() -> list[dict]:
         """)["elements"]
 
 
-def fetch_borough_osm(use_cache: bool = True) -> dict:
-    """{"nodes": {id: element}, "ways": [element]} for the whole borough.
+def fetch_borough_osm(use_cache: bool = True, bbox: tuple | None = None) -> dict:
+    """{"nodes": {id: element}, "ways": [element]} for one whole snapshot area.
+
+    `bbox` selects the area; None means Hopewell Borough, which is what every caller
+    predating SNAPSHOT_AREAS meant. Callers that know a site pass `_area_for(...)`.
 
     Raises if any way references a node that isn't present. The OSM API completes ways
     whose nodes fall outside the bbox, so a gap means a truncated download - and half a
     kerb is worse than no kerb, because it looks like geometry.
     """
-    cache_path = _snapshot_path()
+    cache_path = _snapshot_path(bbox)
     if use_cache and _cache_hit(cache_path):
         raw = _memoized(cache_path, lambda: json.loads(cache_path.read_text()))
     else:
-        raw = _download_snapshot()
+        raw = _download_snapshot(bbox)
         if use_cache:
             _write_cache(cache_path, raw)
 
@@ -237,7 +283,7 @@ def fetch_borough_osm(use_cache: bool = True) -> dict:
         dangling = sum(1 for w in ways for nid in w.get("nodes", []) if nid not in nodes)
         if dangling:
             raise RuntimeError(
-                f"{dangling} way node reference(s) in the borough snapshot don't resolve - the "
+                f"{dangling} way node reference(s) in the snapshot don't resolve - the "
                 f"download is truncated. Delete {cache_path} and re-pull; do not build geometry "
                 f"from it, the ways would come out with missing vertices.")
         _MEMO[key] = {"nodes": nodes, "ways": ways}
@@ -245,15 +291,14 @@ def fetch_borough_osm(use_cache: bool = True) -> dict:
 
 
 def assert_within_snapshot(center_wgs84: Point, radius_m: float) -> None:
-    """A site reaching outside the borough bbox gets NOTHING, silently, which is precisely
+    """A site reaching outside every snapshot area gets NOTHING, silently, which is precisely
     how ground truth disappears in this project. Refuse instead."""
-    west, south, east, north = buffer_point_wgs84(center_wgs84, radius_m)
-    bw, bs, be, bn = BOROUGH_BBOX
-    if west < bw or south < bs or east > be or north > bn:
-        raise SiteOutsideSnapshotError(
-            f"this site's {radius_m:.0f} m context window ({west:.5f},{south:.5f},{east:.5f},"
-            f"{north:.5f}) reaches outside the downloaded borough bbox {BOROUGH_BBOX}. Widen "
-            f"BOROUGH_BBOX in src/sources/osm_context.py and delete the cached snapshot.")
+    _area_for(center_wgs84, radius_m)
+
+
+def snapshot_for_site(center_wgs84: Point, radius_m: float) -> dict:
+    """The parsed snapshot covering this site, refusing rather than half-serving it."""
+    return fetch_borough_osm(bbox=_area_for(center_wgs84, radius_m))
 
 
 # One resolved layer per (layer, centre, radius), for as long as the snapshot it came from is
@@ -272,7 +317,9 @@ _LAYER_VIEWS: dict[tuple, tuple] = {}
 
 
 def _layer(kind: str, center_wgs84: Point, radius_m: float, build):
-    snapshot = fetch_borough_osm()
+    # The site's OWN area, so a view is invalidated by a re-pull of the snapshot it actually
+    # came from. Keyed on the centre and radius as before, which already distinguishes areas.
+    snapshot = snapshot_for_site(center_wgs84, radius_m)
     key = (kind, round(center_wgs84.x, 7), round(center_wgs84.y, 7), float(radius_m))
     cached = _LAYER_VIEWS.get(key)
     if cached is not None and cached[0] is snapshot:
@@ -298,8 +345,7 @@ def _ways_near(center_wgs84: Point, radius_m: float, predicate) -> list[tuple[di
     Same rectangle-and-any-vertex rule Overpass applies to a bbox query, so switching
     source doesn't quietly change which elements a junction sees.
     """
-    assert_within_snapshot(center_wgs84, radius_m)
-    snapshot = fetch_borough_osm()
+    snapshot = snapshot_for_site(center_wgs84, radius_m)
     bbox = buffer_point_wgs84(center_wgs84, radius_m)
     out = []
     for way in snapshot["ways"]:
@@ -312,8 +358,7 @@ def _ways_near(center_wgs84: Point, radius_m: float, predicate) -> list[tuple[di
 
 
 def _nodes_near(center_wgs84: Point, radius_m: float, predicate) -> list[dict]:
-    assert_within_snapshot(center_wgs84, radius_m)
-    snapshot = fetch_borough_osm()
+    snapshot = snapshot_for_site(center_wgs84, radius_m)
     bbox = buffer_point_wgs84(center_wgs84, radius_m)
     return [n for n in snapshot["nodes"].values()
             if predicate(n.get("tags") or {}) and _in_bbox(bbox, n["lon"], n["lat"])]

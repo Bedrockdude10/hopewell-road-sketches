@@ -90,7 +90,7 @@ def test_a_dangling_node_reference_is_refused(monkeypatch):
     raw = [{"type": "node", "id": 1, "lon": LON, "lat": LAT, "tags": {}},
            {"type": "way", "id": 9, "nodes": [1, 999], "tags": {"barrier": "kerb"}}]
     monkeypatch.setattr(osm_context, "_cache_hit", lambda p: False)
-    monkeypatch.setattr(osm_context, "_download_snapshot", lambda: raw)
+    monkeypatch.setattr(osm_context, "_download_snapshot", lambda bbox=None: raw)
     monkeypatch.setattr(osm_context, "_write_cache", lambda p, d: None)
     osm_context._MEMO.clear()
     with pytest.raises(RuntimeError, match="don't resolve"):

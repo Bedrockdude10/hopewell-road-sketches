@@ -1,0 +1,727 @@
+buildings:
+  count: 75
+  vertices: 1425
+channels:
+  bike_lane_contraflow_lines:
+    count: 25
+    extent:
+      max:
+      - 36.833
+      - 8.099
+      min:
+      - -35.553
+      - -16.121
+    points: 75
+  bike_lane_edge_lines:
+    count: 27
+    extent:
+      max:
+      - 39.332
+      - 10.946
+      min:
+      - -37.048
+      - -17.941
+    points: 403
+  bike_lane_hatch_lines:
+    count: 14
+    extent:
+      max:
+      - 38.158
+      - 10.788
+      min:
+      - -34.223
+      - -13.815
+    points: 28
+  bike_lane_surface_polygons:
+    count: 8
+    extent:
+      max:
+      - 39.293
+      - 10.195
+      min:
+      - -36.802
+      - -17.822
+    points: 221
+  corner_apron_polygons:
+    count: 0
+    extent: null
+    points: 0
+  corner_hatching_lines:
+    count: 0
+    extent: null
+    points: 0
+  corner_parcels:
+    count: 4
+    extent:
+      max:
+      - 32.003
+      - 57.206
+      min:
+      - -34.888
+      - -74.099
+    points: 26
+  kerbs:
+    count: 33
+    extent:
+      max:
+      - 77.762
+      - 33.438
+      min:
+      - -142.259
+      - -116.73
+    points: 106
+  lane_narrowing_edge_lines:
+    count: 17
+    extent:
+      max:
+      - 36.019
+      - 17.369
+      min:
+      - -39.345
+      - -38.139
+    points: 529
+  lane_narrowing_hatch_lines:
+    count: 17
+    extent:
+      max:
+      - 18.767
+      - -1.563
+      min:
+      - -29.394
+      - -36.35
+    points: 34
+  lane_narrowing_taper_lines:
+    count: 0
+    extent: null
+    points: 0
+  parking_buffer_edge_lines:
+    count: 0
+    extent: null
+    points: 0
+  parking_buffer_hatch_lines:
+    count: 0
+    extent: null
+    points: 0
+  parking_buffer_taper_lines:
+    count: 0
+    extent: null
+    points: 0
+  parking_edge_lines:
+    count: 0
+    extent: null
+    points: 0
+  parking_stall_divider_lines:
+    count: 0
+    extent: null
+    points: 0
+  paved_surfaces:
+    count: 28
+    extent:
+      max:
+      - 145.456
+      - 146.288
+      min:
+      - -115.458
+      - -146.87
+    points: 453
+  pavement_far:
+    count: 3
+    extent:
+      max:
+      - 46.62
+      - 21.326
+      min:
+      - -121.049
+      - -56.998
+    points: 113
+  pavement_near:
+    count: 1
+    extent:
+      max:
+      - 11.554
+      - 8.505
+      min:
+      - -11.554
+      - -11.554
+    points: 668
+  raised_crossings:
+    count: 0
+    extent: null
+    points: 0
+  refuge_islands:
+    count: 0
+    extent: null
+    points: 0
+  sidewalks_far:
+    count: 10
+    extent:
+      max:
+      - 47.241
+      - 23.047
+      min:
+      - -121.632
+      - -57.71
+    points: 404
+  sidewalks_near:
+    count: 8
+    extent:
+      max:
+      - 11.323
+      - 9.844
+      min:
+      - -11.334
+      - -11.51
+    points: 838
+  tree_points:
+    count: 0
+    extent: null
+    points: 0
+existing_marked_crosswalks:
+- e_broad_st_west
+- princeton_ave_south
+frame:
+  center_m:
+  - 0.344
+  - -2.633
+  radius_m: 41.682
+legs:
+  e_broad_st_east:
+    centerline_paint_m:
+    - - - 14.653
+        - 7.019
+      - - 15.225
+        - 7.208
+      - - 15.8
+        - 7.398
+      - - 16.372
+        - 7.586
+      - - 16.948
+        - 7.776
+      - - 17.521
+        - 7.964
+      - - 18.093
+        - 8.152
+      - - 18.666
+        - 8.339
+      - - 19.239
+        - 8.527
+      - - 19.815
+        - 8.716
+      - - 19.815
+        - 8.716
+      - - 20.388
+        - 8.903
+      - - 20.961
+        - 9.09
+      - - 21.534
+        - 9.277
+      - - 22.107
+        - 9.464
+      - - 22.684
+        - 9.652
+      - - 22.684
+        - 9.652
+      - - 23.257
+        - 9.838
+      - - 23.831
+        - 10.024
+      - - 24.404
+        - 10.21
+      - - 24.977
+        - 10.395
+      - - 25.552
+        - 10.582
+      - - 26.125
+        - 10.767
+      - - 26.699
+        - 10.953
+      - - 27.272
+        - 11.139
+      - - 27.845
+        - 11.324
+      - - 28.418
+        - 11.51
+      - - 28.992
+        - 11.696
+      - - 29.565
+        - 11.882
+      - - 30.712
+        - 12.253
+      - - 31.285
+        - 12.439
+      - - 31.858
+        - 12.625
+      - - 32.431
+        - 12.811
+      - - 33.005
+        - 12.997
+      - - 33.578
+        - 13.183
+      - - 34.15
+        - 13.369
+      - - 34.724
+        - 13.555
+      - - 35.297
+        - 13.742
+      - - 35.87
+        - 13.928
+      - - 36.443
+        - 14.114
+      - - 37.017
+        - 14.301
+    - - - 14.685
+        - 6.924
+      - - 15.257
+        - 7.113
+      - - 15.831
+        - 7.303
+      - - 16.404
+        - 7.491
+      - - 16.979
+        - 7.681
+      - - 17.552
+        - 7.869
+      - - 18.125
+        - 8.056
+      - - 18.697
+        - 8.244
+      - - 19.27
+        - 8.432
+      - - 19.846
+        - 8.621
+      - - 20.419
+        - 8.808
+      - - 20.992
+        - 8.995
+      - - 21.565
+        - 9.182
+      - - 22.138
+        - 9.369
+      - - 22.715
+        - 9.557
+      - - 23.288
+        - 9.742
+      - - 23.861
+        - 9.928
+      - - 24.435
+        - 10.114
+      - - 25.008
+        - 10.3
+      - - 25.582
+        - 10.487
+      - - 26.156
+        - 10.672
+      - - 26.729
+        - 10.858
+      - - 27.303
+        - 11.044
+      - - 27.876
+        - 11.229
+      - - 28.449
+        - 11.415
+      - - 29.023
+        - 11.601
+      - - 29.596
+        - 11.787
+      - - 30.743
+        - 12.158
+      - - 31.315
+        - 12.344
+      - - 31.889
+        - 12.53
+      - - 32.462
+        - 12.716
+      - - 33.035
+        - 12.902
+      - - 33.609
+        - 13.088
+      - - 34.181
+        - 13.274
+      - - 34.755
+        - 13.46
+      - - 35.328
+        - 13.647
+      - - 35.901
+        - 13.833
+      - - 36.474
+        - 14.019
+      - - 37.048
+        - 14.205
+    centerline_start_m: 16.116
+    centerline_style: double_yellow
+    confirmed: false
+    crosswalk_axis:
+    - 0.948
+    - 0.317
+    crosswalk_bar_count: 12
+    crosswalk_centre_m:
+    - 6.797
+    - 2.166
+    crosswalk_offset_m: 7.134
+    crosswalk_offset_source: geometric_estimate
+    crosswalk_reach_left_m: 5.639
+    crosswalk_reach_right_m: 6.096
+    crosswalk_skew_deg: 0.0
+    crosswalk_style: continental
+    far_m:
+    - 37.671
+    - 12.286
+    near_m:
+    - 0.029
+    - -0.089
+    stop_bar_axis:
+    - 0.949
+    - 0.314
+    stop_bar_centre_m:
+    - 15.318
+    - 5.008
+    stop_bar_lateral_offset_m: 3.744
+    stop_bar_offset_m: 16.116
+    stop_bar_span_m: 3.353
+    stop_bar_width_m: 10.841
+    width_m: 11.253
+  e_broad_st_west:
+    centerline_paint_m:
+    - - - -11.577
+        - -2.133
+      - - -12.153
+        - -2.327
+      - - -12.73
+        - -2.521
+      - - -13.306
+        - -2.715
+      - - -13.881
+        - -2.908
+      - - -14.458
+        - -3.101
+      - - -15.034
+        - -3.294
+      - - -15.61
+        - -3.487
+      - - -16.187
+        - -3.681
+      - - -16.761
+        - -3.872
+      - - -17.338
+        - -4.065
+      - - -17.912
+        - -4.256
+      - - -17.912
+        - -4.256
+      - - -18.489
+        - -4.447
+      - - -19.066
+        - -4.639
+      - - -20.221
+        - -5.021
+      - - -20.795
+        - -5.212
+      - - -20.795
+        - -5.212
+      - - -21.373
+        - -5.402
+      - - -21.95
+        - -5.593
+      - - -22.528
+        - -5.783
+      - - -23.105
+        - -5.973
+      - - -23.682
+        - -6.163
+      - - -24.26
+        - -6.353
+      - - -24.837
+        - -6.544
+      - - -25.415
+        - -6.734
+      - - -25.992
+        - -6.924
+      - - -26.571
+        - -7.114
+      - - -27.148
+        - -7.304
+      - - -28.303
+        - -7.685
+      - - -28.881
+        - -7.875
+      - - -29.459
+        - -8.066
+      - - -30.036
+        - -8.257
+      - - -30.614
+        - -8.447
+      - - -31.191
+        - -8.638
+      - - -31.769
+        - -8.829
+      - - -32.346
+        - -9.019
+      - - -33.501
+        - -9.4
+      - - -34.078
+        - -9.59
+      - - -34.655
+        - -9.781
+      - - -35.232
+        - -9.971
+      - - -35.809
+        - -10.161
+      - - -36.387
+        - -10.351
+      - - -36.965
+        - -10.541
+      - - -37.542
+        - -10.731
+      - - -38.12
+        - -10.921
+    - - - -11.609
+        - -2.039
+      - - -12.185
+        - -2.232
+      - - -12.762
+        - -2.426
+      - - -13.338
+        - -2.62
+      - - -13.913
+        - -2.813
+      - - -14.49
+        - -3.006
+      - - -15.065
+        - -3.2
+      - - -15.642
+        - -3.393
+      - - -16.219
+        - -3.586
+      - - -16.793
+        - -3.778
+      - - -17.37
+        - -3.97
+      - - -17.944
+        - -4.161
+      - - -18.521
+        - -4.352
+      - - -19.098
+        - -4.544
+      - - -20.252
+        - -4.926
+      - - -20.827
+        - -5.117
+      - - -21.404
+        - -5.307
+      - - -21.982
+        - -5.498
+      - - -22.559
+        - -5.688
+      - - -23.137
+        - -5.878
+      - - -23.713
+        - -6.068
+      - - -24.291
+        - -6.259
+      - - -24.868
+        - -6.449
+      - - -25.446
+        - -6.639
+      - - -26.024
+        - -6.829
+      - - -26.602
+        - -7.019
+      - - -27.179
+        - -7.209
+      - - -28.334
+        - -7.59
+      - - -28.912
+        - -7.781
+      - - -29.49
+        - -7.971
+      - - -30.068
+        - -8.162
+      - - -30.645
+        - -8.352
+      - - -31.223
+        - -8.543
+      - - -31.8
+        - -8.734
+      - - -32.377
+        - -8.924
+      - - -33.532
+        - -9.305
+      - - -34.109
+        - -9.495
+      - - -34.687
+        - -9.686
+      - - -35.263
+        - -9.876
+      - - -35.841
+        - -10.066
+      - - -36.418
+        - -10.256
+      - - -36.996
+        - -10.446
+      - - -37.574
+        - -10.636
+      - - -38.151
+        - -10.826
+    centerline_start_m: 11.653
+    centerline_style: double_yellow
+    confirmed: false
+    crosswalk_axis:
+    - -0.948
+    - -0.319
+    crosswalk_bar_count: 12
+    crosswalk_centre_m:
+    - -6.508
+    - -2.273
+    crosswalk_offset_m: 6.893
+    crosswalk_offset_source: osm_survey
+    crosswalk_reach_left_m: 5.791
+    crosswalk_reach_right_m: 5.715
+    crosswalk_skew_deg: 0.853
+    crosswalk_style: continental
+    far_m:
+    - -37.573
+    - -12.583
+    near_m:
+    - 0.029
+    - -0.089
+    stop_bar_axis:
+    - -0.948
+    - -0.319
+    stop_bar_centre_m:
+    - -11.019
+    - -3.792
+    stop_bar_lateral_offset_m: 0.777
+    stop_bar_offset_m: 11.653
+    stop_bar_span_m: 5.152
+    stop_bar_width_m: 6.706
+    width_m: 11.654
+  princeton_ave_south:
+    centerline_paint_m:
+    - - - 5.267
+        - -13.621
+      - - 5.5
+        - -14.218
+      - - 6.61
+        - -17.056
+      - - 7.724
+        - -19.893
+      - - 8.865
+        - -22.719
+      - - 10.035
+        - -25.534
+      - - 11.213
+        - -28.345
+      - - 12.392
+        - -31.156
+      - - 13.569
+        - -33.967
+      - - 13.569
+        - -33.967
+      - - 14.743
+        - -36.78
+    - - - 5.174
+        - -13.658
+      - - 5.406
+        - -14.254
+      - - 5.406
+        - -14.254
+      - - 6.517
+        - -17.093
+      - - 6.517
+        - -17.093
+      - - 7.631
+        - -19.93
+      - - 7.632
+        - -19.931
+      - - 8.773
+        - -22.757
+      - - 8.773
+        - -22.758
+      - - 9.943
+        - -25.572
+      - - 9.943
+        - -25.572
+      - - 11.121
+        - -28.384
+      - - 12.299
+        - -31.195
+      - - 13.477
+        - -34.006
+      - - 14.651
+        - -36.819
+    centerline_start_m: 14.602
+    centerline_style: double_yellow
+    confirmed: false
+    crosswalk_axis:
+    - 0.363
+    - -0.932
+    crosswalk_bar_count: 10
+    crosswalk_centre_m:
+    - 3.008
+    - -7.959
+    crosswalk_offset_m: 8.506
+    crosswalk_offset_source: osm_survey
+    crosswalk_reach_left_m: 5.563
+    crosswalk_reach_right_m: 4.877
+    crosswalk_skew_deg: -6.631
+    crosswalk_style: continental
+    far_m:
+    - 14.697
+    - -36.8
+    near_m:
+    - -0.113
+    - -0.046
+    stop_bar_axis:
+    - 0.363
+    - -0.932
+    stop_bar_centre_m:
+    - 5.221
+    - -13.64
+    stop_bar_lateral_offset_m: 1.676
+    stop_bar_offset_m: 14.602
+    stop_bar_span_m: 3.353
+    stop_bar_width_m: 6.706
+    width_m: 9.208
+name: Two-Way Bike Lane
+props:
+- bollard@420049.83,567120.57
+- bollard@420057.43,567123.07
+- bollard@420065.03,567125.58
+- bollard@420072.63,567128.09
+- bollard@420080.22,567130.59
+- bollard@420103.02,567138.10
+- bollard@420110.62,567140.62
+- bollard@420118.22,567143.15
+- bollard@420125.82,567145.69
+- bollard@420133.41,567148.24
+- bollard@420140.99,567150.80
+- bollard@420200.91,567171.75
+- bollard@420208.49,567174.28
+- bollard@420216.08,567176.81
+- bollard@420223.66,567179.32
+- bollard@420231.26,567181.82
+- bollard@420238.85,567184.30
+- bollard@420246.44,567186.78
+- bollard@420254.05,567189.25
+- bollard@420261.66,567191.71
+- bollard@420269.27,567194.18
+- bollard@420276.89,567196.65
+- bollard@420284.50,567199.12
+- bollard@420292.11,567201.59
+- fire_hydrant@420202.49,567130.87
+- pedestrian_pushbutton@420138.78,567184.10
+- pedestrian_pushbutton@420155.82,567135.85
+- pedestrian_pushbutton@420155.82,567135.85
+- pedestrian_pushbutton@420200.03,567147.42
+- pedestrian_signal_head@420158.27,567137.80
+- pedestrian_signal_head@420201.17,567146.98
+- tactile_paving_pad@420140.54,567179.30
+- tactile_paving_pad@420154.14,567140.28
+- tactile_paving_pad@420161.03,567136.87
+- tactile_paving_pad@420198.68,567146.46
+- traffic_signal_pole@420158.27,567137.80
+- traffic_signal_pole@420201.17,567146.98
+scalars:
+  crosswalk_depth_m: 1.829
+  stop_bar_curb_clearance_m: 0.5
+units: meters

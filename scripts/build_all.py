@@ -53,7 +53,7 @@ from src.render.plan_view import draw_change_panel, legend_handles, plot_design_
 from src.render.theme import build_default_theme
 from src.site import (list_sites, load_site_scenarios, run_scenario, scenario_label,
                       site_output_dir)
-from src.sources.osm_context import (REFRESH_ENV, cache_summary, fetch_borough_osm,
+from src.sources.osm_context import (REFRESH_ENV, SNAPSHOT_AREAS, cache_summary, fetch_borough_osm,
                                      fetch_buildings, fetch_crossings)
 
 # Plot resolution. 150 matches what the phase scripts write; matplotlib rasterization is
@@ -114,7 +114,7 @@ def draw_before_after(model, baseline, state, scenario_name: str, out_path: Path
 
 
 def refresh_osm_serially() -> None:
-    """Re-pull the borough snapshot - one request, in THIS process, before the pool starts.
+    """Re-pull every snapshot area - one request each, in THIS process, before the pool starts.
 
     It used to be one request per layer per site (20-24 of them), fanned out across the
     worker processes. That was wrong twice over: it pointed four concurrent clients at
@@ -122,22 +122,31 @@ def refresh_osm_serially() -> None:
     minutes was indistinguishable from a hang. Both were live on 2026-08-02, when all three
     Overpass mirrors went down and the build sat silent for half an hour.
 
-    Now every layer for every site is a view over one 2.9 MB download, so this is a single
-    visible round trip and the workers touch no network at all.
+    Now every layer for every site is a view over one download per TOWN (SNAPSHOT_AREAS), so
+    this is a handful of visible round trips and the workers touch no network at all.
+
+    EVERY AREA IS PULLED, not just the ones this run's --site selection needs. A refresh that
+    covered only the selected sites would leave the other town's snapshot stale while
+    reporting a successful refresh, which is the same "I traced it and the render didn't
+    change" failure the whole cache-age report exists to prevent. One area failing does not
+    stop the others: each is reported on its own line.
     """
     os.environ[REFRESH_ENV] = "1"
-    started = time.perf_counter()
-    # Plain lines, not a \r-overwritten one: the result line is shorter than the status
-    # line, so the tail of the status line survived the overwrite and every run printed
-    # "...1.3sst, covers every site)...".
-    print("  Re-pulling the borough OSM snapshot (one request, covers every site)...", flush=True)
     try:
-        snapshot = fetch_borough_osm()
-        print(f"  OSM snapshot: {len(snapshot['nodes'])} nodes, {len(snapshot['ways'])} ways "
-              f"in {time.perf_counter() - started:.1f}s", flush=True)
-    except Exception as e:   # an outage must not sink a build that can use the cache
-        print(f"  OSM refresh FAILED ({type(e).__name__}: {e}). Building from the cached "
-              f"snapshot instead - your latest tracing is NOT in this build.", flush=True)
+        for name, bbox in SNAPSHOT_AREAS.items():
+            started = time.perf_counter()
+            # Plain lines, not a \r-overwritten one: the result line is shorter than the
+            # status line, so the tail of the status line survived the overwrite and every
+            # run printed "...1.3sst, covers every site)...".
+            print(f"  Re-pulling the {name} OSM snapshot (one request)...", flush=True)
+            try:
+                snapshot = fetch_borough_osm(bbox=bbox)
+                print(f"  {name}: {len(snapshot['nodes'])} nodes, {len(snapshot['ways'])} ways "
+                      f"in {time.perf_counter() - started:.1f}s", flush=True)
+            except Exception as e:   # an outage must not sink a build that can use the cache
+                print(f"  {name} refresh FAILED ({type(e).__name__}: {e}). Building from the "
+                      f"cached snapshot instead - your latest tracing in {name} is NOT in this "
+                      f"build.", flush=True)
     finally:
         # The workers must not re-fetch: they'd go to the network in parallel, which is the
         # whole thing this function exists to avoid.
@@ -164,10 +173,22 @@ def build_site(site: str, render_3d: bool = False, dpi: int = 150,
     started = time.perf_counter()
 
     quiet = io.StringIO()
-    with contextlib.redirect_stdout(quiet):
-        model = load_intersection_model(site=site)
-        baseline = DesignState.from_model(model)
-        crossings = fetch_crossings(model.center_wgs84, radius_m=BUILDING_CONTEXT_RADIUS_M)
+    # A SITE THAT WILL NOT LOAD IS THIS SITE'S FAILURE, NOT THE BUILD'S. Uncaught, the
+    # exception propagates out of the worker process and kills pool.map, so ONE unloadable
+    # junction takes down the other three - the exact opposite of what this script promises,
+    # and it hides the state of every site that was fine. Found by adding a junction whose
+    # pavement ring does not close (NJ 31 & W Delaware): four working sites stopped building.
+    #
+    # Deliberately broad. Everything from here is per-site work on per-site data - a config
+    # that fails validation, a junction shape the corner-fillet model cannot represent, an OSM
+    # layer that will not resolve - and none of it is a reason to lose the other sites' output.
+    try:
+        with contextlib.redirect_stdout(quiet):
+            model = load_intersection_model(site=site)
+            baseline = DesignState.from_model(model)
+            crossings = fetch_crossings(model.center_wgs84, radius_m=BUILDING_CONTEXT_RADIUS_M)
+    except Exception as e:
+        return [f"{site}: could not build the junction model - {type(e).__name__}: {e}"], []
 
     states = [("existing", "Existing Conditions", baseline)]
     with contextlib.redirect_stdout(quiet):

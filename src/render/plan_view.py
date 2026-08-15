@@ -203,6 +203,11 @@ PAINT_STYLE = require_every_kind({
     # different colour across a driveway, which it is not.
     markings.BIKE_LANE_DOTTED_EXTENSION: dict(color="seagreen", linewidth=1.6, zorder=3),
     markings.BIKE_BUFFER_FILL:    dict(color="mediumseagreen", alpha=0.35, hatch="\\\\", zorder=3),
+    # A two-way lane's centre stripe. Yellow and dashed, the same as the roadway's own
+    # centreline and for the same reason - it divides opposing traffic. Drawn above the green
+    # surface it sits on (zorder 4, over the surface's 2) or the fill hides it.
+    markings.BIKE_CONTRAFLOW_DIVIDER: dict(color="goldenrod", linewidth=1.3, linestyle="--",
+                                            zorder=4),
 }, "plan_view.PAINT_STYLE")
 # Outline colour for each filled zone's own fill colour.
 PAINT_FILL_EDGE = {"gold": "goldenrod", "peru": "saddlebrown", "orangered": "orangered",
@@ -607,7 +612,11 @@ def _draw_centerlines(ax, scene: SceneGeometry):
         # draw the same paint - see centerline_paint_ft for the up-to-4 ft they used to differ by
         # on broad_st_east. Drawn solid whatever the style, because a dashed style now arrives as
         # separate dash segments rather than as one line with a pattern on it.
-        for line in centerline_paint_ft(leg, start_ft, style):
+        # A two-way bike lane on one side pushes the travel lanes off the alignment, so the
+        # divider between them moves with them. None on every leg of every other scenario.
+        shift = state.travel_lane_divider_shift(leg_name)
+        shift_ft, shift_side = shift if shift is not None else (0.0, None)
+        for line in centerline_paint_ft(leg, start_ft, style, shift_ft, shift_side):
             ax.plot(*line.xy, color="gold", lw=1.2, zorder=4)
 
 
@@ -718,16 +727,23 @@ def _label_paint(ax, state, paint):
     (a leg is not always narrowed on both sides).
     """
     from src.geometry.targets import LegSide
-    from src.geometry.treatments import LaneNarrowing, MarkedParking
+    from src.geometry.treatments import (LaneNarrowing, MarkedParking, divider_shift_toward_ft,
+                                          travel_lane_width_ft)
 
     for narrowing in state.treatments_of(LaneNarrowing):
         leg_name = narrowing.target.leg
         leg = state.legs[leg_name]
-        lane_ft = leg.curb_to_curb_ft / 2 - narrowing.stripe_width_ft
         along_ft = min(leg.centerline.length * 0.6, leg.centerline.length - 5)
         for side in narrowing.sides:
             sign = side.sign
-            at = leg.centerline.offset_curve(sign * lane_ft / 2).interpolate(along_ft)
+            # THE LANE IS MEASURED FROM THE DIVIDER, not from the alignment. Those coincide until
+            # a two-way bike lane shifts the travel lanes off it; ignoring that printed
+            # "lane 9.6 ft" next to a lane the geometry had built at 11.00, which is the number a
+            # reviewer would have taken away.
+            lane_ft = travel_lane_width_ft(state, leg_name, str(side), narrowing.stripe_width_ft)
+            # And the label belongs IN that lane, so its position takes the shift too.
+            shift_ft = divider_shift_toward_ft(state, leg_name, str(side))
+            at = leg.centerline.offset_curve(sign * (shift_ft + lane_ft / 2)).interpolate(along_ft)
             ax.annotate(f"lane {lane_ft:.1f} ft", (at.x, at.y), fontsize=6.5, color="goldenrod",
                         ha="center", bbox=dict(boxstyle="round,pad=0.15", fc="white", ec="none", alpha=0.75))
 
@@ -818,6 +834,8 @@ def legend_handles():
                label="Bike lane - green surface"),
         Patch(facecolor="mediumseagreen", alpha=0.35, hatch="\\\\", edgecolor="seagreen",
                label="Bike lane buffer"),
+        Line2D([0], [0], color="goldenrod", lw=1.3, ls="--",
+               label="Two-way bike lane - contraflow divider (MUTCD yellow)"),
         Line2D([0], [0], marker="o", color=BOLLARD_PLAN_COLOR, lw=0, label="Bollard"),
         Line2D([0], [0], color="steelblue", lw=1.5, label="Marked parking lane + stalls"),
         Patch(facecolor="white", edgecolor="darkviolet", label="Crosswalk - OSM-surveyed position"),

@@ -345,6 +345,15 @@ def build_scene(data: dict):
     for i, ring in enumerate(data.get("bike_lane_surface_polygons", [])):
         extrude_polygon(f"bike_lane_surface_{i}", ring, MARKING_CLEARANCE_M / 2, bike_surface_mat,
                          z_base=marking_z - MARKING_CLEARANCE_M)
+    # A TWO-WAY lane's centre stripe, in the YELLOW centreline material rather than the white
+    # marking one - the colour is the whole message (opposing directions), and routing it through
+    # any edge-line channel would have drawn it white here while the plan view drew it yellow.
+    # Already cut into dashes upstream, like the roadway centreline: this loop draws the segments
+    # it is given and derives nothing, because nothing on this side of the boundary can be
+    # compared against the plan view.
+    for i, line in enumerate(data.get("bike_lane_contraflow_lines", [])):
+        add_paint_polyline(f"bike_contraflow_{i}", line, CENTERLINE_WIDTH_M, centerline_mat,
+                            z_base=marking_z)
 
     for island in data.get("refuge_islands", []):
         extrude_polygon(f"refuge_{island['name']}", island["coords"], island.get("height_m", 0.15), refuge_mat)

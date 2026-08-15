@@ -32,8 +32,9 @@ from src.sources.assessor import (BuildingHeight, assessor_path, describe_buildi
 from src.sources.osm_context import (fetch_buildings, fetch_crossings, fetch_kerbs,
                                      fetch_street_furniture, fetch_traffic_control)
 from src.render.props import build_props, control_nodes_ft, osm_tree_points_ft
+from src.geometry.targets import Side
 from src.geometry.treatments import (DesignState, RaiseCrossing, RefugeIsland,
-                                      build_sidewalk_pieces)
+                                      build_sidewalk_pieces, divider_shift_toward_ft)
 
 BUILDING_CONTEXT_RADIUS_M = 130
 KERB_RADIUS_M = 120
@@ -108,7 +109,8 @@ def _stop_bar_span_m(state: DesignState, leg_name: str, has_bar: bool) -> dict:
     if not has_bar:
         return {}
     span_ft, lateral_ft = stop_bar_band_geometry_ft(
-        stop_bar_width_ft(state, leg_name), entering_lane_width_ft(state, leg_name) is None)
+        stop_bar_width_ft(state, leg_name), entering_lane_width_ft(state, leg_name) is None,
+        inner_ft=divider_shift_toward_ft(state, leg_name, Side.LEFT))
     return {"stop_bar_span_m": span_ft * FT_TO_M,
             "stop_bar_lateral_offset_m": lateral_ft * FT_TO_M}
 
@@ -432,7 +434,11 @@ def export_scenario(model: IntersectionModel, state: DesignState, name: str, out
                         centerline_start_ft(crosswalk_offsets[leg_name].offset_ft,
                                             stop_bar_offsets.get(leg_name),
                                             leg_name in marked_crosswalks),
-                        state.centerline_style(leg_name))
+                        state.centerline_style(leg_name),
+                        # Same shift the plan view applies, off the same DesignState - a two-way
+                        # bike lane on one side moves this line, and the two views must move it
+                        # together or the render's lanes come out unequal.
+                        *(state.travel_lane_divider_shift(leg_name) or (0.0, None)))
                 ],
             }
             for leg_name, leg in state.legs.items()

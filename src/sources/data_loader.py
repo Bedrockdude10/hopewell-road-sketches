@@ -8,6 +8,7 @@ from geopy.geocoders import Nominatim
 from shapely.geometry import MultiLineString, MultiPolygon, Point, box
 
 from src.geometry.model import NJ_STATE_PLANE_FT, WGS84, buffer_point_wgs84, reproject_to_state_plane
+from src.sources.schemas import ParcelsSchema, RoadNetworkSchema, validate_layer
 
 
 class OfflineCacheMiss(RuntimeError):
@@ -155,23 +156,38 @@ def geocode_intersection(street1: str, street2: str, anchor_query: str, search_r
     anchor = approximate_geocode(anchor_query)
     west, south, east, north = buffer_point_wgs84(anchor, search_radius_m)
 
+    # BOTH `name` AND `ref`, because a state highway routinely has no name at all. Every
+    # way at NJ 31 & W Delaware Ave carries `ref=NJ 31` and no `name`, so a name-only match
+    # found nothing there and reported it as "could not find OSM ways matching 'NJ 31'" -
+    # which reads like a misspelling rather than a tag that does not exist on this class of
+    # road. A local street is named and unreffed, an arterial is often both, and which of the
+    # two a caller passes is not something they should have to know in advance.
+    #
     # `out geom` gives coordinates but not node IDs; `out geom` + the `nodes` array
     # (included for ways by default in Overpass JSON) gives both, positionally paired.
+    clauses = "\n      ".join(
+        f'way["highway"]["{tag}"~"{street}",i]({south},{west},{north},{east});'
+        for street in (street1, street2) for tag in ("name", "ref")
+    )
     query = f"""
     [out:json][timeout:25];
     (
-      way["highway"]["name"~"{street1}",i]({south},{west},{north},{east});
-      way["highway"]["name"~"{street2}",i]({south},{west},{north},{east});
+      {clauses}
     );
     out geom;
     """
     elements = query_overpass(query)["elements"]
 
-    def nodes_of(name_fragment: str) -> dict[int, Point]:
-        """Map node id -> position for every node on every way matching this name."""
+    def nodes_of(street: str) -> dict[int, Point]:
+        """Map node id -> position for every node on every way matching this street.
+
+        Matched against `name` and `ref` alike - the same pair the query asked for, so a way
+        the query returned cannot then be discarded here for carrying the wrong one of the two.
+        """
         found: dict[int, Point] = {}
         for el in elements:
-            if name_fragment.lower() not in el.get("tags", {}).get("name", "").lower():
+            tags = el.get("tags", {})
+            if not any(street.lower() in (tags.get(tag) or "").lower() for tag in ("name", "ref")):
                 continue
             for node_id, coords in zip(el.get("nodes", []), el.get("geometry", [])):
                 found[node_id] = Point(coords["lon"], coords["lat"])
@@ -179,8 +195,16 @@ def geocode_intersection(street1: str, street2: str, anchor_query: str, search_r
 
     nodes1 = nodes_of(street1)
     nodes2 = nodes_of(street2)
-    if not nodes1 or not nodes2:
-        raise ValueError(f"Could not find OSM ways matching {street1!r} and/or {street2!r} near {anchor_query!r}")
+    # Name the street that actually failed. "street1 and/or street2" sends you to check both,
+    # and the answer is nearly always one of them - a typo, or a name OSM does not use here.
+    unmatched = [s for s, found in ((street1, nodes1), (street2, nodes2)) if not found]
+    if unmatched:
+        raise ValueError(
+            f"Could not find OSM ways matching {' or '.join(repr(s) for s in unmatched)} near "
+            f"{anchor_query!r} - searched both the `name` and `ref` tags. Check the spelling "
+            "against what OSM actually tags this road with; a state highway is often reffed "
+            "(`ref=NJ 31`) and unnamed, and a county route carries both."
+        )
 
     shared = set(nodes1) & set(nodes2)
     if shared:
@@ -256,10 +280,13 @@ def load_road_network(
     built (see _resolve_indexed_path / scripts/convert_road_network.py) - same data,
     dramatically faster bbox reads.
     """
-    network = gpd.read_file(_resolve_indexed_path(path), bbox=bbox)
+    resolved = _resolve_indexed_path(path)
+    network = gpd.read_file(resolved, bbox=bbox)
     if not network.empty:
         network = network.set_geometry(network.geometry.map(_unpack_single_part))
-    return network
+    # Validated at the boundary, once - see src/sources/schemas.py. A renamed SRI column is
+    # otherwise read downstream as "this leg matched no road", which is drawn, not raised.
+    return validate_layer(network, RoadNetworkSchema, resolved, expect_crs=WGS84)
 
 
 def load_parcels(
@@ -268,7 +295,10 @@ def load_parcels(
     """Load a parcels/MOD-IV shapefile (Mercer County by default; pass `path` for a
     different one), optionally filtered to a bbox (in the shapefile's native CRS -
     reproject the bbox first if querying in WGS84)."""
-    return gpd.read_file(path, bbox=bbox)
+    # The CRS check here is the one that has actually bitten: a WGS84 bbox against this
+    # State-Plane shapefile returns zero rows, which reads as "no parcels here".
+    return validate_layer(gpd.read_file(path, bbox=bbox), ParcelsSchema, path,
+                           expect_crs=NJ_STATE_PLANE_FT)
 
 
 def load_parcels_near(

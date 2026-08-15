@@ -296,10 +296,49 @@ route**, in Hopewell Borough, New Jersey. The authorities are, in descending ord
 > practice and probably right, but it is **not authority here** and must not be cited as such.
 > The equivalent NJ/AASHTO provisions have NOT yet been read.
 
-> **Still to read, and none of it optional before a transition is drawn at Louellen:** the NJDOT
-> Roadway Design Manual's intersection and bicycle-facility sections (link above, in `data/`
-> reach), AASHTO's *Guide for the Development of Bicycle Facilities* on separated-lane
-> transitions, and whatever Mercer County holds - since the county, not the state, owns CR 518.
+#### NJDOT Roadway Design Manual §6, at-grade intersections — **Verified 2026-08-15**
+
+Read, from the [2015 manual](https://dot.nj.gov/transportation/eng/documents/RDM/documents/2015RoadwayDesignManual_20231226.pdf)
+(§6.2 alignment, §6.3.2 bicycle sight distance). **This is the governing document for Louellen
+and it is far more specific than anything cited before it:**
+
+> "Roads intersecting at acute angles require extensive turning roadway areas. **Intersection
+> angles less than 75 degrees normally warrant realignment closer to 90 degrees.** At skewed
+> intersections where the approach leg to the left intersects the driver's approach leg at an
+> angle of less than 75 degrees, **a right-turn-on-red (RTOR) prohibition is desirable.** When
+> realignment cannot be obtained, extensive application of appropriate signing and signal
+> control is recommended. **Roundabouts should also be considered** at locations where
+> intersection skew is severe and realignment cannot be obtained."
+
+> "**Older drivers in particular have difficulty with skewed intersections**, due to restricted
+> range of motion and diminished reaction time. Refer to the FHWA *Handbook for Designing
+> Roadways for the Aging Population*."
+
+**Applied to W Broad & Louellen at 43.6°**, NJDOT's own manual gives four things in order:
+
+| | treatment | why it lands here |
+|---|---|---|
+| 1 | **Realign toward 90°** | "normally warrant[ed]" below 75°, and we are at 43.6° |
+| 2 | **Prohibit right-turn-on-red** | "desirable" at exactly this geometry - and the 2023-11-08 injury here was a driver **turning right** from W Broad onto Louellen into a cyclist in the crosswalk. The manual names the movement that hurt someone |
+| 3 | **Signing and signal control** | where realignment cannot be obtained |
+| 4 | **Consider a roundabout** | explicitly, where skew is severe and realignment is unavailable |
+
+None of that is a bike-lane treatment, and that is the finding: **NJDOT's answer to this junction
+is to fix the junction, not to stripe through it.** The two-way lane's refusal here is a symptom
+of a geometry the state's own manual says warrants realignment.
+
+**§6.3.2, bicycle sight distance** — *"In general the sight distance required to see a bicycle is
+no greater than that to see a vehicle... At locations where a **separated bicycle facility
+crosses the roadway**, or elsewhere where cyclists may enter or cross the roadway independent of
+vehicles, appropriate sight distance should be provided."* The same section restates
+**R.S. 39:4-138**'s 25 ft / 50 ft setbacks as a *sight distance* measure and confirms curb
+extensions may reduce them - which is what `src/geometry/daylighting.py` already encodes, now
+with the state manual behind it rather than the statute alone.
+
+> **Still unread:** AASHTO's *Guide for the Development of Bicycle Facilities* on separated-lane
+> transitions, and whatever Mercer County holds. The county owns CR 518, but NJDOT §6 above is
+> the design authority NJ agencies work to, so the county call is no longer a precondition for
+> drawing Louellen - it is a check on the result.
 
 ### NJDOT figures actually usable here — **Verified 2026-08-14**
 

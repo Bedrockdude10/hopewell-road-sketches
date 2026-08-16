@@ -61,7 +61,7 @@ from enum import StrEnum
 
 import numpy as np
 
-from src.geometry.model import station_offset_many
+from src.geometry.model import curb_offsets_at_stations, station_offset_many
 
 
 class KerbType(StrEnum):
@@ -164,6 +164,12 @@ class KerbOpening:
         return f"OSM kerb={self.kerb.value if self.kerb else 'lowered'}{where}"
 
 
+# How far from the junction centre openings are collected. Matches the kerb radius the 3D export
+# draws with (src/render/export.py:KERB_RADIUS_M, 120 m), so the paint breaks everywhere the
+# picture shows a driveway rather than only within a leg's working length.
+OPENING_COLLECTION_RADIUS_FT = 120.0 / 0.3048
+
+
 # How far outside a leg's nominal half-width a kerb vertex may sit and still be that leg's kerb.
 # The same allowance intersection.py's own kerb-to-leg test uses, and for the same reason: a
 # traced kerb flares through the corner returns well past the mid-block cross-section.
@@ -211,8 +217,21 @@ def kerb_openings_from_model(model) -> dict:
     if not all(hasattr(model, attr) for attr in ("center_wgs84", "center_ft", "legs")):
         return {}
     openings: dict[tuple[str, str], list[KerbOpening]] = {}
+    # THE DRAWING RADIUS, NOT THE LEG TEST. An opening is a fact about the KERB - a place a
+    # vehicle crosses it - and every opening in the frame gets the same treatment, so gating
+    # collection on leg membership asks an unrelated question first. _runs_along_a_leg also
+    # measures against the NOMINAL half-width, and on Broad St the traced kerb wanders 12-13 ft
+    # from nominal, so real driveways were being judged "not this leg's kerb" and dropped: 9
+    # driveways on the model produced 1 opening, and the render drew driveway paving it would
+    # never break paint for.
+    #
+    # kerb_lines_with_tags_ft's own docstring says radius_ft is "the DRAWING test, and the only
+    # one of the three that is about the picture rather than about the junction. Use it for
+    # anything being rendered." This is rendered. _place_on_a_leg_side still assigns a leg
+    # afterwards, because a STATION needs one - but that is stationing, not eligibility, and an
+    # opening it cannot place simply has no paint to break.
     for line, tags, way_id in kerb_lines_with_tags_ft(model.center_wgs84, model.center_ft,
-                                                       model.legs):
+                                                       radius_ft=OPENING_COLLECTION_RADIUS_FT):
         if not opens_the_kerb(tags):
             continue
         placed = _place_on_a_leg_side(line, model.legs)
@@ -384,11 +403,21 @@ def _place_on_a_leg_side(line, legs: dict):
         if leg.curb_to_curb_ft is None:
             continue
         stations, offsets = station_offset_many(leg.centerline, points)
-        half_ft = leg.curb_to_curb_ft / 2
         # The median rather than the mean, so one stray vertex - a way that turns up a driveway,
         # or runs on past the leg - cannot decide which street the kerb is on.
         typical_offset = float(np.median(offsets))
         typical_station = float(np.median(stations))
+        # AGAINST THE TRACED KERB AT THIS STATION, not the nominal half-width. They are the same
+        # only on a leg whose config width matches its tracing, and on Broad St they differ by
+        # 12-13 ft: broad_st_east is 68 ft nominal (34 per side) against traced kerbs 21.97-34.55
+        # ft out. A driveway's dropped kerb sits on the TRACED kerb, so measured against nominal
+        # it looked 12 ft adrift - past the 8 ft tolerance - and was judged not to be this leg's
+        # kerb at all. Nine driveways produced one opening, and the lane's paint ran unbroken
+        # across the rest while the render drew their paving.
+        side = "left" if typical_offset > 0 else "right"
+        traced = curb_offsets_at_stations(leg, side, np.array([typical_station]))
+        half_ft = (float(abs(traced[0])) if traced is not None and np.isfinite(traced[0])
+                   else leg.curb_to_curb_ft / 2)
         error = abs(abs(typical_offset) - half_ft)
         if error > OPENING_OFFSET_TOLERANCE_FT:
             continue

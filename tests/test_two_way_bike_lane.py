@@ -132,14 +132,32 @@ def test_the_south_side_is_resolved_per_leg(site_models):
     assert side_facing(east, "south") != side_facing(east, "north")
 
 
-def test_a_north_south_leg_has_no_compass_side(site_models):
-    """Greenwood Ave runs north-south. It has an east and a west kerb, and answering "which is
-    the south side" with whichever way its lean falls would be a guess presented as a fact."""
+def test_a_north_south_leg_has_no_compass_side():
+    """A leg running nearly due north-south has east and west sides, not north and south ones,
+    and answering anyway would return whichever way its survey lean happened to fall.
+
+    Built synthetically rather than borrowed from a site, because the site leg this used to
+    assert on turned out not to be north-south at all: greenwood_ave_north runs 30 deg off due
+    north (|dx|/len = 0.504), which has a perfectly clear compass side. The old guard refused it
+    only because it used a |dx| < |dy| cut - a hard 45 deg threshold - and that same cut refused
+    w_broad_st_southwest at 222.3 deg and silently dropped the corridor bike lane from one of the
+    two Broad St legs at Louellen. The test agreed with the bug because it was written from it.
+    """
+    from types import SimpleNamespace
+
+    from shapely.geometry import LineString
+
     from src.geometry.model import side_facing
 
-    greenwood = site_models["broad_st_greenwood"].legs["greenwood_ave_north"]
+    due_north = SimpleNamespace(name="synthetic_north_south",
+                                 centerline=LineString([(0.0, 0.0), (0.0, 100.0)]))
     with pytest.raises(ValueError, match="north-south"):
-        side_facing(greenwood, "south")
+        side_facing(due_north, "south")
+
+    # And a diagonal DOES have one - 45 deg is not the boundary, near-due-north-south is.
+    diagonal = SimpleNamespace(name="synthetic_diagonal",
+                                centerline=LineString([(0.0, 0.0), (50.0, 100.0)]))
+    assert side_facing(diagonal, "south") in ("left", "right")
 
 
 def _two_way_scene(site_models, site="broad_st_greenwood"):

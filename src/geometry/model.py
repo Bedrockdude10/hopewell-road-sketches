@@ -498,6 +498,12 @@ def curb_station_span(leg: "Leg", side: str) -> tuple[float, float] | None:
     return (lo, hi) if hi > lo else None
 
 
+# How close to due north-south a leg must run before it has no meaningful compass side. sin(12
+# deg): the perpendicular's northing component is then under a fifth of the leg's length, which
+# is the point at which a slight survey lean could flip the answer.
+NORTH_SOUTH_LEG_TOLERANCE = 0.2
+
+
 def side_facing(leg: "Leg", compass: str) -> str:
     """Which of this leg's two sides ("left"/"right") faces `compass` ("north"/"south").
 
@@ -512,9 +518,17 @@ def side_facing(leg: "Leg", compass: str) -> str:
     on a leg with a kink the two differ. Measured at the leg's midpoint, where a lateral offset
     is least affected by either end.
 
-    ONLY MEANINGFUL FOR A ROUGHLY EAST-WEST LEG, which is what "north side" means at all. A leg
-    running north-south has an east and a west side and this would answer with whichever way its
-    slight lean happens to fall, so it raises instead of guessing.
+    REFUSES ONLY A LEG RUNNING NEARLY DUE NORTH-SOUTH, which is the case that genuinely has no
+    answer: its sides face east and west, and a compass side would come from whichever way its
+    slight lean happened to fall.
+
+    The test is on the PERPENDICULAR's northing component, not on whether the leg is "more
+    east-west than north-south". Those are different questions and the second one is wrong: the
+    left side is 90 deg anticlockwise of the heading, so its northing component is dx, and dx is
+    a strong signal long before the leg is predominantly east-west. A |dx| < |dy| cut is a hard
+    45 deg threshold, and it refused w_broad_st_southwest - a leg at 222.3 deg, 2.3 deg past the
+    cut, whose south side is entirely unambiguous. That dropped the corridor bike lane from one
+    of the two Broad St legs at Louellen and left the treatment stopping inside the junction.
     """
     if compass not in ("north", "south"):
         raise ValueError(f"side_facing takes 'north' or 'south', not {compass!r}")
@@ -522,11 +536,13 @@ def side_facing(leg: "Leg", compass: str) -> str:
     ahead = line.interpolate(min(line.length * 0.55, line.length))
     behind = line.interpolate(max(line.length * 0.45, 0.0))
     dx, dy = ahead.x - behind.x, ahead.y - behind.y
-    if abs(dx) <= abs(dy):
+    length = float(np.hypot(dx, dy)) or 1.0
+    if abs(dx) / length < NORTH_SOUTH_LEG_TOLERANCE:
         raise ValueError(
-            f"Leg {leg.name!r} runs more north-south than east-west (its midpoint heading moves "
-            f"{dx:+.1f} ft east for {dy:+.1f} ft north), so it has no 'north side' to speak of. "
-            f"A compass side is only meaningful across a roughly east-west leg.")
+            f"Leg {leg.name!r} runs within "
+            f"{float(np.degrees(np.arcsin(NORTH_SOUTH_LEG_TOLERANCE))):.0f} deg of due north-south "
+            f"(its midpoint heading moves {dx:+.1f} ft east for {dy:+.1f} ft north), so its sides "
+            f"face east and west and it has no 'north side' to speak of.")
     # The left side is the +offset side, 90 degrees anticlockwise of the heading: (-dy, dx). Its
     # northing component is dx, so the left side faces north exactly when the leg heads east.
     left_faces = "north" if dx > 0 else "south"

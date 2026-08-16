@@ -362,12 +362,22 @@ And on the outside lane, which is what a bikeway changes:
 > the adjacent through lane width.** The designer should strive to accommodate the bicyclist and
 > pedestrian on all projects."
 
-> **This is a second, independent basis for the +1 ft already inside our 11 ft** - and it is a
-> BICYCLE provision, not the truck one recorded in §6. The two are not the same rule and should
-> not be conflated: *Bicycle Compatible Roadways* adds a foot where trucks exceed 15% of the mix;
-> the RDM adds a foot to the outside lane where alternate bike access exists. Which one our 11 ft
-> is spending has not been established, and it matters - if both apply, 11 ft may be a foot short
-> rather than a foot generous. Worth resolving before the section is presented as compliant.
+> **This does NOT apply once a protected lane is built, and reading it as "+1 ft on top of our
+> 11" was an error (corrected 2026-08-15).** The whole provision is about carrying cyclists **in
+> the outside travel lane** where there is no shoulder: 15 ft is a *shared* lane wide enough for
+> a car to pass a bike within it. "Where alternate bike access is provided" the requirement
+> **relaxes** from 15 ft to one foot over the through lane - it is a reduction, not an addition,
+> and it is conditioned on cyclists having somewhere else to be.
+>
+> **A protected bike lane IS that alternate access.** Riders are not in the travel lane at all,
+> so the provision is satisfied by the facility rather than by widening the carriageway. And
+> widening a travel lane beside a protected bike lane would be actively counterproductive: wider
+> lanes carry higher speeds, Broad St is posted **25 mph its whole length through the borough**
+> (OSM `maxspeed=25 mph` on all three segments, CR 518 and CR 654), and every scenario here is a
+> traffic-calming proposal. Adding a foot in the name of accommodating bicyclists, on a street
+> that has just been given a separated bikeway, gets the intent exactly backwards.
+>
+> So 11 ft stands, and the only +1 ft inside it is the truck allowance in §6.
 
 > **Still unread:** AASHTO's *Guide for the Development of Bicycle Facilities* on separated-lane
 > transitions, and whatever Mercer County holds. The county owns CR 518, but NJDOT §6 above is

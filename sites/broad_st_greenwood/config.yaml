@@ -49,7 +49,12 @@ intersection:
 corridor:
   jurisdiction: "County"
   functional_class: "Urban Minor Arterial"
-  speed_limit_mph: 30
+  # 25, not 30 (corrected 2026-08-15). OSM carries maxspeed=25 mph on every Broad St way through
+  # the borough - CR 518 and CR 654 alike - and Danny confirms 25 is posted the whole length. The
+  # 30 here disagreed with both, and with this project's two other Broad St sites, which already
+  # said 25. It matters beyond bookkeeping: speed drives the turn-speed metric, and it is the
+  # premise of every traffic-calming argument the proposals make.
+  speed_limit_mph: 25
   lanes: 2
   median_type: "None"
   median_width_ft: 0

@@ -259,8 +259,10 @@ def test_every_restriped_lane_holds_the_target_everywhere(site_models):
 
     from scripts.build_all import scenarios_for
     from src.geometry.targets import LegSide, LegTarget
+    from src.geometry.model import narrowest_half_width_ft
     from src.geometry.treatments import (TARGET_LANE_WIDTH_FT, AddBikeLane, DesignState,
-                                          LaneNarrowing, MarkedParking, travel_lane_width_ft)
+                                          LaneNarrowing, MarkedParking, divider_shift_toward_ft,
+                                          travel_lane_width_ft)
     from src.site import load_site_scenarios, run_scenario
 
     over, checked = [], 0
@@ -292,7 +294,13 @@ def test_every_restriped_lane_holds_the_target_everywhere(site_models):
                     if state.treatment_for(AddBikeLane, LegSide(leg_name, side)):
                         continue
                     checked += 1
+                    # Same traced-kerb bound TravelLanesHoldTheTarget applies: on an unpainted
+                    # side the lane ends at the KERB, and the traced kerb is not the nominal one.
                     lane_ft = travel_lane_width_ft(state, leg_name, side, painted(side))
+                    if painted(side) <= 0:
+                        lane_ft = min(lane_ft,
+                                       narrowest_half_width_ft(leg, side)
+                                       - divider_shift_toward_ft(state, leg_name, side))
                     if lane_ft > TARGET_LANE_WIDTH_FT + 0.05:
                         over.append(f"{site}/{name} {leg_name} {side}: {lane_ft:.2f} ft")
     assert checked > 20, f"only {checked} lanes swept - the sweep stopped finding scenarios"

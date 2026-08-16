@@ -1386,6 +1386,19 @@ BIKE_LANE_DEFAULT_SHY_FT = 2.0
 # oncoming pair, which on a corridor route is the condition rather than the exception.
 TWO_WAY_BIKE_LANE_WIDTH_FT = 12.0
 MIN_TWO_WAY_BIKE_LANE_FT = 10.0
+# NACTO's CONSTRAINED-CONDITIONS width, and it is opt-in rather than a floor the section slides
+# down to on its own. At 8 ft two riders cannot pass an oncoming pair, so it is not a width to
+# design a route at - which is why an earlier version of this file refused to offer it at all.
+#
+# What changed is the question. That refusal assumed 8 ft would be the CORRIDOR width; here it is
+# a short constrained run through ONE junction whose alternative is no facility at all. W Broad &
+# Louellen has 32.10 ft between its traced kerbs, and the standard 10 + 3 section leaves 9.14 ft
+# travel lanes - under NJDOT's 10 ft traffic-calming floor. An 8 + 3 section leaves 10.14 ft, so
+# the pinch keeps its full buffer, keeps its posts, and the corridor stays continuous.
+#
+# Requires `constrained=True` on the section, so a scenario cannot reach this width by accident:
+# it has to say that it is accepting NACTO's constrained case and why.
+CONSTRAINED_TWO_WAY_BIKE_LANE_FT = 8.0
 # With vertical elements (flex posts) NACTO asks 3 ft where a two-way lane runs beside moving
 # traffic - more than the 2 ft a one-way lane gets, because a head-on error here is a closing
 # speed, not an overtaking one.
@@ -1573,15 +1586,21 @@ class TwoWayBikeLane(BikeLane):
     """
     near_half_ft: float = 0.0
     far_half_ft: float = 0.0
+    # Accepting NACTO's constrained-conditions width. Declared per section rather than inferred
+    # from how narrow the street is, so the drawing records a DECISION and not an accommodation.
+    constrained: bool = False
 
     def __post_init__(self):
-        if self.width_ft < MIN_TWO_WAY_BIKE_LANE_FT:
+        floor = (CONSTRAINED_TWO_WAY_BIKE_LANE_FT if self.constrained
+                 else MIN_TWO_WAY_BIKE_LANE_FT)
+        if self.width_ft < floor:
             raise ValueError(
-                f"A {self.width_ft:.2f} ft two-way bike lane is under NACTO's "
-                f"{MIN_TWO_WAY_BIKE_LANE_FT:.0f} ft minimum ({TWO_WAY_BIKE_LANE_WIDTH_FT:.0f} ft "
-                f"is the width to design to). Two riders meeting head-on need the width of two "
-                f"riders; a one-way lane's {AASHTO_MIN_BIKE_LANE_FT:.0f} ft floor does not apply "
-                f"to a lane carrying both directions.")
+                f"A {self.width_ft:.2f} ft two-way bike lane is under NACTO's {floor:.0f} ft "
+                f"{'constrained-conditions' if self.constrained else 'minimum'} width "
+                f"({TWO_WAY_BIKE_LANE_WIDTH_FT:.0f} ft is the width to design to). Two riders "
+                f"meeting head-on need the width of two riders; a one-way lane's "
+                f"{AASHTO_MIN_BIKE_LANE_FT:.0f} ft floor does not apply to a lane carrying both "
+                f"directions.")
         super().__post_init__()
         travel_way_ft = self.near_half_ft + self.far_half_ft - self.section_ft
         if travel_way_ft / 2 < MIN_TRAVEL_LANE_BESIDE_TWO_WAY_FT:
@@ -1960,6 +1979,7 @@ class AddTwoWayBikeLane(AddBikeLane):
     """
     paint_group: ClassVar[int] = 30
     paint_rank: ClassVar[int] = 0
+    constrained: bool = False
 
     def __post_init__(self):
         """The width floor, checked without a street.
@@ -1970,13 +1990,13 @@ class AddTwoWayBikeLane(AddBikeLane):
         any street is consulted, so that part is checked here and the fit is checked in apply_to
         where the real half-widths exist.
         """
-        if self.width_ft < MIN_TWO_WAY_BIKE_LANE_FT:
+        floor = (CONSTRAINED_TWO_WAY_BIKE_LANE_FT if self.constrained
+                 else MIN_TWO_WAY_BIKE_LANE_FT)
+        if self.width_ft < floor:
             raise ValueError(
-                f"A {self.width_ft:.2f} ft two-way bike lane is under NACTO's "
-                f"{MIN_TWO_WAY_BIKE_LANE_FT:.0f} ft minimum ({TWO_WAY_BIKE_LANE_WIDTH_FT:.0f} ft "
-                f"is the width to design to). Two riders meeting head-on need the width of two "
-                f"riders; a one-way lane's {AASHTO_MIN_BIKE_LANE_FT:.0f} ft floor does not apply "
-                f"to a lane carrying both directions.")
+                f"A {self.width_ft:.2f} ft two-way bike lane is under NACTO's {floor:.0f} ft "
+                f"{'constrained-conditions' if self.constrained else 'minimum'} width "
+                f"({TWO_WAY_BIKE_LANE_WIDTH_FT:.0f} ft is the width to design to).")
 
     def section(self, state: "DesignState") -> TwoWayBikeLane:
         """The section as this leg's own kerbs make it - measured at the NARROWEST traced point on
@@ -1987,7 +2007,7 @@ class AddTwoWayBikeLane(AddBikeLane):
         leg = state.legs[self.target.leg]
         side = Side(str(self.target.side))
         return TwoWayBikeLane(
-            width_ft=self.width_ft, buffer_ft=self.buffer_ft,
+            width_ft=self.width_ft, buffer_ft=self.buffer_ft, constrained=self.constrained,
             near_half_ft=narrowest_half_width_ft(leg, str(side)),
             far_half_ft=narrowest_half_width_ft(leg, str(side.other)))
 

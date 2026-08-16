@@ -681,6 +681,7 @@ class TravelLanesHoldTheTarget(SceneCheck):
 
     def run(self, scene: SceneContext) -> list[Violation]:
         from src.geometry.targets import LegSide, LegTarget
+        from src.geometry.model import narrowest_half_width_ft
         from src.geometry.treatments import (TARGET_LANE_WIDTH_FT, AddBikeLane, LaneNarrowing,
                                               MarkedParking, travel_lane_width_ft)
 
@@ -708,7 +709,19 @@ class TravelLanesHoldTheTarget(SceneCheck):
             for side in sides:
                 if state.treatment_for(AddBikeLane, LegSide(leg_name, side)) is not None:
                     continue    # the lane's own cross-section defines this edge
+                # WHERE THERE IS NO PAINT THE KERB IS THE BOUND, and the traced kerb is not the
+                # nominal one. travel_lane_width_ft works in the NOMINAL frame, which is right
+                # when it is subtracting nominal-referenced paint - but on an unpainted side the
+                # lane really ends at the traced kerb, and on w_broad_st_northeast that is 1.66 ft
+                # closer than nominal. Measured nominally the lane read 12.93 ft and this check
+                # called it over target; measured to the kerb it is the 10.14 ft the section
+                # actually leaves. A false positive on the one junction where the street has
+                # nothing left to give.
                 lane_ft = travel_lane_width_ft(state, leg_name, side, painted_ft(side))
+                if painted_ft(side) <= 0:
+                    traced_ft = narrowest_half_width_ft(leg, side)
+                    lane_ft = min(lane_ft, traced_ft - _divider_shift_toward_ft(state, leg_name,
+                                                                                side))
                 if lane_ft > TARGET_LANE_WIDTH_FT + LANE_WIDTH_TOLERANCE_FT:
                     violations.append(Violation(
                         "travel_lane_over_target",

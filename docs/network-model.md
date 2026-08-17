@@ -39,6 +39,30 @@ session came from a scratch script on raw OSM, and three of them were wrong, bec
 `narrowest_half_width_ft`, `opens_the_kerb` and the daylighting rules are only reachable through a
 leg and a corridor has no legs.
 
+## The third reason, and the one you can see: the drawing discards surveyed ground truth
+
+Measured 2026-08-17 at Broad & Greenwood, rendered at `--frame-scale 2.5` (431 ft frame radius):
+
+```
+10  OSM crossings inside the frame
+ 4  drawn - exactly the four matched to this junction's legs
+ 6  DISCARDED, at 263-411 ft, three of them tagged crossing:markings=zebra
+```
+
+Blackwell & Broad is in that picture with its crosswalks traced, and the render shows bare asphalt
+there. This is not a filter that can be widened: a drawn crossing needs a STATION, an ORIENTATION
+and a REACH TO BOTH KERBS, and all three are properties of a leg. A junction the site does not
+model has no legs, so its surveyed crossings are unreachable however far the fetch radius goes.
+
+It is the same fault as the kerbs, which were per-leg until `cb9c8b6` moved them to the drawing
+radius on the grounds that *what a drawing contains is a question about the drawing*. Crossings
+cannot follow without somewhere to hang a station and a kerb pair - which is the Road.
+
+This one matters more than the five bugs above, because those were wrong numbers a reader could not
+see. This is a render that shows a marked crosswalk as unmarked asphalt, to an audience deciding
+whether to build something. The wider the frame - and a corridor argument needs a wide frame - the
+more of the surveyed borough it silently drops.
+
 ## What the config becomes
 
 Ten per-leg fields today: `sri`, `bearing_deg`, `street_name`, `curb_to_curb_ft`, `confirmed`,

@@ -39,10 +39,11 @@ import mathutils
 sys.path.insert(0, str(Path(__file__).resolve().parent))  # for the sibling blender_*.py imports below
 
 from blender_crosswalks import (
-    add_crosswalk, add_dashed_centerline, add_double_yellow_centerline, add_paint_line, add_paint_polyline,
+    add_crosswalk, add_dashed_centerline, add_double_yellow_centerline, add_paint_polyline,
     add_stop_bar,
 )
-from blender_geometry import build_mesh_from_data, extrude_polygon
+from blender_geometry import (MeshBatch, build_mesh_from_data, extrude_polygon,
+                              line_ring, polyline_rings)
 from blender_materials import make_material, make_textured_material
 from blender_props import (
     PED_SIGNAL_HOUSING_DARK, SIGNAL_HOUSING_DARK, SIGN_POST_GRAY,
@@ -76,6 +77,11 @@ EXISTING_MARKING_HEIGHT_M = 0.07
 # isolated test. Fixed by both lifting z_base to sit flush on the pavement's top (see
 # blender_crosswalks.py:EXISTING_MARKING_Z_BASE) and tightening the camera's clip range.
 MARKING_CLEARANCE_M = 0.01
+# How thick a painted marking is built. Was add_paint_line's own `height_m=0.01` default, which is
+# where every batched marking's thickness came from before the draw block stopped going through it -
+# named here so the value is stated rather than inherited from a keyword default two modules away.
+# Paint has no meaningful thickness; this exists only to give the depth buffer something to order.
+PAINT_HEIGHT_M = 0.01
 
 BUILDING_PALETTE = [
     (0.62, 0.42, 0.35),  # brick red
@@ -124,6 +130,32 @@ KERB_WIDTH_M = 0.15
 # The two lines of a double yellow arrive already offset from each other, so this is the width of
 # each, not of the pair.
 CENTERLINE_WIDTH_M = 0.15
+
+# WHICH PAINT CHANNELS ARE SAMPLED POLYLINES, and which are honestly two-point segments. Declared
+# as data rather than left implicit in the loops below, because the distinction is load-bearing and a
+# test guards it (tests/test_paint.py).
+#
+# A SAMPLED POLYLINE MUST BE WALKED SEGMENT BY SEGMENT. These follow the traced kerb on a 2 ft
+# station grid, so drawing the chord between the first and last vertex is not the line: it deviated
+# 0.7 ft on Broad St's daylight zone, which pulled the painted edge inside the 11 ft lane it marks
+# and lifted it off the hatching it bounds. The value beside each is its stripe width in metres - a
+# drawn-scale choice, not a standard: a solid edge line reads at 0.25 m here, a taper at 0.15 m.
+SAMPLED_POLYLINE_CHANNELS = (
+    ("lane_narrowing_edge_lines", 0.25),
+    ("lane_narrowing_taper_lines", 0.15),
+    ("parking_edge_lines", 0.25),
+    ("parking_buffer_edge_lines", 0.25),
+    ("parking_buffer_taper_lines", 0.15),
+    ("bike_lane_edge_lines", 0.25),
+)
+# Two-point strokes: a hatch stroke runs edge to edge of its zone and a stall tick lies across the
+# kerbside strip. Only their two ends exist, so the chord IS the line.
+TWO_POINT_CHANNELS = (
+    "lane_narrowing_hatch_lines", "corner_hatching_lines", "parking_stall_divider_lines",
+    "parking_buffer_hatch_lines", "bike_lane_hatch_lines",
+)
+TWO_POINT_WIDTH_M = 0.15
+
 
 
 def _marking_frame(leg: dict, near, u, n, prefix: str, fallback_offset_m: float):
@@ -307,53 +339,55 @@ def build_scene(data: dict):
     # the painted lane edge inside the 11 ft it is supposed to mark, and to pull the line off
     # the hatching it is supposed to bound. The hatch strokes and stall ticks below really are
     # two-point segments, so add_paint_line is right for those.
-    for i, line in enumerate(data.get("lane_narrowing_edge_lines", [])):
-        add_paint_polyline(f"lane_narrowing_edge_{i}", line, 0.25, marking_mat, z_base=marking_z)
-    for i, line in enumerate(data.get("lane_narrowing_taper_lines", [])):
-        add_paint_polyline(f"lane_narrowing_taper_{i}", line, 0.15, marking_mat, z_base=marking_z)
-    for i, line in enumerate(data.get("lane_narrowing_hatch_lines", [])):
-        add_paint_line(f"lane_narrowing_hatch_{i}", line[0], line[-1], 0.15, marking_mat, z_base=marking_z)
-    for i, line in enumerate(data.get("corner_hatching_lines", [])):
-        add_paint_line(f"corner_hatch_{i}", line[0], line[-1], 0.15, marking_mat, z_base=marking_z)
+    # EVERY WHITE MARKING IN ONE MESH, and the yellow ones in another. What this replaced was a
+    # loop per channel calling add_paint_polyline, which called add_paint_line per SEGMENT, which
+    # built an object each: a 130 ft lane edge sampled every 2 ft became 64 objects, its channel
+    # became 1,209, and a wide render's scene held 3,753 objects for 842 JSON items. Batched, it is
+    # two. See blender_geometry.MeshBatch, and src/render/plan_view.py:_draw for the same argument
+    # winning the same 156x in matplotlib.
+    #
+    # Grouped by MATERIAL rather than by channel, because that is the only thing a merge has to
+    # respect - a mesh carries one material, and every white marking shares one. The channel
+    # distinctions above it (which line is a lane edge, which a stall tick) are decided upstream in
+    # src/geometry/markings.py and are already spent by the time the geometry arrives here.
+    #
+    # POLYLINES, NOT CHORDS. polyline_rings walks every segment, so a sampled arc still curves; the
+    # old add_paint_line(line[0], line[-1]) shortcut deviated 0.7 ft on Broad St's daylight zone,
+    # enough to pull the painted lane edge inside the 11 ft it marks.
+    white = MeshBatch("paint_white", marking_mat)
+    yellow = MeshBatch("paint_yellow", centerline_mat)
+    # (channel, stripe width) - the two widths are a drawn-scale choice, not a standard: a solid
+    # edge line reads at 0.25 m here and a hatch stroke at 0.15 m.
+    for key, width in SAMPLED_POLYLINE_CHANNELS:
+        for line in data.get(key, []):
+            for ring in polyline_rings(line, width):
+                white.add_prism(ring, PAINT_HEIGHT_M, z_base=marking_z)
+    # The hatch strokes and stall ticks really are two-point segments, so only their ends matter.
+    for key in TWO_POINT_CHANNELS:
+        for line in data.get(key, []):
+            ring = line_ring(line[0], line[-1], TWO_POINT_WIDTH_M)
+            if ring is not None:
+                white.add_prism(ring, PAINT_HEIGHT_M, z_base=marking_z)
+    # A TWO-WAY LANE'S CENTRE STRIPE IS YELLOW, and the channel is what decides that: every
+    # edge-line channel above is drawn in the white marking material, and a yellow line is not a
+    # white line somewhere else. Same distinction the roadway centreline gets, for the same reason -
+    # yellow means opposing directions. Already cut into dashes upstream.
+    for line in data.get("bike_lane_contraflow_lines", []):
+        for ring in polyline_rings(line, CENTERLINE_WIDTH_M):
+            yellow.add_prism(ring, PAINT_HEIGHT_M, z_base=marking_z)
+    white.build()
+    yellow.build()
+
     for i, ring in enumerate(data.get("corner_apron_polygons", [])):
         extrude_polygon(f"corner_apron_{i}", ring, 0.01, apron_mat, z_base=marking_z)
-    for i, line in enumerate(data.get("parking_edge_lines", [])):
-        add_paint_polyline(f"parking_edge_{i}", line, 0.25, marking_mat, z_base=marking_z)
-    for i, line in enumerate(data.get("parking_stall_divider_lines", [])):
-        add_paint_line(f"parking_stall_{i}", line[0], line[-1], 0.15, marking_mat, z_base=marking_z)
-    for i, line in enumerate(data.get("parking_buffer_edge_lines", [])):
-        add_paint_polyline(f"parking_buffer_edge_{i}", line, 0.25, marking_mat, z_base=marking_z)
-    for i, line in enumerate(data.get("parking_buffer_taper_lines", [])):
-        add_paint_polyline(f"parking_buffer_taper_{i}", line, 0.15, marking_mat, z_base=marking_z)
-    for i, line in enumerate(data.get("parking_buffer_hatch_lines", [])):
-        add_paint_line(f"parking_buffer_hatch_{i}", line[0], line[-1], 0.15, marking_mat, z_base=marking_z)
-    # An exclusive bike lane's two edge lines and the hatched buffer beside it. Sampled
-    # polylines for the edges (they follow the traced kerb's own station grid), straight
-    # two-point strokes for the hatch, same as every other zone above.
-    for i, line in enumerate(data.get("bike_lane_edge_lines", [])):
-        add_paint_polyline(f"bike_lane_edge_{i}", line, 0.25, marking_mat, z_base=marking_z)
-    for i, line in enumerate(data.get("bike_lane_hatch_lines", [])):
-        add_paint_line(f"bike_lane_hatch_{i}", line[0], line[-1], 0.15, marking_mat, z_base=marking_z)
-    # The lane's own asphalt, painted green. UNDER the stripe layer by one clearance gap, so the
-    # white edge lines sit on top of the green the way they do on a real street - and so that the
-    # two never end up coplanar, which is the z-fighting this file's header is mostly about. The
-    # polygons are cut to stop at the stripes' faces (src/geometry/treatments/bikeways.py:AddBikeLane.paint),
-    # so this is belt and braces rather than the thing keeping them apart.
-    # Half a clearance thick, so its TOP (marking_z - 0.005) stays below the stripe layer's own
-    # base rather than landing exactly on it: a hairline of lateral overlap left by float
-    # arithmetic would otherwise be two coplanar faces, which is the one failure mode here.
-    for i, ring in enumerate(data.get("bike_lane_surface_polygons", [])):
-        extrude_polygon(f"bike_lane_surface_{i}", ring, MARKING_CLEARANCE_M / 2, bike_surface_mat,
-                         z_base=marking_z - MARKING_CLEARANCE_M)
-    # A TWO-WAY lane's centre stripe, in the YELLOW centreline material rather than the white
-    # marking one - the colour is the whole message (opposing directions), and routing it through
-    # any edge-line channel would have drawn it white here while the plan view drew it yellow.
-    # Already cut into dashes upstream, like the roadway centreline: this loop draws the segments
-    # it is given and derives nothing, because nothing on this side of the boundary can be
-    # compared against the plan view.
-    for i, line in enumerate(data.get("bike_lane_contraflow_lines", [])):
-        add_paint_polyline(f"bike_contraflow_{i}", line, CENTERLINE_WIDTH_M, centerline_mat,
-                            z_base=marking_z)
+    # The bike lane's own asphalt, painted green. UNDER the stripe layer by one clearance gap, so the
+    # white edge lines sit on top of the green the way they do on a real street - and so the two never
+    # end up coplanar, which is the z-fighting this file's header is mostly about. Half a clearance
+    # thick, so its TOP stays below the stripe layer's base rather than landing exactly on it.
+    green = MeshBatch("bike_lane_surface", bike_surface_mat)
+    for ring in data.get("bike_lane_surface_polygons", []):
+        green.add_prism(ring, MARKING_CLEARANCE_M / 2, z_base=marking_z - MARKING_CLEARANCE_M)
+    green.build()
 
     # EVERY SURVEYED CROSSING IN THE PICTURE, drawn from its own traced way rather than rebuilt
     # from a leg. This is the network-renderer change (docs/network-renderer-plan.md): a crossing
@@ -566,8 +600,22 @@ def render(output_path: Path):
     bpy.ops.render.render(write_still=True)
 
 
+def disable_undo():
+    """Stop Blender snapshotting the scene after every operator.
+
+    Undo exists for a person clicking in the UI. In a headless batch there is nobody to undo for,
+    and the cost is not small: every `bpy.ops` call pushes a snapshot of the scene, so the price of
+    an operator grows with the scene it is called in. This build still uses operators for the
+    buildings' face merge and for the props, which run late, when the scene is at its largest.
+
+    Set once at startup rather than per render, because it is a preference and not scene state.
+    """
+    bpy.context.preferences.edit.use_global_undo = False
+
+
 def main():
     jobs = parse_args()
+    disable_undo()
     configure_render()  # render settings are scene-independent - set once
     for geometry_path, output_path in jobs:
         with open(geometry_path) as f:

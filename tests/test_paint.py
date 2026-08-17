@@ -659,26 +659,52 @@ def test_no_rim_where_there_is_no_crossing_to_cut_against():
 
 
 def test_sampled_polylines_are_rendered_as_polylines_not_chords():
-    """add_paint_line(line[0], line[-1]) draws the straight chord between a polyline's
-    endpoints and silently discards every vertex between them.
+    """A sampled polyline is walked segment by segment; only a two-point stroke takes the chord.
 
-    The lane-edge lines follow the traced kerb and are sampled every 2 ft, so the chord is
-    not the line: it deviated 0.7 ft on Broad St's daylight zone, which both pulled the
-    painted edge inside the 11 ft lane it is supposed to mark and lifted it off the hatching
-    it is supposed to bound. add_paint_polyline exists precisely for this and its own
-    docstring warns about it, so this is a static guard rather than a comment.
+    The lane-edge lines follow the traced kerb and are sampled every 2 ft, so the chord between their
+    endpoints is not the line: it deviated 0.7 ft on Broad St's daylight zone, which both pulled the
+    painted edge inside the 11 ft lane it is supposed to mark and lifted it off the hatching it is
+    supposed to bound.
+
+    READS THE DECLARATION, not the loop. The first version of this guard grepped blender_scene.py for
+    `add_paint_polyline(f"{name}_{i}"` and broke the moment the draw block was batched - it was
+    pinning a call site rather than the property, so a correct rewrite failed it. blender_scene.py now
+    declares the two groups as data (SAMPLED_POLYLINE_CHANNELS, TWO_POINT_CHANNELS) and this asserts
+    the split is right and exhaustive, which survives any rewrite that keeps the distinction.
     """
-    import re
+    import ast
     from pathlib import Path
 
     source = (Path(__file__).resolve().parent.parent
               / "scripts" / "blender" / "blender_scene.py").read_text()
-    # Lists whose entries come from inset_line_ft / taper arcs - many vertices apiece.
-    for name in ("lane_narrowing_edge", "lane_narrowing_taper", "parking_edge",
-                  "parking_buffer_edge", "parking_buffer_taper"):
-        chord = re.search(rf'add_paint_line\(f"{name}_\{{i\}}", line\[0\], line\[-1\]', source)
-        assert chord is None, f"{name} is drawn as a chord; it is a sampled polyline"
-        assert f'add_paint_polyline(f"{name}_{{i}}"' in source, f"{name} is not drawn at all"
+    declared = {}
+    for node in ast.parse(source).body:
+        if isinstance(node, ast.Assign) and isinstance(node.targets[0], ast.Name):
+            name = node.targets[0].id
+            if name in ("SAMPLED_POLYLINE_CHANNELS", "TWO_POINT_CHANNELS"):
+                declared[name] = ast.literal_eval(node.value)
+    assert set(declared) == {"SAMPLED_POLYLINE_CHANNELS", "TWO_POINT_CHANNELS"}, (
+        "blender_scene.py no longer declares which channels are sampled polylines - the guard has "
+        "nothing to read, which is not the same as the code being correct")
+
+    sampled = {key for key, _width in declared["SAMPLED_POLYLINE_CHANNELS"]}
+    two_point = set(declared["TWO_POINT_CHANNELS"])
+    # The channels whose entries come from inset_line_ft or a taper arc - many vertices apiece.
+    for name in ("lane_narrowing_edge_lines", "lane_narrowing_taper_lines", "parking_edge_lines",
+                  "parking_buffer_edge_lines", "parking_buffer_taper_lines",
+                  "bike_lane_edge_lines"):
+        assert name in sampled, f"{name} is a sampled polyline and is not declared as one"
+        assert name not in two_point, f"{name} would be drawn as the chord between its endpoints"
+    assert not (sampled & two_point), "a channel cannot be both"
+
+    # Every paint channel the export writes is drawn SOMEWHERE. This is the half the old guard could
+    # not check: a channel dropped from the draw block entirely would have passed it.
+    from src.geometry.markings import CHANNELS
+
+    drawn = sampled | two_point | {
+        "bike_lane_contraflow_lines", "bike_lane_surface_polygons", "corner_apron_polygons"}
+    missing = [c.key for c in CHANNELS if c.key not in drawn]
+    assert not missing, f"declared marking channel(s) never drawn in 3D: {missing}"
 
 
 # --------------------------------------------------------------------------

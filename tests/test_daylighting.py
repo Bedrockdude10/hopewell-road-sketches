@@ -70,13 +70,21 @@ def test_a_curb_extension_reduces_both_setbacks_to_ten_feet(monkeypatch):
     is what test_only_a_built_curb_extension_buys_back_the_setback is for.
     """
     import src.geometry.treatments as treatments
+    from src.geometry.treatments import corners
     from src.geometry.daylighting import SIDELINE_SETBACK_WITH_BULBOUT_FT
 
-    monkeypatch.setattr(treatments, "CURB_EXTENSION_DEVICES", frozenset({"built_bulbout"}))
-    # The kind has to be constructible as well as recognised: a Treatment validates itself, so
-    # "built_bulbout" would be refused by ProtectDaylightZone's own constructor otherwise.
-    monkeypatch.setattr(treatments, "VALID_DAYLIGHT_DEVICES",
-                        (*treatments.VALID_DAYLIGHT_DEVICES, "built_bulbout"))
+    # BOTH BINDINGS, because the two readers reach these constants differently and patching one
+    # place stopped being enough when treatments became a package. ProtectDaylightZone resolves
+    # them as globals of the module it is DEFINED in (treatments.corners), while
+    # daylighting.legal_parking_start_ft imports CURB_EXTENSION_DEVICES from the package inside
+    # the function, so it reads the re-export. Patching only the package left the constructor
+    # refusing the very kind this test installs.
+    for module in (corners, treatments):
+        monkeypatch.setattr(module, "CURB_EXTENSION_DEVICES", frozenset({"built_bulbout"}))
+        # The kind has to be constructible as well as recognised: a Treatment validates itself,
+        # so "built_bulbout" would be refused by ProtectDaylightZone's own constructor otherwise.
+        monkeypatch.setattr(module, "VALID_DAYLIGHT_DEVICES",
+                            (*corners.VALID_DAYLIGHT_DEVICES, "built_bulbout"))
     state = with_device(a_state(), "built_bulbout", spacing_ft=5.0)
     start = legal_parking_start_ft(state, "east", "left", {"east": (30.0,)})
     assert start == pytest.approx(30.0 + CROSSWALK_SETBACK_WITH_BULBOUT_FT)

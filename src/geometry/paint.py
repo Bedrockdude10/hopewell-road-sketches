@@ -907,7 +907,7 @@ def apron_polygon(state, corner: tuple[str, str], apron, center_ft):
     """The ground one CornerApron covers - a fixed-depth kite, or the swept-path annulus.
 
     Two shapes because there are two reasons for an apron; see
-    src/geometry/treatments.py:CornerApron. The annulus is the one a curb extension lays, and it
+    src/geometry/treatments/base.py:CornerApron. The annulus is the one a curb extension lays, and it
     is built from the corner's two real curb lines rather than offset off the drawn arc, so the
     outer edge genuinely reaches the radius a bus needs.
     """

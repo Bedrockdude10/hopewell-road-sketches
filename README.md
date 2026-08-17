@@ -71,7 +71,7 @@ Four things in this codebase used to be conventions spread across several module
 | A paint kind: a bare string keyed into `PAINT_STYLE`, `PAINT_KIND_LISTS`, `PAINT_FILL_EDGE` and `kind == "bollard"` branches | `src/geometry/markings.py` — a `PaintKind` with a role (line/fill/surface/colour/object) and the channel it travels to the 3D render in | Declaring a marking that reaches no renderer; routing a hatched zone to a channel of lines; a plan-view style table missing an entry. All three raise on import |
 | An invariant: a function you had to remember to add to a `+` chain, with a hand-picked argument list | `src/checks.py` — a `SceneCheck` subclass, registered by being defined, reading one `SceneContext` | Writing a check that never runs; handing two checks differently-built versions of the same geometry (that shipped: 15 sq ft apart at W Broad & Louellen) |
 | A kerb: a traced OSM line, drawn as one black stroke whatever `kerb=raised`/`kerb=lowered` said about it | `src/geometry/kerbs.py` — a `KerbType`, and a `KerbOpening` where the kerb is dropped for a vehicle | A surveyor's raised/lowered tagging reaching the geometry and no renderer; kerbside paint and flex posts running unbroken across a driveway |
-| A treatment: a function writing one of 20 dicts on `DesignState` that five other modules read back, validating whatever its author remembered | `src/geometry/treatments.py` — a `Treatment` frozen dataclass with a typed target from `src/geometry/targets.py`, applied through `DesignState.apply`, and the **only** record of what a design asked for | An unvalidated treatment existing at all; a treatment aimed at a leg the junction doesn't have; a treatment that needs the model being silently skipped; a missing provenance note; a parameter a renderer reads disagreeing with the decision that set it |
+| A treatment: a function writing one of 20 dicts on `DesignState` that five other modules read back, validating whatever its author remembered | `src/geometry/treatments/` — a `Treatment` frozen dataclass with a typed target from `src/geometry/targets.py`, applied through `DesignState.apply`, and the **only** record of what a design asked for | An unvalidated treatment existing at all; a treatment aimed at a leg the junction doesn't have; a treatment that needs the model being silently skipped; a missing provenance note; a parameter a renderer reads disagreeing with the decision that set it |
 
 `Side` is a `StrEnum`, so it matches OSM's `parking:left` tag keys and the traced kerb attributes (`leg.left_curb`) unchanged, but `Side("north")` raises and the `1 if side == "left" else -1` that appeared in ten places has one home.
 
@@ -440,7 +440,7 @@ scripts/
 
 `leg_clearance_ft()` computes how far along a leg's centerline you have to go before the roadway is straight (i.e. past the corner curve) — **always project onto the centerline, never use raw Euclidean distance** from a point on the (laterally-offset) curb line, or wide legs will wildly overshoot (a 68 ft leg has a 34 ft half-width, which alone dominates a naive distance calc). Used to place crosswalks, raised-crossing treatments, and props outside the curve, not inside it, whenever real survey/geometric-basis data isn't available.
 
-## Treatments (`src/geometry/treatments.py`)
+## Treatments (`src/geometry/treatments/`)
 
 A treatment is an object, and `state.apply(...)` is the only way one enters a design:
 

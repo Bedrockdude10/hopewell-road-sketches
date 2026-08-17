@@ -450,7 +450,7 @@ def test_each_kerb_gets_the_paint_its_restriction_and_width_allow(site, site_mod
     """
     from src.geometry.treatments import (MIN_MARKED_PARKING_DEPTH_FT,
                                           PARKING_STALL_DEPTH_DEFAULT_FT,
-                                          TARGET_LANE_WIDTH_FT, _restriction_summary,
+                                          TARGET_LANE_WIDTH_FT, restriction_summary,
                                           apply_osm_parking, kerbside_allowance_ft)
 
     model = site_models[site]
@@ -470,7 +470,7 @@ def test_each_kerb_gets_the_paint_its_restriction_and_width_allow(site, site_mod
             # asked a question the street does not answer: broad_st_east's dominant way says
             # "none" while its first 79.5 ft are tagged no_parking, so this test used to agree
             # that stalls belonged on a kerb OSM forbids them on.
-            at = _restriction_summary(state, leg_name, side, leg.centerline.length)
+            at = restriction_summary(state, leg_name, side, leg.centerline.length)
             hatched = narrowing is not None and side in narrowing.sides
             parking = state.treatment_for(MarkedParking, LegSide(leg_name, side))
             stalls = parking is not None
@@ -1098,19 +1098,31 @@ def test_every_declared_marking_is_something_paint_can_build():
     treatments themselves (Treatment.paint). This test caught that move the first time a marking
     left: CORNER_HATCH_FILL is emitted by CornerHatching now, and searching paint.py alone called
     it stale.
+
+    EVERY FILE OF THE TREATMENTS PACKAGE, walked rather than named. inspect.getsource on a package
+    returns its __init__.py alone, so when treatments became a package this read the re-export list
+    and called eight genuinely-emitted markings stale. Globbing the directory means a new submodule
+    is covered the day it is added, which a hand-written list of the seven would not be.
     """
     import inspect
+    from pathlib import Path
 
     from src.geometry import paint as paint_module
     from src.geometry import treatments as treatments_module
     from src.geometry.markings import KINDS
 
-    source = inspect.getsource(paint_module) + inspect.getsource(treatments_module)
+    package_dir = Path(treatments_module.__file__).parent
+    treatment_sources = sorted(package_dir.glob("*.py"))
+    assert len(treatment_sources) > 1, (
+        f"expected the treatments package's submodules under {package_dir}, found "
+        f"{[p.name for p in treatment_sources]} - if it went back to being one module, read that "
+        f"file instead, but do not let this silently check nothing")
+    source = inspect.getsource(paint_module) + "".join(p.read_text() for p in treatment_sources)
     for name, _kind in KINDS.items():
         constant = name.upper()
         assert constant in source, (
             f"src/geometry/markings.py declares {name!r} but nothing in src/geometry/paint.py or "
-            f"src/geometry/treatments.py emits {constant} - a marking nothing builds is a stale "
+            f"src/geometry/treatments/ emits {constant} - a marking nothing builds is a stale "
             f"declaration")
 
 

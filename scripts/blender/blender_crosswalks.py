@@ -3,7 +3,7 @@
 blender_scene.py - runs under Blender's bundled Python. See README.md
 "Crosswalk styles: real data over guessing" for how a leg's crosswalk style
 is decided upstream in src/render/export.py, and
-src/geometry/treatments.py:DEFAULT_CENTERLINE_STYLE for centerline style."""
+src/geometry/treatments/base.py:DEFAULT_CENTERLINE_STYLE for centerline style."""
 import math
 
 import mathutils

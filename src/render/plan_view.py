@@ -639,13 +639,13 @@ def _label_parking_legality(ax, model, state):
     junction is how OSM records "no parking for the first 100 ft", and a label that reduced the
     kerb to one value could only report one end of it - which is how East Broad came to be
     labelled "parking OK" over a kerb whose first 80 ft are tagged no_parking. See
-    src/geometry/treatments.py:RestrictionSummary.
+    src/geometry/treatments/parking.py:RestrictionSummary.
     """
     from src.geometry.model import curb_point_at_station
     from src.geometry.targets import BOTH_SIDES, LegSide, LegTarget
     from src.geometry.treatments import (AddBikeLane, LaneNarrowing, MarkedParking,
                                          MIN_MARKED_PARKING_DEPTH_FT, TARGET_LANE_WIDTH_FT,
-                                         _restriction_summary, kerbside_allowance_ft)
+                                         restriction_summary, kerbside_allowance_ft)
 
     for leg_name, leg in state.legs.items():
         if leg.curb_to_curb_ft is None:
@@ -657,7 +657,7 @@ def _label_parking_legality(ax, model, state):
             allowance_ft = kerbside_allowance_ft(leg, side)
             kerb = LegSide(leg_name, side)
             bike_lane = state.treatment_for(AddBikeLane, kerb)
-            at = _restriction_summary(state, leg_name, side, leg.centerline.length)
+            at = restriction_summary(state, leg_name, side, leg.centerline.length)
             if at.restricted_throughout:
                 kind, says = "restricted", at.worst_value
             elif at.restricted_in_part:
@@ -816,7 +816,7 @@ def legend_handles():
                label="OSM: parking untagged"),
         Line2D([0], [0], color="darkviolet", lw=1, ls=":", label="OSM crossing way (as surveyed)"),
         # A curb extension's tightened face is drawn as this same arc - it IS a corner fillet,
-        # solved at the radius the extension presents (src/geometry/treatments.py).
+        # solved at the radius the extension presents (src/geometry/treatments/).
         Line2D([0], [0], color="darkorange", lw=2.5,
                 label="Corner fillet / curb extension face (radius labeled)"),
         Line2D([0], [0], color="seagreen", lw=6, alpha=0.6, label="Pedestrian refuge island"),

@@ -35,12 +35,12 @@ There is exactly one home for each of these. Adding a second copy is the most co
 
 | you need | it already exists as | in |
 |---|---|---|
-| travel lane target width | `TARGET_LANE_WIDTH_FT` | `src/geometry/treatments.py` |
+| travel lane target width | `TARGET_LANE_WIDTH_FT` | `src/geometry/treatments/` |
 | a CRS string | `WGS84`, `NJ_STATE_PLANE_FT` | `src/geometry/model.py` |
-| how far the divider sits off the alignment | `divider_shift_toward_ft(state, leg, side)` | `src/geometry/treatments.py` |
-| a travel lane's real width | `travel_lane_width_ft(state, leg, side, painted_ft)` | `src/geometry/treatments.py` |
-| hold a lane at target, spend the surplus | `hold_travel_lane_at_target(state, leg, side)` | `src/geometry/treatments.py` |
-| may this kerb hold parking? | `kerb_may_hold_parking(state, leg, side)` | `src/geometry/treatments.py` |
+| how far the divider sits off the alignment | `divider_shift_toward_ft(state, leg, side)` | `src/geometry/treatments/` |
+| a travel lane's real width | `travel_lane_width_ft(state, leg, side, painted_ft)` | `src/geometry/treatments/` |
+| hold a lane at target, spend the surplus | `hold_travel_lane_at_target(state, leg, side)` | `src/geometry/treatments/` |
+| may this kerb hold parking? | `kerb_may_hold_parking(state, leg, side)` | `src/geometry/treatments/` |
 | which side of a leg faces north/south | `side_facing(leg, "south")` | `src/geometry/model.py` |
 | room beside a lane, measured on the traced kerb | `narrowest_half_width_ft`, `kerbside_allowance_ft` | `src/geometry/model.py`, `treatments.py` |
 | the centreline stripes both views draw | `centerline_paint_ft` | `src/render/crosswalks.py` |

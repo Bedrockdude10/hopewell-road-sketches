@@ -285,7 +285,7 @@ def build_scene(data: dict):
         add_paint_polyline(f"kerb_{kerb.get('kerb', 'unknown')}_{i}", coords, KERB_WIDTH_M,
                            kerb_mat, height_m=kerb.get("height_m", 0.20), z_base=0.0)
 
-    # Paint-only / no-curb-change proposal treatments (src/geometry/treatments.py:
+    # Paint-only / no-curb-change proposal treatments (src/geometry/treatments/:
     # add_lane_narrowing / add_corner_hatching / add_mountable_apron) - sit
     # above BOTH the pavement and the existing crosswalk/centerline markings
     # they can overlap (a stripe runs the whole leg, crossing the crosswalk),
@@ -337,7 +337,7 @@ def build_scene(data: dict):
     # The lane's own asphalt, painted green. UNDER the stripe layer by one clearance gap, so the
     # white edge lines sit on top of the green the way they do on a real street - and so that the
     # two never end up coplanar, which is the z-fighting this file's header is mostly about. The
-    # polygons are cut to stop at the stripes' faces (src/geometry/treatments.py:AddBikeLane.paint),
+    # polygons are cut to stop at the stripes' faces (src/geometry/treatments/bikeways.py:AddBikeLane.paint),
     # so this is belt and braces rather than the thing keeping them apart.
     # Half a clearance thick, so its TOP (marking_z - 0.005) stays below the stripe layer's own
     # base rather than landing exactly on it: a hairline of lateral overlap left by float
@@ -404,7 +404,7 @@ def build_scene(data: dict):
                          curb_clearance_m=stop_bar_curb_clearance_m,
                          span_m=leg.get("stop_bar_span_m"),
                          lateral_offset_m=leg.get("stop_bar_lateral_offset_m"))
-        # Real per-leg fact (confirmed via street-view, see src/geometry/treatments.py
+        # Real per-leg fact (confirmed via street-view, see src/geometry/treatments/
         # DEFAULT_CENTERLINE_STYLE) - some legs get no centerline paint at all, so this
         # is NOT drawn unconditionally the way it used to be.
         centerline_style = leg.get("centerline_style", "single_yellow_dashed")

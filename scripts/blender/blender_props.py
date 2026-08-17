@@ -268,7 +268,7 @@ def add_rrfb(name: str, position: tuple, heading_deg: float, post_mat):
     crossing warning sign (MUTCD W11-2) with two amber beacon bars mounted
     below it. Real installations typically pair a matching unit on the
     opposite curb - only one assembly is modeled per exported prop entry (see
-    src/geometry/treatments.py:add_extra_prop)."""
+    src/geometry/treatments/extras.py:ExtraProp)."""
     x, y = position
     bpy.ops.mesh.primitive_cylinder_add(radius=0.05, depth=RRFB_MOUNT_HEIGHT_M, location=(x, y, RRFB_MOUNT_HEIGHT_M / 2))
     post = bpy.context.active_object

@@ -90,7 +90,7 @@ def _add_broad_st_both_side_parking(state: DesignState, curb_offset_ft: float = 
 BROAD_ST_LEGS = ("broad_st_west", "broad_st_east")
 # TARGET_LANE_WIDTH_FT is imported from src, not redeclared here. It is a standard
 # (NACTO/AASHTO urban minimum travel lane), not a per-site choice, and four sites each
-# holding their own copy is what src/geometry/treatments.py's own comment on it warns
+# holding their own copy is what src/geometry/treatments/'s own comment on it warns
 # about - a leg could then be narrowed to one number and checked against another.
 
 

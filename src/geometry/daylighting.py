@@ -149,7 +149,7 @@ def no_parking_zones_ft(state, leg_name: str, side: str, crosswalk_offsets: dict
                          props: list[dict] | None = None) -> list[NoParkingZone]:
     """Every stretch of this kerb where R.S. 39:4-138 forbids parking, nearest first."""
     leg = state.legs[leg_name]
-    # Local, for the usual cycle: src/geometry/treatments.py reads this module's statutory
+    # Local, for the usual cycle: src/geometry/treatments/ reads this module's statutory
     # figures. This module deliberately depends on nothing in src/render.
     from src.geometry.targets import LegSide
     from src.geometry.treatments import CURB_EXTENSION_DEVICES, ProtectDaylightZone

@@ -22,7 +22,7 @@ key path and what was expected, before any geometry is built.
 
 The vocabularies come from wherever they are already defined - provenance tiers from
 src/provenance.py - rather than being re-listed, since a copy is a second place for them to
-drift. The one exception is the centerline styles, which live in src/geometry/treatments.py
+drift. The one exception is the centerline styles, which live in src/geometry/treatments/
 and cannot be imported here without pulling shapely and the whole geometry stack into the
 import path of every phase script that only wanted to read a config. That copy is pinned to
 the original by tests/test_site_schema.py rather than by an import.

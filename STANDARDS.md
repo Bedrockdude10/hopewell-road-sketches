@@ -103,10 +103,10 @@ the line stops at Blackwell Avenue's mouth and carries across the driveways.
 
 | figure | value | constant | file |
 |---|---|---|---|
-| Bike lane design width (and the width to design to) | 5 ft | `AASHTO_MIN_BIKE_LANE_FT` | `src/geometry/treatments.py` |
-| Bike lane hard floor, no curb face | 4 ft | `MIN_BIKE_LANE_FT` | `src/geometry/treatments.py` |
-| Parallel parking lane depth | 8 ft | `PARKING_STALL_DEPTH_DEFAULT_FT` | `src/geometry/treatments.py` |
-| Parallel parking stall length | 22 ft | `PARKING_STALL_LENGTH_DEFAULT_FT` | `src/geometry/treatments.py` |
+| Bike lane design width (and the width to design to) | 5 ft | `AASHTO_MIN_BIKE_LANE_FT` | `src/geometry/treatments/` |
+| Bike lane hard floor, no curb face | 4 ft | `MIN_BIKE_LANE_FT` | `src/geometry/treatments/` |
+| Parallel parking lane depth | 8 ft | `PARKING_STALL_DEPTH_DEFAULT_FT` | `src/geometry/treatments/` |
+| Parallel parking stall length | 22 ft | `PARKING_STALL_LENGTH_DEFAULT_FT` | `src/geometry/treatments/` |
 | Low-speed side friction factor | 0.30 | `TURN_SIDE_FRICTION` | `src/metrics.py` |
 | Minimum-radius relation | `V = sqrt(15·R·(e+f))` | `TURN_SUPERELEVATION = 0.0` | `src/metrics.py` |
 
@@ -127,10 +127,10 @@ Two of these carry project decisions worth knowing:
 
 | figure | value | constant | file |
 |---|---|---|---|
-| Minimum pedestrian refuge island width | 6 ft | `NACTO_MIN_REFUGE_ISLAND_WIDTH_FT` | `src/geometry/treatments.py` |
-| Typical low-cost paint buffer / shoulder stripe | 5 ft | `LANE_NARROWING_DEFAULT_STRIPE_FT` | `src/geometry/treatments.py` |
+| Minimum pedestrian refuge island width | 6 ft | `NACTO_MIN_REFUGE_ISLAND_WIDTH_FT` | `src/geometry/treatments/` |
+| Typical low-cost paint buffer / shoulder stripe | 5 ft | `LANE_NARROWING_DEFAULT_STRIPE_FT` | `src/geometry/treatments/` |
 | Urban minimum travel lane (with AASHTO) | 10 ft | — | see `TARGET_LANE_WIDTH_FT` below |
-| …**plus** NJDOT's truck-route allowance (§6) | **11 ft** | `TARGET_LANE_WIDTH_FT` | `src/geometry/treatments.py` |
+| …**plus** NJDOT's truck-route allowance (§6) | **11 ft** | `TARGET_LANE_WIDTH_FT` | `src/geometry/treatments/` |
 | Crosswalk visibility ranking | continental > ladder > transverse | — | `src/render/crosswalks.py` |
 
 ### Two-way (bidirectional) bikeway — *as cited, and NONE OF IT CHECKED*
@@ -143,10 +143,10 @@ checking before any of this goes to a county engineer.
 
 | figure | value | constant | file |
 |---|---|---|---|
-| Two-way lane width, desirable | 12 ft | `TWO_WAY_BIKE_LANE_WIDTH_FT` | `src/geometry/treatments.py` |
-| Two-way lane width, minimum | 10 ft | `MIN_TWO_WAY_BIKE_LANE_FT` | `src/geometry/treatments.py` |
-| Buffer beside moving traffic, with vertical elements | 3 ft | `TWO_WAY_BIKE_LANE_BUFFER_FT` | `src/geometry/treatments.py` |
-| Travel lane floor beside a two-way lane | 10 ft | `MIN_TRAVEL_LANE_BESIDE_TWO_WAY_FT` | `src/geometry/treatments.py` |
+| Two-way lane width, desirable | 12 ft | `TWO_WAY_BIKE_LANE_WIDTH_FT` | `src/geometry/treatments/` |
+| Two-way lane width, minimum | 10 ft | `MIN_TWO_WAY_BIKE_LANE_FT` | `src/geometry/treatments/` |
+| Buffer beside moving traffic, with vertical elements | 3 ft | `TWO_WAY_BIKE_LANE_BUFFER_FT` | `src/geometry/treatments/` |
+| Travel lane floor beside a two-way lane | 10 ft | `MIN_TRAVEL_LANE_BESIDE_TWO_WAY_FT` | `src/geometry/treatments/` |
 
 ### Driveways across a protected bike lane — **Verified 2026-08-14**
 

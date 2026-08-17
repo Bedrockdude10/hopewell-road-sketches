@@ -19,7 +19,7 @@ from src.geometry.treatments import (
 
 # TARGET_LANE_WIDTH_FT is imported from src, not redeclared here. It is a standard
 # (NACTO/AASHTO urban minimum travel lane), not a per-site choice, and four sites each
-# holding their own copy is what src/geometry/treatments.py's own comment on it warns
+# holding their own copy is what src/geometry/treatments/'s own comment on it warns
 # about - a leg could then be narrowed to one number and checked against another.
 PARKING_DEPTH_FT = 8.0        # a standard marked parallel stall
 MIN_PARKING_DEPTH_FT = 7.0    # below this it isn't a usable stall, so none is marked

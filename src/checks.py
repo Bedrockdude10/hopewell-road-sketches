@@ -562,7 +562,7 @@ def _boxes_apart(a: tuple, b: tuple) -> bool:
 
 
 def _divider_shift_toward_ft(state, leg_name: str, side: str) -> float:
-    """Signed divider offset toward `side`. Delegates to src/geometry/treatments.py, which is
+    """Signed divider offset toward `side`. Delegates to src/geometry/treatments/, which is
     where the one definition lives - see divider_shift_toward_ft for why there is only one."""
     from src.geometry.treatments import divider_shift_toward_ft
 

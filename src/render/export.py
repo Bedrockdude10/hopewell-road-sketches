@@ -412,7 +412,7 @@ def export_scenario(model: IntersectionModel, state: DesignState, name: str, out
                 **_stop_bar_span_m(state, leg_name, leg_name in stop_bar_offsets),
                 # A SetCenterlineStyle treatment if the design has one, else the real per-leg
                 # fact from config.yaml (street-view confirmed) or OSM's overtaking=no - see
-                # src/geometry/treatments.py:DesignState.centerline_style.
+                # src/geometry/treatments/state.py:DesignState.centerline_style.
                 "centerline_style": state.centerline_style(leg_name),
                 # Where the centerline paint starts. Resolved here, not in Blender, so the
                 # rule ("stop at the stop bar") lives with the geometry and is testable -

@@ -597,7 +597,7 @@ def _osm_control_props(state: DesignState, nodes_ft: list[dict], pavement=None) 
 def _bollard_props(state: DesignState) -> list[dict]:
     """Plastic bollards (flex-post delineators) down the center of each
     lane-narrowing buffer for legs a scenario has explicitly added them to
-    (src/geometry/treatments.py:add_bollards) - not a general per-site fact, only
+    (src/geometry/treatments/lanes.py:LaneNarrowingBollards) - not a general per-site fact, only
     ever present when a proposal calls for this specific paint+bollard
     escalation.
 
@@ -815,7 +815,7 @@ def _extra_props_from_config(model: IntersectionModel, state: DesignState, offse
 
 def _extra_props_from_state(state: DesignState, offsets_ft: dict, pavement=None) -> list[dict]:
     """Scenario-specific extra signage added by a treatment
-    (src/geometry/treatments.py:ExtraProp) - e.g. an RRFB or a relocated
+    (src/geometry/treatments/extras.py:ExtraProp) - e.g. an RRFB or a relocated
     school-zone sign that only exists in one particular proposal, not the
     site's baseline config (see _extra_props_from_config for the site-wide
     equivalent).
@@ -845,7 +845,7 @@ DRAWN_BY_PAINT = "drawn_by_paint"
 
 def _parking_buffer_bollard_props(state: DesignState) -> list[dict]:
     """Plastic bollards centered in the striped no-parking buffer between a
-    marked-parking lane and the curb (src/geometry/treatments.py:
+    marked-parking lane and the curb (src/geometry/treatments/:
     add_parking_buffer_bollards) - the same bollard prop type _bollard_props
     uses (just on the curb side of a parking lane instead of the travel-lane
     side of a lane-narrowing buffer), so both render identically in 3D via

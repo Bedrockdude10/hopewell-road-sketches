@@ -81,7 +81,7 @@ legs:
     # sanity check, not a measurement - the curb-to-sidewalk setback measured 11.8 ft/side
     # on one field-measured leg and 4.0 ft/side on another 100 ft away.
     centerline_style: single_yellow_dashed|double_yellow|none  # optional, defaults to single_yellow_dashed
-                                       # (src/geometry/treatments.py:DEFAULT_CENTERLINE_STYLE) - what's actually
+                                       # (src/geometry/treatments/base.py:DEFAULT_CENTERLINE_STYLE) - what's actually
                                        # painted down the middle of this leg TODAY. No OSM tag for this; state
                                        # your source in a comment (street-view review, field survey, etc.) the
                                        # same way the `signals` block below does.
@@ -137,7 +137,7 @@ def build_demo_scenario(baseline: DesignState) -> DesignState:
     ...
 ```
 
-Compose treatments from `src/geometry/treatments.py` by applying them to a design:
+Compose treatments from `src/geometry/treatments/` by applying them to a design:
 `state.apply(RefugeIsland(LegTarget("broad_st_east"), offset_ft=40, width_ft=6))`. Each is a frozen
 dataclass that validates itself, and `apply` checks its target exists at this junction - see
 `sites/broad_st_greenwood/scenarios.py` for a worked example.

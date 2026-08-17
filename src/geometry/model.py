@@ -635,7 +635,7 @@ def lane_narrowing_polygons_ft(leg: "Leg", stripe_width_ft: float,
     """Two thin paint-only strips just inside each curb line - a visual lane
     narrowing treatment achieved with paint, NOT a curb_to_curb_ft change (no
     pavement/curb geometry is touched). Used by paint-only proposals - see
-    src/geometry/treatments.py:add_lane_narrowing.
+    src/geometry/treatments/lanes.py:LaneNarrowing.
 
     start_left_ft/start_right_ft trim each strip to begin past the point
     where it tapers into the corner (see lane_narrowing_taper_ft) - a real
@@ -649,7 +649,7 @@ def lane_narrowing_polygons_ft(leg: "Leg", stripe_width_ft: float,
     intersection box where no paint actually exists.
 
     sides restricts which curb(s) to build a strip for - e.g. a marked-
-    parking buffer (src/geometry/treatments.py:add_marked_parking's
+    parking buffer (src/geometry/treatments/parking.py:MarkedParking's
     curb_offset_ft) only ever needs one side of one leg, not the symmetric
     both-sides narrowing a travel lane gets."""
     half = leg.curb_to_curb_ft / 2
@@ -965,8 +965,8 @@ def bollard_points_ft(leg: "Leg", stripe_width_ft: float, start_ft: float,
     starting start_ft along the centerline (past the corner fillet curve, same
     clearance convention as crosswalks/stop bars/trees - see leg_clearance_ft)
     and spaced spacing_ft apart to the end of the leg. Used by
-    src/geometry/treatments.py:add_bollards (both sides, centered in a
-    lane-narrowing buffer) and add_parking_buffer_bollards (one side,
+    src/geometry/treatments/lanes.py:LaneNarrowingBollards (both sides, centered in a
+    lane-narrowing buffer) and treatments/parking.py:ParkingBufferBollards (one side,
     centered in the curb_offset_ft buffer between a marked-parking lane and
     the curb - same "centered in a strip" math either way, just a different
     strip)."""
@@ -1047,7 +1047,7 @@ def parking_lane_edge_line_ft(leg: "Leg", side: str, depth_ft: float, start_ft: 
     gives for its own edge line.
 
     curb_offset_ft > 0 pulls the whole parking lane in from the curb by that
-    much (see src/geometry/treatments.py:add_marked_parking) - e.g. a striped
+    much (see src/geometry/treatments/parking.py:MarkedParking) - e.g. a striped
     no-parking buffer between the parking lane and the curb itself, so
     parking sits directly against the active travel lane instead of against
     the curb. Defaults to 0 (the lane starts right at the curb, as before)."""
@@ -1126,7 +1126,7 @@ def parking_stall_lines_ft(leg: "Leg", side: str, depth_ft: float, stall_length_
 #
 # How far a curb extension may be pushed is bounded by the travel lane it must leave behind,
 # so every caller is checked against TARGET_LANE_WIDTH_FT - see
-# src/geometry/treatments.py:add_curb_extension.
+# src/geometry/treatments/corners.py:AddCurbExtension.
 
 # How gently the extension returns to the real kerb: feet along the leg per foot of lateral
 # shift. A DESIGN CHOICE, not a measured or standard figure - flagged like
@@ -1371,7 +1371,7 @@ def corner_overlay_polygon(pieces: dict, center_ft: Point, depth_ft: float) -> P
     """A 'virtual bump-out' zone hugging a corner's fillet arc, extending
     depth_ft inward toward the intersection center - flush with the pavement,
     no elevation/curb change. Shared shape for two different render
-    treatments: diagonal paint hatching (src/geometry/treatments.py:add_corner_hatching)
+    treatments: diagonal paint hatching (src/geometry/treatments/corners.py:CornerHatching)
     and a textured mountable apron (add_mountable_apron) - same footprint,
     different surface finish.
 

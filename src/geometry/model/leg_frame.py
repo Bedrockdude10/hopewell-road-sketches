@@ -163,7 +163,8 @@ def curb_offsets_at_stations(leg: "Leg", side: str, stations: np.ndarray) -> np.
     return np.interp(stations, curb_stations, curb_offsets)
 
 
-def curb_station_span(leg: "Leg", side: str) -> tuple[float, float] | None:
+def curb_station_span(leg: "Leg", side: str,
+                       behind_ft: float = 0.0) -> tuple[float, float] | None:
     """The stations along the leg that this side's curb was actually traced across, clipped
     to the leg itself.
 
@@ -171,12 +172,21 @@ def curb_station_span(leg: "Leg", side: str) -> tuple[float, float] | None:
     separately) and several of them carry on 11-78 ft PAST the end of the 130 ft leg, because
     the tracing continues down the block. Paint has to be built inside that span - outside it
     there is no curb to measure from, only extrapolation.
+
+    `behind_ft` lets the span begin BEHIND the junction node, as far back as the kerb is really
+    traced. Only a THROUGH-RUNNING kerb should ask: there the kerb does not stop at the node, it
+    carries on as the far leg's kerb, and the two legs' paint has to overlap to fuse rather than
+    stopping dead at station 0 on each side. At W Broad & Louellen that clamp left a 1.28 ft hole
+    in a lane the corridor is supposed to run continuously through - each half ended at its own
+    station 0, in its own frame, with different section widths either side. Still bounded by the
+    tracing, so this never invents kerb; it only stops discarding what is there (that side is
+    traced to station -3.0).
     """
     frame = _traced_curb_frame(leg, side)
     if frame is None:
         return None
     stations, _offsets = frame
-    lo = max(float(stations[0]), 0.0)      # sorted by _curb_in_leg_frame
+    lo = max(float(stations[0]), -abs(behind_ft))      # sorted by _curb_in_leg_frame
     hi = min(float(stations[-1]), leg.centerline.length)
     return (lo, hi) if hi > lo else None
 
@@ -258,6 +268,171 @@ def narrowest_half_width_ft(leg: "Leg", side: str, from_ft: float = 0.0,
     return float(np.abs(offsets).min())
 
 
+def paint_stations(leg: "Leg", side: str, start_ft: float,
+                    end_ft: float | None = None) -> np.ndarray | None:
+    """The station grid every marking on one side of a leg is sampled on.
+
+    Extracted because four functions here had this same eight lines inlined, and a marking whose
+    band was built on one grid while its own edge stripes were built on another is a marking whose
+    pieces do not line up - which is the failure inset_line_ft and offset_band_polygon already
+    warn about in their own docstrings. One grid, one definition.
+
+    Bounded by the stations where this side's kerb is traced, because that is the only stretch
+    where a lateral offset can be checked against anything. None where there is no such span or
+    it is shorter than a single sample.
+
+    A NEGATIVE start_ft is a request to begin behind the junction node, and it is honoured only
+    as far as the kerb is actually traced there - see curb_station_span's behind_ft. Callers that
+    start at 0 or beyond are unaffected, which is all of them except a through-running kerb.
+    """
+    span = curb_station_span(leg, side, behind_ft=max(-start_ft, 0.0))
+    if span is None:
+        return None
+    lo, hi = span
+    lo = max(lo, start_ft)
+    hi = min(hi, leg.centerline.length if end_ft is None else end_ft)
+    if hi - lo < STRIP_SAMPLE_FT:
+        return None
+    return np.linspace(lo, hi, max(int(np.ceil((hi - lo) / STRIP_SAMPLE_FT)) + 1, 2))
+
+
+def kerb_inset_offsets(leg: "Leg", side: str, stations, inset_ft: float,
+                        keep_inside_ft: float = 0.0,
+                        floor_ft: float = 0.0) -> np.ndarray | None:
+    """Offsets that sit `inset_ft` in from the TRACED KERB at each station - a line that follows
+    the kerb rather than the alignment.
+
+    THE DIFFERENCE THIS EXISTS FOR. A centreline offset is a constant; the kerb is not. On
+    w_broad_st_northeast's south-east side the kerb runs 25.13 ft out at the junction throat and
+    17.24 ft out 39 ft later - a real, mapped 8 ft convergence where two streets of different
+    widths meet. A bike lane drawn at a constant 16.44 ft from the centreline held straight
+    through all of it and left a hatched wedge widening from 0.87 ft to 8.68 ft against the kerb.
+    In the render the lane reads as swerving away from the kerb it is supposed to be protected by.
+
+    So a marking that BELONGS TO THE KERB - the outer edge of a kerbside bike lane, the parking
+    lane against it - is measured from the kerb, and the variable part of the section is absorbed
+    where a designer would put it: the buffer between the lane and the travel way. What must NOT
+    be measured from here is anything that belongs to the travel lane, or the travel lane inherits
+    the kerb's wobble and stops holding its target width.
+
+    `floor_ft` IS WHAT KEEPS THIS ONE-DIRECTIONAL, and it matters more than it looks. A section is
+    sized at the leg's NARROWEST traced point, so that position is the one place it is known to
+    fit; following the kerb is only ever about the stations where the street has MORE room. Pass
+    the section's own alignment-referenced offset here and the marking moves outward with the kerb
+    and never inward past its design. Without it, a station where the sampled kerb comes inside the
+    narrowest figure compresses the whole section - on broad_st_east's right kerb the lane's outer
+    stripe and its buffer stripe converged and ran along each other for 2.3 ft, which
+    MarkingsDoNotCollide reported.
+
+    Returns absolute distances, unsigned - see line_from_offsets for the side convention.
+    """
+    curb_offsets = curb_offsets_at_stations(leg, side, stations)
+    if curb_offsets is None:
+        return None
+    return np.maximum(np.abs(curb_offsets) - inset_ft - keep_inside_ft, floor_ft)
+
+
+def _advancing(centerline: LineString, points) -> np.ndarray:
+    """Mask of placed vertices that ADVANCE along the centreline, dropping any that double back.
+
+    A lateral offset is placed perpendicular to the centreline at each station, and near a vertex
+    the perpendiculars on either side converge - so past a certain offset consecutive placements
+    come out in the wrong order and the polyline reverses. tests/test_frame_properties.py already
+    established this as a property of the frame rather than a defect: around a kink there is a band
+    of stations no offset can reach.
+
+    It only bites at LARGE offsets, which is why it surfaced when the bike lane's edges moved onto
+    the kerb. broad_st_east's centreline kinks 4.5 deg at station 43.2 and that edge sits 28 ft out;
+    one vertex, asked for station 42.5, landed back at 38.96. The line stays SIMPLE - it does not
+    cross itself - so nothing caught it geometrically, but clipping it by station then produced two
+    fragments whose station ranges overlap, and MarkingsDoNotCollide reported 2.3 ft of one line
+    painted twice. It was right: a stripe that runs forward, back, then forward again is drawn over
+    itself on the ground.
+
+    Dropping the offending vertex loses nothing real - the band it sits in is unreachable, so there
+    is no correct position for it - and leaves the stripe monotonic, which is what every
+    station-based clip downstream assumes.
+    """
+    stations, _offsets = station_offset_many(centerline, np.asarray(points, dtype=float))
+    keep = np.ones(len(stations), dtype=bool)
+    highest = -np.inf
+    for i, station in enumerate(stations):
+        if station <= highest:
+            keep[i] = False
+        else:
+            highest = station
+    return keep
+
+
+def line_from_offsets(leg: "Leg", side: str, stations, offsets_ft) -> LineString | None:
+    """A polyline through `offsets_ft` (absolute, unsigned) at `stations` on one side."""
+    sign = 1.0 if side == "left" else -1.0
+    pts = place_in_measured_frame(leg.centerline, stations, sign * np.asarray(offsets_ft))
+    pts = np.asarray(pts, dtype=float)[_advancing(leg.centerline, pts)]
+    return LineString(pts) if len(pts) >= 2 else None
+
+
+def band_from_offsets(leg: "Leg", side: str, stations, inner_ft, outer_ft) -> Polygon | None:
+    """The strip between two per-station offset arrays on one side.
+
+    The shared tail of offset_band_polygon and its kerb-referenced sibling: once both boundaries
+    are arrays on the same grid, how they were derived stops mattering, which is what lets a band
+    have one centreline-referenced edge and one kerb-referenced edge - exactly what the buffer
+    beside a kerb-hugging bike lane is.
+    """
+    sign = 1.0 if side == "left" else -1.0
+    inner_pts = np.asarray(place_in_measured_frame(leg.centerline, stations,
+                                                   sign * np.asarray(inner_ft)), dtype=float)
+    outer_pts = np.asarray(place_in_measured_frame(leg.centerline, stations,
+                                                   sign * np.asarray(outer_ft)), dtype=float)
+    # ONE mask for both edges - see _advancing. Filtering them independently would drop a station
+    # from the outer edge and keep it on the inner, which shears the band rather than shortening it:
+    # the two boundaries are paired by station and a polygon built from unpaired lists closes across
+    # the gap. The outer edge doubles back first (it is further out), so requiring BOTH to advance is
+    # what keeps the pairing.
+    keep = _advancing(leg.centerline, inner_pts) & _advancing(leg.centerline, outer_pts)
+    inner_pts, outer_pts = inner_pts[keep], outer_pts[keep]
+    if len(inner_pts) < 2:
+        return None
+    band = Polygon(list(inner_pts) + list(reversed(list(outer_pts))))
+    if not band.is_valid:
+        band = band.buffer(0)
+    return band if not band.is_empty and band.area > 0 else None
+
+
+def kerb_parallel_line_ft(leg: "Leg", side: str, inset_ft: float, start_ft: float,
+                           end_ft: float | None = None,
+                           keep_inside_ft: float = 0.0,
+                           floor_ft: float = 0.0) -> LineString | None:
+    """A stripe that runs `inset_ft` in from the traced kerb - see kerb_inset_offsets."""
+    stations = paint_stations(leg, side, start_ft, end_ft)
+    if stations is None:
+        return None
+    offsets = kerb_inset_offsets(leg, side, stations, inset_ft, keep_inside_ft, floor_ft)
+    if offsets is None:
+        return None
+    return line_from_offsets(leg, side, stations, offsets)
+
+
+def kerb_referenced_band_polygon(leg: "Leg", side: str, outer_inset_ft: float, width_ft: float,
+                                  start_ft: float, end_ft: float | None = None,
+                                  keep_inside_ft: float = 0.0,
+                                  floor_ft: float = 0.0) -> Polygon | None:
+    """A band of constant `width_ft` whose OUTER edge sits `outer_inset_ft` in from the kerb.
+
+    A kerbside bike lane's own asphalt: constant width, following the kerb. Its inner edge moves
+    with the kerb too, which is the point - the buffer inside it then absorbs whatever the street
+    happens to do, and the travel lane keeps its target.
+    """
+    stations = paint_stations(leg, side, start_ft, end_ft)
+    if stations is None:
+        return None
+    outer = kerb_inset_offsets(leg, side, stations, outer_inset_ft, keep_inside_ft, floor_ft)
+    if outer is None:
+        return None
+    return band_from_offsets(leg, side, stations, np.maximum(outer - width_ft, 0.0), outer)
+
+
 def inset_line_ft(leg: "Leg", side: str, offset_ft: float,
                    start_ft: float, end_ft: float | None = None,
                    keep_inside_ft: float = 0.0) -> LineString | None:
@@ -274,16 +449,9 @@ def inset_line_ft(leg: "Leg", side: str, offset_ft: float,
     straddling the kerb. Clamping the AXIS to the kerb hung half the paint over it wherever
     the road was narrower than the offset asked for.
     """
-    span = curb_station_span(leg, side)
-    if span is None:
+    stations = paint_stations(leg, side, start_ft, end_ft)
+    if stations is None:
         return None
-    lo, hi = span
-    lo = max(lo, start_ft)
-    hi = min(hi, leg.centerline.length if end_ft is None else end_ft)
-    if hi - lo < STRIP_SAMPLE_FT:
-        return None
-    n = max(int(np.ceil((hi - lo) / STRIP_SAMPLE_FT)) + 1, 2)
-    stations = np.linspace(lo, hi, n)
     curb_offsets = curb_offsets_at_stations(leg, side, stations)
     sign = 1.0 if side == "left" else -1.0
     room = np.maximum(np.abs(curb_offsets) - keep_inside_ft, 0.0)
@@ -313,28 +481,14 @@ def offset_band_polygon(leg: "Leg", side: str, inner_offset_ft: float, outer_off
 
     Returns None where there is no room or no span to draw over, like its siblings.
     """
-    span = curb_station_span(leg, side)
-    if span is None:
+    stations = paint_stations(leg, side, start_ft, end_ft)
+    if stations is None:
         return None
-    lo, hi = span
-    lo = max(lo, start_ft)
-    hi = min(hi, leg.centerline.length if end_ft is None else end_ft)
-    if hi - lo < STRIP_SAMPLE_FT:
-        return None
-    n = max(int(np.ceil((hi - lo) / STRIP_SAMPLE_FT)) + 1, 2)
-    stations = np.linspace(lo, hi, n)
     curb_offsets = curb_offsets_at_stations(leg, side, stations)
-    sign = 1.0 if side == "left" else -1.0
     room = (np.maximum(np.abs(curb_offsets) - keep_inside_ft, 0.0) if curb_offsets is not None
             else np.full(stations.shape, abs(leg.curb_to_curb_ft) / 2 - keep_inside_ft))
-    inner = sign * np.minimum(inner_offset_ft, room)
-    outer = sign * np.minimum(outer_offset_ft, room)
-    inner_pts = place_in_measured_frame(leg.centerline, stations, inner)
-    outer_pts = place_in_measured_frame(leg.centerline, stations, outer)
-    band = Polygon(list(inner_pts) + list(reversed(list(outer_pts))))
-    if not band.is_valid:
-        band = band.buffer(0)
-    return band if not band.is_empty and band.area > 0 else None
+    return band_from_offsets(leg, side, stations, np.minimum(inner_offset_ft, room),
+                              np.minimum(outer_offset_ft, room))
 
 
 

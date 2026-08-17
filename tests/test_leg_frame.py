@@ -346,3 +346,43 @@ def test_the_width_fit_measures_a_badly_configured_leg_from_its_kerbs():
         _fit_legs_to_traced_kerbs(legs, ways, Point(0, 0), {})
     assert _traced_side_count(legs) == 2
     assert legs["east"].curb_to_curb_ft == pytest.approx(31.0, abs=0.5)
+
+
+def test_a_stripe_placed_at_a_large_offset_does_not_double_back():
+    """The bug that made the two-way lane's edge line paint itself twice.
+
+    A lateral offset is placed perpendicular to the centreline at each station, and around a bend
+    the perpendiculars converge - so past some offset consecutive placements come out in the wrong
+    order and the polyline reverses. broad_st_east's centreline kinks 4.5 deg at station 43.2, and
+    once the bike lane's outer edge moved onto the traced kerb it sat 28 ft out: one vertex asked
+    for station 42.5 landed back at station 38.96.
+
+    The line stayed SIMPLE, so no geometric test caught it, but clipping it by station then produced
+    two fragments whose station ranges overlapped and MarkingsDoNotCollide reported 2.3 ft of one
+    stripe painted over itself. So what is asserted is the property the clip downstream assumes:
+    stations along a placed stripe only ever increase.
+    """
+    import numpy as np
+    from shapely.geometry import LineString
+
+    from src.geometry.model import Leg, line_from_offsets, station_offset_many
+
+    # A 4.5 deg kink at station 43, like broad_st_east's, TURNING TOWARD the offset side. The
+    # direction is the whole condition and it is easy to get backwards: on the outside of a bend
+    # the perpendiculars diverge and any offset places cleanly, so a leg kinked the other way
+    # passes this with no guard at all and pins nothing.
+    ahead = -np.radians(4.5)
+    kinked = LineString([(0, 0), (43, 0),
+                         (43 + 130 * np.cos(ahead), 130 * np.sin(ahead))])
+    leg = Leg(name="kinked", centerline=kinked, curb_to_curb_ft=60.0)
+    stations = np.arange(0.0, 170.0, 2.0)
+    line = line_from_offsets(leg, "right", stations, np.full(stations.shape, 28.0))
+    assert line is not None
+
+    placed, _offsets = station_offset_many(kinked, np.asarray(line.coords, dtype=float))
+    backwards = [(placed[i - 1], placed[i]) for i in range(1, len(placed))
+                 if placed[i] <= placed[i - 1]]
+    assert not backwards, (
+        f"{len(backwards)} vertex/vertices double back along the leg, e.g. "
+        f"{backwards[0][0]:.2f} -> {backwards[0][1]:.2f} ft - a station-based clip will fragment "
+        f"this stripe into pieces that overlap, which reads as paint applied twice")

@@ -7,10 +7,11 @@ the standard section, fall back to the constrained one, and report which it got.
 from dataclasses import dataclass
 from typing import ClassVar
 
+import numpy as np
 import shapely.ops
 
 from src.geometry.targets import Side
-from src.geometry.model import (narrowest_half_width_ft)
+from src.geometry.model import narrowest_half_width_ft
 from src.geometry.treatments.base import (BOLLARD_DEFAULT_SPACING_FT, LANE_WIDTH_SLACK_FT,
                                           PARKING_STALL_LENGTH_DEFAULT_FT,
                                           TARGET_LANE_WIDTH_FT, Treatment)
@@ -101,6 +102,12 @@ CONTRAFLOW_GAP_FT = 5.0
 # TARGET_LANE_WIDTH_FT (11) is what this project designs to; a corridor that cannot hold two
 # 10 ft lanes beside the section is reported rather than drawn.
 MIN_TRAVEL_LANE_BESIDE_TWO_WAY_FT = 10.0
+# How far behind the junction node a THROUGH-RUNNING kerb's paint starts, so the two legs' halves
+# overlap and fuse instead of each stopping at its own station 0. Enough to cover the 1.28 ft seam
+# at W Broad & Louellen with margin, and bounded by the tracing either way, so a kerb traced right
+# up to the node overlaps by this much and one traced only from the node out overlaps not at all
+# and is no worse off than before.
+THROUGH_JUNCTION_OVERLAP_FT = 3.0
 
 
 def _feet(value: float) -> str:
@@ -206,6 +213,64 @@ class BikeLane:
                 "parking_outer_ft": parking_inner + self.parking_ft,
                 "outer_ft": parking_inner + self.parking_ft}
 
+    @property
+    def hugs_kerb(self) -> bool:
+        """Whether this section's outer edge FOLLOWS the traced kerb rather than standing off the
+        leg's narrowest point.
+
+        False here, and that is a measured decision rather than caution. broad_st_east's left kerb
+        is traced between 18 and 32 ft from the centreline over one leg - a 14 ft range, because
+        the tracing takes in a bay and the corner flare as well as the straight run. A one-way lane
+        that followed it would swing 14 ft and read as snaking; drawn against the narrowest point it
+        stays straight and the leftover is hatched, which is what a striper would do beside a bay.
+
+        TwoWayBikeLane overrides it to True, because there the kerb IS the design: a two-way
+        protected lane exists to be shielded by that kerb along a corridor, and W Broad's 8 ft
+        convergence over 39 ft is the street widening, not a bay. Following it there reads as the
+        road opening out; ignoring it left the wedge this whole split exists to remove.
+
+        The honest limit: neither behaviour is right for a kerb that BOTH converges a long way and
+        oscillates. Distinguishing those needs the kerb described as a course plus excursions from
+        it, which is docs/network-model.md's job, not this flag's.
+        """
+        return False
+
+    def offsets_from_kerb_ft(self) -> dict:
+        """The same section read from the KERB INWARD, as insets from the traced kerb.
+
+        WHY BOTH DIRECTIONS EXIST, and which boundary belongs to which. The offsets above are
+        measured from the alignment at the leg's NARROWEST traced point, because that is where a
+        section has to fit. But the kerb is not at the narrowest point everywhere: on
+        w_broad_st_northeast's south-east side it runs 17.24 ft out at station 46.5 and 25.13 ft
+        out at the junction throat, a real mapped convergence where two streets of different
+        widths meet. Drawn from the alignment, the lane held straight through it and left a
+        hatched wedge against the kerb widening to 8.68 ft - a protected lane visibly wandering
+        away from the thing protecting it.
+
+        So the boundaries are split by WHAT THEY BELONG TO, not by convenience:
+
+            the lane's outer edge, its asphalt, its inner edge   -> the KERB (here)
+            the travel lane's edge stripe                        -> the ALIGNMENT (above)
+
+        and the buffer between them absorbs the difference, which is where a designer puts it.
+        Measuring the travel lane's edge from the kerb instead would hand the kerb's convergence
+        to the travel lane, and it would stop holding TARGET_LANE_WIDTH_FT - which is the one
+        thing every check here is about.
+
+        Insets are positive INWARD from the kerb, and each `*_line_ft` is again the stripe's
+        CENTRE, half a stripe outward from the face it marks - the same convention, mirrored.
+        """
+        line_ft = _lane_line_ft()
+        bike_outer = self.shy_ft + self.parking_ft + (line_ft if self.has_outer_line else 0.0)
+        bike_inner = bike_outer + self.width_ft
+        return {"kerb_hatch_ft": self.shy_ft,
+                "parking_outer_ft": self.shy_ft,
+                "outer_line_ft": (self.shy_ft + self.parking_ft + line_ft / 2
+                                   if self.has_outer_line else None),
+                "bike_outer_ft": bike_outer,
+                "bike_inner_ft": bike_inner,
+                "buffer_outer_line_ft": bike_inner + line_ft / 2 if self.buffer_ft else None}
+
 
 def _lane_line_ft() -> float:
     """The painted width of one edge line. Local import: src/geometry/paint.py imports this
@@ -300,6 +365,11 @@ class TwoWayBikeLane(BikeLane):
                 f"for traffic - {travel_way_ft / 2:.2f} ft per travel lane, under the "
                 f"{MIN_TRAVEL_LANE_BESIDE_TWO_WAY_FT:.0f} ft floor. Narrow the lane, drop the "
                 f"buffer, or put a conventional pair of one-way lanes on this leg instead.")
+
+    @property
+    def hugs_kerb(self) -> bool:
+        """True: the kerb this lane is protected by is the line it follows. See BikeLane.hugs_kerb."""
+        return True
 
     @property
     def section_ft(self) -> float:
@@ -494,9 +564,10 @@ class AddBikeLane(Treatment):
         from src.geometry.markings import (BIKE_BUFFER_FILL, BIKE_LANE_DOTTED_EXTENSION,
                                            BIKE_LANE_EDGE_LINE, BIKE_LANE_SURFACE,
                                            BUFFER_EDGE_LINE, BUFFER_FILL, STALL_DIVIDER)
-        from src.geometry.model import (curbside_strip_polygon, inset_line_ft,
-                                        lane_narrowing_polygons_ft, offset_band_polygon,
-                                        parking_stall_lines_ft)
+        from src.geometry.model import (band_from_offsets, curbside_strip_polygon, inset_line_ft,
+                                        kerb_inset_offsets, kerb_parallel_line_ft,
+                                        kerb_referenced_band_polygon, lane_narrowing_polygons_ft,
+                                        offset_band_polygon, paint_stations, parking_stall_lines_ft)
         from src.geometry.paint import (LANE_EDGE_LINE_WIDTH_FT, _one, end_against_crossing,
                                         parking_runs)
 
@@ -509,25 +580,60 @@ class AddBikeLane(Treatment):
         # here - a real one carries on to the crossing and often across it. Stopping it at the
         # corner clearance instead left the buffer 5.5 ft short of the crossing, which
         # test_curbside_paint_ends_against_its_crossing reads as hatching that gave up early.
-        if (leg_name, side) in ctx.straight_through:
-            start_ft, beyond_ft = 0.0, None
+        through = (leg_name, side) in ctx.straight_through
+        if through:
+            # BEHIND THE NODE, not up to it. Each leg's paint is built in its own frame, so two
+            # halves that both stop at their own station 0 stop just shy of each other - 1.28 ft
+            # of hole at W Broad & Louellen, in the middle of a lane whose whole point is running
+            # continuously through the junction. Starting behind it makes the two overlap, and the
+            # overlap is deduped by shares_a_kerb below, which is the same mechanism that keeps two
+            # zones on one through kerb from double-painting. Honoured only as far as the kerb is
+            # really traced there - see model.paint_stations.
+            start_ft, beyond_ft = -THROUGH_JUNCTION_OVERLAP_FT, None
         elif leg_name in ctx.marked:
             start_ft, beyond_ft = end_against_crossing(at)
         else:
             start_ft, beyond_ft = at.target_ft, None
         bounds = lane.offsets_from_centerline_ft()
+        kerb = lane.offsets_from_kerb_ft()
         # Every stripe at its own CENTRE, which BikeLane has already offset half a stripe out
         # from the face it marks - so the travel lane keeps its 11 ft and the bike lane keeps
         # its own width, and the paint comes out of the buffer between them. Getting this wrong
         # is not subtle: an edge line centred on the mark leaves a 10.59 ft lane, which
         # PaintClearOfTheTravelLane reports on every vertex.
-        for key in ("inner_line_ft", "buffer_outer_line_ft", "outer_line_ft"):
-            if bounds[key] is None:
-                continue
-            ctx.add(BIKE_LANE_EDGE_LINE,
-                     inset_line_ft(leg, side, bounds[key], start_ft,
-                                    keep_inside_ft=LANE_EDGE_LINE_WIDTH_FT / 2),
-                     leg_name, side, beyond_ft)
+        #
+        # WHICH DATUM EACH BOUNDARY IS MEASURED FROM. The travel lane's edge always comes off the
+        # alignment, so the lane holds TARGET_LANE_WIDTH_FT whatever the kerb does. The lane's own
+        # two edges come off the KERB where this section hugs it (see BikeLane.hugs_kerb) and off
+        # the alignment where it does not - one branch, so a section cannot end up with its green
+        # on one datum and its stripes on the other.
+        def lane_edge_line(key, from_ft, to_ft=None):
+            if lane.hugs_kerb:
+                # floor_ft is this stripe's own designed offset, so it follows the kerb OUTWARD
+                # and never comes in tighter than the section - see kerb_inset_offsets.
+                return (kerb_parallel_line_ft(leg, side, kerb[key], from_ft, to_ft,
+                                               floor_ft=bounds[key])
+                        if kerb[key] is not None else None)
+            return (inset_line_ft(leg, side, bounds[key], from_ft, to_ft,
+                                   keep_inside_ft=LANE_EDGE_LINE_WIDTH_FT / 2)
+                    if bounds[key] is not None else None)
+
+        def lane_surface(from_ft, to_ft=None):
+            if lane.hugs_kerb:
+                return kerb_referenced_band_polygon(leg, side, kerb["bike_outer_ft"],
+                                                     lane.width_ft, from_ft, to_ft,
+                                                     floor_ft=bounds["bike_outer_ft"])
+            return offset_band_polygon(leg, side, bounds["bike_inner_ft"], bounds["bike_outer_ft"],
+                                        from_ft, to_ft,
+                                        keep_inside_ft=LANE_EDGE_LINE_WIDTH_FT / 2)
+
+        ctx.add(BIKE_LANE_EDGE_LINE,
+                 inset_line_ft(leg, side, bounds["inner_line_ft"], start_ft,
+                                keep_inside_ft=LANE_EDGE_LINE_WIDTH_FT / 2),
+                 leg_name, side, beyond_ft, shares_a_kerb=through)
+        for key in ("buffer_outer_line_ft", "outer_line_ft"):
+            ctx.add(BIKE_LANE_EDGE_LINE, lane_edge_line(key, start_ft), leg_name, side, beyond_ft,
+                     shares_a_kerb=through)
         # THE LANE'S OWN ASPHALT, PAINTED GREEN - between the two edge stripes, i.e. exactly the
         # width a rider gets. Bounded by the stripes' faces rather than their centres, so the
         # green stops where the white starts instead of running under it; MarkingsDoNotCollide
@@ -540,10 +646,8 @@ class AddBikeLane(Treatment):
         # Through ctx.add like every other marking, NOT ctx.add_surface: a surface is built
         # ground that everything else is cut around (seal_surfaces), and colouring the lane must
         # not cut the lane's own edge lines - or the buffer hatching beside it - back out.
-        surface = offset_band_polygon(
-            leg, side, bounds["bike_inner_ft"], bounds["bike_outer_ft"], start_ft,
-            keep_inside_ft=LANE_EDGE_LINE_WIDTH_FT / 2)
-        ctx.add(BIKE_LANE_SURFACE, surface, leg_name, side, beyond_ft)
+        surface = lane_surface(start_ft)
+        ctx.add(BIKE_LANE_SURFACE, surface, leg_name, side, beyond_ft, shares_a_kerb=through)
         # AND ACROSS EACH DRIVEWAY IT MEETS, DOTTED - the green and both lines together. A lane is
         # not interrupted by an entrance, it is crossed there, and the dotted extension is what
         # says so; a rider looking down the lane sees it continue. The spans come from the lane's
@@ -555,32 +659,58 @@ class AddBikeLane(Treatment):
         # the lane is a no-travel zone - it sweeps away from the mouth instead (see
         # paint.kerb_opening_bands).
         for dash_start_ft, dash_end_ft in ctx.opening_dash_spans(surface, leg_name):
-            for key in ("inner_line_ft", "buffer_outer_line_ft", "outer_line_ft"):
-                if bounds[key] is None:
-                    continue
+            # Split the same way the solid stripes above are, or the dotted continuation would
+            # sit somewhere the line it continues does not.
+            ctx.emit_across_opening(BIKE_LANE_DOTTED_EXTENSION,
+                                     inset_line_ft(leg, side, bounds["inner_line_ft"],
+                                                   dash_start_ft, dash_end_ft,
+                                                   keep_inside_ft=LANE_EDGE_LINE_WIDTH_FT / 2),
+                                     leg_name, side)
+            for key in ("buffer_outer_line_ft", "outer_line_ft"):
                 ctx.emit_across_opening(BIKE_LANE_DOTTED_EXTENSION,
-                                         inset_line_ft(leg, side, bounds[key], dash_start_ft,
-                                                       dash_end_ft,
-                                                       keep_inside_ft=LANE_EDGE_LINE_WIDTH_FT / 2),
+                                         lane_edge_line(key, dash_start_ft, dash_end_ft),
                                          leg_name, side)
-            ctx.emit_across_opening(BIKE_LANE_SURFACE, offset_band_polygon(
-                leg, side, bounds["bike_inner_ft"], bounds["bike_outer_ft"],
-                dash_start_ft, dash_end_ft,
-                keep_inside_ft=LANE_EDGE_LINE_WIDTH_FT / 2), leg_name, side)
+            ctx.emit_across_opening(BIKE_LANE_SURFACE,
+                                     lane_surface(dash_start_ft, dash_end_ft), leg_name, side)
         if lane.buffer_ft:
             # The hatched buffer, between the two lines that bound it rather than under them.
             # lane_narrowing_polygons_ft measures its stripe inward from the kerb-to-kerb half,
             # so the depth is the distance from the kerb to the buffer's inner FACE, and the
             # zone is then cut back to the buffer's outer face.
+            # THE BUFFER IS THE MIXED BAND, and it is the piece that makes the whole split work:
+            # its inner face is the travel lane's edge, measured from the alignment so the lane
+            # holds its target, and its outer face is the bike lane's inner face, measured from the
+            # kerb so the lane hugs it. Everything the street does between those two - the 8 ft
+            # convergence at W Broad's junction throat - ends up here, widening the separation
+            # exactly where the turning conflicts are, which is where a designer would want it.
             inner_face_ft = bounds["travel_lane_edge_ft"] + LANE_EDGE_LINE_WIDTH_FT
-            fill = _one(lane_narrowing_polygons_ft(
-                leg, leg.curb_to_curb_ft / 2 - inner_face_ft,
-                start_left_ft=start_ft, start_right_ft=start_ft, sides=(side,)))
-            outer_face_ft = bounds["bike_inner_ft"] - LANE_EDGE_LINE_WIDTH_FT
-            beyond = curbside_strip_polygon(leg, side, outer_face_ft, start_ft)
-            if fill is not None and beyond is not None:
-                fill = fill.difference(beyond)
-            ctx.rim(ctx.add(BIKE_BUFFER_FILL, fill, leg_name, side, beyond_ft), BIKE_LANE_EDGE_LINE)
+            fill = None
+            if lane.hugs_kerb:
+                stations = paint_stations(leg, side, start_ft)
+                if stations is not None:
+                    outer = kerb_inset_offsets(
+                        leg, side, stations, kerb["bike_inner_ft"] + LANE_EDGE_LINE_WIDTH_FT,
+                        floor_ft=bounds["bike_inner_ft"] - LANE_EDGE_LINE_WIDTH_FT)
+                    if outer is not None:
+                        # Never inside the travel lane's edge: where the kerb comes in far enough
+                        # that the buffer would have negative width it pinches to nothing, rather
+                        # than reaching back across the stripe that bounds it.
+                        fill = band_from_offsets(leg, side, stations,
+                                                  np.full(stations.shape, inner_face_ft),
+                                                  np.maximum(outer, inner_face_ft))
+            else:
+                fill = _one(lane_narrowing_polygons_ft(
+                    leg, leg.curb_to_curb_ft / 2 - inner_face_ft,
+                    start_left_ft=start_ft, start_right_ft=start_ft, sides=(side,)))
+                beyond = curbside_strip_polygon(
+                    leg, side, bounds["bike_inner_ft"] - LANE_EDGE_LINE_WIDTH_FT, start_ft)
+                if fill is not None and beyond is not None:
+                    fill = fill.difference(beyond)
+            # Deduped against the other half of the same kerb like the lane itself, or the two
+            # legs' buffers overlap through the node now that both reach behind it - 18 sq ft of
+            # it at Louellen, which markings_collide reported.
+            ctx.rim(ctx.add(BIKE_BUFFER_FILL, fill, leg_name, side, beyond_ft,
+                             shares_a_kerb=through), BIKE_LANE_EDGE_LINE)
         if lane.parking_ft:
             # Parking-protected: the stalls sit OUTSIDE the bike lane, between it and the kerb,
             # which is what shields the lane. Ticked at the standard stall length over the runs
@@ -603,10 +733,22 @@ class AddBikeLane(Treatment):
             # for free, so this zone read as finished in 2D while the 3D render - which gets
             # only the hatch strokes and the lines actually painted - had its strokes stopping
             # in mid-air where the crossing cut them. See PaintContext.rim.
-            ctx.rim(ctx.add(BUFFER_FILL, _one(lane_narrowing_polygons_ft(
-                leg, leg.curb_to_curb_ft / 2 - bounds["outer_ft"],
-                start_left_ft=start_ft, start_right_ft=start_ft, sides=(side,))),
-                leg_name, side, beyond_ft), BUFFER_EDGE_LINE)
+            # Now a CONSTANT shy_ft against the kerb rather than whatever the street had spare,
+            # because the lane's outer edge follows the kerb instead of standing off the narrowest
+            # point. That is the whole visible fix: this zone used to be the wedge, 0.87 ft of
+            # hatching at one end of W Broad's lane and 8.68 ft at the other. Where shy_ft is 0
+            # there is nothing to hatch and the lane meets its own edge stripe at the kerb.
+            # Where the lane hugs the kerb this is a CONSTANT shy_ft against it rather than
+            # whatever the street had spare, which is the whole visible fix: it used to be the
+            # wedge - 0.87 ft of hatching at one end of W Broad's lane and 8.68 ft at the other.
+            # With shy_ft at 0 there is nothing to hatch and the lane meets its own edge stripe.
+            hatch = (kerb_referenced_band_polygon(leg, side, 0.0, lane.shy_ft, start_ft)
+                     if lane.shy_ft else None) if lane.hugs_kerb else _one(
+                lane_narrowing_polygons_ft(leg, leg.curb_to_curb_ft / 2 - bounds["outer_ft"],
+                                            start_left_ft=start_ft, start_right_ft=start_ft,
+                                            sides=(side,)))
+            ctx.rim(ctx.add(BUFFER_FILL, hatch, leg_name, side, beyond_ft,
+                             shares_a_kerb=through), BUFFER_EDGE_LINE)
 
 
 @dataclass(frozen=True)
@@ -693,7 +835,7 @@ class AddTwoWayBikeLane(AddBikeLane):
     def paint(self, ctx) -> None:
         """The one-way section's markings, plus the yellow stripe down the middle of the lane."""
         from src.geometry.markings import BIKE_CONTRAFLOW_DIVIDER
-        from src.geometry.model import inset_line_ft
+        from src.geometry.model import inset_line_ft, kerb_parallel_line_ft
 
         # Everything AddBikeLane paints, at this section's own offsets. Reached through the
         # resolved lane, so the stripes land where the shifted section actually is.
@@ -704,9 +846,24 @@ class AddTwoWayBikeLane(AddBikeLane):
         leg = ctx.state.legs[leg_name]
         bounds = section.offsets_from_centerline_ft()
         centre_ft = (bounds["bike_inner_ft"] + bounds["bike_outer_ft"]) / 2
+        # Measured from the KERB, like the lane's own two edges - see BikeLane.offsets_from_kerb_ft.
+        # Left on the alignment it stayed put while the lane moved onto the kerb, and on
+        # broad_st_east's right kerb the divider ended up running along the lane's edge stripe for
+        # 1.2 ft, which MarkingsDoNotCollide reported and was right to: a lane's centre stripe that
+        # is not down the lane's centre is not a centre stripe.
+        from_kerb = section.offsets_from_kerb_ft()
+        centre_from_kerb_ft = (from_kerb["bike_inner_ft"] + from_kerb["bike_outer_ft"]) / 2
         at = ctx.anchors(leg_name, side, inner_offset_ft=centre_ft)
-        if (leg_name, side) in ctx.straight_through:
-            start_ft, beyond_ft = 0.0, None
+        through = (leg_name, side) in ctx.straight_through
+        if through:
+            # BEHIND THE NODE, not up to it. Each leg's paint is built in its own frame, so two
+            # halves that both stop at their own station 0 stop just shy of each other - 1.28 ft
+            # of hole at W Broad & Louellen, in the middle of a lane whose whole point is running
+            # continuously through the junction. Starting behind it makes the two overlap, and the
+            # overlap is deduped by shares_a_kerb below, which is the same mechanism that keeps two
+            # zones on one through kerb from double-painting. Honoured only as far as the kerb is
+            # really traced there - see model.paint_stations.
+            start_ft, beyond_ft = -THROUGH_JUNCTION_OVERLAP_FT, None
         elif leg_name in ctx.marked:
             from src.geometry.paint import end_against_crossing
             start_ft, beyond_ft = end_against_crossing(at)
@@ -717,7 +874,9 @@ class AddTwoWayBikeLane(AddBikeLane):
         # rather than left to a line style, for the reason every other dashed marking in this
         # project is: a style is a 2D property and the 3D render gets geometry, so a continuous
         # line with a dashed style renders solid.
-        axis = inset_line_ft(leg, side, centre_ft, start_ft)
+        axis = (kerb_parallel_line_ft(leg, side, centre_from_kerb_ft, start_ft,
+                                       floor_ft=centre_ft)
+                 if section.hugs_kerb else inset_line_ft(leg, side, centre_ft, start_ft))
         if axis is None or axis.is_empty:
             return
         # AND IT CARRIES THROUGH EVERY DRIVEWAY, like the lane's other markings.

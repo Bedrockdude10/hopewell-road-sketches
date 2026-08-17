@@ -115,14 +115,56 @@ def opens_the_kerb(tags: dict) -> bool:
 class OpeningSource(StrEnum):
     """Which OSM object said a vehicle crosses the kerb here.
 
-    Recorded per opening rather than collapsed, because the two are not equally good evidence and
-    the difference belongs in the citation: a dropped kerb's extent is SURVEYED, while a driveway
-    is a centreline with no width, so its mouth is assumed. A reader auditing a gap in a marking
-    needs to know which of those they are looking at.
+    Recorded per opening rather than collapsed, for two reasons that pull in different
+    directions and are both load-bearing.
+
+    HOW GOOD THE EVIDENCE IS, which belongs in the citation: a dropped kerb's extent is
+    SURVEYED, while a driveway is a centreline with no width, so its mouth is assumed. A reader
+    auditing a gap in a marking needs to know which of those they are looking at.
+
+    AND WHAT KIND OF JUNCTION IT IS, which decides the markings - see is_an_intersection. That
+    one is not a matter of evidence quality at all, and reading the source enum for it is the
+    whole reason this stayed an enum rather than collapsing to a bool once the citations were
+    written.
     """
     DROPPED_KERB = "dropped_kerb"
     DRIVEWAY = "driveway"
     CROSS_STREET = "cross_street"
+
+    @property
+    def is_an_intersection(self) -> bool:
+        """Whether a vehicle crossing the kerb here is leaving an INTERSECTION or a DRIVEWAY.
+
+        NOT a distinction this project invented, and not one it is free to decide. Both
+        authorities define it and they agree (STANDARDS.md section 2):
+
+          * MUTCD 11th ed. 1C.02(113)(b) - "The junction of an alley, driveway, or site roadway
+            with a public roadway or highway shall not constitute an intersection, unless the
+            public roadway or highway at said junction is controlled by a traffic control
+            device." Its 1C.02(113)(a) requires "two highways" for the affirmative case.
+          * N.J.S.A. 39:1-1 - an "intersection" joins "two or more highways"; a "private road or
+            driveway" is one "not open to the use of the public for vehicular travel".
+
+        Everything downstream that treats a gap in the kerb differently reads THIS rather than
+        testing the source itself, so a new source (a rail crossing, a bus pad, an alley) answers
+        the question once, here, and every marking rule follows. That is not hypothetical
+        tidiness: when CROSS_STREET was added as a source it inherited every driveway rule in the
+        project silently, and the one that was wrong - a parking edge line carried across
+        Blackwell Avenue - was wrong for a year with nothing able to notice.
+
+        CROSS_STREET is the only affirmative case today and the other two are deliberate:
+
+          * DRIVEWAY is a `service=driveway` way. Not a highway; not an intersection.
+          * DROPPED_KERB is a kerb the surveyor tagged `wheelchair=no` with no tactile paving,
+            which is this borough's convention for a driveway mouth and nothing else - see the
+            module docstring's tag census. A dropped kerb tagged across a STREET's mouth would be
+            a driveway by this rule and an intersection in fact, so kerb_openings_from_model
+            resolves that overlap in favour of the cross street rather than leaving it here.
+
+        The "unless … controlled by a traffic control device" arm of 1C.02(113)(b) is NOT
+        implemented, and STANDARDS.md says so rather than this pretending to be the whole rule.
+        """
+        return self is OpeningSource.CROSS_STREET
 
 
 @dataclass(frozen=True)
@@ -151,6 +193,17 @@ class KerbOpening:
         """Whether the SPAN is surveyed or assumed. A dropped kerb's own extent is the width of
         the opening; a driveway centreline has none, so DRIVEWAY_WIDTH_FT stands in for it."""
         return self.source is OpeningSource.DROPPED_KERB
+
+    @property
+    def is_an_intersection(self) -> bool:
+        """Whether this gap is an intersecting approach or a driveway - OpeningSource's rule.
+
+        Delegated rather than duplicated, and exposed on the opening rather than making every
+        consumer reach for `.source`, because the marking rules are about the GAP: MUTCD
+        3B.11(08) discontinues an edge line "across intersecting approaches" and 3B.11(09)
+        maintains it across a driveway. Neither is about which OSM object told us.
+        """
+        return self.source.is_an_intersection
 
     @property
     def citation(self) -> str:
@@ -278,8 +331,27 @@ def kerb_openings_from_model(model) -> dict:
                 # Where the tracing shows where the kerb really stops, that is the mouth.
                 near_ft, far_ft = _mouth_from_the_tracing(
                     traced.get((leg_name, side), ()), cross.station_ft, cross.mouth_ft)
+                start_ft, end_ft = max(near_ft, 0.0), far_ft
+                # A WHOLE STREET OUTRANKS A DRIVEWAY TAG AT THE SAME PLACE. A dropped kerb or a
+                # service way inside a street's mouth is that street's mouth being described
+                # twice, and the two descriptions do not carry the same rule: an intersecting
+                # approach breaks the edge line (MUTCD 3B.11(08)) where a driveway carries it
+                # across (3B.11(09)), and OpeningSource.is_an_intersection reads the source. Left
+                # in, the same gap would be both at once - the narrower, driveway-flavoured
+                # opening sitting inside the wider one, each cutting a different set of markings.
+                #
+                # The mirror of the DROPPED_KERB-beats-DRIVEWAY rule above, and resolved in the
+                # opposite direction on purpose: that one is about which SPAN is measured, this
+                # one about what the gap IS. Nothing in the four sites hits it today - the
+                # nearest driveway to a cross street's mouth is 68 ft away - so this is a
+                # statement about what must happen rather than a description of current output.
+                inside = [o for o in openings.get((leg_name, side), ())
+                          if not o.is_an_intersection
+                          and start_ft <= o.start_ft and o.end_ft <= end_ft]
+                for swallowed in inside:
+                    openings[(leg_name, side)].remove(swallowed)
                 openings.setdefault((leg_name, side), []).append(
-                    KerbOpening(start_ft=max(near_ft, 0.0), end_ft=far_ft,
+                    KerbOpening(start_ft=start_ft, end_ft=end_ft,
                                 source=OpeningSource.CROSS_STREET, way_id=cross.way_id))
     for key in openings:
         openings[key].sort(key=lambda o: o.start_ft)

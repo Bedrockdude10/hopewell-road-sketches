@@ -1,5 +1,5 @@
 {
-  "name": "Proposed Treatments (build_demo_scenario)",
+  "name": "build_demo_scenario",
   "units": "meters",
   "notes": [
     "LaneNarrowing(princeton_ave_north, stripe_width_ft=4.265788425306804, line_only=False, sides=('left', 'right'))",
@@ -12,10 +12,7 @@
     "complete_centerlines(columbia_ave_east): double_yellow added - the leg has no centerline paint today, so nothing marks the middle of the road",
     "SetCenterlineStyle(columbia_ave_west, style='double_yellow')",
     "complete_centerlines(columbia_ave_west): double_yellow added - the leg has no centerline paint today, so nothing marks the middle of the road",
-    "UpgradeCrosswalkMarkings(columbia_ave_east, style='continental')",
-    "UpgradeCrosswalkMarkings(columbia_ave_west, style='continental')",
-    "UpgradeCrosswalkMarkings(princeton_ave_north, style='continental')",
-    "UpgradeCrosswalkMarkings(princeton_ave_south, style='continental')"
+    "UpgradeCrosswalkMarkings(everywhere, style='continental')"
   ],
   "theme": {
     "asphalt_near": {

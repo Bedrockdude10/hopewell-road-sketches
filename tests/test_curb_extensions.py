@@ -873,3 +873,66 @@ def test_a_kerb_under_the_floor_with_a_buffer_falls_back_to_a_conventional_lane(
     assert widest_protected_lane_ft(roomy, "east", "left") == pytest.approx(BIKE_LANE_WIDTH_FT), (
         "and one with room holds the full design width, buffer and all")
     assert MIN_BIKE_LANE_FT < BIKE_LANE_WIDTH_FT
+
+
+@needs_source_data
+def test_a_stop_bar_stops_where_a_TWO_WAY_bike_lane_starts(site_models):
+    """The same rule, on the leg where the travel lane is not where it looks.
+
+    test_a_stop_bar_stops_where_the_bike_lane_starts above is the one-way case, where the travel
+    lanes straddle the alignment and the section as REQUESTED and as RESOLVED are the same
+    numbers. A two-way lane shifts the travel lanes off the alignment to make room for itself, so
+    they are not: on w_broad_st_southwest the requested section puts the travel lane edge at
+    11.00 ft and the resolved one at 8.20.
+
+    travel_lane_edge_ft read the requested one (`treatment.lane`) where src/checks.py had been
+    reading the resolved one (`treatment.section(state)`) all along - two definitions of one
+    number, with the wrong one wired to the paint. The bar came out 2.80 ft too wide: across the
+    bike lane's inner edge line, into its buffer, and through a flex post standing in it.
+
+    Asserted against the drawn geometry rather than the offsets, because the offsets were not
+    what was wrong - the arithmetic was correct on the wrong section.
+    """
+    from src.geometry.markings import (BIKE_BUFFER_FILL, BIKE_CONTRAFLOW_DIVIDER,
+                                       BIKE_LANE_EDGE_LINE, BIKE_LANE_SURFACE)
+    from src.geometry.treatments import AddTwoWayBikeLane
+    from src.render.crosswalks import entering_lane_width_ft
+
+    checked = 0
+    for site, model in site_models.items():
+        scenarios = load_site_scenarios(site)
+        builder = getattr(scenarios, "build_proposal_two_way_bike_lane", None)
+        if builder is None:
+            continue
+        with contextlib.redirect_stdout(io.StringIO()):
+            state = run_scenario(builder, DesignState.from_model(model), model)
+            scene = resolved_scene(model, state)
+            paint, _props = scene.build_paint_and_posts(scene_props(model, state, scene))
+
+        for leg_name, band in sorted(scene.stop_bar_bands.items()):
+            treatment = state.treatment_for(AddTwoWayBikeLane, LegSide(leg_name, "left"))
+            if treatment is None or band is None or band.is_empty:
+                continue
+            checked += 1
+            resolved = treatment.section(state).offsets_from_centerline_ft()["travel_lane_edge_ft"]
+            assert entering_lane_width_ft(state, leg_name) == pytest.approx(resolved), (
+                f"{site}/{leg_name}: the bar is sized against the section as REQUESTED "
+                f"({treatment.lane.offsets_from_centerline_ft()['travel_lane_edge_ft']:.2f} ft) "
+                f"rather than as resolved against this design ({resolved:.2f} ft)")
+
+            # Nothing belonging to the bikeway may be under the bar - not the lane, not its
+            # buffer, not either edge line, not the contraflow stripe, and not a post.
+            for piece in paint:
+                if piece.leg != leg_name:
+                    continue
+                if piece.kind in (BIKE_LANE_SURFACE, BIKE_BUFFER_FILL, BIKE_LANE_EDGE_LINE,
+                                   BIKE_CONTRAFLOW_DIVIDER):
+                    shared = band.intersection(piece.geometry)
+                    amount = shared.area if piece.covers_area else shared.length
+                    assert amount < 0.1, (
+                        f"{site}/{leg_name}: the stop bar covers {amount:.2f} of "
+                        f"{piece.kind} - a stopping car has no business in the bikeway")
+                elif piece.kind.is_object:
+                    assert not band.intersects(piece.geometry), (
+                        f"{site}/{leg_name}: a flex post stands inside the stop bar")
+    assert checked, "no leg carried a two-way bike lane and a stop bar, so this asserted nothing"

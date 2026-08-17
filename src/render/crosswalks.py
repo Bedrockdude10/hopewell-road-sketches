@@ -14,7 +14,7 @@ from shapely.geometry import LineString, Polygon
 from src.render.coords import FT_TO_M, wgs84_to_state_plane
 from src.geometry.model import (crosswalk_estimate_ft, inset_line_ft, leg_clearance_ft,
                                 station_offset_many)
-from src.geometry.targets import LegSide, LegTarget, Side
+from src.geometry.targets import Everywhere, LegSide, LegTarget, Side
 from src.geometry.treatments import (AddBikeLane, DesignState, LaneNarrowing, MarkedParking,
                                      ShiftCrosswalk, UpgradeCrosswalkMarkings,
                                      divider_shift_toward_ft)
@@ -137,13 +137,26 @@ def travel_lane_edge_ft(state: DesignState, leg_name: str, side) -> float | None
     the travel lane's edge directly, where the other two name what lies outside it. Nothing in
     the four sites applies two of these to one kerb, so this ordering is a statement about what
     should happen if one ever does, not a description of current output.
+
+    THE SECTION IS ASKED OF THE DESIGN, not read off the treatment. `treatment.lane` is the
+    section as REQUESTED - the nominal one, measured from the alignment; `treatment.section(state)`
+    is the section as RESOLVED against the street it is being painted on, and for a two-way lane
+    those are different numbers because the travel lanes have been shifted off the alignment to
+    make room for it. On w_broad_st_southwest the requested section puts the travel lane edge at
+    11.00 ft and the resolved one at 8.20.
+
+    Reading the requested one drew the stop bar 2.80 ft past the end of the travel lane: across
+    the bike lane's inner edge line, into its buffer, and through a flex post standing in that
+    buffer. src/checks.py:_travel_lane_target_ft had been asking the same question correctly the
+    whole time, so this was two definitions of one number with the wrong one wired to the paint -
+    which is the failure this function's own docstring opens by claiming it prevents.
     """
     side = Side(side)
     kerb = LegSide(leg_name, side)
     half_ft = state.legs[leg_name].curb_to_curb_ft / 2
     bike_lane = state.treatment_for(AddBikeLane, kerb)
     if bike_lane is not None:
-        return bike_lane.lane.offsets_from_centerline_ft()["travel_lane_edge_ft"]
+        return bike_lane.section(state).offsets_from_centerline_ft()["travel_lane_edge_ft"]
     narrowing = state.treatment_for(LaneNarrowing, kerb.leg_target)
     if narrowing is not None and side in narrowing.sides:
         return half_ft - narrowing.stripe_width_ft
@@ -421,8 +434,16 @@ def resolve_crosswalk_style(state: DesignState, leg_name: str) -> str:
 
     Here rather than in export.py so the rule has one home, the same reason
     entering_lane_width_ft does.
+
+    THE LEG FIRST, THEN THE FRAME. A per-leg UpgradeCrosswalkMarkings is a decision about this
+    approach and outranks a frame-wide one; a frame-wide one (targets.Everywhere) is the policy
+    every proposal here starts from, and it is what all_crosswalks_continental now applies.
+    Checking only the leg is what left the crossings at unmodelled junctions unstyled - see
+    crossing_style_in, which asks the same two questions for a crossing that has no leg at all.
     """
     treatment = state.treatment_for(UpgradeCrosswalkMarkings, LegTarget(leg_name))
+    if treatment is None:
+        treatment = state.treatment_for(UpgradeCrosswalkMarkings, Everywhere())
     return treatment.style if treatment is not None else "lines"
 
 

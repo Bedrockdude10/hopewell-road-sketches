@@ -125,13 +125,25 @@ class MarkedParking(Treatment):
             # zone's cut end - can be trimmed against it. Painted after, the two overlapped by
             # 3.3 ft where the fillet leaves the lane edge tangentially, which is exactly where
             # they are supposed to meet; MarkingsDoNotCollide reported it.
+            # PAST THE END OF THE TRACING, which nothing else here may do. A daylight zone is
+            # not a design choice about this kerb, it is R.S. 39:4-138 restated in paint, and the
+            # statute does not stop where OSM's kerb tracing does. W Broad & Louellen's south
+            # kerb is traced only from station 60.3 against a statutory zone of 0-93.3, so the
+            # hatching was drawn over the last third of the zone and stopped 7.5 ft short of the
+            # crosswalk it exists to daylight - and hatching that stops short of a crossing
+            # undoes the treatment, because the bare stretch beside the crossing is exactly where
+            # a car parks and blocks the sight line. See leg_frame.paint_stations for what is
+            # assumed outside the tracing (the kerb held at its first traced offset) and why the
+            # stalls and buffers below deliberately do NOT ask for the same.
             ctx.add(DAYLIGHT_EDGE_LINE,
                      inset_line_ft(leg, side, lane_edge_offset_ft, start_ft, zone_end_ft,
-                                    keep_inside_ft=LANE_EDGE_LINE_WIDTH_FT / 2),
+                                    keep_inside_ft=LANE_EDGE_LINE_WIDTH_FT / 2,
+                                    beyond_the_tracing=True),
                      leg_name, side, beyond_ft)
             ctx.rim(ctx.add(DAYLIGHT_FILL, _one(lane_narrowing_polygons_ft(
                 leg, daylight_fill_ft, start_left_ft=start_ft, start_right_ft=start_ft,
-                sides=(side,), end_ft=zone_end_ft)), leg_name, side, beyond_ft,
+                sides=(side,), end_ft=zone_end_ft, beyond_the_tracing=True)),
+                leg_name, side, beyond_ft,
                 shares_a_kerb=(leg_name, side) in ctx.straight_through), DAYLIGHT_EDGE_LINE)
             # Nothing to end against and no taper available: close the square end. See
             # zone_end_line_ft. Not where the kerb runs straight through - the zone carries
@@ -477,6 +489,79 @@ def _merged_length_ft(intervals: list[tuple[float, float]]) -> float:
 # lane, so it is not a stall; MIN_MARKED_PARKING_DEPTH_FT (8 ft) is the width to mark when the
 # street can spare it, not the floor for whether parking exists at all.
 MIN_USABLE_STALL_FT = 7.0
+
+
+def osm_derived_baseline(state: DesignState, model, legs: tuple | None = None) -> DesignState:
+    """Paint every kerb the way OSM says it is used, complete the centrelines, upgrade the
+    crossings - the design that proposes nothing.
+
+    NOT A PROPOSAL, which is the point of it having one home. Every mark it makes is derived
+    from surveyed data: hatching where OSM records a parking restriction, stalls where it does
+    not, a centreline on a leg that has none today, continental paint on the crossings that
+    already exist. There is no design choice in it to make per site, and it was the
+    `build_demo_scenario` of four sites - byte-identical in three of them, and differing in the
+    fourth only by which legs it touches.
+
+    `legs` restricts the parking pass to some of them, which IS a per-site fact (Columbia &
+    Princeton calms only its two Princeton Ave legs) and so stays a parameter rather than
+    becoming a second copy of the function.
+
+    Local import because crossings.py is a sibling and the package's __init__ imports both;
+    reaching for it at module scope would order the two by accident.
+    """
+    from src.geometry.treatments.crossings import all_crosswalks_continental, complete_centerlines
+
+    if model is None:
+        return state
+    state = apply_osm_parking(state, model, legs=legs) if legs else apply_osm_parking(state, model)
+    state = complete_centerlines(state)
+    return all_crosswalks_continental(state)
+
+
+def narrow_lanes_and_recover_parking(state: DesignState) -> DesignState:
+    """Narrow EVERY leg to TARGET_LANE_WIDTH_FT and put the recovered width to work as parking.
+
+    The two treatments have to be sized together, not stacked: an 11 ft lane plus an 8 ft stall
+    needs 19 ft per side, and a small-borough leg is commonly 33-39 ft curb-to-curb (16.5-19.5
+    per side). So the recovered width - half the roadway minus the target lane - is what is
+    available, and each leg gets whichever of these fits:
+
+      * >= PARKING_STALL_DEPTH_DEFAULT_FT: a full 8 ft stall, remainder as a striped buffer
+        between the stall and the kerb (MarkedParking's curb_offset_ft);
+      * >= MIN_USABLE_STALL_FT: a single stall taking the whole recovered width;
+      * less than that: no parking - paint-only narrowing, since a 6 ft stall is not a stall.
+        The leg still gets its target lanes.
+
+    Printed per leg so the trade-off is visible rather than buried in geometry.
+
+    ONE DEFINITION, for the reason hold_travel_lane_at_target below gives at length and this
+    function proves again: it existed as a byte-identical private `_parking_and_narrowing` in
+    THREE site scenario files, each with its own local `PARKING_DEPTH_FT = 8.0` and
+    `MIN_PARKING_DEPTH_FT = 7.0` shadowing the standards in this module. Three copies of a rule
+    is three chances for one of them to drift, and a site is exactly where nobody looks for a
+    standard. See tests/test_sites.py:test_no_site_redeclares_what_src_already_defines.
+
+    THE SISTER RULE IS hold_travel_lane_at_target, and they are deliberately not merged: this
+    one narrows a WHOLE JUNCTION symmetrically and is what a plain road-diet proposal wants;
+    that one holds ONE KERB at the target and is what a bikeway proposal needs for the far side.
+    """
+    for leg_name, leg in state.legs.items():
+        recovered_ft = leg.curb_to_curb_ft / 2 - TARGET_LANE_WIDTH_FT
+        if recovered_ft < MIN_USABLE_STALL_FT:
+            state = state.apply(LaneNarrowing(LegTarget(leg_name), max(recovered_ft, 0.5)))
+            print(f"  NOTE: {leg_name} ({leg.curb_to_curb_ft:.0f} ft) recovers only "
+                  f"{recovered_ft:.1f} ft per side at {TARGET_LANE_WIDTH_FT:.0f} ft lanes - too "
+                  f"narrow for a stall, so paint-only narrowing here, no parking.")
+            continue
+        depth_ft = min(recovered_ft, PARKING_STALL_DEPTH_DEFAULT_FT)
+        buffer_ft = max(recovered_ft - depth_ft, 0.0)
+        for side in ("left", "right"):
+            state = state.apply(MarkedParking(LegSide(leg_name, side), depth_ft=depth_ft,
+                                               curb_offset_ft=buffer_ft))
+        print(f"  NOTE: {leg_name} ({leg.curb_to_curb_ft:.0f} ft) -> "
+              f"{TARGET_LANE_WIDTH_FT:.0f} ft lanes + {depth_ft:.1f} ft parking both sides"
+              + (f" + {buffer_ft:.1f} ft striped buffer" if buffer_ft > 0.1 else "") + ".")
+    return state
 
 
 def hold_travel_lane_at_target(state: DesignState, leg_name: str, side: str) -> DesignState:

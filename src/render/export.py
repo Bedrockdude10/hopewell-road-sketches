@@ -23,7 +23,6 @@ from src.geometry.model import hatch_lines_ft
 from src.geometry.intersection import (IntersectionModel, drawn_kerb_radius_ft,
                                        kerb_lines_with_tags_ft)
 from src.geometry.kerbs import KerbType
-from src.geometry.surveyed import crossing_bars_ft, crossing_lines_ft
 from src.geometry.markings import CHANNELS, KINDS, Role, kinds_in
 from src.geometry.paint import RimCause, in_channel
 from src.render.frame import frame_covering_radius_m, junction_frame
@@ -199,13 +198,13 @@ def export_scenario(model: IntersectionModel, state: DesignState, name: str, out
     # Resolved once and read twice - written into the JSON for the camera, and used to decide
     # which traced kerbs are in the picture at all. Two calls would be two chances to disagree.
     frame = junction_frame(model)
-    # THE TRACED KERBS, resolved once for the same reason. Written out as `kerbs` below and used to
-    # trim each surveyed crossing to the carriageway; two calls would be two chances to disagree
-    # about which kerbs are in the picture, and the trim would then cut against a different set from
-    # the one drawn beside it.
+    # THE TRACED KERBS, resolved once for the same reason - written out as `kerbs` below. The bare
+    # geometry that used to sit beside this (`drawn_kerbs = list(scene.drawn_kerbs)`) was here to
+    # trim each surveyed crossing to the carriageway; that trim moved into
+    # SceneGeometry.surveyed_crossing_markings, which is where the crossing's STYLE is resolved
+    # too, so the two cannot be done against different kerbs.
     drawn_kerbs_with_tags = list(kerb_lines_with_tags_ft(model.center_wgs84, center_ft,
                                                          radius_ft=drawn_kerb_radius_ft()))
-    drawn_kerbs = list(scene.drawn_kerbs)
 
     near_radius_ft = max((v[0] for v in crosswalk_offsets.values()), default=30) + NEAR_ZONE_BUFFER_FT
     pavement_near, pavement_far = _split_near_far([pavement], center_ft, near_radius_ft)
@@ -525,14 +524,16 @@ def export_scenario(model: IntersectionModel, state: DesignState, name: str, out
         # Trimmed to the carriageway at the traced kerbs (surveyed.carriageway_geometry_ft): the
         # traced way runs sidewalk to sidewalk, 6-22 ft longer than the road it spans here, so
         # untrimmed bars are painted across the footway.
+        # Styled by the SCENE, not by each way's own tag: a proposal that repaints every crossing
+        # continental has to reach the ones at junctions this site does not model, and building
+        # the bars here from `crossing.markings` is why it did not - see
+        # SceneGeometry.surveyed_crossing_markings, which the plan view now reads too.
         "surveyed_crossings": [
             {"markings": crossing.markings,
              "distance_m": crossing.distance_ft * FT_TO_M,
-             "bars": [ring_to_local_m(bar.exterior.coords, center_ft)
-                      for bar in crossing_bars_ft(crossing, drawn_kerbs)],
-             "lines": [ring_to_local_m(line.coords, center_ft)
-                       for line in crossing_lines_ft(crossing, drawn_kerbs)]}
-            for crossing in scene.unmodelled_crossings
+             "bars": [ring_to_local_m(bar.exterior.coords, center_ft) for bar in bars],
+             "lines": [ring_to_local_m(line.coords, center_ft) for line in lines]}
+            for crossing, bars, lines in scene.surveyed_crossing_markings()
         ],
         "corner_parcels": [
             {"name": str(row["quadrant"]), "coords": ring_to_local_m(row.geometry.exterior.coords, center_ft)}

@@ -98,22 +98,22 @@ channels:
     count: 3
     extent:
       max:
-      - -19.305
+      - -16.631
       - -0.673
       min:
       - -41.753
       - -10.735
-    points: 40
+    points: 46
   parking_buffer_hatch_lines:
-    count: 7
+    count: 10
     extent:
       max:
-      - -20.464
+      - -10.527
       - -0.94
       min:
       - -36.023
-      - -4.234
-    points: 14
+      - -4.832
+    points: 20
   parking_buffer_taper_lines:
     count: 0
     extent: null
@@ -712,10 +712,10 @@ legs:
     stop_bar_centre_m:
     - -15.833
     - -13.435
-    stop_bar_lateral_offset_m: 1.284
+    stop_bar_lateral_offset_m: 0.892
     stop_bar_offset_m: 20.52
-    stop_bar_span_m: 4.137
-    stop_bar_width_m: 6.706
+    stop_bar_span_m: 3.353
+    stop_bar_width_m: 5.136
     width_m: 13.396
 name: Two-Way Bike Lane
 props:

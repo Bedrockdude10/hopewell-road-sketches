@@ -38,7 +38,11 @@ import sys
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-TARGETS = ["src", "scripts", "tests", "conftest.py"]
+# `sites` was missing until 2026-08-17, and it is the directory where a rule is most
+# likely to be quietly re-invented - the consolidation that removed six duplicated
+# constants and four duplicated functions from it left nine unused imports behind,
+# and nothing said so. A linter that does not read a directory is not linting it.
+TARGETS = ["src", "scripts", "sites", "tests", "conftest.py"]
 RUFF = Path(sys.executable).parent / "ruff"
 LINT_IMPORTS = Path(sys.executable).parent / "lint-imports"
 

@@ -247,7 +247,37 @@ def carriageway_geometry_ft(crossing: SurveyedCrossing, kerb_lines=None) -> Line
     return substring(line, min(hits), max(hits)) or line
 
 
-def crossing_bars_ft(crossing: SurveyedCrossing, kerb_lines=None) -> list[Polygon]:
+def crossing_style_in(state, crossing: SurveyedCrossing) -> str | None:
+    """How `state` calls for this crossing to be drawn, or None to draw nothing.
+
+    THE ONE PLACE a design's marking policy meets a crossing that has no leg. The per-leg path
+    asks src/render/crosswalks.py:resolve_crosswalk_style; this asks the same two questions of
+    the same treatment for the six crossings at Broad & Greenwood that belong to no leg here.
+
+    RESTYLES, NEVER INVENTS. `is_marked` is the gate and it is not negotiable: a crossing the
+    surveyor recorded as unpainted (`crossing:markings=no`), or recorded nothing about, draws
+    nothing however loudly a policy says "all crosswalks continental". Painting one there would
+    be a NEW crossing at an uncontrolled approach, which MUTCD 3C.02(04) wants an engineering
+    study for and this project has no pedestrian counts to do (STANDARDS.md section 2) - and it
+    would be this repo's signature failure exactly inverted, inventing survey data rather than
+    dropping it.
+
+    So the policy can only ever move a crossing UP the visibility ranking that already applies
+    to it: lines -> continental is a repaint of something that exists. Absent a policy the
+    surveyed style stands, which is what existing conditions must always show.
+    """
+    if not crossing.is_marked:
+        return None
+    from src.geometry.targets import Everywhere
+    from src.geometry.treatments import UpgradeCrosswalkMarkings
+
+    treatment = (state.treatment_for(UpgradeCrosswalkMarkings, Everywhere())
+                 if state is not None else None)
+    return treatment.style if treatment is not None else _style_of(crossing.markings)
+
+
+def crossing_bars_ft(crossing: SurveyedCrossing, kerb_lines=None, style: str | None = None
+                      ) -> list[Polygon]:
     """The continental bars painted along this crossing, or [] if it carries no markings.
 
     [] FOR AN UNMARKED CROSSING IS THE POINT, not an edge case: 2 of the 10 in Greenwood's frame
@@ -265,8 +295,12 @@ def crossing_bars_ft(crossing: SurveyedCrossing, kerb_lines=None) -> list[Polygo
     vertices; stepping along the chord instead would walk the bars off a bent crossing, which is
     the error crosswalk_axes had for the crossing frame and centerline_paint_ft had for the double
     yellow (3.98-7.58 ft off, both of them visible in the render).
+
+    `style` overrides the surveyed one where a design has a marking policy - see
+    crossing_style_in, which is the only thing allowed to compute it, because it is the only
+    thing that also enforces "restyle, never invent".
     """
-    if _style_of(crossing.markings) not in ("continental", "ladder"):
+    if (style or _style_of(crossing.markings)) not in ("continental", "ladder"):
         return []
     line = carriageway_geometry_ft(crossing, kerb_lines)
     count = continental_bar_count(line.length)
@@ -279,7 +313,8 @@ def crossing_bars_ft(crossing: SurveyedCrossing, kerb_lines=None) -> list[Polygo
     return [bar for bar in bars if not bar.is_empty]
 
 
-def crossing_lines_ft(crossing: SurveyedCrossing, kerb_lines=None) -> list[LineString]:
+def crossing_lines_ft(crossing: SurveyedCrossing, kerb_lines=None, style: str | None = None
+                       ) -> list[LineString]:
     """The two transverse lines bounding this crossing, or [] if it carries no markings.
 
     The traced way's own two edges, CROSSWALK_DEPTH_FT apart - the least visible of the three
@@ -292,8 +327,10 @@ def crossing_lines_ft(crossing: SurveyedCrossing, kerb_lines=None) -> list[LineS
     itself can return a MultiLineString or nothing at all. Guarded the way
     src/render/crosswalks.py:centerline_paint_ft guards the same call, rather than handing a
     renderer a geometry type it will fail on later.
+
+    `style` is crossing_style_in's - see crossing_bars_ft.
     """
-    if _style_of(crossing.markings) not in ("lines", "ladder"):
+    if (style or _style_of(crossing.markings)) not in ("lines", "ladder"):
         return []
     trimmed = carriageway_geometry_ft(crossing, kerb_lines)
     edges = (trimmed.offset_curve(sign * CROSSWALK_DEPTH_FT / 2) for sign in (1, -1))

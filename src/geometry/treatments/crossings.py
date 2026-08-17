@@ -4,7 +4,7 @@ from dataclasses import dataclass
 
 from shapely.geometry import Polygon
 
-from src.geometry.targets import LegTarget
+from src.geometry.targets import Everywhere, LegTarget
 from src.geometry.model import (leg_clearance_ft)
 from src.geometry.treatments.base import (DEFAULT_CENTERLINE_STYLE,
                                           NACTO_MIN_REFUGE_ISLAND_WIDTH_FT,
@@ -220,14 +220,22 @@ def complete_centerlines(state: DesignState, style: str = "double_yellow") -> De
 
 
 def all_crosswalks_continental(state: DesignState) -> DesignState:
-    """Repaint every marked crossing at this junction to continental.
+    """Repaint every marked crossing IN THE FRAME to continental.
 
     FHWA and NACTO both rank crosswalk visibility roughly lines < continental < ladder, and
     continental is the low-cost repaint that every proposal here starts from - so it applies
-    to all legs rather than being chosen one at a time. Existing conditions keep whatever
+    to all of them rather than being chosen one at a time. Existing conditions keep whatever
     OSM's crossing:markings records; this only changes the proposal.
+
+    EVERY CROSSING, NOT EVERY LEG - one treatment against Everywhere() rather than one per leg.
+    This looped over `state.legs`, which is this junction's four approaches, and a frame drawn
+    at 2.5x holds ten surveyed crossings: the other six belong to Blackwell, Model and Seminary
+    Avenue, have no leg here, and were drawn from their own OSM tag whatever the proposal said.
+    Two of them are tagged `crossing:markings=lines`, so a render captioned "all crosswalks
+    continental" showed two crossings still striped as a pair of parallel lines, 260 ft from
+    four that had been upgraded. See src/geometry/targets.py:Everywhere.
+
+    A PER-LEG UpgradeCrosswalkMarkings STILL WINS where a scenario applies one, which is what
+    makes this a default rather than an override - resolve_crosswalk_style checks the leg first.
     """
-    new_state = state
-    for leg_name in sorted(state.legs):
-        new_state = new_state.apply(UpgradeCrosswalkMarkings(LegTarget(leg_name), "continental"))
-    return new_state
+    return state.apply(UpgradeCrosswalkMarkings(Everywhere(), "continental"))

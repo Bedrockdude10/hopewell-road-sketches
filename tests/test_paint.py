@@ -14,7 +14,7 @@ import io
 
 import numpy as np
 import pytest
-from shapely.geometry import LineString
+from shapely.geometry import LineString, Polygon
 
 from src.checks import (PAINT_PAST_CURB_TOLERANCE_FT, PaintInsideTheCurb, SceneContext)
 from src.geometry.model import (curb_offsets_at_stations, curb_station_span,
@@ -30,6 +30,8 @@ from src.geometry.markings import (BUFFER_EDGE_LINE, BUFFER_FILL, CORNER_HATCH_F
 from src.geometry.paint import PaintPiece
 from src.geometry.treatments import DesignState
 from src.render.crosswalks import CrosswalkOffset
+from shapely.ops import unary_union
+from tests.conftest import needs_source_data
 import itertools
 
 
@@ -940,3 +942,133 @@ def test_a_shorter_post_drops_bands_instead_of_burying_them(monkeypatch):
     assert centres, "a 12 in post should still carry its top band"
     assert all(z - props.BOLLARD_BAND_HEIGHT_M / 2 > 0 for z in centres)
     assert len(centres) < props.BOLLARD_BAND_COUNT
+
+
+# --------------------------------------------------------------------------
+# MUTCD 11th ed. 3B.11(08)/(09) - the edge of the travelled way at a gap
+# --------------------------------------------------------------------------
+
+def test_the_edge_of_the_travelled_way_is_cut_by_a_street_and_not_by_a_driveway():
+    """MUTCD 11th ed. 3B.11, two Guidance paragraphs one apart, off one definition:
+
+        (09)  driveways that do not meet the definition of an intersection SHOULD HAVE edge line
+              markings MAINTAINED across the intersecting approach
+        (08)  edge line markings SHOULD BE DISCONTINUED across intersecting approaches
+
+    KerbOpenings.against returned None for the whole set - the whole of (09) and none of (08).
+    That read right while a driveway was the only thing that opened a kerb; once
+    src/geometry/cross_streets.py started producing openings too, a parking edge line ran
+    unbroken across the mouth of Blackwell Avenue and nothing in the project could notice.
+
+    Pinned AT THE RULE rather than against a site's drawn paint, and the reason is worth stating
+    because the obvious test is the other one and it passes vacuously. R.S. 39:4-138(e) keeps
+    parking 25 ft back from every crosswalk at a cross street, and a crosswalk sits outside the
+    mouth - so at all four sites the stalls, and their edge line, stop well before any street
+    mouth is reached. (08) is a rule the statute currently keeps this project from ever
+    exercising, which makes it exactly the kind that rots unwatched.
+    """
+    from src.geometry.markings import LANE_EDGE_LINE, PARKING_EDGE_LINE
+    from src.geometry.paint import KerbOpenings
+
+    driveway = Polygon([(0, 0), (10, 0), (10, 5), (0, 5)])
+    street = Polygon([(50, 0), (80, 0), (80, 5), (50, 5)])
+    openings = KerbOpenings(driven=unary_union([driveway, street]),
+                             tapered=unary_union([driveway, street]),
+                             intersections=street)
+
+    cut_against = openings.against(PARKING_EDGE_LINE)
+    assert cut_against is not None, (
+        "the parking edge line is cut by nothing - MUTCD 3B.11(08) discontinues it across an "
+        "intersecting approach")
+    assert cut_against.intersects(street), "(08): it has to break at the street"
+    assert not cut_against.intersects(driveway), (
+        "(09): it must NOT break at the driveway - the line marks where the running lane ends, "
+        "and that does not stop being true because someone can turn in")
+
+    # And a marking that is not the edge of the travelled way is still cut by both, which is what
+    # makes the set above a membership question rather than a blanket rule about lines.
+    assert openings.against(LANE_EDGE_LINE).intersects(driveway)
+
+
+def test_a_kerb_with_no_intersecting_approach_still_carries_its_edge_line_through():
+    """The (09)-only case, and the one every site is actually in.
+
+    A kerb whose openings are all driveways has `intersections` empty, and `against` has to
+    answer "cut by nothing" rather than raising or returning an empty geometry that some caller
+    reads as "cut by everything". This is the state 20 of the 22 openings across the four sites
+    are in.
+    """
+    from src.geometry.markings import PARKING_EDGE_LINE
+    from src.geometry.paint import KerbOpenings
+
+    driveway = Polygon([(0, 0), (10, 0), (10, 5), (0, 5)])
+    openings = KerbOpenings(driven=driveway, tapered=driveway, intersections=None)
+    assert openings.against(PARKING_EDGE_LINE) is None
+
+
+@needs_source_data
+def test_the_parking_edge_line_carries_across_a_driveway_on_the_real_sites(wide_site_models):
+    """(09) against the drawn paint, because that half IS exercised - 20 of the 22 openings
+    across the four sites are driveways, and several sit inside a marked parking run."""
+    import contextlib
+    import io
+
+    from src.geometry.kerbs import OpeningSource
+    from src.geometry.markings import PARKING_EDGE_LINE
+    from src.geometry.treatments import DesignState
+    from src.site import load_site_scenarios, run_scenario
+    from tests.test_sites import resolved_scene, scene_props
+
+    streets, driveways = 0, 0
+    for site, model in wide_site_models.items():
+        with contextlib.redirect_stdout(io.StringIO()):
+            scenarios = load_site_scenarios(site)
+            state = run_scenario(scenarios.build_demo_scenario,
+                                  DesignState.from_model(model), model)
+            scene = resolved_scene(model, state)
+            paint = scene.build_paint(scene_props(model, state, scene))
+
+        for (leg_name, side), openings in state.kerb_openings.items():
+            lines = [p.geometry for p in paint if p.kind is PARKING_EDGE_LINE
+                     and p.leg == leg_name and p.side == side]
+            if not lines:
+                continue        # no marked parking on this kerb, so no edge line to test
+            painted = unary_union(lines)
+            for opening in openings:
+                mouth = _mouth_polygon(state, leg_name, side, opening)
+                if mouth is None or mouth.is_empty:
+                    continue
+                over_ft = painted.intersection(mouth).length
+                if opening.source is OpeningSource.CROSS_STREET:
+                    streets += 1
+                    # Belt and braces: (08) is pinned at the rule above because the statute
+                    # keeps the paint away from here, so this only says the drawing agrees.
+                    assert over_ft < 1.0, (
+                        f"{site}: the parking edge line runs {over_ft:.1f} ft across the mouth of "
+                        f"an intersecting street on {leg_name}/{side} "
+                        f"({opening.start_ft:.0f}-{opening.end_ft:.0f} ft) - MUTCD 3B.11(08) "
+                        f"discontinues it there")
+                elif painted.distance(mouth) < 1.0:
+                    # Only where the line actually reaches this driveway - a mouth beyond the
+                    # last stall has no line at it either way, and asserting on that would pass
+                    # for the wrong reason.
+                    driveways += 1
+                    assert over_ft > 1.0, (
+                        f"{site}: the parking edge line stops at a driveway on {leg_name}/{side} "
+                        f"({opening.start_ft:.0f}-{opening.end_ft:.0f} ft) - MUTCD 3B.11(09) "
+                        f"maintains it across")
+    assert driveways, "no driveway mouth carried a parking edge line, so (09) was not tested"
+    assert streets >= 0
+
+
+def _mouth_polygon(state, leg_name, side, opening):
+    """The ground one opening covers, on the kerbside strip its markings live on."""
+    from src.geometry.model import offset_band_polygon
+    from src.geometry.treatments import TARGET_LANE_WIDTH_FT, divider_shift_toward_ft
+
+    leg = state.legs.get(leg_name)
+    if leg is None or leg.curb_to_curb_ft is None:
+        return None
+    inner_ft = divider_shift_toward_ft(state, leg_name, side) + TARGET_LANE_WIDTH_FT
+    return offset_band_polygon(leg, side, inner_ft, leg.curb_to_curb_ft,
+                                opening.start_ft, opening.end_ft)

@@ -95,7 +95,7 @@ from src.geometry.model.stripes import (BULBOUT_TAPER_RATE, MIN_HATCH_STROKE_FT,
                                         parking_lane_edge_line_ft,
                                         parking_stall_count_ft,
                                         parking_stall_lines_ft)
-from src.geometry.model.context import (CROSSWALK_SETBACK_FT, CROSS_STREET_MAX_ANGLE_DEG,
+from src.geometry.model.context import (CROSSWALK_OFFSET_FROM_KERB_FT, CROSS_STREET_MAX_ANGLE_DEG,
                                         SIDEWALK_PROBE_DISTANCES_FT,
                                         SIDEWALK_PROBE_REACH_FT,
                                         crosswalk_estimate_ft,
@@ -104,7 +104,7 @@ from src.geometry.model.context import (CROSSWALK_SETBACK_FT, CROSS_STREET_MAX_A
 __all__ = [
                                     "BULBOUT_TAPER_RATE",
                                     "CORNER_BLEND_FT",
-                                    "CROSSWALK_SETBACK_FT",
+                                    "CROSSWALK_OFFSET_FROM_KERB_FT",
                                     "CROSS_STREET_MAX_ANGLE_DEG",
                                     "CURB_EXTRAPOLATION_MAX_SLOPE",
                                     "CURB_EXTRAPOLATION_MIN_BASELINE_FT",

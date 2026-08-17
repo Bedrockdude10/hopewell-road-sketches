@@ -42,13 +42,35 @@ is the long-form version of this section.
 
 All four are floors. The binding one is whichever sits furthest from the junction.
 
-Two things worth remembering, because both were bugs:
+Three things worth remembering, because all three were bugs, and the third is the first two
+combined:
 
 - **(e) has two arms.** The crosswalk arm and the side-line arm. Only the crosswalk arm was
   applied at first, so legs with no marked crossing got no setback at all.
 - **The statute is about *an* intersection, not *this* one.** A leg drawn 374 ft out crosses
   Blackwell Avenue and Model Avenue too, and each gets its own (e) setback. See
   `src/geometry/cross_streets.py`.
+- **Both arms, at every intersection** *(fixed 2026-08-17)*. When (e) was extended past the
+  modelled junction only the **side-line** arm went with it — the same half-a-rule as the first
+  bullet, run backwards. A cross street with a marked zebra across our own street got the
+  setback owed to one with nothing. Measured on `broad_st_east` at Blackwell Avenue, the zone
+  was `253.3–329.3` where the two surveyed crossings put it at `239.1–340.6`: **28 ft of kerb
+  the drawing marked as parkable and the statute does not.**
+
+**And the crosswalk arm binds even where nothing is painted**, which is the part that is easy to
+get backwards. **N.J.S.A. 39:1-1** defines a crosswalk as one *"either marked or unmarked
+existing at each approach of every roadway intersection"* (quoted in full in §2). So every cross
+street contributes two of them whether or not a surveyor traced any paint. Making the setback
+conditional on a traced zebra would report **the survey's coverage as if it were the law's
+reach** — and OSM has crossings traced at Blackwell and none at Model Avenue, two intersections
+130 ft apart on the same street.
+
+Positions come from the surveyed way where one is traced and from the measured
+`CROSSWALK_OFFSET_FROM_KERB_FT` (8.3 ft beyond the kerb line, §7) where none is;
+`NoParkingZone.reason` says which, so an estimated position is never presented as a survey. Since
+a crosswalk sits *outside* the side line by that offset, the crosswalk arm is the binding one at
+essentially every intersection — that is not a surprise to be tuned away, it is what the statute
+says, and it is already how the junction end behaves.
 
 **R.S. 39:4-138.6** — municipal authority. *(as cited)* Hopewell Borough may set its own
 permissible distances by ordinance, but may **not** permit parking within 25 ft of a crosswalk
@@ -64,20 +86,138 @@ or side line, nor within 50 ft of a stop sign in a school zone while school is i
 
 ## 2. MUTCD
 
-### Edge lines at driveways and intersections — **Verified**
+### A DRIVEWAY IS NOT AN INTERSECTION, and which one a gap is decides the markings — **Verified 2026-08-17**
 
-**MUTCD §3B.07.** An edge line is **maintained across the intersecting approach of a driveway
-that does not meet the definition of an intersection**, and is **interrupted at an actual
-intersection**, where a dotted extension may carry it through instead.
+This is the definition the whole of the rest of this section hangs on, and the repo had none:
+every gap in a kerb was one kind of thing. It is not our judgement to make — both the manual
+and the statute define it, and they agree.
 
-This is the one rule in this document checked against the published source during the project
-(2026-08-07). It settled the question of whether a driveway should be hatched or the shoulder
-line simply carried past: **carried past.**
+**MUTCD 11th ed. §1C.02(113), "Intersection"**
+([source](https://mutcd.fhwa.dot.gov/pdfs/11th_Edition/part1.pdf), read 2026-08-17):
 
-Encoded as `LINES_UNBROKEN_BY_A_DRIVEWAY` in
-[`src/geometry/markings.py`](src/geometry/markings.py), consumed by `KerbOpenings.against()` in
-[`src/geometry/paint.py`](src/geometry/paint.py). The intersection half was already correct —
-the line stops at Blackwell Avenue's mouth and carries across the driveways.
+> (a) The area embraced within the prolongation or connection of the lateral curb lines, or if
+> none, the lateral boundary lines of the roadways of two highways that join one another at, or
+> approximately at, right angles, or the area within which vehicles traveling on different
+> highways that join at any other angle might come into conflict.
+>
+> (b) **The junction of an alley, driveway, or site roadway with a public roadway or highway
+> shall not constitute an intersection, unless the public roadway or highway at said junction is
+> controlled by a traffic control device.**
+
+§1C.02(63) defines a **Driveway** as *"an access from a roadway to a building, site, or abutting
+property."* And §9E.04(01) sends you straight back here — *"The definition of an 'Intersection'
+in Section 1C.02 contains information to determine if a driveway can be considered an
+intersection"* — so the manual itself treats this as the load-bearing test, not a technicality.
+
+**N.J.S.A. 39:1-1** agrees, in the state whose law governs the parking rules in §1
+([source](https://codes.findlaw.com/nj/title-39-motor-vehicles-and-traffic-regulation/nj-st-sect-39-1-1/),
+read 2026-08-17):
+
+> **Intersection** — "the area embraced within the prolongation of the lateral curb lines or, if
+> none, the lateral boundary lines of two or more **highways** which join one another at an
+> angle, whether or not one such highway crosses another."
+>
+> **Private road or driveway** — "every road or driveway **not open to the use of the public**
+> for purposes of vehicular travel."
+
+A driveway is not a highway, so a driveway junction is not an intersection under either
+authority. Encoded as `OpeningSource.is_an_intersection` in
+[`src/geometry/kerbs.py`](src/geometry/kerbs.py) — one property, read by every marking rule
+below, so a new source of kerb opening (a rail crossing, a bus pad) answers the question once
+rather than in each rule.
+
+> **The clause we do NOT implement, said out loud:** §1C.02(113)(b)'s *"unless … controlled by a
+> traffic control device"*. A driveway with a signal or a STOP/YIELD sign on the **public
+> roadway** at its mouth IS an intersection. Nothing in this borough's OSM data records one, and
+> inferring it from the nearest stop sign would be a guess. If a site ever has one, it is a tag
+> read in `kerb_openings_from_model`, not a new mechanism.
+
+### Edge lines at driveways and intersections — **Verified 2026-08-17**
+
+**MUTCD 11th ed. §3B.11, "Application of Pavement Markings through Intersections or
+Interchanges"** ([source](https://mutcd.fhwa.dot.gov/pdfs/11th_Edition/part3.pdf)):
+
+| ¶ | force | wording |
+|---|---|---|
+| 07 | **Standard** | "Solid lines **shall not** be used to extend edge lines into or through intersections **except through that part of an intersection with no intersecting approach (such as at the far side of a T-intersection)**." |
+| 08 | Guidance | "Edge line markings **should be discontinued** across intersecting approaches at intersections or interchanges." |
+| 09 | Guidance | "**Driveways that do not meet the definition of an intersection** (see Section 1C.02) **should have edge line markings maintained** across the intersecting approach of the driveway." |
+| 10 | Option | "Dotted edge line extensions **may** be placed through intersections." |
+
+§3B.09(07) says the same thing from the other end: *"Edge line markings should not be continued
+through intersections, except for … dotted edge line extensions … or through that part of an
+intersection with no intersecting approach."*
+
+**Two rules, opposite directions, one definition between them.** Encoded as
+`LINES_UNBROKEN_BY_A_DRIVEWAY` in [`src/geometry/markings.py`](src/geometry/markings.py),
+consumed by `KerbOpenings.against()` in [`src/geometry/paint.py`](src/geometry/paint.py), which
+now cuts those lines against the **intersecting approaches** and carries them past the driveways.
+
+The ¶07 exception — the far side of a T — needs no code of its own, and that is worth knowing
+because it looks like it should. `src/geometry/cross_streets.py` reads which side of our
+centreline the cross street's own vertices fall on and opens **only that kerb**; a T's far kerb
+is never opened, so the line across it was never broken. A genuine crossroads opens both.
+
+> **A citation error this file exists to catch.** Until 2026-08-17 the row above cited **MUTCD
+> §3B.07**, from a 2026-08-07 reading. In the 11th edition §3B.07 is *White Lane Line Markings
+> for Non-Continuing Lanes* and says nothing about driveways; the rule is §3B.11(08)–(09), with
+> §3B.09(07) as its counterpart. The substance was right and the pointer was wrong, which is the
+> harder kind to notice — nothing downstream misbehaves, and the next person to open the manual
+> finds lane drops.
+
+> **And a claim that had gone stale.** The same row used to say "the intersection half was
+> already correct — the line stops at Blackwell Avenue's mouth and carries across the driveways."
+> That was true when written and false by 2026-08-17: once `cross_streets.py` began producing
+> `KerbOpening`s, an intersecting approach became indistinguishable from a driveway to
+> `KerbOpenings.against()`, so the parking edge line was carried **across Blackwell Avenue** on
+> exactly the Guidance that says it should be discontinued there. A rule stated in prose and
+> enforced nowhere lasted one refactor.
+
+### Crosswalks at an intersection nobody signalized — **Verified 2026-08-17**
+
+Broad St crosses Blackwell Avenue, Model Avenue, Seminary Avenue and more inside the drawn
+frame. None of them is this site's modelled junction; all of them are intersections, and three
+of the crossings there are traced in OSM as a zebra. The rules that apply do not care which
+junction a drawing is centred on.
+
+**N.J.S.A. 39:1-1, "Crosswalk"** — and this is the sentence that matters most:
+
+> "that part of a highway at an intersection, **either marked or unmarked existing at each
+> approach of every roadway intersection**, included within the connections of the lateral lines
+> of the sidewalks on opposite sides of the highway measured from the curbs or, in the absence of
+> curbs, from the edges of the shoulder, or, if none, from the edges of the roadway"
+
+So **a crosswalk exists at every approach of every intersection whether or not anyone painted
+one**, and R.S. 39:4-138(e)'s "within 25 feet of the nearest crosswalk" (§1 above) therefore
+binds at Blackwell exactly as it binds at Greenwood. See
+[`src/geometry/daylighting.py`](src/geometry/daylighting.py); the crossing's position comes from
+the surveyed way where one is traced and from `CROSSWALK_OFFSET_FROM_KERB_FT` where none is.
+
+**MUTCD 11th ed. §1C.02(50)** draws the same two cases: (a) the unmarked connection of the
+sidewalk lines at an intersection, (b) "any portion of a roadway at an intersection **or
+elsewhere** distinctly indicated as a pedestrian crossing by pavement marking lines."
+
+**MUTCD 11th ed. §3C.02, application of crosswalk markings**, for whether to draw one that is
+not there today:
+
+| ¶ | force | wording |
+|---|---|---|
+| 01 | Guidance | "At locations controlled by traffic control signals, crosswalk markings **should** be installed." |
+| 03 | Guidance | "On approaches controlled by STOP or YIELD signs, crosswalk markings **should** be installed where engineering judgment indicates they are needed…" |
+| 04 | Guidance | "**At uncontrolled approaches, an engineering study should be performed before a marked crosswalk is installed**," against fourteen listed criteria (lanes, median, ADT, speed, sight lines, transit stops, …). |
+| 05 | **Standard** | "Crosswalk markings **shall** be provided at legally established crosswalks at non-intersection locations." |
+
+> **This project does not propose new crosswalks at uncontrolled approaches, and ¶04 is why.**
+> The study it asks for needs pedestrian counts and ADT that this repo does not hold. What the
+> repo does instead is draw every crossing the surveyor **did** record, keep paint off it, and
+> apply the statutory setback around it. Marking a new one is a recommendation with a study
+> behind it, not a geometry change.
+
+§3C.01(03) is worth keeping beside that: *"At non-intersection locations, crosswalk markings
+legally establish the crosswalk."* At an intersection the crosswalk is already there in law and
+the paint only makes it visible; mid-block, the paint is what creates it. That is the whole
+difference between the two, and it is why an unmarked intersection approach still carries a
+setback and an unmarked mid-block stretch does not.
 
 ### Other MUTCD figures — *as cited*
 
@@ -461,18 +601,21 @@ Listed so nobody goes looking for a standard behind them.
 | `OPENING_TRIM_FT` | 1.5 ft | `paint.py` | cohesion at a driveway mouth, not a swept-path design |
 | `THROUGH_JOIN_BLEND_FT` | 60 ft | `intersection.py` | the run over which a striper swings a centreline |
 | `TRACED_SECTION_START/END_FT` | 35 / 130 ft | `intersection.py` | the window a leg's *width* is a fact about |
-| `CROSSWALK_SETBACK_FT` | 8.3 ft | `model.py` | **not the statute** — see the name clash below |
+| `CROSSWALK_OFFSET_FROM_KERB_FT` | 8.3 ft | `model/context.py` | **not the statute** — measured, see below |
+| `MAX_CROSSWALK_FROM_MOUTH_FT` | 25 ft | `cross_streets.py` | how far outside a mouth a traced crossing is still that junction's |
 
-> **Name clash — `CROSSWALK_SETBACK_FT` means two different things.**
+> **Name clash — resolved 2026-08-17.** `CROSSWALK_SETBACK_FT` used to mean two things:
 >
 > | file | value | meaning |
 > |---|---|---|
 > | `src/geometry/daylighting.py` | **25.0 ft** | R.S. 39:4-138(e) — how far from a crosswalk parking is forbidden |
 > | `src/geometry/model/context.py` | **8.3 ft** | measured — how far beyond a cross street's kerb line a crosswalk actually sits, fitted to the 11 surveyed crossings (σ 2.4 ft, range 5.1–13.9) |
 >
-> Different modules, so nothing is shadowed and there is no bug today. But one grep for the
-> name returns both, and only one of them is a legal figure. Renaming the measured one
-> (`CROSSWALK_OFFSET_FROM_KERB_FT` or similar) would end it.
+> Different modules, so nothing was ever shadowed. It stopped being merely untidy when
+> `cross_streets.py` began placing the unmarked crosswalk at the measured 8.3 ft and handing it
+> to `daylighting.py` to measure the statutory 25 ft from — two constants of the same name one
+> call apart. The measured one is now `CROSSWALK_OFFSET_FROM_KERB_FT`; only the legal figure
+> keeps the old name.
 
 ---
 
@@ -482,4 +625,8 @@ Listed so nobody goes looking for a standard behind them.
 2. The **line width** divergence in §2 changes design outcomes, not just appearance.
 3. The **Hopewell Borough ordinance** in §1 is unread and can only make the setbacks stricter.
 4. No **Mercer County standard sheet** has been found; §5 is one verbal figure.
-5. `CROSSWALK_SETBACK_FT` resolves to two different numbers depending on the module — §7.
+5. The **traffic-control-device arm** of MUTCD 1C.02(113)(b) is not implemented — a driveway
+   whose public roadway carries a signal or a STOP/YIELD sign at the mouth IS an intersection,
+   and this project would draw it as a driveway. Nothing in this borough's data records one.
+6. **New crosswalks at uncontrolled approaches are not proposed** — MUTCD 3C.02(04) wants an
+   engineering study this repo has no counts for. Existing ones are drawn and deferred to; §2.

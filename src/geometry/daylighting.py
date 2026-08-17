@@ -193,16 +193,31 @@ def no_parking_zones_ft(state, leg_name: str, side: str, crosswalk_offsets: dict
         zones.append(NoParkingZone(restriction.start_ft, restriction.end_ft,
                                     restriction.citation))
 
-    # (e) again, at EVERY OTHER intersection this leg runs across. The statute is about an
-    # intersection, not about the one the drawing is centred on, and a leg carried out with the
-    # frame crosses several - Broad St at 374 ft passes Blackwell and Model Avenue. Before this
-    # the markings ran straight through them: stalls marked across the mouth of a side street,
-    # and no setback anywhere but at this junction's own corners.
+    # (e) again, at EVERY OTHER intersection this leg runs across - and BOTH ARMS of it, which is
+    # the correction that took longest to land. The statute is about an intersection, not about
+    # the one the drawing is centred on, and a leg carried out with the frame crosses several:
+    # Broad St at 374 ft passes Blackwell and Model Avenue. Before any of this the markings ran
+    # straight through them, with stalls marked across the mouth of a side street; then the SIDE
+    # LINE arm arrived and the CROSSWALK arm did not, which is the same half-a-rule this module's
+    # docstring records at the junction end - "only the crosswalk arm of (e) was applied" - run
+    # backwards. A cross street with a marked zebra across our own street got the setback owed to
+    # one with nothing.
     #
-    # Measured from the SIDE LINE, i.e. from the edge of the cross street's own carriageway
-    # rather than from its centreline, which is what "the side line of the intersecting street"
-    # means and what sideline_station_ft does at the junction end. Only on the side the street
-    # actually leaves on - a T-junction does not daylight the kerb opposite it.
+    # THE SIDE LINE ARM is measured from the edge of the cross street's own carriageway rather
+    # than from its centreline, which is what "the side line of the intersecting street" means
+    # and what sideline_station_ft does at the junction end.
+    #
+    # THE CROSSWALK ARM is measured from a crosswalk that exists whether or not it is painted:
+    # N.J.S.A. 39:1-1 defines a crosswalk as one "either marked or unmarked existing at each
+    # approach of every roadway intersection". So every cross street contributes two of them,
+    # resolved on the CrossStreet itself (src/geometry/cross_streets.py) from the surveyed way
+    # where one is traced and from the measured 8.3 ft offset where none is. Since a crosswalk
+    # sits BEYOND the side line by that offset, this arm binds at essentially every intersection
+    # - which is not a surprise to be tuned away, it is what the statute says, and it is already
+    # how the junction end behaves.
+    #
+    # Both only on the side the street actually leaves on - a T-junction does not daylight the
+    # kerb opposite it.
     for cross in getattr(state, "cross_streets", {}).get(leg_name, []):
         if side not in cross.sides:
             continue
@@ -211,6 +226,13 @@ def no_parking_zones_ft(state, leg_name: str, side: str, crosswalk_offsets: dict
             near_ft - sideline_setback, far_ft + sideline_setback,
             f"R.S. 39:4-138(e), {sideline_setback:.0f} ft from the side line of "
             f"{cross.citation}"))
+        for crosswalk in getattr(cross, "crosswalks", ()):
+            zones.append(NoParkingZone(
+                crosswalk.station_ft - crosswalk_setback,
+                crosswalk.station_ft + crosswalk_setback,
+                f"R.S. 39:4-138(e), {crosswalk_setback:.0f} ft from {crosswalk.citation} at "
+                f"{cross.citation}"
+                + (" (curb extension built)" if bulbout else "")))
 
     # (h) and (i) - radii around a point feature, anywhere along the leg.
     for prop in props or []:

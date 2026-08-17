@@ -1,11 +1,11 @@
 """Example treatment scenarios, shared by the Phase 3 plan-view render and the
 Phase 4 3D export so both phases show the exact same design."""
 from src.geometry.targets import LegSide, LegTarget, Side
-from src.geometry.treatments import (BIKE_LANE_BUFFER_FT, MIN_TWO_WAY_BIKE_LANE_FT,
-    MIN_BIKE_LANE_FT, widest_protected_lane_ft,
-    TARGET_LANE_WIDTH_FT, AddBikeLane, AddBikeLaneBollards, DesignState, LaneNarrowing,
-    MarkedParking, ProtectDaylightZone, all_crosswalks_continental, apply_osm_parking,
-    complete_centerlines)
+from src.geometry.treatments import (AddBikeLane, AddBikeLaneBollards,
+    all_crosswalks_continental, apply_osm_parking, BIKE_LANE_BOLLARD_SPACING_FT,
+    BIKE_LANE_BUFFER_FT, complete_centerlines, CORRIDOR_SIDE, DesignState, LaneNarrowing,
+    MarkedParking, MIN_BIKE_LANE_FT, MIN_TWO_WAY_BIKE_LANE_FT, osm_derived_baseline,
+    ProtectDaylightZone, TARGET_LANE_WIDTH_FT, widest_protected_lane_ft)
 
 GREENWOOD_LEGS = ("greenwood_ave_north", "greenwood_ave_south")
 
@@ -23,11 +23,7 @@ def build_demo_scenario(baseline: DesignState, model=None) -> DesignState:
     Needs the model for the OSM tags, so it falls back to the untouched baseline when called
     with a state alone (the older single-argument convention).
     """
-    if model is None:
-        return baseline
-    state = apply_osm_parking(baseline, model)
-    state = complete_centerlines(state)
-    return all_crosswalks_continental(state)
+    return osm_derived_baseline(baseline, model)
 
 
 def _protect_every_daylight_zone(state: DesignState, kind: str) -> DesignState:
@@ -88,10 +84,16 @@ def _add_broad_st_both_side_parking(state: DesignState, curb_offset_ft: float = 
 # proposals above. Each is a distinct scenario, not a stack, so they can be
 # compared side by side.
 BROAD_ST_LEGS = ("broad_st_west", "broad_st_east")
-# TARGET_LANE_WIDTH_FT is imported from src, not redeclared here. It is a standard
-# (NACTO/AASHTO urban minimum travel lane), not a per-site choice, and four sites each
-# holding their own copy is what src/geometry/treatments/'s own comment on it warns
-# about - a leg could then be narrowed to one number and checked against another.
+# NOTHING IN THIS FILE MAY RESTATE A STANDARD. Lane widths, stall depths, post spacing, which
+# kerb the corridor runs along - all of them are the same answer at the next junction, so they
+# are imported from src/geometry/treatments/ rather than declared here. A site file is for what
+# is true of THIS street: its widths, which legs it treats, what its proposals are called.
+#
+# Enforced, not merely asked for: tests/test_sites.py:test_no_site_redeclares_what_src_already_defines
+# fails the build on a local copy of anything src exports, and
+# test_no_rule_is_written_out_in_more_than_one_site fails on a rule copied between two sites.
+# Both were written after six constants and four whole functions were found duplicated across
+# these files - see README, "A site is not a place to keep a standard".
 
 
 def _narrow_broad_st_to_11ft_lanes(state: DesignState, line_only: bool = False) -> DesignState:
@@ -145,8 +147,6 @@ def _narrow_broad_st_to_11ft_lanes(state: DesignState, line_only: bool = False) 
 # section needs. It is standardised anyway, because a lane width is a standard and not a thing to
 # spend spare width on: what the spare width buys here is hatching, which is what says the road
 # is narrower than it looks.
-BIKE_LANE_BOLLARD_SPACING_FT = 8.0  # same flex-post pitch a daylight zone uses - reads as a
-                                     # continuous delineator rather than a row of dots
 
 
 def _one_way_bike_lanes_reference(baseline: DesignState, model=None) -> DesignState:
@@ -221,31 +221,6 @@ def _one_way_bike_lanes_reference(baseline: DesignState, model=None) -> DesignSt
 # A single two-way protected bike lane on ONE side of Broad St, running the length of Hopewell
 # Borough - 6,871 ft of W Broad + E Broad - rather than a pair of one-way lanes on each leg.
 #
-# THE SIDE IS A CORRIDOR DECISION AND IT IS THE SOUTH KERB. Measured over the whole borough
-# length from OSM, 2026-08-13:
-#
-#   * side streets cutting the kerb   north 10, SOUTH 7. Five crossings cut both kerbs whichever
-#     side is chosen (Eaton/Ege, Lanning, Greenwood, Maple, Elm); the difference is one-sided
-#     T-junctions - Windsor Way, Louellen, Mercer, Blackwell and Hamilton on the north against
-#     Seminary and Princeton on the south.
-#   * parking capacity lost           north 246 stalls, SOUTH 241. A 2% difference, and derived
-#     from geometry rather than counted: OSM carries no parking:* tag anywhere on this corridor,
-#     and the borough's Schedule I restrictions are not loaded as a data source. Treat it as a
-#     tie, not as a finding.
-#   * mapped driveways                north 20, south 21 - and NOT usable either way. OSM has a
-#     driveway for 29% of the parcels fronting Broad St, so both figures are roughly threefold
-#     undercounts and the undercount rate is the same on both sides.
-#
-# So the crossings decided it, because that is the count OSM records completely. Junctions are
-# also the hazard that matters most for this treatment specifically: a two-way lane puts
-# contraflow riders at every one of them, arriving from the direction a turning driver does not
-# check.
-#
-# The side is chosen ONCE for the route and then translated per leg by side_facing() - a leg's
-# left/right is in its own frame, so the same real kerb is "left" on the east approach and
-# "right" on the west, and hand-translating it is how a corridor treatment ends up on the north
-# kerb of one leg and the south kerb of the next.
-CORRIDOR_SIDE = "south"
 
 # TEN FEET, NOT THE 12 FT DESIGN WIDTH, AND PARKING IS WHY. Hopewell Borough is car-dependent;
 # a corridor plan that removes a kerb of parking and returns none is not viable here whatever it
@@ -259,10 +234,6 @@ CORRIDOR_SIDE = "south"
 # to keep the parking. The alternative on the table was narrowing the travel lanes to 10 ft
 # instead, which would have kept the lane at 12 - not taken, so the travel lanes hold 11 ft.
 CORRIDOR_LANE_WIDTH_FT = MIN_TWO_WAY_BIKE_LANE_FT
-# The narrowest parallel stall worth marking. Below 7 ft a car cannot sit clear of the travel
-# lane, so it is not a stall; src's MIN_MARKED_PARKING_DEPTH_FT (8 ft) is the width to mark when
-# the street can spare it, not the floor for whether parking exists at all.
-MIN_USABLE_STALL_FT = 7.0
 
 
 def build_proposal_two_way_bike_lane(baseline: DesignState, model=None) -> DesignState:

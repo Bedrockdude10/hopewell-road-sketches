@@ -151,6 +151,12 @@ class SceneContext:
     crosswalk_bands: dict = field(default_factory=dict)
     crosswalk_offsets: dict = field(default_factory=dict)
     stop_bars: dict = field(default_factory=dict)
+    # The MARKED crossings at junctions inside the frame that this site does not model - the ones
+    # with no leg here and therefore no entry in crosswalk_bands. Separate rather than merged into
+    # that dict on purpose: crosswalk_bands is keyed by leg and several checks iterate it as "this
+    # junction's four crossings", so a Blackwell Avenue entry keyed by nothing would quietly change
+    # what those checks mean. See CrossingsAreNotPaintedOver.
+    unmodelled_crossing_bands: tuple = ()
 
     @property
     def legs(self) -> dict:
@@ -866,6 +872,62 @@ class CrosswalksCrossTheRoadway(SceneCheck):
                     f"{leg_name}'s crosswalk is only {inside * 100:.0f}% inside the roadway it crosses "
                     f"(expected at least {MIN_CROSSWALK_IN_PAVEMENT * 100:.0f}%)",
                     (band.centroid.x, band.centroid.y)))
+        return violations
+
+
+class CrossingsAreNotPaintedOver(SceneCheck):
+    """No marking is painted over a crossing that belongs to another junction in the frame.
+
+    MarkingsDoNotCollide already stops two markings sharing ground, and this junction's own four
+    crossings are cut out of everything by curbside_paint_ft. Neither covered the case this
+    exists for: a crosswalk at a junction this site does not model. Broad St's frame contains
+    Blackwell Avenue, whose three traced crossings src/geometry/surveyed.py draws and whose
+    ground nothing was cut against - so the corridor proposal laid 120 sq ft of green bike lane,
+    36 ft of edge line and a yellow contraflow stripe over a marked zebra, and every check passed.
+
+    The failure is exactly the shape this project keeps finding: the crossings reached the
+    drawing through one path and the paint through another, and no invariant looked across the
+    two. The fix (curbside_paint_ft's `crossings_elsewhere`) is a subtraction; this is what makes
+    it stay a fix, because a subtraction that is quietly dropped looks like nothing at all.
+
+    Not restricted to fills. A line painted down a crosswalk is the same false statement about
+    the street as a hatched zone over one, and on the corridor proposal the lines were most of it.
+    """
+
+    def run(self, scene: SceneContext) -> list[Violation]:
+        from shapely.ops import unary_union
+
+        bands = [b for b in scene.unmodelled_crossing_bands if b is not None and not b.is_empty]
+        if not bands:
+            return []
+        crossings = unary_union(bands)
+        extent = crossings.bounds
+        violations = []
+        for piece in scene.paint:
+            # An OBJECT is a point standing in for a post and has no area to overlap; it is kept
+            # out of a driveway by paint.stands_in_an_opening and out of a crossing by the same
+            # keep_clear this checks, so testing its 1e-6 ft square here would only ever misreport.
+            if piece.kind.is_object or _boxes_apart(extent, piece.geometry.bounds):
+                continue
+            shared = crossings.intersection(piece.geometry)
+            if shared.is_empty:
+                continue
+            if piece.covers_area:
+                if shared.area <= MARKING_OVERLAP_TOLERANCE_SQ_FT:
+                    continue
+                how_much = f"{shared.area:.0f} sq ft of"
+            else:
+                if shared.length <= MIN_COLLINEAR_OVERLAP_FT:
+                    continue
+                how_much = f"{shared.length:.1f} ft of"
+            violations.append(Violation(
+                "paint_over_a_crossing",
+                f"{piece.kind} is painted across {how_much} a surveyed crosswalk at another "
+                f"junction in this frame"
+                + (f" ({piece.leg} {piece.side})" if piece.leg else "")
+                + " - a crossing outranks kerbside paint wherever it is, not only at the "
+                  "junction the drawing is centred on",
+                (shared.centroid.x, shared.centroid.y)))
         return violations
 
 

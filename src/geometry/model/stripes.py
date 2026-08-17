@@ -11,13 +11,14 @@ from src.geometry.model.leg_frame import (Leg,STRIP_SAMPLE_FT, place_in_measured
                                           _place_no_further_in_than, point_at, _traced_curb_frame,
                                           unit_vector, curb_edge_by_station, curb_offsets_at_stations,
                                           curb_point_at_station, curb_station_span,
-                                          inset_line_ft, inset_point_at_station,
+                                          inset_line_ft, inset_point_at_station, paint_stations,
                                           station_offset_many)
 
 
 
 def curbside_strip_polygon(leg: "Leg", side: str, inner_offset_ft: float,
-                            start_ft: float, end_ft: float | None = None) -> Polygon | None:
+                            start_ft: float, end_ft: float | None = None,
+                            beyond_the_tracing: bool = False) -> Polygon | None:
     """The strip of roadway between a leg's real curb and a line inner_offset_ft from its
     centerline, between two centerline stations.
 
@@ -32,18 +33,16 @@ def curbside_strip_polygon(leg: "Leg", side: str, inner_offset_ft: float,
 
     Returns None where there is no room - the curb comes inside inner_offset_ft (paint would
     be outside the roadway) or the span is empty.
-    """
-    span = curb_station_span(leg, side)
-    if span is None:
-        return None
-    lo, hi = span
-    lo = max(lo, start_ft)
-    hi = min(hi, leg.centerline.length if end_ft is None else end_ft)
-    if hi - lo < STRIP_SAMPLE_FT:
-        return None
 
-    n = max(int(np.ceil((hi - lo) / STRIP_SAMPLE_FT)) + 1, 2)
-    stations = np.linspace(lo, hi, n)
+    beyond_the_tracing is paint_stations', and the grid comes from paint_stations now rather than
+    from a fourth copy of the same eight lines. That copy is why this function had to be edited
+    at all: paint_stations' own docstring says it exists because "four functions here had this
+    same eight lines inlined", and this was the fifth, sitting in a different module.
+    """
+    stations = paint_stations(leg, side, start_ft, end_ft, beyond_the_tracing)
+    if stations is None:
+        return None
+    lo, hi = float(stations[0]), float(stations[-1])
     curb_offsets = curb_offsets_at_stations(leg, side, stations)
     if curb_offsets is None:
         return None
@@ -72,7 +71,8 @@ def curbside_strip_polygon(leg: "Leg", side: str, inner_offset_ft: float,
 def lane_narrowing_polygons_ft(leg: "Leg", stripe_width_ft: float,
                                 start_left_ft: float = 0.0, start_right_ft: float = 0.0,
                                 sides: tuple = ("left", "right"),
-                                end_ft: float | None = None) -> list[Polygon]:
+                                end_ft: float | None = None,
+                                beyond_the_tracing: bool = False) -> list[Polygon]:
     """Two thin paint-only strips just inside each curb line - a visual lane
     narrowing treatment achieved with paint, NOT a curb_to_curb_ft change (no
     pavement/curb geometry is touched). Used by paint-only proposals - see
@@ -92,14 +92,17 @@ def lane_narrowing_polygons_ft(leg: "Leg", stripe_width_ft: float,
     sides restricts which curb(s) to build a strip for - e.g. a marked-
     parking buffer (src/geometry/treatments/parking.py:MarkedParking's
     curb_offset_ft) only ever needs one side of one leg, not the symmetric
-    both-sides narrowing a travel lane gets."""
+    both-sides narrowing a travel lane gets.
+
+    beyond_the_tracing is paint_stations' - see it. Only the statutory daylight zone asks."""
     half = leg.curb_to_curb_ft / 2
     inner_half = max(half - stripe_width_ft, 0.5)
     polys = []
     for start_ft, side in ((start_left_ft, "left"), (start_right_ft, "right")):
         if side not in sides:
             continue
-        poly = curbside_strip_polygon(leg, side, inner_half, start_ft, end_ft)
+        poly = curbside_strip_polygon(leg, side, inner_half, start_ft, end_ft,
+                                       beyond_the_tracing)
         if poly is not None:
             polys.append(poly)
     return polys

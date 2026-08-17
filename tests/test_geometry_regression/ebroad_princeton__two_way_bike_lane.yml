@@ -71,7 +71,7 @@ channels:
       - -116.73
     points: 106
   lane_narrowing_edge_lines:
-    count: 17
+    count: 16
     extent:
       max:
       - 36.019
@@ -79,17 +79,17 @@ channels:
       min:
       - -39.345
       - -38.139
-    points: 529
+    points: 521
   lane_narrowing_hatch_lines:
-    count: 17
+    count: 18
     extent:
       max:
       - 18.767
       - -1.563
       min:
-      - -29.394
+      - -32.664
       - -36.35
-    points: 34
+    points: 36
   lane_narrowing_taper_lines:
     count: 0
     extent: null
@@ -590,10 +590,10 @@ legs:
     stop_bar_centre_m:
     - -11.019
     - -3.792
-    stop_bar_lateral_offset_m: 0.777
+    stop_bar_lateral_offset_m: -0.123
     stop_bar_offset_m: 11.653
-    stop_bar_span_m: 5.152
-    stop_bar_width_m: 6.706
+    stop_bar_span_m: 3.353
+    stop_bar_width_m: 3.106
     width_m: 11.654
   princeton_ave_south:
     centerline_paint_m:

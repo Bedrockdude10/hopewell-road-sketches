@@ -244,6 +244,69 @@ Three details that are not obvious:
 
 The setback is measured from the **side line** (the edge of the cross street's carriageway), not its centreline, matching `sideline_station_ft` at the junction end. That width is OSM's `width` tag where a mapper recorded one, else the highway class — an assumption, and `KerbOpening.citation` says so.
 
+### …but a cross street is not a driveway (`OpeningSource.is_an_intersection`)
+
+"Nothing in any marking builder was touched to make this work, and that is the point" is the paragraph above, and it was half right. Adding cross streets as a *source* of `KerbOpening` did propagate to every marking at once — including **three rules that are wrong for a street**, because each of them had been written about a driveway and there was no way to tell the two apart. The mechanism generalised; the standards behind it did not.
+
+The definition is not ours to pick. **MUTCD 11th ed. §1C.02(113)(b)**: *"The junction of an alley, driveway, or site roadway with a public roadway or highway shall not constitute an intersection."* **N.J.S.A. 39:1-1** the same way round — an intersection joins *"two or more highways"*, a driveway is *"not open to the use of the public"*. `OpeningSource.is_an_intersection` is that sentence, read once by everything downstream, so the next source (a rail crossing, a bus pad) has to answer the question instead of inheriting an answer. Full quotations in `STANDARDS.md` §2.
+
+What it fixed, all three of them latent for as long as cross streets have been openings:
+
+| | was | is | authority |
+|---|---|---|---|
+| parking **edge line** at the mouth | carried straight across Blackwell Avenue's 49.7 ft | discontinued | MUTCD §3B.11(08) vs (09) |
+| **trim** at the mouth | +1.5 ft each end, a driveway apron's flare | none — the traced mouth already includes the corner return | — |
+| hatched zone's **run-out** | swept away on an apron fillet | ends square | — |
+
+§3B.11(07)'s exception — a solid edge line *may* continue "through that part of an intersection with no intersecting approach (such as at the far side of a T-intersection)" — needs no code, and it is worth knowing why: `_sides_of` already opens only the kerb the street's own vertices say it leaves on, so a T's far kerb was never broken in the first place.
+
+**The edge-line rule is one the statute currently hides.** R.S. 39:4-138(e) keeps parking 25 ft back from every crosswalk at a cross street, so at all four sites the stalls — and their edge line — stop well before any street mouth. `test_the_edge_of_the_travelled_way_is_cut_by_a_street_and_not_by_a_driveway` therefore pins it at the rule rather than against drawn paint, because the obvious test passes vacuously and would have gone on passing after a regression.
+
+### A crossing outranks the paint wherever it is (`SceneGeometry.unmodelled_crossing_bands`)
+
+`src/geometry/surveyed.py` draws every crossing the surveyor traced inside the frame, including the ones at junctions this site does not model — six of the ten in Broad & Greenwood's 2.5x frame. It drew them and **nothing got out of their way**, because `keep_clear` was built from `crosswalk_bands`, which is keyed by leg and structurally cannot hold a crossing that belongs to no leg here. The drawing made a claim about the street and contradicted it 6 ft away:
+
+```
+bike_lane_surface        120 sq ft   over Blackwell Avenue's two zebras
+bike_lane_edge_line       36 ft
+bike_buffer_fill          25 sq ft
+lane_narrowing_fill     18.5 sq ft
+bike_contraflow_divider  4.5 ft
+```
+
+and two **flex posts standing in a marked crosswalk**, which is worse than any of it. That one had never arisen at the junction's own crossings because a post row starts past where the crossing reaches — the rule was satisfied by an accident of ordering rather than stated anywhere.
+
+The fix is a subtraction, and the reason it is worth a section is the shape of it: `crosswalk_bands` was already documented as **doing two jobs** — aiming each taper, and cutting everything as a backstop — and the moment a second set of crossings arrived those two jobs stopped wanting the same input. Aim at this junction's crossings only; cut against every crossing in the frame. Handed the full set, `broad_st_east`'s taper would aim at station 322 (Blackwell's far crossing) instead of 26 and the leg's whole kerbside treatment would disappear behind it. `CrossingsAreNotPaintedOver` reads the same tuple the paint was cut against, so a subtraction quietly dropped later fails rather than looking like nothing at all.
+
+### The statute's other arm, at the other junctions too (`CrossStreetCrosswalk`)
+
+Extending R.S. 39:4-138(e) past the modelled junction took the **side-line** arm and left the **crosswalk** arm behind — the same half-a-rule the junction end had shipped years earlier, run backwards. On `broad_st_east` at Blackwell the zone was `253.3–329.3` where the two surveyed crossings put it at `239.1–340.6`: 28 ft of kerb marked parkable that the statute forbids.
+
+And the arm binds where nothing is painted, which is the part that inverts intuition. **N.J.S.A. 39:1-1** defines a crosswalk as one *"either marked or unmarked existing at each approach of every roadway intersection."* Conditioning the setback on a traced zebra would report **the survey's coverage as if it were the law's reach** — and OSM has crossings at Blackwell and none at Model Avenue, 130 ft apart on the same street. So every cross street contributes two, surveyed where traced and placed at the measured `CROSSWALK_OFFSET_FROM_KERB_FT` where not, with `NoParkingZone.reason` saying which.
+
+### A site is not a place to keep a standard
+
+`src/` contains no site data — no site name, no leg name, in any code path. That half of the rule held. The other half did not: **standards had leaked the other way, into the sites.**
+
+| written out in `sites/` | copies | what it already was |
+|---|---|---|
+| `PARKING_DEPTH_FT = 8.0` | 3 | `PARKING_STALL_DEPTH_DEFAULT_FT` — AASHTO, STANDARDS.md §3 |
+| `MIN_PARKING_DEPTH_FT = 7.0` | 3 | `MIN_USABLE_STALL_FT`, already exported |
+| `MIN_USABLE_STALL_FT = 7.0` | 1 | a dead shadow of that same export |
+| `BIKE_LANE_BOLLARD_SPACING_FT = 8.0` | 2 | nothing — now in `bikeways.py` |
+| `CORRIDOR_SIDE = "south"` | 3 | nothing — now in `bikeways.py` |
+| `_parking_and_narrowing()` | 3 | byte-identical → `narrow_lanes_and_recover_parking` |
+| `_continental_everywhere()` | 3 | byte-identical, **and** a reimplementation of `all_crosswalks_continental` that one of the three files was already importing |
+| `build_demo_scenario()` | 3 | byte-identical → `osm_derived_baseline` |
+
+Four site files lost a third of their length (864 → 694 lines) and every golden passed unchanged, which is the point: none of this was doing anything a shared definition would not.
+
+**`CORRIDOR_SIDE` is the one to remember.** Its own comment called it *"a corridor decision, not a per-junction one"* — and it was written out in three junction files. Edit one and the borough's bike lane swaps kerbs at that junction, while all three drawings still look locally correct. A rule that documents its own scope and is then stored per-site is worse than one that says nothing, because the comment reads as an assurance.
+
+Two tests now fail the build on the next instance, and they are deliberately different questions — `test_no_site_redeclares_what_src_already_defines` catches a shared **number**, `test_no_rule_is_written_out_in_more_than_one_site` compares normalised ASTs to catch a shared **rule**. The second found `build_demo_scenario` immediately, which the first could not have.
+
+A third gap turned up on the way: **`sites/` was never linted.** `tests/test_lint.py:TARGETS` listed `src`, `scripts`, `tests` and `conftest.py`, so the nine imports this consolidation orphaned raised nothing. It is the directory where a rule is most likely to be quietly re-invented and it was the one directory nobody was reading.
+
 If you edit `sites/<site>/config.yaml` (widths, corner radius, crosswalks, treatments, props), rerun from Phase 2 onward — Phase 1 doesn't depend on it.
 
 Phase 4 shells out to Blender (not the project venv — `blender_scene.py` runs under Blender's own bundled Python, with no network access and none of this project's packages). Needs Blender on `PATH`, or set `BLENDER_BIN` — defaults to `/Applications/Blender.app/Contents/MacOS/Blender` on Mac if nothing else is found.

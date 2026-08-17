@@ -237,13 +237,26 @@ ZONE_BOUNDARY_LINES: frozenset = frozenset({
     LANE_EDGE_LINE, TAPER_LINE, BUFFER_EDGE_LINE, DAYLIGHT_EDGE_LINE, ZONE_END_LINE,
 })
 
-# Markings that are the EDGE OF THE TRAVELLED WAY, and so run unbroken past a driveway.
+# Markings that are the EDGE OF THE TRAVELLED WAY: they run unbroken past a DRIVEWAY, and are
+# discontinued across an INTERSECTING APPROACH. Two rules, one definition between them, and the
+# name says only the half that is about this set's membership - which of the two a given gap gets
+# is kerbs.OpeningSource.is_an_intersection's answer, applied in paint.KerbOpenings.against.
 #
-# MUTCD Section 3B.07: an edge line is maintained across the intersecting approach of a
-# driveway that does not meet the definition of an intersection, and is interrupted only at
-# an actual intersection (where a dotted extension may carry it instead). The reason is what
-# the line means - it marks where the running lane ends, and that does not stop being true
-# because someone can turn in.
+# MUTCD 11th ed. Section 3B.11, "Application of Pavement Markings through Intersections or
+# Interchanges" (STANDARDS.md section 2 quotes both in full):
+#
+#   (08) Guidance  edge line markings SHOULD BE DISCONTINUED across intersecting approaches
+#   (09) Guidance  driveways that DO NOT meet the definition of an intersection (Section 1C.02)
+#                  SHOULD HAVE edge line markings MAINTAINED across the intersecting approach
+#
+# The reason for (09) is what the line MEANS - it marks where the running lane ends, and that
+# does not stop being true because someone can turn in. The reason for (08) is the same sentence
+# read the other way: at an intersection the running lane genuinely does end, because the ground
+# beyond it is another street's.
+#
+# (Cited as Section 3B.07 here until 2026-08-17, from the 2009 numbering. In the 11th edition
+# 3B.07 is "White Lane Line Markings for Non-Continuing Lanes" and says nothing about any of
+# this; the counterpart to 3B.11 is 3B.09(07).)
 #
 # Only the PARKING edge line is here, and the omissions are deliberate. LANE_EDGE_LINE and
 # BUFFER_EDGE_LINE bound a hatched zone as well as the lane, and a zone that sweeps away on

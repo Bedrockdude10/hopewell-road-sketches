@@ -141,25 +141,75 @@ class SceneGeometry:
 
         One list, so the 2D view, the 3D export and the coverage check draw and audit exactly the
         same geometry rather than three near-copies of it.
+
+        IN THE STYLE THE DESIGN CALLS FOR, which is what makes a proposal's crosswalk policy reach
+        these at all. They were drawn from their own OSM tag whatever the design said, so a
+        scenario that restyles every crossing to continental left the two tagged
+        `crossing:markings=lines` - Blackwell Avenue's among them - drawn as two parallel lines in
+        a frame where four others had been repainted. crossing_style_in is the rule, and it is
+        also what stops a policy painting a crossing nobody marked.
         """
-        from src.geometry.surveyed import crossing_bars_ft, crossing_lines_ft
+        return [piece for _crossing, bars, lines in self.surveyed_crossing_markings()
+                for piece in (*bars, *lines)]
+
+    def surveyed_crossing_markings(self) -> list:
+        """[(crossing, bars, lines)] for every unmodelled crossing the design draws something on.
+
+        THE ONE RESOLUTION, and it had to become one before a marking policy could reach these at
+        all. Three consumers were each building this list themselves off the raw drawers -
+        plan_view._draw_unmodelled_crossings, export.export_scenario's `surveyed_crossings`, and
+        surveyed_crossing_paint here - which is the exact failure this module's docstring opens
+        with, one layer out. Adding the style to one of the three changed nothing in either
+        picture; every golden stayed green while the render still showed Blackwell Avenue striped
+        as two parallel lines.
+
+        Per crossing rather than flattened, because the two renderers genuinely need them apart:
+        the plan view strokes a line and fills a bar differently, and the export writes them to
+        separate JSON keys. What they must NOT do is decide the style, which is why that is
+        resolved here and handed over.
+        """
+        from src.geometry.surveyed import crossing_bars_ft, crossing_lines_ft, crossing_style_in
 
         kerbs = list(self.drawn_kerbs)
-        return [piece for crossing in self.unmodelled_crossings
-                for piece in (crossing_bars_ft(crossing, kerbs)
-                              + crossing_lines_ft(crossing, kerbs))]
+        out = []
+        for crossing in self.unmodelled_crossings:
+            style = crossing_style_in(self.state, crossing)
+            if style is None:
+                continue        # unmarked or unrecorded - a policy may not invent paint here
+            out.append((crossing, crossing_bars_ft(crossing, kerbs, style),
+                         crossing_lines_ft(crossing, kerbs, style)))
+        return out
+
+    @property
+    def unmodelled_crossing_bands(self) -> tuple:
+        """The footprints of the MARKED crossings at junctions this site does not model.
+
+        What curbside_paint_ft has to keep its paint off, and what the scene invariants check it
+        against - one definition, for the reason this class exists. `band_ft` is the traced way's
+        own footprint, which is the same shape surveyed_crossing_paint() draws the bars and lines
+        inside, so the paint is cut around exactly the ground the crossing is drawn on.
+
+        MARKED ONLY. An unmarked crossing is a crossing nobody has painted (or one the surveyor
+        recorded as unpainted - SurveyedCrossing.is_marked keeps the two apart), and reserving
+        asphalt around paint that is not there would be inventing a marking to defer to. It is
+        the same rule `marked_crosswalks` applies to this junction's own four.
+        """
+        return tuple(c.band_ft for c in self.unmodelled_crossings if c.is_marked)
 
     def build_paint(self, props: list[dict] | None = None) -> list:
         """Every painted marking this scenario puts down (src/geometry/paint.py).
 
         Here rather than at each call site so the paint is always cut around the same bands
-        the crossings are drawn from, and always told which crossings are actually marked.
+        the crossings are drawn from, and always told which crossings are actually marked -
+        including the ones at junctions this site does not model, which are drawn from the
+        surveyed way and until now had nothing getting out of their way.
         """
         from src.geometry.paint import curbside_paint_ft
 
         return curbside_paint_ft(self.state, self.crosswalk_offsets, self.model.center_ft,
                                   self.crosswalk_bands, props,
-                                  marked_crosswalks=self.marked_crosswalks)
+                                  marked_crosswalks=self.marked_crosswalks,
+                                  crossings_elsewhere=self.unmodelled_crossing_bands)
 
     def build_paint_and_posts(self, props: list[dict]) -> tuple[list, list[dict]]:
         """The paint, and `props` extended with the posts only the paint knows the place of.
@@ -203,7 +253,11 @@ class SceneGeometry:
                              props=tuple(props), paint=tuple(paint),
                              crosswalk_bands=self.crosswalk_bands,
                              crosswalk_offsets=self.crosswalk_offsets,
-                             stop_bars=self.stop_bar_bands)
+                             stop_bars=self.stop_bar_bands,
+                             # The same tuple build_paint was cut against, not a second
+                             # derivation of it - a check reading a different set from the one
+                             # the paint avoided is the drift this class exists to prevent.
+                             unmodelled_crossing_bands=self.unmodelled_crossing_bands)
 
     def check(self, props: list[dict], paint: list) -> list:
         """Every scene invariant, all violations, no raising (src/checks.py)."""

@@ -10,64 +10,24 @@ see this site config.yaml. Every width here is osm_derived or estimated, NOT fie
 measured, so treat the lane/parking dimensions below as a design study rather than a
 construction drawing.
 """
-from src.geometry.targets import LegSide, LegTarget, Side
-from src.geometry.treatments import (
-    MIN_BIKE_LANE_FT, MIN_TWO_WAY_BIKE_LANE_FT, widest_protected_lane_ft,BIKE_LANE_BUFFER_FT, BIKE_LANE_WIDTH_FT,
-    LANE_WIDTH_SLACK_FT, TARGET_LANE_WIDTH_FT, AddBikeLane, AddBikeLaneBollards, DesignState,
-    LaneNarrowing, MarkedParking, ProtectDaylightZone, UpgradeCrosswalkMarkings,
-    all_crosswalks_continental, apply_osm_parking, bike_lane_spare_ft, complete_centerlines)
+from src.geometry.targets import LegSide, Side
+from src.geometry.treatments import (AddBikeLane, AddBikeLaneBollards,
+    all_crosswalks_continental, apply_osm_parking, BIKE_LANE_BOLLARD_SPACING_FT,
+    BIKE_LANE_BUFFER_FT, bike_lane_spare_ft, BIKE_LANE_WIDTH_FT, complete_centerlines,
+    CORRIDOR_SIDE, DesignState, LANE_WIDTH_SLACK_FT, LaneNarrowing, MarkedParking,
+    MIN_BIKE_LANE_FT, MIN_TWO_WAY_BIKE_LANE_FT, osm_derived_baseline, ProtectDaylightZone,
+    widest_protected_lane_ft)
 
-# TARGET_LANE_WIDTH_FT is imported from src, not redeclared here. It is a standard
-# (NACTO/AASHTO urban minimum travel lane), not a per-site choice, and four sites each
-# holding their own copy is what src/geometry/treatments/'s own comment on it warns
-# about - a leg could then be narrowed to one number and checked against another.
-PARKING_DEPTH_FT = 8.0        # a standard marked parallel stall
-MIN_PARKING_DEPTH_FT = 7.0    # below this it isn't a usable stall, so none is marked
-
-
-def _continental_everywhere(state: DesignState) -> DesignState:
-    """Repaint every leg's crosswalk to continental. Applied to every leg, not just the
-    ones marked today - upgrading a marking a leg doesn't have would be a new crossing,
-    which is a different proposal, but src/render/export.py only paints legs listed in
-    the config's existing_marked_crosswalks, so unmarked legs stay unmarked in the render."""
-    for leg_name in state.legs:
-        state = state.apply(UpgradeCrosswalkMarkings(LegTarget(leg_name), "continental"))
-    return state
-
-
-def _parking_and_narrowing(state: DesignState) -> DesignState:
-    """Narrow every travel lane to TARGET_LANE_WIDTH_FT and put the recovered width to
-    work as marked parallel parking.
-
-    The two treatments have to be sized together, not stacked: an 11 ft lane plus an 8 ft
-    stall needs 19 ft per side, and most legs here are 33-39 ft curb-to-curb (16.5-19.5 ft
-    per side). So the recovered width - half the roadway minus 11 ft - is what's available,
-    and each leg gets whichever of these fits:
-
-      * >= PARKING_DEPTH_FT + 1: an 8 ft stall, with the remainder as a striped buffer
-        between the stall and the kerb (add_marked_parking's curb_offset_ft).
-      * >= MIN_PARKING_DEPTH_FT: a single stall taking the whole recovered width.
-      * less than that: no parking - paint-only lane narrowing, since a 6 ft stall isn't
-        a stall. The leg still gets its 11 ft lanes.
-
-    Printed per leg so the trade-off is visible rather than buried in geometry.
-    """
-    for leg_name, leg in state.legs.items():
-        recovered_ft = leg.curb_to_curb_ft / 2 - TARGET_LANE_WIDTH_FT
-        if recovered_ft < MIN_PARKING_DEPTH_FT:
-            state = state.apply(LaneNarrowing(LegTarget(leg_name), max(recovered_ft, 0.5)))
-            print(f"  NOTE: {leg_name} ({leg.curb_to_curb_ft:.0f} ft) recovers only "
-                  f"{recovered_ft:.1f} ft per side at {TARGET_LANE_WIDTH_FT:.0f} ft lanes - too narrow "
-                  f"for a stall, so paint-only narrowing here, no parking.")
-            continue
-        depth_ft = min(recovered_ft, PARKING_DEPTH_FT)
-        buffer_ft = max(recovered_ft - depth_ft, 0.0)
-        for side in ("left", "right"):
-            state = state.apply(MarkedParking(LegSide(leg_name, side), depth_ft=depth_ft, curb_offset_ft=buffer_ft))
-        print(f"  NOTE: {leg_name} ({leg.curb_to_curb_ft:.0f} ft) -> {TARGET_LANE_WIDTH_FT:.0f} ft lanes + "
-              f"{depth_ft:.1f} ft parking both sides"
-              + (f" + {buffer_ft:.1f} ft striped buffer" if buffer_ft > 0.1 else "") + ".")
-    return state
+# NOTHING IN THIS FILE MAY RESTATE A STANDARD. Lane widths, stall depths, post spacing, which
+# kerb the corridor runs along - all of them are the same answer at the next junction, so they
+# are imported from src/geometry/treatments/ rather than declared here. A site file is for what
+# is true of THIS street: its widths, which legs it treats, what its proposals are called.
+#
+# Enforced, not merely asked for: tests/test_sites.py:test_no_site_redeclares_what_src_already_defines
+# fails the build on a local copy of anything src exports, and
+# test_no_rule_is_written_out_in_more_than_one_site fails on a rule copied between two sites.
+# Both were written after six constants and four whole functions were found duplicated across
+# these files - see README, "A site is not a place to keep a standard".
 
 
 def build_demo_scenario(baseline: DesignState, model=None) -> DesignState:
@@ -81,12 +41,7 @@ def build_demo_scenario(baseline: DesignState, model=None) -> DesignState:
     Needs the model for the OSM tags, so it falls back to the untouched baseline when called
     with a state alone (the older single-argument convention).
     """
-    if model is None:
-        return baseline
-    state = apply_osm_parking(baseline, model)
-    state = complete_centerlines(state)
-    return all_crosswalks_continental(state)
-
+    return osm_derived_baseline(baseline, model)
 
 
 def build_proposal_daylight_bollards(baseline: DesignState, model=None) -> DesignState:
@@ -143,8 +98,6 @@ def build_proposal_daylight_bollards(baseline: DesignState, model=None) -> Desig
 # The buffer is the STANDARD width or nothing - not whatever a kerb can spare. Sizing it from the
 # spare gave 2.01 and 2.14 ft buffers, which is a lane sized by the noisiest input in the model
 # rather than to a standard. Spare width's job here is to be hatched.
-BIKE_LANE_BOLLARD_SPACING_FT = 8.0  # matches Broad & Greenwood's pitch - reads as a continuous
-                                     # delineator rather than a row of dots
 E_BROAD_LEGS = ("e_broad_st_east", "e_broad_st_west")
 
 
@@ -217,7 +170,6 @@ def _one_way_bike_lanes_reference(baseline: DesignState, model=None) -> DesignSt
 # kerb for the whole borough length of Broad St. See that file for the measurements the side was
 # chosen on (10 side streets cutting the north kerb against 7 on the south, over a corridor
 # where the parking difference is 2% and the driveway data is 29% complete).
-CORRIDOR_SIDE = "south"
 
 # TEN FEET, NOT THE 12 FT DESIGN WIDTH, AND PARKING IS WHY. Hopewell Borough is car-dependent;
 # a corridor plan that removes a kerb of parking and returns none is not viable here whatever it

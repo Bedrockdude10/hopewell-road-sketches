@@ -397,3 +397,92 @@ def test_a_hatched_zone_tapers_off_at_an_opening_where_a_lane_line_stops_dead(si
         f"the run-out closes {near_lane_half:.2f} ft over the lane-side half of the strip and "
         f"{near_kerb_half:.2f} ft over the kerb-side half, so the arc is tangent to the wrong "
         f"direction - flat where the eye follows the edge line, which is the blunt end again")
+
+
+# --------------------------------------------------------------------------
+# A DRIVEWAY IS NOT AN INTERSECTION - MUTCD 11th ed. 1C.02(113)(b), N.J.S.A. 39:1-1
+# --------------------------------------------------------------------------
+
+def test_only_a_cross_street_is_an_intersection():
+    """The definition every marking rule downstream reads, pinned at its source.
+
+    MUTCD 1C.02(113)(b): "The junction of an alley, driveway, or site roadway with a public
+    roadway or highway shall not constitute an intersection". N.J.S.A. 39:1-1 the same way round:
+    an intersection joins "two or more highways", and a driveway is "not open to the use of the
+    public". A dropped kerb is this borough's tagging convention for a driveway mouth and nothing
+    else (see the module docstring's tag census), so it is a driveway too.
+
+    Asserted over the whole enum rather than the three members named, so a source added later
+    has to decide which it is instead of defaulting to "driveway" the way CROSS_STREET silently
+    did - which is the bug this property exists to have prevented.
+    """
+    from src.geometry.kerbs import OpeningSource
+
+    assert OpeningSource.CROSS_STREET.is_an_intersection
+    assert not OpeningSource.DRIVEWAY.is_an_intersection
+    assert not OpeningSource.DROPPED_KERB.is_an_intersection
+    assert [s for s in OpeningSource if s.is_an_intersection] == [OpeningSource.CROSS_STREET], (
+        "a new OpeningSource has appeared - decide whether it is an intersection under MUTCD "
+        "1C.02 and say so here, because every marking rule reads this property")
+
+
+@needs_source_data
+def test_an_intersecting_approach_gets_no_driveway_apron(wide_site_models):
+    """No trim and no fillet at a street mouth: both model a DRIVEWAY APRON.
+
+    A driveway's apron flares at the kerb, so the gap is widened by OPENING_TRIM_FT and a hatched
+    zone sweeps away from it on a fillet. A street mouth's flare is its CORNER RETURN, and
+    kerbs._mouth_from_the_tracing already takes the mouth from where the traced kerb really
+    stops - i.e. from the tangent point of that return. Adding an apron on top counts the same
+    flare twice and draws a driveway apron across the mouth of Blackwell Avenue.
+
+    Checked on a kerb whose ONLY opening is a cross street, so the two bands can be compared
+    whole: `tapered` is `driven` plus every fillet, so equal areas means no fillet was swept, and
+    a mouth no wider than the opening means no trim was added.
+    """
+    from src.geometry.kerbs import OpeningSource
+    from src.geometry.paint import OPENING_TRIM_FT, kerb_opening_bands
+
+    # THE WIDE FRAME, which is what output/ is drawn at. At 1x no leg reaches a cross street at
+    # all - the whole class of bug this pins lives past the modelled junction, so a fixture that
+    # stops at it would assert nothing and say it passed.
+    seen = 0
+    for site, model in wide_site_models.items():
+        with contextlib.redirect_stdout(io.StringIO()):
+            state = DesignState.from_model(model)
+        for (leg_name, side), openings in state.kerb_openings.items():
+            if len(openings) != 1 or openings[0].source is not OpeningSource.CROSS_STREET:
+                continue
+            seen += 1
+            opening = openings[0]
+            # One kerb at a time, so the unions below contain this opening and nothing else.
+            one_kerb = _only_this_kerb(state, leg_name, side)
+            bands = kerb_opening_bands(one_kerb)
+            assert bands.intersections is not None and not bands.intersections.is_empty, (
+                f"{site}: {leg_name}/{side}'s cross street reached `driven` but not "
+                f"`intersections`, so KerbOpenings.against cannot break an edge line at it")
+            assert bands.tapered.area == pytest.approx(bands.driven.area, rel=1e-6), (
+                f"{site}: {leg_name}/{side} is a street mouth and grew a run-out fillet - "
+                f"{bands.tapered.area:.1f} sq ft tapered against {bands.driven.area:.1f} driven")
+
+            stations, _offsets = station_offset_many(
+                state.legs[leg_name].centerline,
+                np.asarray([xy for part in getattr(bands.driven, "geoms", [bands.driven])
+                            for xy in part.exterior.coords], dtype=float))
+            assert float(stations.min()) >= opening.start_ft - 0.01, (
+                f"{site}: the drawn mouth starts {opening.start_ft - float(stations.min()):.2f} ft "
+                f"before the measured one - a driveway apron\'s trim on a street")
+            assert float(stations.max()) <= opening.end_ft + 0.01, (
+                f"{site}: the drawn mouth ends {float(stations.max()) - opening.end_ft:.2f} ft "
+                f"past the measured one - a driveway apron\'s trim on a street")
+    assert seen, "no kerb whose only opening is a cross street, so this asserted nothing"
+    assert OPENING_TRIM_FT > 0, "the trim this test says is NOT applied here has to exist"
+
+
+def _only_this_kerb(state, leg_name, side):
+    """`state` with every kerb opening but this one dropped, so a union is about one mouth."""
+    import copy
+
+    trimmed = copy.copy(state)
+    trimmed.kerb_openings = {(leg_name, side): state.kerb_openings[(leg_name, side)]}
+    return trimmed

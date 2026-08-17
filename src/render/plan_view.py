@@ -326,17 +326,17 @@ def _draw_unmodelled_crossings(ax, scene):
     own band, including whatever a proposal restyles them to, and drawing both would put two
     crossings 1.44-2.73 ft apart on the same ground.
 
-    Styled from each way's own tags, so an unrecorded crossing gets nothing rather than the two
-    transverse lines src/render/crosswalks.py's default would invent. Drawn in the same white as the
-    modelled crosswalks: on the ground they are the same paint, and colouring them differently would
-    say the survey is worth less than our reconstruction of it.
+    Styled by SceneGeometry.surveyed_crossing_markings, NOT from each way's tags here: a proposal
+    that repaints every crossing continental has to reach these too, and this function reading the
+    tags directly is why it did not. An unrecorded crossing still gets nothing rather than the two
+    transverse lines src/render/crosswalks.py's default would invent - that rule moved with the
+    styling, into surveyed.crossing_style_in. Drawn in the same white as the modelled crosswalks:
+    on the ground they are the same paint, and colouring them differently would say the survey is
+    worth less than our reconstruction of it.
     """
-    from src.geometry.surveyed import crossing_bars_ft, crossing_lines_ft
-
-    kerbs = list(scene.drawn_kerbs)
-    unmodelled = scene.unmodelled_crossings
-    bars = [bar for c in unmodelled for bar in crossing_bars_ft(c, kerbs)]
-    lines = [line for c in unmodelled for line in crossing_lines_ft(c, kerbs)]
+    drawn = scene.surveyed_crossing_markings()
+    bars = [bar for _c, crossing_bars, _l in drawn for bar in crossing_bars]
+    lines = [line for _c, _b, crossing_lines in drawn for line in crossing_lines]
     if bars:
         _draw(ax, bars, facecolor="white", edgecolor="0.35", linewidth=0.4, zorder=6)
     if lines:

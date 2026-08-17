@@ -41,8 +41,10 @@ class RimCause(StrEnum):
 
     CROSSING a painted crossing, which the hatching runs into and is cut by - the clean diagonal
              end you see on a real street.
-    OPENING  a driveway's fillet, which the hatching stops short of, because that arc's chord is
-             at the hatch angle and a stroke laid beside it reads as a fork.
+    OPENING  a gap in the kerb. At a DRIVEWAY that is the apron's fillet, which the hatching
+             stops short of, because that arc's chord is at the hatch angle and a stroke laid
+             beside it reads as a fork. At an INTERSECTING APPROACH there is no fillet - a street
+             mouth has no apron (see kerb_opening_bands) - so the rim is the square end instead.
     """
     CROSSING = "crossing"
     OPENING = "opening"
@@ -350,7 +352,12 @@ class PaintContext:
     state: object
     crosswalk_offsets: dict
     center_ft: object
-    keep_clear: object = None          # union of the painted crossings, buffered by the gap
+    keep_clear: object = None          # EVERY painted crossing in the frame, buffered by the gap
+    # This junction's own crossings, same buffer. The two used to be one field doing two jobs,
+    # which curbside_paint_ft's docstring already described as two jobs - and they stopped being
+    # the same set the moment crossings at UNMODELLED junctions had to be kept clear of too. See
+    # anchors() for why aiming at those would be a disaster and cutting against them is required.
+    junction_crossings: object = None
     marked: set = field(default_factory=set)
     straight_through: set = field(default_factory=set)
     props: list | None = None
@@ -392,14 +399,27 @@ class PaintContext:
         """Keep a piece as-is, without clipping. For the things that are not paint: an apron is
         a surface the paint stops at, and a bollard is a point standing in the road.
 
-        WITH ONE CLIP, because a kerb opening is not paint either. A flex post cannot be trimmed
-        by a driveway the way a stripe can - it is either standing in the entrance or it is not -
-        so a post that lands inside an opening is dropped rather than shortened. Without this the
-        paint broke over a driveway and the bollards marched straight across it, which is worse
-        than not breaking the paint at all: it reads as a protected lane whose protection you are
-        expected to drive through.
+        WITH TWO CLIPS, because neither a kerb opening nor a crossing is paint. A flex post
+        cannot be trimmed the way a stripe can - it is either standing in the way or it is not -
+        so a post that lands in one is dropped rather than shortened.
+
+        AN OPENING: without this the paint broke over a driveway and the bollards marched
+        straight across it, which is worse than not breaking the paint at all - it reads as a
+        protected lane whose protection you are expected to drive through.
+
+        A CROSSING: a post planted in a marked crosswalk is the same statement about a person
+        walking, and it is the worse of the two. This never arose at THIS junction's crossings,
+        because a bike lane's post row starts past where the crossing reaches
+        (props.bollard_props_from_paint takes its stations from the painted row for exactly that
+        reason) - so the rule was satisfied by an accident of ordering rather than stated. At a
+        crossing belonging to another junction in the frame there is no such ordering, and two
+        posts stood in Blackwell Avenue's zebras on the corridor proposal.
+
+        `keep_clear` and not `junction_crossings`: every crosswalk in the picture, for the same
+        reason `add` cuts against all of them.
         """
-        if piece.kind.is_object and stands_in_an_opening(self.openings, piece.geometry):
+        if piece.kind.is_object and (stands_in_an_opening(self.openings, piece.geometry)
+                                      or _stands_in_a_crossing(self.keep_clear, piece.geometry)):
             return piece
         self.pieces.append(piece)
         return piece
@@ -600,16 +620,29 @@ class PaintContext:
                             painted.append(got)
 
     def anchors(self, leg_name: str, side: str, inner_offset_ft: float = 0.0):
-        """This leg-side's measuring stations, with the shared crossing geometry filled in."""
-        return leg_anchors(self.state, leg_name, side, self.crosswalk_offsets, self.keep_clear,
-                            inner_offset_ft=inner_offset_ft,
+        """This leg-side's measuring stations, with the shared crossing geometry filled in.
+
+        THIS JUNCTION'S CROSSINGS ONLY, and this is the one place the distinction bites.
+        leg_anchors asks crosswalk_reach_on_leg_side_ft how far along the kerb a crossing
+        reaches, takes the FURTHEST, and starts the kerbside treatment beyond it - which is right
+        for a crossing at the corner the paint is backing away from, and catastrophic for one
+        220 ft down the block. Handed the full set, broad_st_east's taper would aim at station
+        322 (Blackwell's far crossing) instead of 26, and the leg's entire kerbside treatment
+        would vanish behind the crossing it was supposed to start after.
+
+        Everything else - `add`, `emit_across_opening`, `rim` - reads `keep_clear`, which is the
+        full set, because "do not paint over a crosswalk" is true of every crosswalk in the frame.
+        """
+        return leg_anchors(self.state, leg_name, side, self.crosswalk_offsets,
+                            self.junction_crossings, inner_offset_ft=inner_offset_ft,
                             crosswalk_is_marked=leg_name in self.marked)
 
 
 def curbside_paint_ft(state, crosswalk_offsets: dict, center_ft,
                        crosswalk_bands: dict | None = None,
                        props: list[dict] | None = None,
-                       marked_crosswalks: set | None = None) -> list[PaintPiece]:
+                       marked_crosswalks: set | None = None,
+                       crossings_elsewhere=None) -> list[PaintPiece]:
     """Every painted marking this design puts on the roadway, in state-plane feet.
 
     props supplies the stop signs and fire hydrants that carry statutory parking setbacks of
@@ -623,6 +656,18 @@ def curbside_paint_ft(state, crosswalk_offsets: dict, center_ft,
     layered by priority and a crossing outranks a buffer or a parking lane. Aiming correctly
     is what makes the paint LOOK right - the subtraction alone leaves a taper chopped off
     square where it ran into the crossing.
+
+    `crossings_elsewhere` is the SECOND of those jobs done for the crossings this junction does
+    not own: the marked ones at the other junctions inside the frame (src/geometry/surveyed.py),
+    which have no leg here and therefore no entry in `crosswalk_bands`. They are subtracted and
+    never aimed at - see PaintContext.anchors for why the second half of that is not an oversight.
+
+    THEY WERE GETTING NEITHER. Broad St's frame contains Blackwell Avenue with three crossings
+    traced across it, two of them a zebra; src/geometry/surveyed.py drew them and nothing got out
+    of their way, so the corridor proposal painted 120 sq ft of green bike lane, 36 ft of lane
+    edge line and its yellow contraflow stripe straight over a marked crosswalk. Measured across
+    the four sites and every scenario, up to 164 sq ft of area paint and 48 ft of line. The
+    drawing was making a claim about the street that the same drawing contradicted 6 ft away.
     """
     # Only crossings that are actually PAINTED get out of the way of anything. Every leg
     # gets a resolved offset, including ones with no marking today - cutting paint around
@@ -634,8 +679,12 @@ def curbside_paint_ft(state, crosswalk_offsets: dict, center_ft,
     straight_through = through_street_sides(state.legs)
     bands = {name: band for name, band in (crosswalk_bands or {}).items()
              if band is not None and not band.is_empty and name in marked}
-    keep_clear = (unary_union(list(bands.values())).buffer(PAINT_TO_CROSSWALK_GAP_FT)
-                   if bands else None)
+    junction_crossings = (unary_union(list(bands.values())).buffer(PAINT_TO_CROSSWALK_GAP_FT)
+                           if bands else None)
+    elsewhere = [band for band in (crossings_elsewhere or ())
+                 if band is not None and not band.is_empty]
+    all_bands = list(bands.values()) + elsewhere
+    keep_clear = (unary_union(all_bands).buffer(PAINT_TO_CROSSWALK_GAP_FT) if all_bands else None)
     openings = kerb_opening_bands(state)
     # --- and now the treatments paint themselves. Each one that has markings owns them
     # (Treatment.paint), so a marking's geometry lives beside the validation and the provenance
@@ -647,7 +696,8 @@ def curbside_paint_ft(state, crosswalk_offsets: dict, center_ft,
     # a design's dicts are last-write-wins, so two MarkedParking treatments on one kerb are one
     # marked lane and not two painted on top of each other.
     ctx = PaintContext(state=state, crosswalk_offsets=crosswalk_offsets, center_ft=center_ft,
-                        keep_clear=keep_clear, marked=marked, openings=openings,
+                        keep_clear=keep_clear, junction_crossings=junction_crossings,
+                        marked=marked, openings=openings,
                         straight_through=straight_through, props=props)
     current = {}
     for treatment in getattr(state, "treatments", []):
@@ -702,51 +752,86 @@ def _dash_spans(lo_ft: float, hi_ft: float) -> list[tuple[float, float]]:
 
 @dataclass(frozen=True)
 class KerbOpenings:
-    """Where the kerbside markings open for a vehicle - in the TWO shapes that needs.
+    """Where the kerbside markings open for a vehicle - in the THREE shapes that needs.
 
-    A marking does not stop at a driveway the same way whatever it is. The ground a car drives
-    over is one shape, and how each kind of paint ends against it is a different question:
+    A marking does not stop at a driveway the same way whatever it is, and it does not stop at a
+    STREET the same way it stops at a driveway. Two independent questions, and the shapes here
+    are their answers:
 
-      * `driven` is that ground itself: the dropped kerb's own extent, trimmed back and rounded.
-        A line stops here (and a lane line then carries a dotted extension across it, see
-        PaintContext.dashes_through_openings), the green stops here, a post is dropped if it
-        stands here, and this is the entrance's real width.
+      * `driven` is the ground a car crosses: every entrance, driveway and intersecting approach
+        alike, trimmed back and rounded where it is an apron. A line stops here (and a lane line
+        then carries a dotted extension across it, see PaintContext.opening_dash_spans), the
+        green stops here, a post is dropped if it stands here, and this is the entrance's real
+        width.
       * `tapered` is the same thing with a rounded run-out at the travel lane's edge, and it is
         what a HATCHED zone ends against. A no-travel zone that stops square reads as a rectangle
         punched through the hatching; the same zone at a crossing ends on the crossing's own
         diagonal, which is what makes it look painted rather than deleted.
+      * `intersections` is the subset that is an INTERSECTING APPROACH rather than a driveway
+        (kerbs.OpeningSource.is_an_intersection). It exists because one group of markings - the
+        edge of the travelled way - is carried across the one and discontinued across the other,
+        so "which shape is this cut against" has a third answer and not two.
 
-    One shape for everything is what produced the blunt ends: the two questions had the same
-    answer because nothing had asked them separately.
+    One shape for everything is what produced the blunt ends: the questions had the same answer
+    because nothing had asked them separately. That was true twice over, and the second time it
+    was a standards error rather than a cosmetic one - see against().
     """
     driven: object = None
     tapered: object = None
+    intersections: object = None
 
     def against(self, kind) -> object:
         """The shape `kind` is cut against - the fillet for a hatched zone AND THE LINES THAT BOUND
-        IT, the entrance itself for everything else, and NOTHING for the edge of the travelled way.
+        IT, the entrance itself for everything else, and for the edge of the travelled way, the
+        INTERSECTING APPROACHES ONLY.
 
         The edge line has to go with its zone. Cut at the mouth while the hatching swept away on
         its fillet, it ran on with nothing behind it and the fillet's rim cut across it at an angle
         - a hook and a Y in the render, at every driveway. See markings.ZONE_BOUNDARY_LINES for why
         that set is declared rather than derived from the role.
 
-        And the line marking the edge of the running lane is cut by nothing here, which is what
-        this docstring and kerb_opening_bands both always said should happen ("it does not break
-        the line that marks the edge of the running lane, which carries straight past") and what
-        the code did not do: a parking edge line was cut against `driven` like a stall, so at the
-        driveway 178-204 ft along broad_st_east's south kerb the stalls stopped, both lines
-        stopped, and 26 ft of kerb was left with nothing drawn on it at all. See
-        markings.LINES_UNBROKEN_BY_A_DRIVEWAY for the standard.
+        AND THE EDGE OF THE TRAVELLED WAY IS CUT BY A STREET AND NOT BY A DRIVEWAY, which is two
+        rules and used to be one. MUTCD 11th ed. 3B.11 states them a paragraph apart, in opposite
+        directions and off the same definition (STANDARDS.md section 2):
+
+            (08) Guidance   edge line markings SHOULD BE DISCONTINUED across intersecting
+                            approaches at intersections or interchanges
+            (09) Guidance   driveways that DO NOT meet the definition of an intersection (see
+                            Section 1C.02) SHOULD HAVE edge line markings MAINTAINED across the
+                            intersecting approach of the driveway
+
+        This returned None - break for nothing - which is the whole of (09) and none of (08). It
+        was right while a driveway was the only thing that opened a kerb, and became wrong the day
+        src/geometry/cross_streets.py started producing openings too: broad_st_east's parking edge
+        line ran unbroken straight across the 49.7 ft mouth of Blackwell Avenue. Nothing failed,
+        because a rule carried in prose is enforced by whoever last read the prose.
+
+        3B.11(07)'s exception - solid edge lines MAY continue "through that part of an intersection
+        with no intersecting approach (such as at the far side of a T-intersection)" - needs no code
+        here, and that is worth stating because it looks like it should. cross_streets.py opens only
+        the kerb the street's own vertices say it leaves on, so a T's far kerb never enters
+        `intersections` in the first place and its line is never cut. A crossroads opens both.
         """
         from src.geometry.markings import LINES_UNBROKEN_BY_A_DRIVEWAY, ZONE_BOUNDARY_LINES
 
         if kind in LINES_UNBROKEN_BY_A_DRIVEWAY:
-            return None
+            return self.intersections
         return (self.tapered if kind.is_fill or kind in ZONE_BOUNDARY_LINES else self.driven)
 
     def __bool__(self) -> bool:
         return self.driven is not None and not self.driven.is_empty
+
+
+def _stands_in_a_crossing(keep_clear, geometry) -> bool:
+    """Whether an OBJECT is standing on a painted crossing, so it must not be placed.
+
+    Measured against `keep_clear`, which is the crossings already buffered by
+    PAINT_TO_CROSSWALK_GAP_FT. The gap is deliberately included: a post a foot from a crosswalk
+    is a post in the crosswalk as far as anyone walking into it is concerned, and the same
+    striper's gap that keeps paint off it keeps a bollard off it.
+    """
+    return (keep_clear is not None and not keep_clear.is_empty
+            and keep_clear.intersects(geometry))
 
 
 def stands_in_an_opening(openings, geometry) -> bool:
@@ -851,11 +936,27 @@ def kerb_opening_bands(state) -> KerbOpenings:
     which is not how one ends anywhere else in this project: at a crossing it ends on the
     crossing's own diagonal. So the fills are cut against `tapered`, the same band plus
     _opening_run_out, and the lines and the green against `driven`.
+
+    NEITHER THE TRIM NOR THE FILLET IS APPLIED AT AN INTERSECTING APPROACH, and both omissions
+    are the same point: they model a DRIVEWAY APRON, which is a thing a street mouth does not
+    have. A driveway's apron flares at the kerb and a car turning in cuts the corner, so the gap
+    is widened and rounded and a hatched zone sweeps away from it. A street mouth's flare is its
+    CORNER RETURN, and it is already in the geometry - kerbs._mouth_from_the_tracing takes the
+    mouth from where the traced kerb really stops, which is that return's tangent point - so
+    adding an apron's 1.5 ft to each end counts the same flare twice, and sweeping a fillet onto
+    it draws a driveway apron across the mouth of Blackwell Avenue. Measured at Broad &
+    Greenwood, the trim alone was 3.0 ft of kerb per intersection given up to a feature that is
+    not there.
+
+    A zone that ends at a street therefore ends SQUARE, which is not a shrug - it is the same end
+    zone_end_line_ft already draws for a zone with nothing to end against, and past it the
+    statutory setback (R.S. 39:4-138(e), src/geometry/daylighting.py) has usually stopped the
+    parking well before the mouth anyway.
     """
     from src.geometry.model import offset_band_polygon
     from src.geometry.treatments import TARGET_LANE_WIDTH_FT, divider_shift_toward_ft
 
-    driven, tapered = [], []
+    driven, tapered, intersections = [], [], []
     for (leg_name, side), openings in getattr(state, "kerb_openings", {}).items():
         leg = state.legs.get(leg_name)
         if leg is None or leg.curb_to_curb_ft is None:
@@ -887,20 +988,31 @@ def kerb_opening_bands(state) -> KerbOpenings:
             # than right angles. Buffering the fillet along with it - which is what this did - grew
             # the sweep by 1.5 ft in every direction including along its own tangent, so the curve
             # left the edge line 1.5 ft wide: the bulge where the sweep begins.
-            mouth = band.buffer(OPENING_TRIM_FT, join_style=1, cap_style=1)
-            # Grown from the TRIMMED mouth, so the arc's square end lands exactly on the entrance's
-            # edge and the two join without a step.
-            run_out = _opening_run_out(leg, side, inner_ft,
-                                       float(np.abs(offsets).max()),
-                                       opening.start_ft - OPENING_TRIM_FT,
-                                       opening.end_ft + OPENING_TRIM_FT)
-            for shape, target in ((mouth, driven), (unary_union([mouth, *run_out]), tapered)):
+            #
+            # AND ONLY AN APRON HAS ONE. An intersecting approach keeps the mouth the tracing
+            # gave it, square - see this function's docstring for why the trim and the fillet are
+            # one decision and both belong to a driveway.
+            if opening.is_an_intersection:
+                mouth, run_out = band, []
+            else:
+                mouth = band.buffer(OPENING_TRIM_FT, join_style=1, cap_style=1)
+                # Grown from the TRIMMED mouth, so the arc's square end lands exactly on the
+                # entrance's edge and the two join without a step.
+                run_out = _opening_run_out(leg, side, inner_ft,
+                                           float(np.abs(offsets).max()),
+                                           opening.start_ft - OPENING_TRIM_FT,
+                                           opening.end_ft + OPENING_TRIM_FT)
+            targets = [(mouth, driven), (unary_union([mouth, *run_out]), tapered)]
+            if opening.is_an_intersection:
+                targets.append((mouth, intersections))
+            for shape, target in targets:
                 if kerbside is not None and not kerbside.is_empty:
                     shape = shape.intersection(kerbside)
                 if not shape.is_empty:
                     target.append(shape)
     return KerbOpenings(driven=unary_union(driven) if driven else None,
-                        tapered=unary_union(tapered) if tapered else None)
+                        tapered=unary_union(tapered) if tapered else None,
+                        intersections=unary_union(intersections) if intersections else None)
 
 
 def apron_polygon(state, corner: tuple[str, str], apron, center_ft):

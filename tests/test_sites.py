@@ -8,7 +8,6 @@ this repo's geometry changes, not when someone re-traces a kerb in OSM.
 import contextlib
 import io
 import json
-import os
 from pathlib import Path
 
 import numpy as np
@@ -27,7 +26,7 @@ from src.render.coords import FT_TO_M
 from src.render.props import build_props
 from src.geometry.markings import (DAYLIGHT_EDGE_LINE, DAYLIGHT_FILL)
 from src.geometry.paint import curbside_paint_ft
-from src.site import load_site_scenarios, run_scenario
+from src.site import list_sites, load_site_scenarios, run_scenario, site_dir
 from src.sources.osm_context import (fetch_crossings, fetch_kerbs, fetch_stop_lines,
                                      fetch_street_furniture, fetch_traffic_control)
 
@@ -544,30 +543,6 @@ def test_osm_parking_never_narrows_a_lane_below_target(site, site_models):
 # commit "Regenerate the outputs: the corridor, drawn to the frame at 2.2x"). The session
 # fixture builds at 1x, where every leg ends inside the 130 ft its width and centre were
 # measured over - so a promise that only breaks further out cannot show up there at all.
-WIDE_FRAME_SCALE = 2.2
-
-
-@pytest.fixture(scope="module")
-def wide_site_models():
-    """{site: IntersectionModel} built at the frame scale output/ is drawn at."""
-    from src.geometry.intersection import load_intersection_model
-    from src.render.frame import FRAME_SCALE_ENV
-
-    previous = os.environ.get(FRAME_SCALE_ENV)
-    os.environ[FRAME_SCALE_ENV] = str(WIDE_FRAME_SCALE)
-    try:
-        models = {}
-        for site in SITES:
-            with contextlib.redirect_stdout(io.StringIO()):
-                models[site] = load_intersection_model(site=site)
-        return models
-    finally:
-        if previous is None:
-            os.environ.pop(FRAME_SCALE_ENV, None)
-        else:
-            os.environ[FRAME_SCALE_ENV] = previous
-
-
 @needs_source_data
 @pytest.mark.parametrize("site", SITES)
 def test_the_two_halves_of_a_through_street_line_up(site, site_models):
@@ -2115,3 +2090,98 @@ def _street_signature(state) -> dict:
                                   for key, value in sorted(pieces.items())
                                   if hasattr(value, "length")}
     return signature
+
+
+def test_no_site_redeclares_what_src_already_defines():
+    """A site file may not hold its own copy of a standard, or its own copy of a shared rule.
+
+    THIS IS A BUG CLASS, not one bug. Every instance looks locally harmless - a scenario needs
+    an 8 ft stall depth, so it writes `PARKING_DEPTH_FT = 8.0` at the top of its own file - and
+    the damage is invisible until the standard in `src` changes and three sites go on drawing
+    the old one. `src/geometry/treatments/`'s own comment on TARGET_LANE_WIDTH_FT has said so
+    for a long time: "four copies is how nothing ends up enforcing it."
+
+    Found and removed when this was written (2026-08-17):
+
+        PARKING_DEPTH_FT = 8.0            x3   PARKING_STALL_DEPTH_DEFAULT_FT (AASHTO)
+        MIN_PARKING_DEPTH_FT = 7.0        x3   MIN_USABLE_STALL_FT, already exported
+        MIN_USABLE_STALL_FT = 7.0         x1   a dead shadow of the exported one
+        BIKE_LANE_BOLLARD_SPACING_FT      x2   now in bikeways.py
+        CORRIDOR_SIDE = "south"           x3   a ROUTE decision, in three junction files
+        _parking_and_narrowing()          x3   byte-identical; now narrow_lanes_and_recover_parking
+        _continental_everywhere()         x3   byte-identical, and a reimplementation of
+                                               all_crosswalks_continental, which one of the three
+                                               files was already importing
+
+    CORRIDOR_SIDE is the one to keep in mind. Its own comment called it "a corridor decision, not
+    a per-junction one" and it was written out in three junction files; had one been edited, the
+    borough's bike lane would have swapped kerbs at that junction and all three drawings would
+    still have looked locally correct.
+
+    A site is for what is TRUE OF THAT STREET - its widths, its bearings, which legs it treats,
+    what it names its proposals. Anything that would be the same answer at the next junction is a
+    standard, and standards live in src/ where STANDARDS.md can cite them.
+    """
+    import ast
+
+    from src.geometry import treatments
+
+    shared = {name for name in dir(treatments) if not name.startswith("_")}
+    offenders = []
+    for site in list_sites():
+        path = site_dir(site) / "scenarios.py"
+        if not path.exists():
+            continue
+        tree = ast.parse(path.read_text())
+        for node in tree.body:
+            names = []
+            if isinstance(node, ast.Assign):
+                names = [t.id for t in node.targets if isinstance(t, ast.Name)]
+            elif isinstance(node, ast.FunctionDef):
+                # A leading underscore does not exempt it - `_parking_and_narrowing` was private
+                # in three files at once, which is three copies with a name that says otherwise.
+                names = [node.name.lstrip("_")]
+            for name in names:
+                if name in shared:
+                    offenders.append(f"{site}/scenarios.py: {name}")
+    assert not offenders, (
+        "these site files redeclare something src.geometry.treatments already defines - import "
+        "it instead, or if the site genuinely needs a different value, say why in a comment and "
+        "give it a name that does not collide:\n  " + "\n  ".join(sorted(offenders)))
+
+
+def test_no_rule_is_written_out_in_more_than_one_site():
+    """The same function body in two site files is one rule with two homes.
+
+    The constants check above catches a shared NUMBER; this catches a shared RULE, which is the
+    more expensive kind to have drifted. `_parking_and_narrowing` was byte-identical in three
+    files - so was `_continental_everywhere`, which duplicated an src function one of those
+    files already imported.
+
+    Compared on the normalised AST rather than the text, so reformatting or a renamed local does
+    not hide a copy. Two scenarios that genuinely happen to agree should be one function in src
+    with two callers; that is the whole point.
+    """
+    import ast
+    import hashlib
+    from collections import defaultdict
+
+    bodies = defaultdict(list)
+    for site in list_sites():
+        path = site_dir(site) / "scenarios.py"
+        if not path.exists():
+            continue
+        for node in ast.parse(path.read_text()).body:
+            if not isinstance(node, ast.FunctionDef):
+                continue
+            body = "\n".join(ast.unparse(stmt) for stmt in node.body
+                              if not (isinstance(stmt, ast.Expr)
+                                      and isinstance(stmt.value, ast.Constant)))
+            if body.count("\n") < 2:
+                continue        # a one-liner delegating to src is the good case, not a copy
+            bodies[hashlib.md5(body.encode()).hexdigest()].append(f"{site}:{node.name}")
+
+    shared = {digest: where for digest, where in bodies.items() if len(where) > 1}
+    assert not shared, (
+        "the same rule is written out in more than one site file - move it to src/ and have both "
+        "call it:\n  " + "\n  ".join(" == ".join(w) for w in shared.values()))

@@ -269,7 +269,8 @@ def narrowest_half_width_ft(leg: "Leg", side: str, from_ft: float = 0.0,
 
 
 def paint_stations(leg: "Leg", side: str, start_ft: float,
-                    end_ft: float | None = None) -> np.ndarray | None:
+                    end_ft: float | None = None,
+                    beyond_the_tracing: bool = False) -> np.ndarray | None:
     """The station grid every marking on one side of a leg is sampled on.
 
     Extracted because four functions here had this same eight lines inlined, and a marking whose
@@ -284,13 +285,39 @@ def paint_stations(leg: "Leg", side: str, start_ft: float,
     A NEGATIVE start_ft is a request to begin behind the junction node, and it is honoured only
     as far as the kerb is actually traced there - see curb_station_span's behind_ft. Callers that
     start at 0 or beyond are unaffected, which is all of them except a through-running kerb.
+
+    `beyond_the_tracing` LIFTS THAT BOUND, and almost nothing may ask for it. The bound is right
+    for a marking that is a DESIGN CHOICE - a stall, a bike lane, a buffer - because drawing one
+    where the kerb is unmapped is proposing something on ground nobody has measured. It is wrong
+    for a marking that is a STATEMENT OF LAW. R.S. 39:4-138 forbids parking within 25 ft of a
+    crosswalk whether or not a surveyor traced the kerb there, and a daylight zone that stops
+    where the tracing starts is not a shorter zone, it is the same zone drawn incompletely -
+    which is worse than not drawing it, because a gap in hatching reads as permission.
+
+    Measured at W Broad & Louellen, whose south kerb is traced only from station 60.3: the
+    statutory zone runs 0-93.3 ft and the hatching was drawn 60.3-93.3, stopping 7.5 ft short of
+    a crosswalk it exists to daylight. 92% of the zone was hatched and the missing 8% was the
+    part beside the crossing.
+
+    Outside the tracing the kerb is held at the offset it has where the tracing begins, which is
+    what curb_offsets_at_stations already returns there (np.interp clamps) and what
+    curb_edge_by_station already builds its end vertex from. So this invents no geometry that the
+    rest of this module was not already using - it stops discarding it. The assumption is still an
+    assumption, and it is the reason this is opt-in and named rather than being the default.
     """
     span = curb_station_span(leg, side, behind_ft=max(-start_ft, 0.0))
     if span is None:
         return None
     lo, hi = span
-    lo = max(lo, start_ft)
-    hi = min(hi, leg.centerline.length if end_ft is None else end_ft)
+    if beyond_the_tracing:
+        # The LEG's own extent, not the tracing's. Still bounded - a marking off the end of the
+        # leg belongs to the next block - and still requiring the kerb to be traced SOMEWHERE,
+        # since with no tracing at all there is no offset to hold.
+        lo = max(start_ft, -abs(min(lo, 0.0)))
+        hi = min(leg.centerline.length if end_ft is None else end_ft, leg.centerline.length)
+    else:
+        lo = max(lo, start_ft)
+        hi = min(hi, leg.centerline.length if end_ft is None else end_ft)
     if hi - lo < STRIP_SAMPLE_FT:
         return None
     return np.linspace(lo, hi, max(int(np.ceil((hi - lo) / STRIP_SAMPLE_FT)) + 1, 2))
@@ -435,7 +462,8 @@ def kerb_referenced_band_polygon(leg: "Leg", side: str, outer_inset_ft: float, w
 
 def inset_line_ft(leg: "Leg", side: str, offset_ft: float,
                    start_ft: float, end_ft: float | None = None,
-                   keep_inside_ft: float = 0.0) -> LineString | None:
+                   keep_inside_ft: float = 0.0,
+                   beyond_the_tracing: bool = False) -> LineString | None:
     """A line offset_ft from the centerline on one side, over the stations where that side's
     curb exists - the inner boundary of curbside_strip_polygon, drawn on its own.
 
@@ -448,8 +476,12 @@ def inset_line_ft(leg: "Leg", side: str, offset_ft: float,
     there - half the painted stripe's width, so the stripe sits inside the road instead of
     straddling the kerb. Clamping the AXIS to the kerb hung half the paint over it wherever
     the road was narrower than the offset asked for.
+
+    beyond_the_tracing is paint_stations'; it is passed through so a statutory zone's edge line
+    reaches exactly as far as the zone it bounds. A fill with no line along its first 34 ft is
+    the same disagreement between a marking's pieces this function's docstring is about.
     """
-    stations = paint_stations(leg, side, start_ft, end_ft)
+    stations = paint_stations(leg, side, start_ft, end_ft, beyond_the_tracing)
     if stations is None:
         return None
     curb_offsets = curb_offsets_at_stations(leg, side, stations)

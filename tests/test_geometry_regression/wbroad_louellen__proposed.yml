@@ -79,9 +79,9 @@ channels:
       min:
       - -41.753
       - -31.553
-    points: 135
+    points: 141
   parking_buffer_hatch_lines:
-    count: 24
+    count: 27
     extent:
       max:
       - 2.259
@@ -89,7 +89,7 @@ channels:
       min:
       - -36.023
       - -31.49
-    points: 48
+    points: 54
   parking_buffer_taper_lines:
     count: 0
     extent: null

@@ -52,3 +52,39 @@ def site_models():
         with contextlib.redirect_stdout(io.StringIO()):   # phase notes are noise here
             models[site] = load_intersection_model(site=site)
     return models
+
+
+# The frame scale output/ is actually drawn at. Here rather than in one test module because three
+# of them need it now: anything about a feature PAST the modelled junction - a cross street, its
+# kerb opening, its crosswalks - is invisible at 1x, so a test that forgets to widen the frame
+# passes having checked nothing.
+WIDE_FRAME_SCALE = 2.2
+
+
+@pytest.fixture(scope="session")
+def wide_site_models():
+    """{site: IntersectionModel} built at the frame scale output/ is drawn at.
+
+    NOTE the env var is restored when this returns. The frame is read again at DRAW time, so a
+    test that resolves a scene from these models must set it back itself (FRAME_SCALE_ENV,
+    WIDE_FRAME_SCALE) or it will draw a 1x frame around 2.2x legs.
+    """
+    import contextlib
+    import io
+
+    from src.geometry.intersection import load_intersection_model
+    from src.render.frame import FRAME_SCALE_ENV
+
+    previous = os.environ.get(FRAME_SCALE_ENV)
+    os.environ[FRAME_SCALE_ENV] = str(WIDE_FRAME_SCALE)
+    try:
+        models = {}
+        for site in SITES:
+            with contextlib.redirect_stdout(io.StringIO()):
+                models[site] = load_intersection_model(site=site)
+        return models
+    finally:
+        if previous is None:
+            os.environ.pop(FRAME_SCALE_ENV, None)
+        else:
+            os.environ[FRAME_SCALE_ENV] = previous

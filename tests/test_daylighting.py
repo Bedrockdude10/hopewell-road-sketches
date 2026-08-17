@@ -413,3 +413,159 @@ def test_a_cross_street_breaks_the_kerb_it_joins_and_not_the_one_opposite(site_m
                             f"{site}: {cross.citation} broke {leg_name}/{side}, the kerb "
                             f"OPPOSITE the one it joins")
     assert seen, "no cross street found at any site"
+
+
+# --------------------------------------------------------------------------
+# 39:4-138(e), the CROSSWALK arm, at a cross street - and N.J.S.A. 39:1-1
+# --------------------------------------------------------------------------
+
+def _a_cross_street(station_ft=100.0, half_width_ft=13.0, sides=("left",), crosswalks=()):
+    from src.geometry.cross_streets import CrossStreet
+
+    return CrossStreet(leg="east", station_ft=station_ft, half_width_ft=half_width_ft,
+                        sides=frozenset(sides), name="Blackwell Avenue", way_id=1,
+                        crosswalks=tuple(crosswalks))
+
+
+def test_a_cross_street_gets_the_crosswalk_arm_of_e_and_not_only_the_side_line():
+    """R.S. 39:4-138(e) has two arms and the further one binds - at EVERY intersection.
+
+    Only the side line arm was applied away from the modelled junction, which is the same
+    half-a-rule this module's docstring records at the junction end, run backwards: a cross
+    street with a marked zebra across our own street got the setback owed to one with nothing.
+    """
+    from src.geometry.cross_streets import CrossStreetCrosswalk
+
+    # A crosswalk 10 ft outside each end of the mouth - further out than the side line, so it is
+    # the arm that binds, which is the whole point of measuring both.
+    cross = _a_cross_street(crosswalks=(CrossStreetCrosswalk(77.0, is_surveyed=True,
+                                                              node_ids=(4242,)),
+                                        CrossStreetCrosswalk(123.0, is_surveyed=True,
+                                                              node_ids=(4243,))))
+    state = a_state(length_ft=300.0)
+    state.cross_streets = {"east": [cross]}
+
+    zones = no_parking_zones_ft(state, "east", "left", {"east": (30.0,)})
+    from_crosswalk = [z for z in zones if "crosswalk" in z.reason and "side line" not in z.reason
+                      and z.start_ft > 40]
+    assert len(from_crosswalk) == 2, (
+        f"expected one zone per approach crosswalk, got {[z.reason for z in zones]}")
+    assert min(z.start_ft for z in from_crosswalk) == pytest.approx(77.0 - CROSSWALK_SETBACK_FT)
+    assert max(z.end_ft for z in from_crosswalk) == pytest.approx(123.0 + CROSSWALK_SETBACK_FT)
+
+    # And it must actually reach the parking, not merely be listed: a zone nobody subtracts is
+    # not a setback.
+    runs = parkable_runs_ft(state, "east", "left", {"east": (30.0,)})
+    for start_ft, end_ft in runs:
+        assert end_ft <= 77.0 - CROSSWALK_SETBACK_FT or start_ft >= 123.0 + CROSSWALK_SETBACK_FT
+
+    assert "4242" in " ".join(z.reason for z in from_crosswalk), (
+        "a surveyed crosswalk's setback has to cite the way it was read off")
+
+
+def test_an_intersection_with_no_paint_still_carries_the_crosswalk_setback():
+    """N.J.S.A. 39:1-1: a crosswalk exists "either marked or unmarked … at each approach of
+    every roadway intersection".
+
+    So the setback is not a function of whether a surveyor traced a zebra. Making it one would
+    report the SURVEY's coverage as if it were the LAW's reach - and OSM has crossings traced at
+    Blackwell and none at Model Avenue, two intersections 130 ft apart on the same street.
+    """
+    from src.geometry.cross_streets import CrossStreetCrosswalk
+
+    cross = _a_cross_street(crosswalks=(CrossStreetCrosswalk(80.0, is_surveyed=False),
+                                        CrossStreetCrosswalk(120.0, is_surveyed=False)))
+    state = a_state(length_ft=300.0)
+    state.cross_streets = {"east": [cross]}
+
+    zones = no_parking_zones_ft(state, "east", "left", {"east": (30.0,)})
+    placed = [z for z in zones if "unmarked crosswalk" in z.reason]
+    assert len(placed) == 2, f"got {[z.reason for z in zones]}"
+    assert min(z.start_ft for z in placed) == pytest.approx(80.0 - CROSSWALK_SETBACK_FT)
+    for zone in placed:
+        assert "position estimated" in zone.reason, (
+            "an estimated crosswalk must say so - the setback is the law's, the position is ours")
+
+
+def test_the_crosswalk_arm_only_daylights_the_kerb_the_street_joins():
+    """A T-junction does not daylight the kerb opposite it, and that is true of both arms.
+
+    The side line arm already honoured `sides`; adding the crosswalk arm beside it is exactly
+    the kind of change that reintroduces a bug one line below the one it fixes.
+    """
+    from src.geometry.cross_streets import CrossStreetCrosswalk
+
+    cross = _a_cross_street(sides=("left",),
+                            crosswalks=(CrossStreetCrosswalk(80.0, is_surveyed=False),
+                                        CrossStreetCrosswalk(120.0, is_surveyed=False)))
+    state = a_state(length_ft=300.0)
+    state.cross_streets = {"east": [cross]}
+
+    right = no_parking_zones_ft(state, "east", "right", {"east": (30.0,)})
+    assert not [z for z in right if "Blackwell" in z.reason], (
+        "the kerb opposite a T-junction got a setback from it")
+
+
+# --------------------------------------------------------------------------
+# The hatching has to REACH the crossing, or it is not daylighting
+# --------------------------------------------------------------------------
+
+@needs_source_data
+def test_the_daylight_hatching_reaches_the_crossing_it_daylights(site_models):
+    """A hatched zone that stops short of the crosswalk does not daylight it.
+
+    Daylighting works by keeping the approach to a crossing clear of parked cars, and the
+    stretch that matters most is the one immediately beside the crossing - that is the car that
+    blocks the sight line. Hatching that stops 7 ft short leaves exactly that space unmarked, and
+    an unmarked setback beside marked hatching reads as permission to park in it. The treatment
+    is then worse than nothing: it has drawn a boundary in the wrong place.
+
+    It stopped short for a reason that had nothing to do with the statute. Every kerbside
+    marking is built on the stations where the kerb is TRACED, which is right for a design
+    choice and wrong for a statement of law: W Broad & Louellen's south kerb is traced only from
+    station 60.3 against a statutory zone of 0-93.3, so 92% of the zone was hatched and the
+    missing 8% was the part against the crossing. See leg_frame.paint_stations.
+
+    Measured as the DISTANCE from the hatching to the crossing band, which is the thing a person
+    looks at, and allowed to be the striper's gap and no more.
+    """
+    import contextlib
+    import io
+
+    from src.geometry.markings import DAYLIGHT_FILL
+    from src.geometry.paint import PAINT_TO_CROSSWALK_GAP_FT
+    from src.site import load_site_scenarios, run_scenario
+    from tests.test_sites import resolved_scene, scene_props
+
+    # A hair over the striper's gap: the fill is cut against the crossing band buffered by
+    # exactly that, so anything further out is the zone failing to reach.
+    allowed_ft = PAINT_TO_CROSSWALK_GAP_FT + 0.25
+
+    checked = 0
+    for site, model in site_models.items():
+        scenarios = load_site_scenarios(site)
+        for name in sorted(n for n in dir(scenarios) if n.startswith("build_")):
+            with contextlib.redirect_stdout(io.StringIO()):
+                state = run_scenario(getattr(scenarios, name),
+                                      DesignState.from_model(model), model)
+                scene = resolved_scene(model, state)
+                paint = scene.build_paint(scene_props(model, state, scene))
+
+            for leg_name in sorted(scene.marked_crosswalks):
+                band = scene.crosswalk_bands.get(leg_name)
+                if band is None or band.is_empty:
+                    continue
+                for side in ("left", "right"):
+                    fills = [p.geometry for p in paint if p.kind is DAYLIGHT_FILL
+                             and p.leg == leg_name and p.side == side]
+                    if not fills:
+                        continue        # no marked parking on this kerb, so no zone to draw
+                    checked += 1
+                    nearest_ft = min(f.distance(band) for f in fills)
+                    assert nearest_ft <= allowed_ft, (
+                        f"{site}/{name}: the daylight hatching on {leg_name}/{side} stops "
+                        f"{nearest_ft:.2f} ft short of the crossing it is there to daylight "
+                        f"(the striper's gap is {PAINT_TO_CROSSWALK_GAP_FT:.1f} ft) - the bare "
+                        f"stretch beside a crossing is the parking space daylighting exists to "
+                        f"remove")
+    assert checked, "no marked crossing had a daylight zone beside it, so this asserted nothing"

@@ -16,7 +16,15 @@ CROSS_STREET_MAX_ANGLE_DEG = 150.0
 # fitted against the 11 OSM-surveyed crossings at the four sites, which give a mean setback of
 # 8.3 ft with a standard deviation of 2.4 ft (range 5.1-13.9). See
 # tests/test_sites.py:test_the_crosswalk_estimate_reproduces_the_surveyed_crossings.
-CROSSWALK_SETBACK_FT = 8.3
+#
+# RENAMED FROM `CROSSWALK_SETBACK_FT` (2026-08-17), which STANDARDS.md had been carrying as an
+# open item: src/geometry/daylighting.py declares a constant of that name meaning R.S.
+# 39:4-138(e)'s 25 ft, and one grep returned both while only one of them is a legal figure.
+# Different modules, so nothing was ever shadowed - but src/geometry/cross_streets.py now reads
+# THIS one (to place the unmarked crosswalk N.J.S.A. 39:1-1 puts at every intersection approach)
+# and hands the result to daylighting.py, which measures the statutory 25 ft from it. Two
+# constants called CROSSWALK_SETBACK_FT one call apart is where a latent clash becomes a real one.
+CROSSWALK_OFFSET_FROM_KERB_FT = 8.3
 
 
 def crosswalk_estimate_ft(leg_name: str, legs: dict) -> float:
@@ -50,7 +58,7 @@ def crosswalk_estimate_ft(leg_name: str, legs: dict) -> float:
         if apart > CROSS_STREET_MAX_ANGLE_DEG:
             continue        # this leg's own continuation across the junction
         widest_cross_half_ft = max(widest_cross_half_ft, other.curb_to_curb_ft / 2)
-    return widest_cross_half_ft + CROSSWALK_SETBACK_FT
+    return widest_cross_half_ft + CROSSWALK_OFFSET_FROM_KERB_FT
 
 
 # Where along a leg to probe for the flanking sidewalks. Far enough out to be clear of

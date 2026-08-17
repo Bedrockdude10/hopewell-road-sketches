@@ -29,13 +29,16 @@ from src.geometry.surveyed import (crossing_bars_ft, crossing_lines_ft,
 from src.render.coords import wgs84_to_state_plane
 from src.render.crosswalks import CROSSWALK_DEPTH_FT, crosswalk_axes
 from src.render.frame import FRAME_SCALE_ENV, junction_frame
-from tests.conftest import SITES, needs_source_data
+from tests.conftest import SITES, WIDE_FRAME_SCALE, needs_source_data
 
 GREENWOOD = "broad_st_greenwood"
 
 # The frame docs/network-renderer-plan.md measures the defect at: 431.2 ft, 2.5x the 172.5 ft
 # Greenwood is drawn at by default.
-WIDE_FRAME_SCALE = "2.5"
+# The scale THIS module's counts were measured at (10 crossings in Greenwood's frame,
+# 6 of them off-leg). Distinct from tests/conftest.py:WIDE_FRAME_SCALE, which is the
+# scale output/ is drawn at and what wide_site_models builds to.
+MEASURED_FRAME_SCALE = "2.5"
 WIDE_FRAME_RADIUS_FT = 431.2
 
 # Inside that frame: 10 traced crossings, 4 of them this junction's own legs', 6 belonging to
@@ -86,7 +89,7 @@ def test_every_traced_crossing_inside_the_frame_is_returned(site_models, monkeyp
     10. `distance_ft` is asserted against the same measure to make sure the number reported beside
     a crossing is the one that decided it is in the picture.
     """
-    monkeypatch.setenv(FRAME_SCALE_ENV, WIDE_FRAME_SCALE)
+    monkeypatch.setenv(FRAME_SCALE_ENV, MEASURED_FRAME_SCALE)
     model = site_models[GREENWOOD]
     frame = junction_frame(model)
     assert frame.radius_ft == pytest.approx(WIDE_FRAME_RADIUS_FT, abs=0.1)
@@ -123,7 +126,7 @@ def test_the_frame_decides_membership_and_the_legs_do_not(site_models, monkeypat
     assert len(at_1x) == CROSSINGS_ON_A_MODELLED_LEG
     assert all(crossing.leg is not None for crossing in at_1x)
 
-    monkeypatch.setenv(FRAME_SCALE_ENV, WIDE_FRAME_SCALE)
+    monkeypatch.setenv(FRAME_SCALE_ENV, MEASURED_FRAME_SCALE)
     at_2_5x = surveyed_crossings_in_frame(model)
     assert len(at_2_5x) == CROSSINGS_IN_THE_WIDE_FRAME
     on_a_leg = [crossing for crossing in at_2_5x if crossing.leg is not None]
@@ -151,7 +154,7 @@ def test_a_leg_matched_crossing_lands_where_the_per_leg_code_puts_it(site_models
     from src.geometry.treatments import DesignState
     from src.render.scene import SceneGeometry
 
-    monkeypatch.setenv(FRAME_SCALE_ENV, WIDE_FRAME_SCALE)
+    monkeypatch.setenv(FRAME_SCALE_ENV, MEASURED_FRAME_SCALE)
     model = site_models[GREENWOOD]
     crossings = _crossings_layer(model)
     with contextlib.redirect_stdout(io.StringIO()):
@@ -185,7 +188,7 @@ def test_a_crossing_with_no_markings_tag_is_not_drawn_as_marked(site_models, mon
     surveyed.LEGACY_CROSSING_MARKINGS. So Greenwood's unrecorded count is 2 -> 1 and its zebra count
     2 -> 3, and no crossing in this frame is left with a legacy tag unread.
     """
-    monkeypatch.setenv(FRAME_SCALE_ENV, WIDE_FRAME_SCALE)
+    monkeypatch.setenv(FRAME_SCALE_ENV, MEASURED_FRAME_SCALE)
     model = site_models[GREENWOOD]
 
     unrecorded = [c for c in surveyed_crossings_in_frame(model) if c.markings is None]
@@ -219,7 +222,7 @@ def test_a_zebra_crossing_is_striped_along_its_own_traced_way(site_models, monke
     at a traced bend (9 of the 10 ways here have 3-5 vertices), and what any construction that went
     back to a leg's frame for its axes would break at a skewed junction.
     """
-    monkeypatch.setenv(FRAME_SCALE_ENV, WIDE_FRAME_SCALE)
+    monkeypatch.setenv(FRAME_SCALE_ENV, MEASURED_FRAME_SCALE)
     model = site_models[GREENWOOD]
 
     zebras = [c for c in surveyed_crossings_in_frame(model) if c.markings == "zebra"]
@@ -257,7 +260,7 @@ def test_a_site_draws_only_the_markings_its_own_tags_record(site, site_models, m
     `crossing:markings=no`, which is a surveyed ABSENCE of paint rather than a missing record. Both
     draw nothing, and the difference between them is why is_marked exists.
     """
-    monkeypatch.setenv(FRAME_SCALE_ENV, WIDE_FRAME_SCALE)
+    monkeypatch.setenv(FRAME_SCALE_ENV, MEASURED_FRAME_SCALE)
     model = site_models[site]
     frame = junction_frame(model)
 
@@ -274,3 +277,229 @@ def test_a_site_draws_only_the_markings_its_own_tags_record(site, site_models, m
             assert bars or lines
         footprint = crossing.geometry.buffer(CROSSWALK_DEPTH_FT)
         assert all(footprint.contains(piece) for piece in bars + lines)
+
+
+# --------------------------------------------------------------------------
+# A crossing at a junction this site does not model still outranks the paint
+# --------------------------------------------------------------------------
+
+@needs_source_data
+def test_no_paint_is_laid_over_a_crossing_at_an_unmodelled_junction(wide_site_models,
+                                                                    monkeypatch):
+    """Drawing a crosswalk and painting over it is two claims about one piece of asphalt.
+
+    This module's whole premise is that a surveyed crossing inside the frame gets drawn from its
+    own traced way. It does - and nothing was getting out of its way, because `keep_clear` was
+    built from `crosswalk_bands`, which is keyed by leg and so cannot contain a crossing that
+    belongs to no leg here. Measured before the fix: 164 sq ft of bike lane green, buffer
+    hatching and lane fill, plus 48 ft of edge line and contraflow stripe, over Blackwell
+    Avenue's two zebras in the corridor proposal - and 44 sq ft at W Broad & Louellen, 1 at
+    E Broad & Princeton.
+
+    Run over every scenario each site publishes, not just the default, because the worst case was
+    the proposal rather than the baseline: the more paint a scenario lays down, the more of it
+    landed on a crossing.
+    """
+    import contextlib
+    import io
+
+    from shapely.ops import unary_union
+
+    from src.geometry.treatments import DesignState
+    from src.site import load_site_scenarios, run_scenario
+    from tests.test_sites import resolved_scene, scene_props
+
+    # The models were BUILT wide; the frame is read again at draw time, and the fixture has
+    # already put the env var back. Without this the scene resolves a 1x frame around models with
+    # 2.2x legs, finds no crossing at any other junction, and the test passes having checked
+    # nothing - which is what it did first time round.
+    monkeypatch.setenv(FRAME_SCALE_ENV, str(WIDE_FRAME_SCALE))
+    checked = 0
+    for site, model in wide_site_models.items():
+        scenarios = load_site_scenarios(site)
+        for name in sorted(n for n in dir(scenarios) if n.startswith("build_")):
+            with contextlib.redirect_stdout(io.StringIO()):
+                state = run_scenario(getattr(scenarios, name),
+                                      DesignState.from_model(model), model)
+                scene = resolved_scene(model, state)
+                paint, _posts = scene.build_paint_and_posts(scene_props(model, state, scene))
+            bands = scene.unmodelled_crossing_bands
+            if not bands:
+                continue
+            checked += 1
+            crossings = unary_union(list(bands))
+            for piece in paint:
+                if piece.kind.is_object:
+                    # A post is a point, so it is dropped rather than trimmed - but it must be
+                    # dropped, and a flex post planted in a marked crosswalk is worse than paint
+                    # over one. Two stood in Blackwell Avenue's zebras before PaintContext.emit
+                    # learned to test the crossings as well as the openings.
+                    assert not crossings.intersects(piece.geometry), (
+                        f"{site}/{name}: a {piece.kind} stands in a surveyed crosswalk at "
+                        f"another junction in the frame ({piece.leg} {piece.side})")
+                    continue
+                shared = crossings.intersection(piece.geometry)
+                if shared.is_empty:
+                    continue
+                amount = shared.area if piece.covers_area else shared.length
+                assert amount < 1.0, (
+                    f"{site}/{name}: {piece.kind} is painted over "
+                    f"{amount:.1f}{' sq ft' if piece.covers_area else ' ft'} of a surveyed "
+                    f"crosswalk at another junction in the frame "
+                    f"({piece.leg} {piece.side}) - the drawing shows a crossing and paints on it")
+    assert checked, ("no site/scenario had a marked crossing at an unmodelled junction, so this "
+                     "asserted nothing - check wide_site_models is wide enough to reach one")
+
+
+@needs_source_data
+def test_the_scene_invariant_reports_paint_over_such_a_crossing(wide_site_models,
+                                                                monkeypatch):
+    """And the invariant that keeps it fixed is wired to the same set the paint was cut against.
+
+    The test above would keep passing if CrossingsAreNotPaintedOver were handed an empty tuple
+    by SceneGeometry.context - a check that cannot see anything cannot fail. So this feeds it
+    paint it must reject: the crossings themselves, as if a marking had been laid along one.
+    """
+    import contextlib
+    import io
+
+    from src.checks import CrossingsAreNotPaintedOver
+    from src.geometry.markings import BIKE_LANE_SURFACE
+    from src.geometry.paint import PaintPiece
+    from src.geometry.treatments import DesignState
+    from tests.test_sites import resolved_scene, scene_props
+
+    monkeypatch.setenv(FRAME_SCALE_ENV, str(WIDE_FRAME_SCALE))
+    for site, model in wide_site_models.items():
+        with contextlib.redirect_stdout(io.StringIO()):
+            state = DesignState.from_model(model)
+            scene = resolved_scene(model, state)
+            props = scene_props(model, state, scene)
+        bands = scene.unmodelled_crossing_bands
+        if not bands:
+            continue
+        over_the_crossing = [PaintPiece(BIKE_LANE_SURFACE, bands[0], "a_leg", "left")]
+        context = scene.context(props, over_the_crossing)
+        assert context.unmodelled_crossing_bands, (
+            f"{site}: SceneGeometry.context did not pass the crossings to the invariants, so "
+            f"CrossingsAreNotPaintedOver can never see anything")
+        violations = CrossingsAreNotPaintedOver().run(context)
+        assert violations, f"{site}: green laid over a whole crosswalk was not reported"
+        assert violations[0].check == "paint_over_a_crossing"
+        return
+    pytest.fail("no site had a marked crossing at an unmodelled junction")
+
+
+# --------------------------------------------------------------------------
+# A marking POLICY is about the frame, not about this junction's four legs
+# --------------------------------------------------------------------------
+
+@needs_source_data
+def test_a_proposal_restyles_every_marked_crossing_in_the_frame(wide_site_models, monkeypatch):
+    """"All crosswalks continental" has to mean all of them.
+
+    all_crosswalks_continental looped over `state.legs` - this junction's four approaches - and a
+    2.5x frame holds ten surveyed crossings. The other six belong to Blackwell, Model and
+    Seminary Avenue and were drawn from their own OSM tag whatever the proposal said, so two
+    tagged `crossing:markings=lines` rendered as two parallel lines 260 ft from four that had
+    been repainted. Same shape as the statutory setback that only applied at the modelled
+    junction, one layer up in the markings.
+
+    It could not be fixed in one place either: THREE consumers built these markings themselves off
+    the raw drawers, so styling one of them changed neither picture. That is why this asserts
+    against SceneGeometry, which both renderers now read.
+    """
+    import contextlib
+    import io
+
+    from src.geometry.surveyed import crossing_style_in
+    from src.geometry.treatments import DesignState
+    from src.site import load_site_scenarios, run_scenario
+    from tests.test_sites import resolved_scene
+
+    monkeypatch.setenv(FRAME_SCALE_ENV, str(WIDE_FRAME_SCALE))
+    checked = 0
+    for site, model in wide_site_models.items():
+        scenarios = load_site_scenarios(site)
+        for name in sorted(n for n in dir(scenarios) if n.startswith("build_")):
+            with contextlib.redirect_stdout(io.StringIO()):
+                state = run_scenario(getattr(scenarios, name),
+                                      DesignState.from_model(model), model)
+                scene = resolved_scene(model, state)
+            if not any(c.is_marked for c in scene.unmodelled_crossings):
+                continue
+            checked += 1
+            for crossing in scene.unmodelled_crossings:
+                if not crossing.is_marked:
+                    continue
+                assert crossing_style_in(state, crossing) == "continental", (
+                    f"{site}/{name}: the crossing {crossing.distance_ft:.0f} ft out is drawn as "
+                    f"{crossing_style_in(state, crossing)!r} while this junction's own legs are "
+                    f"continental - a proposal's crosswalk policy stops at the modelled legs")
+    assert checked, "no scenario had a marked crossing at an unmodelled junction"
+
+
+@needs_source_data
+def test_a_policy_never_paints_a_crossing_nobody_marked(wide_site_models, monkeypatch):
+    """The other half of the rule, and the one that must not be traded away for the first.
+
+    A crossing recorded as unpainted (`crossing:markings=no`), or with nothing recorded at all,
+    draws NOTHING however loudly a proposal says "all crosswalks continental". Painting one would
+    be a new crossing at an uncontrolled approach - MUTCD 3C.02(04) wants an engineering study
+    with pedestrian counts this project does not hold (STANDARDS.md section 2) - and it would be
+    this repo's signature failure inverted: inventing survey data instead of dropping it.
+
+    One such crossing is in Broad & Greenwood's frame, 375 ft out, with no crossing:markings tag.
+    """
+    import contextlib
+    import io
+
+    from src.geometry.surveyed import crossing_style_in
+    from src.geometry.treatments import DesignState
+    from src.site import load_site_scenarios, run_scenario
+    from tests.test_sites import resolved_scene
+
+    monkeypatch.setenv(FRAME_SCALE_ENV, str(WIDE_FRAME_SCALE))
+    checked = 0
+    for site, model in wide_site_models.items():
+        scenarios = load_site_scenarios(site)
+        for name in sorted(n for n in dir(scenarios) if n.startswith("build_")):
+            with contextlib.redirect_stdout(io.StringIO()):
+                state = run_scenario(getattr(scenarios, name),
+                                      DesignState.from_model(model), model)
+                scene = resolved_scene(model, state)
+            drawn = {id(c) for c, _bars, _lines in scene.surveyed_crossing_markings()}
+            for crossing in scene.unmodelled_crossings:
+                if crossing.is_marked:
+                    continue
+                checked += 1
+                assert crossing_style_in(state, crossing) is None, (
+                    f"{site}/{name}: a policy assigned a style to an unmarked crossing")
+                assert id(crossing) not in drawn, (
+                    f"{site}/{name}: paint was drawn on the crossing {crossing.distance_ft:.0f} ft "
+                    f"out, which records no markings - that is a NEW crossing, not a repaint")
+    assert checked, "no unmarked crossing in any frame, so this asserted nothing"
+
+
+@needs_source_data
+def test_existing_conditions_still_draw_each_crossing_as_surveyed(wide_site_models, monkeypatch):
+    """And with no policy applied, the survey stands - which is what a baseline must show."""
+    import contextlib
+    import io
+
+    from src.geometry.surveyed import crossing_style_in, drawable_markings
+    from src.geometry.treatments import DesignState
+    from tests.test_sites import resolved_scene
+
+    monkeypatch.setenv(FRAME_SCALE_ENV, str(WIDE_FRAME_SCALE))
+    checked = 0
+    for site, model in wide_site_models.items():
+        with contextlib.redirect_stdout(io.StringIO()):
+            baseline = DesignState.from_model(model)
+            scene = resolved_scene(model, baseline)
+        for crossing in scene.unmodelled_crossings:
+            checked += 1
+            assert crossing_style_in(baseline, crossing) == drawable_markings(crossing.tags), (
+                f"{site}: existing conditions redrew a crossing in something other than the style "
+                f"it was surveyed in")
+    assert checked, "no surveyed crossing in any frame"

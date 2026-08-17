@@ -57,7 +57,9 @@ from src.geometry.treatments.bikeways import (AASHTO_MIN_BIKE_LANE_FT, AddBikeLa
                                               BIKE_LANE_DEFAULT_SHY_FT,
                                               BIKE_LANE_WIDTH_FT,
                                               BikeLane,
+                                              BIKE_LANE_BOLLARD_SPACING_FT,
                                               CONSTRAINED_TWO_WAY_BIKE_LANE_FT,
+                                              CORRIDOR_SIDE,
                                               CONTRAFLOW_DASH_FT,
                                               CONTRAFLOW_GAP_FT,
                                               MIN_BIKE_LANE_FT,
@@ -94,6 +96,8 @@ from src.geometry.treatments.crossings import (CROSSING_CONTEXT_RADIUS_M, RaiseC
                                                complete_centerlines,
                                                resolved_crossing_stations)
 from src.geometry.treatments.parking import (MIN_USABLE_STALL_FT, MarkedParking,
+                                             narrow_lanes_and_recover_parking,
+                                             osm_derived_baseline,
                                              ParkingBufferBollards,
                                              RESTRICTION_COVERAGE_SLACK_FT,
                                              RestrictionSummary,
@@ -105,6 +109,7 @@ from src.geometry.treatments.extras import (ExtraProp, build_sidewalk_pieces)
 
 __all__ = [
                                           "AASHTO_MIN_BIKE_LANE_FT",
+                                          "BIKE_LANE_BOLLARD_SPACING_FT",
                                           "BIKE_LANE_BUFFER_FT",
                                           "BIKE_LANE_DEFAULT_SHY_FT",
                                           "BIKE_LANE_WIDTH_FT",
@@ -114,6 +119,7 @@ __all__ = [
                                           "CONTRAFLOW_GAP_FT",
                                           "CORNER_APRON_DEFAULT_EXTENT_FT",
                                           "CORNER_HATCHING_DEFAULT_DEPTH_FT",
+                                          "CORRIDOR_SIDE",
                                           "CROSSING_CONTEXT_RADIUS_M",
                                           "CURB_EXTENSION_DEVICES",
                                           "CURB_EXTENSION_FACE_RADIUS_FT",
@@ -177,6 +183,8 @@ __all__ = [
                                           "kerb_may_hold_parking",
                                           "kerbside_allowance_ft",
                                           "min_bike_lane_buffer_ft",
+                                          "narrow_lanes_and_recover_parking",
+    "osm_derived_baseline",
                                           "resolved_crossing_stations",
                                           "restriction_summary",
                                           "travel_lane_divider_shift_ft",

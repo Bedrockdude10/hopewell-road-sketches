@@ -65,6 +65,39 @@ class Target(ABC):
 
 
 @dataclass(frozen=True, order=True)
+class Everywhere(Target):
+    """THE WHOLE DRAWN FRAME, including the junctions this site does not model.
+
+    The other three targets name something in `state.legs`, which is this junction's own four
+    approaches - and for a treatment that moves a kerb or paints one, that is the right scope,
+    because it is the only ground the design has measurements for.
+
+    A MARKING POLICY IS NOT LIKE THAT. "Repaint every crosswalk continental" is a statement
+    about the picture, and the picture contains Blackwell Avenue, Model Avenue and Seminary
+    Avenue with six surveyed crossings between them. Applied per leg it reached four crossings
+    out of ten, so a proposal captioned "all crosswalks continental" rendered two of them as the
+    two parallel lines they are today - in the same frame, 260 ft apart, with nothing to say why.
+    That is the same "the statute is about AN intersection, not THIS one" mistake
+    src/geometry/cross_streets.py exists for, in the marking layer.
+
+    Vacuously present: a frame always exists, so `missing_from` is always None. It is still a
+    Target rather than a bare flag on DesignState so a frame-wide decision is recorded as a
+    treatment like any other, and `state.treatments` stays a complete account of what was applied.
+
+    WHAT IT DOES NOT DO is invent paint. A crossing nobody has marked stays unmarked whatever a
+    policy says - see src/geometry/surveyed.py:crossing_style_in, which only ever RESTYLES a
+    crossing that already carries markings. Painting a crosswalk where there is none is a new
+    crossing, which MUTCD 3C.02(04) wants an engineering study for (STANDARDS.md section 2).
+    """
+
+    def missing_from(self, state) -> str | None:
+        return None
+
+    def __str__(self) -> str:
+        return "everywhere"
+
+
+@dataclass(frozen=True, order=True)
 class LegTarget(Target):
     """A whole leg: both kerbs, or the roadway between them."""
     leg: str

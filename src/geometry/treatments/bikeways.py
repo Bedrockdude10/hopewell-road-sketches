@@ -93,6 +93,35 @@ CONSTRAINED_TWO_WAY_BIKE_LANE_FT = 8.0
 # traffic - more than the 2 ft a one-way lane gets, because a head-on error here is a closing
 # speed, not an overtaking one.
 TWO_WAY_BIKE_LANE_BUFFER_FT = 3.0
+# The pitch of the flex posts down that buffer. Close enough to read as a continuous delineator
+# rather than a row of dots, which is the whole difference between a painted lane and one a
+# driver perceives as protected. Here rather than in a scenario file because it was in TWO of
+# them under the same name and the same value, and a corridor whose posts are 8 ft apart on one
+# leg and 12 on the next is one facility drawn as two.
+BIKE_LANE_BOLLARD_SPACING_FT = 8.0
+# WHICH KERB THE BOROUGH'S TWO-WAY LANE RUNS ALONG. A ROUTE decision, not a junction one - a
+# lane that changes sides mid-corridor makes riders cross the street to stay on it - and that is
+# exactly why it does not belong in a site file. It was written out in THREE of them; had one
+# been edited, the corridor would have switched sides at that junction and every drawing would
+# still have looked locally correct.
+#
+# SOUTH, decided by counting the whole borough length from OSM (2026-08-13):
+#
+#   * side streets cutting the kerb   north 10, SOUTH 7. Five crossings cut both kerbs whichever
+#     side is chosen; the difference is the one-sided T-junctions - Windsor Way, Louellen,
+#     Mercer, Blackwell and Hamilton on the north against Seminary and Princeton on the south.
+#   * parking capacity lost           north 246 stalls, SOUTH 241 - a 2% difference derived from
+#     geometry rather than counted, so a tie, not a finding.
+#   * mapped driveways                north 20, south 21, and NOT usable either way: OSM has a
+#     driveway for 29% of the parcels fronting Broad St, so both are threefold undercounts.
+#
+# The crossings decided it, because that is the count OSM records completely, and junctions are
+# the hazard this treatment specifically creates: a two-way lane puts contraflow riders at every
+# one of them, arriving from the direction a turning driver does not check.
+#
+# Translated per leg by side_facing() - a leg's left/right is in its own frame, so the same real
+# kerb is "left" on one approach and "right" on the next.
+CORRIDOR_SIDE = "south"
 # The contraflow stripe's cadence. Shorter than the roadway's dashed centreline, because it is
 # read at bicycle speed over a 12 ft lane rather than at 25 mph over a 40 ft one, and a stripe
 # scaled to the road reads as two or three marks over a whole block.

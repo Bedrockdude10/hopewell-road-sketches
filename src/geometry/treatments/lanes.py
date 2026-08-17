@@ -42,7 +42,7 @@ class LaneNarrowing(Treatment):
     The width bounds are the first validation this treatment has ever had. As a function it
     checked only that the leg existed, so a zero or negative stripe was a buffer with no
     width - it produced a degenerate polygon that the paint builder then had to guard against
-    (see src/geometry/model.py:lane_narrowing_polygons_ft's 0.5 ft floor).
+    (see src/geometry/model/stripes.py:lane_narrowing_polygons_ft's 0.5 ft floor).
     """
     # Painted in the order the markings are layered: the kerbside zones first, and a
     # row of posts after the buffer it stands in - see paint.curbside_paint_ft.

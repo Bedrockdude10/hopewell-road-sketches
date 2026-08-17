@@ -259,7 +259,7 @@ def _unpack_single_part(geometry):
     FlatGeobuf and GeoPackage both store one geometry type per layer, so writing a
     mixed LineString/MultiLineString layer promotes EVERYTHING to MultiLineString.
     Downstream code takes leg centerlines as simple LineStrings
-    (src/geometry/model.py:split_leg_centerlines uses .coords, which a
+    (src/geometry/model/crs.py:split_leg_centerlines uses .coords, which a
     MultiLineString doesn't have), so undo the promotion on read. Genuinely
     multi-part geometries are left alone - in NJDOT's statewide layer exactly 2 of
     105,838 features are real 2-part MultiLineStrings, and they stay that way.

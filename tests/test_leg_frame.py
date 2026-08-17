@@ -8,7 +8,7 @@ import numpy as np
 import pytest
 from shapely.geometry import LineString, Point
 
-from src.geometry.model import _point_at, station_offset, station_offset_many
+from src.geometry.model import point_at, station_offset, station_offset_many
 
 STRAIGHT = LineString([(0, 0), (100, 0)])
 BENT = LineString([(0, 0), (50, 3), (110, -2), (160, 6)])   # an old street, not quite straight
@@ -42,12 +42,12 @@ def test_station_continues_past_the_far_end():
 
 @pytest.mark.parametrize("station,offset", [(10, 12.5), (0, -8), (-5, 20), (140, -30), (200, 9), (-40, 15)])
 def test_round_trip_is_exact(station, offset):
-    """_point_at and station_offset must be exact inverses over the whole line.
+    """point_at and station_offset must be exact inverses over the whole line.
 
     They weren't when the forward direction used segment tangents and the inverse estimated
     one from a +/-2 ft window: a curb rebuilt from its own traced points came back shifted.
     """
-    x, y = _point_at(BENT, station, offset)
+    x, y = point_at(BENT, station, offset)
     back_station, back_offset = station_offset(BENT, (x, y))
     assert back_station == pytest.approx(station, abs=1e-6)
     assert back_offset == pytest.approx(offset, abs=1e-6)
@@ -190,7 +190,7 @@ def test_the_through_street_test_reads_the_leg_not_its_first_stub():
     there and the traced kerbs show a real 14 ft return."""
     import numpy as np
 
-    from src.geometry.model import Leg, _through_street
+    from src.geometry.model import Leg, is_through_street
 
     ne = Leg(name="ne", centerline=LineString([(0, 0), (130 * np.cos(np.radians(32.2)),
                                                         130 * np.sin(np.radians(32.2)))]),
@@ -203,7 +203,7 @@ def test_the_through_street_test_reads_the_leg_not_its_first_stub():
                                           tuple(kink + 115 * np.array([np.cos(onward),
                                                                        np.sin(onward)]))]),
                    curb_to_curb_ft=42.0)
-    assert not _through_street(ne, louellen), \
+    assert not is_through_street(ne, louellen), \
         "the stub, not the leg, decided this - and it decided wrong"
 
 
@@ -220,7 +220,7 @@ def test_a_kerb_vertex_goes_to_the_leg_it_lies_in_front_of():
     curb_line_from_points needs two, and the whole stretch was dropped - so 58 ft of a kerb
     the surveyor had tagged no_stopping went unhatched and was reported as untraced.
     """
-    from src.geometry.model import Leg, _point_at, assign_curb_points_to_legs
+    from src.geometry.model import Leg, point_at, assign_curb_points_to_legs
 
     east = Leg(name="east", centerline=LineString([(0, 0), (130, 0)]), curb_to_curb_ft=36.9)
     west = Leg(name="west", centerline=LineString([(0, 0), (-130, 0)]), curb_to_curb_ft=38.2)
@@ -228,7 +228,7 @@ def test_a_kerb_vertex_goes_to_the_leg_it_lies_in_front_of():
 
     # One continuous kerb along the north side, straddling the junction node: a vertex 0.8 ft
     # onto the east leg, then out along it.
-    kerb = LineString([_point_at(east.centerline, s, 18.65) for s in (0.8, 59.2, 96.1)])
+    kerb = LineString([point_at(east.centerline, s, 18.65) for s in (0.8, 59.2, 96.1)])
     assigned = assign_curb_points_to_legs(legs, [kerb])
 
     east_left = assigned.get("east", {}).get("left", [])
@@ -241,11 +241,11 @@ def test_a_kerb_vertex_goes_to_the_leg_it_lies_in_front_of():
 def test_a_vertex_behind_every_leg_is_still_claimed():
     """The complement: the penalty must not turn into a hard rejection. A corner return's own
     geometry straddles station 0, and dropping those vertices loses the corner."""
-    from src.geometry.model import Leg, _point_at, assign_curb_points_to_legs
+    from src.geometry.model import Leg, point_at, assign_curb_points_to_legs
 
     east = Leg(name="east", centerline=LineString([(0, 0), (130, 0)]), curb_to_curb_ft=36.9)
     legs = {"east": east}
-    kerb = LineString([_point_at(east.centerline, s, 18.65) for s in (-1.5, 20.0, 60.0)])
+    kerb = LineString([point_at(east.centerline, s, 18.65) for s in (-1.5, 20.0, 60.0)])
     assigned = assign_curb_points_to_legs(legs, [kerb])
     stations = [s for s, _o in assigned["east"]["left"]]
     assert min(stations) == pytest.approx(-1.5, abs=0.1), \
@@ -261,18 +261,18 @@ def test_the_along_a_leg_kerb_test_accepts_the_outer_half_of_a_leg():
     14 traced ways across the four junctions are in that position.
     """
     from src.geometry.intersection import _runs_along_a_leg
-    from src.geometry.model import Leg, _point_at
+    from src.geometry.model import Leg, point_at
 
     leg = Leg(name="east", centerline=LineString([(0, 0), (130, 0)]), curb_to_curb_ft=31.0)
     legs = {"east": leg}
 
-    outer = LineString([_point_at(leg.centerline, s, 15.5) for s in (90.0, 126.0)])
+    outer = LineString([point_at(leg.centerline, s, 15.5) for s in (90.0, 126.0)])
     assert _runs_along_a_leg(outer, legs), "the outer half of the leg's own kerb was rejected"
 
     # A kerb out in a field, or one belonging to a street 300 ft away, is not this leg's.
     elsewhere = LineString([(400.0, 400.0), (460.0, 400.0)])
     assert not _runs_along_a_leg(elsewhere, legs)
-    behind = LineString([_point_at(leg.centerline, s, 15.5) for s in (-90.0, -40.0)])
+    behind = LineString([point_at(leg.centerline, s, 15.5) for s in (-90.0, -40.0)])
     assert not _runs_along_a_leg(behind, legs), "a kerb behind the junction is another leg's"
 
 
@@ -294,11 +294,11 @@ def test_the_width_fit_never_ends_up_using_less_traced_kerb_than_it_found(monkey
     import io
 
     import src.geometry.intersection as intersection
-    from src.geometry.model import Leg, _point_at
+    from src.geometry.model import Leg, point_at
 
     leg = Leg(name="east", centerline=LineString([(0, 0), (130, 0)]), curb_to_curb_ft=12.0)
     legs = {"east": leg}
-    ways = [(LineString([_point_at(leg.centerline, s, sign * 15.5) for s in (20.0, 70.0, 120.0)]),
+    ways = [(LineString([point_at(leg.centerline, s, sign * 15.5) for s in (20.0, 70.0, 120.0)]),
              {"barrier": "kerb"})
             for sign in (1, -1)]
 
@@ -333,11 +333,11 @@ def test_the_width_fit_measures_a_badly_configured_leg_from_its_kerbs():
     import io
 
     from src.geometry.intersection import _fit_legs_to_traced_kerbs, _traced_side_count
-    from src.geometry.model import Leg, _point_at
+    from src.geometry.model import Leg, point_at
 
     leg = Leg(name="east", centerline=LineString([(0, 0), (130, 0)]), curb_to_curb_ft=12.0)
     legs = {"east": leg}
-    ways = [(LineString([_point_at(leg.centerline, s, sign * 15.5) for s in (20.0, 70.0, 120.0)]),
+    ways = [(LineString([point_at(leg.centerline, s, sign * 15.5) for s in (20.0, 70.0, 120.0)]),
              {"barrier": "kerb"})
             for sign in (1, -1)]
     with contextlib.redirect_stdout(io.StringIO()):

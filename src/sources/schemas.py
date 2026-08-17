@@ -60,7 +60,7 @@ MUN_PATTERN = r"^\d{4}$"
 # NJDOT's Standard Route Identifier: 10 or 17 characters, no spaces.
 SRI_PATTERN = r"^\S{10}(\S{7})?$"
 
-# NO CRS CONSTANTS HERE. src/geometry/model.py already owns WGS84 and NJ_STATE_PLANE_FT, and
+# NO CRS CONSTANTS HERE. src/geometry/model/crs.py already owns WGS84 and NJ_STATE_PLANE_FT, and
 # `validate_layer` takes the expected one as an argument, so each caller passes the datum it
 # already works in. A schema module holding its own second copy of a projection string is the
 # exact class of bug this repo keeps finding - two definitions of one datum that can drift.

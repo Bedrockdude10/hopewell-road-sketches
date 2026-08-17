@@ -228,9 +228,9 @@ def _crossing_skew_deg(crossing_line: LineString, centerline: LineString,
         (lx0, ly0), (lx1, ly1) = centerline.coords[0], centerline.coords[-1]
         leg_dir = math.atan2(ly1 - ly0, lx1 - lx0)
     else:
-        from src.geometry.model import _frame_at
+        from src.geometry.model import frame_at
 
-        _origin, tangent = _frame_at(centerline, station_ft)
+        _origin, tangent = frame_at(centerline, station_ft)
         leg_dir = math.atan2(tangent[1], tangent[0])
     square_dir = leg_dir + math.pi / 2  # perpendicular to the leg where the crossing sits
     # A line has no direction, so fold the difference into (-90, 90].
@@ -666,13 +666,13 @@ def crosswalk_axes(leg, offset_ft: float, skew_deg: float = 0.0):
     from that displaced centre and returned 14.0 ft to one kerb against 32.5 to the other -
     a 46.5 ft pair of lines across a 42.1 ft street, one end of it out on the grass.
 
-    _frame_at is the same leg-frame transform station_offset_many inverts, so the centre a
+    frame_at is the same leg-frame transform station_offset_many inverts, so the centre a
     crossing is built on and the station everything else measures it by are now the same
-    arithmetic. See src/geometry/model.py:_polyline_frame.
+    arithmetic. See src/geometry/model/leg_frame.py:polyline_frame.
     """
-    from src.geometry.model import _frame_at
+    from src.geometry.model import frame_at
 
-    origin, tangent = _frame_at(leg.centerline, offset_ft)
+    origin, tangent = frame_at(leg.centerline, offset_ft)
     centre = (float(origin[0]), float(origin[1]))
     ux, uy = float(tangent[0]), float(tangent[1])
 

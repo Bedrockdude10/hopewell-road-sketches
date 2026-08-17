@@ -31,7 +31,7 @@ from src.geometry.treatments.state import DesignState
 class MarkedParking(Treatment):
     """Marked curbside parallel parking along one side of a leg: a lane-edge
     line depth_ft in from the curb, plus perpendicular divider ticks every
-    stall_length_ft (src/geometry/model.py:parking_lane_edge_line_ft /
+    stall_length_ft (src/geometry/model/stripes.py:parking_lane_edge_line_ft /
     parking_stall_lines_ft) - paint-only, zero curb/pavement change, same
     convention as LaneNarrowing/CornerHatching in that regard.
     Independent of LaneNarrowing - a leg can have marked parking with or

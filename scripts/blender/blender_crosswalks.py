@@ -203,7 +203,7 @@ def add_stop_bar(name: str, near, u, n, width_m: float, material, offset_m: floa
 def add_paint_line(name: str, p1: tuple, p2: tuple, width_m: float, material,
                     height_m: float = 0.01, z_base: float = 0.06):
     """A single thin painted line segment between two points - used for
-    corner-hatching diagonal lines (src/geometry/model.py:hatch_lines_ft) and
+    corner-hatching diagonal lines (src/geometry/model/stripes.py:hatch_lines_ft) and
     any other simple paint-only marking that's just a straight stripe.
     z_base defaults just above the pavement's own top surface (0.05 m, per
     blender_scene.py's PAVEMENT_HEIGHT_M) - sitting exactly AT that height
@@ -223,7 +223,7 @@ def add_paint_line(name: str, p1: tuple, p2: tuple, width_m: float, material,
 def add_paint_polyline(name: str, points: list, width_m: float, material,
                         height_m: float = 0.01, z_base: float = 0.06):
     """A painted line through every point in sequence (e.g. a sampled curve
-    like src/geometry/model.py:lane_narrowing_taper_ft's arc) - NOT
+    like src/geometry/model/stripes.py:lane_narrowing_taper_ft's arc) - NOT
     add_paint_line(name, points[0], points[-1], ...), which would draw a
     single straight chord between the endpoints and silently discard every
     point in between, turning an actual curve into a straight diagonal

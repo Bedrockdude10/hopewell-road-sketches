@@ -18,7 +18,7 @@ wgs84_to_state_plane = pyproj.Transformer.from_crs(WGS84, NJ_STATE_PLANE_FT, alw
 # It exists because the alternative is repr(float), i.e. 17 significant digits, and float64
 # arithmetic noise lives in the last two or three of them. A state-plane coordinate is ~500,000
 # ft, so an operation order that changes anywhere upstream perturbs every vertex at ~1e-9 ft -
-# invisible in the render and TOTAL in the diff. One 30-line change to src/geometry/model.py
+# invisible in the render and TOTAL in the diff. One 30-line change to src/geometry/model/
 # rewrote 53,394 lines of geometry JSON that way, and a diff in which every line changed cannot
 # answer the question worth asking of it: did this edit move geometry I did not mean to move?
 # Truncating below the noise floor makes a changed line mean a changed shape.

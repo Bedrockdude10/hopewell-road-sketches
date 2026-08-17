@@ -106,7 +106,7 @@ def _narrow_broad_st_to_11ft_lanes(state: DesignState, line_only: bool = False) 
     The buffer's edge line doesn't stop in a straight cut where the
     crosswalk/stop-bar clearance zone begins - src/render/export.py
     automatically continues it curving into every corner a narrowed leg
-    touches (see src/geometry/model.py:lane_narrowing_taper_ft) until it
+    touches (see src/geometry/model/stripes.py:lane_narrowing_taper_ft) until it
     meets the real curb, reading as a soft, paint-only bulb-out - no separate
     treatment call needed here for that. line_only=True (see
     build_proposal_h_broad_st_line_only) skips the chevron fill in both the

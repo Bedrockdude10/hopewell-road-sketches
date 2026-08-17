@@ -25,7 +25,7 @@ import numpy as np
 from shapely.geometry import LineString, Polygon
 from shapely.ops import unary_union
 
-from src.geometry.model import (_point_at, clip_paint_clear_of, corner_apron_annulus,
+from src.geometry.model import (point_at, clip_paint_clear_of, corner_apron_annulus,
                                 curbside_strip_polygon,
                                 corner_overlay_polygon, curb_offsets_at_stations,
                                 leg_clearance_ft, station_offset_many, through_street_sides)
@@ -312,8 +312,8 @@ def zone_end_line_ft(leg, side: str, start_ft: float, inner_offset_ft: float):
     inner_ft = sign * inner_offset_ft
     if abs(outer_ft) - abs(inner_ft) < MIN_RIM_LENGTH_FT:
         return None
-    return LineString([_point_at(leg.centerline, start_ft, inner_ft),
-                       _point_at(leg.centerline, start_ft, outer_ft)])
+    return LineString([point_at(leg.centerline, start_ft, inner_ft),
+                       point_at(leg.centerline, start_ft, outer_ft)])
 
 
 def _station_of(leg, geometry) -> float:

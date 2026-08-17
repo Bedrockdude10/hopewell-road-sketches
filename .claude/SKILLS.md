@@ -36,16 +36,16 @@ There is exactly one home for each of these. Adding a second copy is the most co
 | you need | it already exists as | in |
 |---|---|---|
 | travel lane target width | `TARGET_LANE_WIDTH_FT` | `src/geometry/treatments/` |
-| a CRS string | `WGS84`, `NJ_STATE_PLANE_FT` | `src/geometry/model.py` |
+| a CRS string | `WGS84`, `NJ_STATE_PLANE_FT` | `src/geometry/model/` |
 | how far the divider sits off the alignment | `divider_shift_toward_ft(state, leg, side)` | `src/geometry/treatments/` |
 | a travel lane's real width | `travel_lane_width_ft(state, leg, side, painted_ft)` | `src/geometry/treatments/` |
 | hold a lane at target, spend the surplus | `hold_travel_lane_at_target(state, leg, side)` | `src/geometry/treatments/` |
 | may this kerb hold parking? | `kerb_may_hold_parking(state, leg, side)` | `src/geometry/treatments/` |
-| which side of a leg faces north/south | `side_facing(leg, "south")` | `src/geometry/model.py` |
-| room beside a lane, measured on the traced kerb | `narrowest_half_width_ft`, `kerbside_allowance_ft` | `src/geometry/model.py`, `treatments.py` |
+| which side of a leg faces north/south | `side_facing(leg, "south")` | `src/geometry/model/` |
+| room beside a lane, measured on the traced kerb | `narrowest_half_width_ft`, `kerbside_allowance_ft` | `src/geometry/model/`, `treatments.py` |
 | the centreline stripes both views draw | `centerline_paint_ft` | `src/render/crosswalks.py` |
-| a band between two lateral offsets | `offset_band_polygon` | `src/geometry/model.py` |
-| a line N ft to one side | `inset_line_ft` — **never** `offset_curve` for stationed work | `src/geometry/model.py` |
+| a band between two lateral offsets | `offset_band_polygon` | `src/geometry/model/` |
+| a line N ft to one side | `inset_line_ft` — **never** `offset_curve` for stationed work | `src/geometry/model/` |
 
 **Search before writing.** `grep -rn "SOME_CONSTANT" src/` costs nothing. Writing the second copy
 costs a session: the far-kerb rule was written inline in one site's `scenarios.py`, the sibling

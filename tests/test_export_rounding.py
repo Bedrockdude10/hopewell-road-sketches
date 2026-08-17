@@ -3,7 +3,7 @@
 Without this the export carries repr(float) - 17 significant digits, the last three of which
 are float64 noise on a ~500,000 ft state-plane coordinate. Any change to the order of
 operations upstream perturbs every vertex below the micron and rewrites the whole file: one
-30-line edit to src/geometry/model.py produced 53,394 lines of geometry diff, none of it a real
+30-line edit to src/geometry/model/ produced 53,394 lines of geometry diff, none of it a real
 movement. A diff in which every line changed cannot answer "did I move geometry I did not mean
 to move", which is the only question worth asking of a rendered artifact under version control.
 

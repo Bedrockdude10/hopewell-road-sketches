@@ -142,7 +142,7 @@ def test_the_tax_list_needs_no_crs():
 # --- the validators agree ------------------------------------------------------------------
 
 def test_the_crs_strings_have_one_definition():
-    """pandera's callers pass the datum from src/geometry/model.py rather than a second copy.
+    """pandera's callers pass the datum from src/geometry/model/crs.py rather than a second copy.
 
     schemas.py deliberately declares NO projection constants of its own; if someone adds them,
     this fails and points at the one place they belong.
@@ -154,7 +154,7 @@ def test_the_crs_strings_have_one_definition():
                   and getattr(schemas, name).startswith("EPSG:")]
     assert not duplicated, (
         f"src/sources/schemas.py declares its own CRS constant(s) {duplicated} - "
-        f"src/geometry/model.py owns WGS84 and NJ_STATE_PLANE_FT, and two definitions of one "
+        f"src/geometry/model/crs.py owns WGS84 and NJ_STATE_PLANE_FT, and two definitions of one "
         f"datum is the bug this project keeps finding")
 
 

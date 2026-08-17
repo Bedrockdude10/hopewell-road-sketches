@@ -932,7 +932,7 @@ def _daylight_device_props(state: DesignState, offsets_ft: dict, so_far: list[di
     flex-posts along it as well would draw posts down the middle of a new sidewalk.
     """
     from src.geometry.daylighting import merged_no_parking_spans_ft, no_parking_zones_ft
-    from src.geometry.model import _point_at
+    from src.geometry.model import point_at
     from src.geometry.paint import (LANE_EDGE_LINE_WIDTH_FT, kerb_opening_bands,
                                     stands_in_an_opening)
     from src.geometry.treatments import (DAYLIGHT_DEVICES_AS_POSTS, ProtectDaylightZone,
@@ -966,7 +966,7 @@ def _daylight_device_props(state: DesignState, offsets_ft: dict, so_far: list[di
             # device rather than none.
             count = max(int(span_ft // spacing_ft), 1)
             for station in np.linspace(start_ft, end_ft, count + 1)[:-1] + (span_ft / count) / 2:
-                at = _point_at(leg.centerline, float(station), offset_ft)
+                at = point_at(leg.centerline, float(station), offset_ft)
                 if stands_in_an_opening(openings, Point(at)):
                     continue
                 props.append({

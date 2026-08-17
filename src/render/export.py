@@ -175,7 +175,7 @@ def export_scenario(model: IntersectionModel, state: DesignState, name: str, out
         # here before the scene resolved it), and everything below - the near/far texture
         # split, the building filter, the sidewalk band - is measured against it.
         raise ValueError("Can't export this scenario - the pavement ring did not close. "
-                         "See src/geometry/model.py:build_pavement_polygon.")
+                         "See src/geometry/model/corners.py:build_pavement_polygon.")
     crosswalk_offsets = scene.crosswalk_offsets
     crosswalk_skews = scene.crosswalk_skews
     crosswalk_reaches = scene.crosswalk_reaches

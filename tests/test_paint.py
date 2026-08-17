@@ -152,9 +152,9 @@ def test_stall_dividers_land_on_their_stations():
     leg = Leg(name="bend", centerline=curve, curb_to_curb_ft=30.0)
     for side in ("left", "right"):
         sign = 1 if side == "left" else -1
-        from src.geometry.model import _point_at
+        from src.geometry.model import point_at
         setattr(leg, f"{side}_curb",
-                LineString([_point_at(curve, s, sign * 15.0) for s in np.linspace(5, 130, 30)]))
+                LineString([point_at(curve, s, sign * 15.0) for s in np.linspace(5, 130, 30)]))
 
     dividers = parking_stall_lines_ft(leg, "left", depth_ft=8.0, stall_length_ft=22.0,
                                        start_ft=40.0, curb_offset_ft=0.0)

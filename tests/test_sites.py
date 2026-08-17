@@ -1738,8 +1738,8 @@ def test_no_traced_kerb_vertex_is_silently_unclaimed(site, site_models):
     from src.geometry.intersection import kerb_lines_with_tags_ft
     from src.geometry.model import (CURB_POINT_BEHIND_TOLERANCE_FT, CURB_POINT_CORNER_ZONE_FT,
                                     CURB_POINT_MAX_SKEW_DEG, CURB_POINT_MAX_WIDTH_RATIO,
-                                    CURB_POINT_MIN_WIDTH_RATIO, _line_direction,
-                                    _vertex_tangents, station_offset_many)
+                                    CURB_POINT_MIN_WIDTH_RATIO, line_direction,
+                                    vertex_tangents, station_offset_many)
 
     TOLERATED = {"broad_st_greenwood": 0, "ebroad_princeton": 0,
                  "columbia_princeton": 0, "wbroad_louellen": 5}
@@ -1749,7 +1749,7 @@ def test_no_traced_kerb_vertex_is_silently_unclaimed(site, site_models):
         ways = [line for line, *_ in kerb_lines_with_tags_ft(model.center_wgs84,
                                                                  model.center_ft)]
     points = np.concatenate([np.asarray(w.coords, dtype=float) for w in ways])
-    tangents = np.concatenate([_vertex_tangents(w) for w in ways])
+    tangents = np.concatenate([vertex_tangents(w) for w in ways])
     min_cosine = np.cos(np.radians(CURB_POINT_MAX_SKEW_DEG))
 
     unclaimable = 0
@@ -1757,7 +1757,7 @@ def test_no_traced_kerb_vertex_is_silently_unclaimed(site, site_models):
         for leg in model.legs.values():
             stations, offsets = station_offset_many(leg.centerline, point[None, :])
             ratio = abs(offsets[0]) / (leg.curb_to_curb_ft / 2)
-            skewed = abs(float(tangents[i] @ _line_direction(leg.centerline))) < min_cosine
+            skewed = abs(float(tangents[i] @ line_direction(leg.centerline))) < min_cosine
             if (stations[0] >= -CURB_POINT_BEHIND_TOLERANCE_FT
                     and CURB_POINT_MIN_WIDTH_RATIO <= ratio <= CURB_POINT_MAX_WIDTH_RATIO
                     and not (skewed and stations[0] > CURB_POINT_CORNER_ZONE_FT)):

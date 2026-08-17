@@ -22,9 +22,9 @@ from src.geometry.model import (
     CURB_POINT_BEHIND_TOLERANCE_FT,
     CURB_POINT_MAX_WIDTH_RATIO,
     Leg,
-    _line_direction,
-    _place_in_measured_frame,
-    _unit,
+    line_direction,
+    place_in_measured_frame,
+    unit_vector,
     assign_curb_points_to_legs,
     assign_kerbs_to_corners,
     curb_line_from_points,
@@ -716,7 +716,7 @@ def _thinned(stations: np.ndarray, gap_ft: float) -> np.ndarray:
     """Drop stations closer together than `gap_ft`, always keeping the first and the last.
 
     Two vertices a couple of inches apart are a hazard, not extra fidelity: the lateral
-    correction at each is placed independently (_place_in_measured_frame corrects per point),
+    correction at each is placed independently (place_in_measured_frame corrects per point),
     so a hundredth of a foot of difference between them turns a 0.17 ft segment into a 34
     degree turn - which is what louellen_st_west's alignment did, and a turn that sharp makes
     the offset frame meaningless for every marking measured across it.
@@ -962,7 +962,7 @@ def _centre_legs_on_traced_kerbs(legs: dict, quiet: bool = False) -> None:
             continue
 
         centred = Leg(name=name, curb_to_curb_ft=leg.curb_to_curb_ft,
-                      centerline=LineString(_place_in_measured_frame(leg.centerline, stations,
+                      centerline=LineString(place_in_measured_frame(leg.centerline, stations,
                                                                      offsets)),
                       width_provenance=leg.width_provenance)
         # Traced sides keep the surveyor's line; untraced ones keep the offset __post_init__
@@ -983,7 +983,7 @@ def _through_leg_pairs(legs: dict) -> list[tuple[str, str]]:
     """The (leg, leg) pairs that are one street running through the junction.
 
     Each leg is matched with whichever OTHER leg points most nearly back the way it came, and
-    the pair is kept only if _through_street agrees they are one street. Deliberately not the
+    the pair is kept only if is_through_street agrees they are one street. Deliberately not the
     pairing through_street_sides uses: that one walks legs in bearing order and pairs each with
     its angular NEIGHBOUR, which is right for the question it asks - which corner has no kerb
     in it - and useless for this one, because at a four-way junction a leg's neighbours are the
@@ -991,16 +991,16 @@ def _through_leg_pairs(legs: dict) -> list[tuple[str, str]]:
     through pair at the two T-junctions and silently found nothing at Broad & Greenwood or
     Columbia & Princeton.
     """
-    from src.geometry.model import _leg_bearing_deg, _through_street
+    from src.geometry.model import leg_bearing_deg, is_through_street
 
     usable = {name: leg for name, leg in legs.items() if leg.centerline is not None}
     pairs = set()
     for name_a, leg_a in usable.items():
         opposed = None
         for name_b, leg_b in usable.items():
-            if name_b == name_a or not _through_street(leg_a, leg_b):
+            if name_b == name_a or not is_through_street(leg_a, leg_b):
                 continue
-            apart = abs(180.0 - abs((_leg_bearing_deg(leg_a) - _leg_bearing_deg(leg_b) + 180.0)
+            apart = abs(180.0 - abs((leg_bearing_deg(leg_a) - leg_bearing_deg(leg_b) + 180.0)
                                      % 360.0 - 180.0))
             if opposed is None or apart < opposed[1]:
                 opposed = (name_b, apart)
@@ -1019,7 +1019,7 @@ def _near_direction(leg, reach_ft: float) -> np.ndarray:
     start = np.asarray(leg.centerline.coords[0], dtype=float)
     ahead = np.asarray(leg.centerline.interpolate(
         min(reach_ft, leg.centerline.length)).coords[0], dtype=float)
-    return _unit(ahead - start)
+    return unit_vector(ahead - start)
 
 
 def _join_through_legs(legs: dict, quiet: bool = False) -> None:
@@ -1054,7 +1054,7 @@ def _join_through_legs(legs: dict, quiet: bool = False) -> None:
         joint = (start_a + start_b) / 2
         # The shared axis bisects the two halves: leg_b points the other way, so its direction
         # is negated before averaging. Anti-parallel by construction, so the paint runs through.
-        axis = _unit(_near_direction(leg_a, blend_ft) - _near_direction(leg_b, blend_ft))
+        axis = unit_vector(_near_direction(leg_a, blend_ft) - _near_direction(leg_b, blend_ft))
 
         moved = []
         for name, leg, heading in ((name_a, leg_a, axis), (name_b, leg_b, -axis)):
@@ -1099,7 +1099,7 @@ def _blend_onto(leg, joint: np.ndarray, heading: np.ndarray, blend_ft: float):
     corrections = (start_offset_ft * (2 * t ** 3 - 3 * t ** 2 + 1)
                    + slope * blend_ft * (t ** 3 - 2 * t ** 2 + t))
     joined = Leg(name=leg.name, curb_to_curb_ft=leg.curb_to_curb_ft,
-                 centerline=LineString(_place_in_measured_frame(centerline, stations, corrections)),
+                 centerline=LineString(place_in_measured_frame(centerline, stations, corrections)),
                  width_provenance=leg.width_provenance)
     for side in leg.traced_sides:
         setattr(joined, f"{side}_curb", getattr(leg, f"{side}_curb"))
@@ -1319,10 +1319,10 @@ def _match_legs_to_osm_roads(legs: dict, center_wgs84: Point, center_ft: Point) 
 
     out: dict[str, list[RoadSpan]] = {}
     for name, leg in legs.items():
-        leg_dir = _line_direction(leg.centerline)
+        leg_dir = line_direction(leg.centerline)
         spans = []
         for road, line in carriageways:
-            along = np.dot(_line_direction(line), leg_dir)
+            along = np.dot(line_direction(line), leg_dir)
             angle = np.degrees(np.arccos(np.clip(abs(along), -1, 1)))
             if angle > ROAD_MATCH_MAX_ANGLE_DEG:
                 continue

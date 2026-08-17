@@ -635,7 +635,7 @@ def test_the_green_surface_covers_the_bike_lane_and_nothing_else(site, site_mode
     MarkingsDoNotCollide and PaintInsideTheCurb were silent and correct to be.
 
     Bounded here by the lane's own offsets, which is also what the marking is now built from
-    (src/geometry/model.py:offset_band_polygon).
+    (src/geometry/model/leg_frame.py:offset_band_polygon).
     """
     from src.geometry.markings import BIKE_LANE_SURFACE
     from src.geometry.model import station_offset_many

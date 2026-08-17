@@ -112,7 +112,7 @@ class Corner(Target):
 
     Order is load-bearing and not symmetric: a corner is always (leg_a's LEFT kerb, leg_b's
     RIGHT kerb), so Corner("a", "b") and Corner("b", "a") are different corners of the
-    junction. See src/geometry/model.py:fillet_curb_corner.
+    junction. See src/geometry/model/corners.py:fillet_curb_corner.
     """
     leg_a: str
     leg_b: str

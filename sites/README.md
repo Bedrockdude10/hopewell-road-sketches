@@ -75,7 +75,7 @@ legs:
       ...                             # isn't field_measured, the methodology AND its uncertainty range.
 
     # Phase 2 cross-checks every leg against OSM's surveyed sidewalk centerlines
-    # (src/geometry/model.py:sidewalk_span_ft): the curb line must sit inside them. A
+    # (src/geometry/model/context.py:sidewalk_span_ft): the curb line must sit inside them. A
     # width leaving under ~3 ft between the curb and the sidewalk CENTERLINE is
     # physically impossible and is reported as IMPLAUSIBLE WIDTH. This is a bound and a
     # sanity check, not a measurement - the curb-to-sidewalk setback measured 11.8 ft/side

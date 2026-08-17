@@ -230,9 +230,9 @@ def _edge_offsets(line: LineString, stations: np.ndarray, offsets: np.ndarray,
 
 def _edge_points(line: LineString, stations: np.ndarray, offsets: np.ndarray) -> list:
     """The inverse of station_offset_many: a point per (station, offset) in the road's frame."""
-    from src.geometry.model import _point_at
+    from src.geometry.model import point_at
 
-    return [_point_at(line, float(s), float(o)) for s, o in zip(stations, offsets)]
+    return [point_at(line, float(s), float(o)) for s, o in zip(stations, offsets)]
 
 
 def roadway_surface(line: LineString, stations: np.ndarray, offsets: np.ndarray,

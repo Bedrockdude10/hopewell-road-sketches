@@ -404,7 +404,7 @@ def fetch_sidewalks(center_wgs84: Point, radius_m: float) -> list[dict]:
 
     Real surveyed geometry, and what OSM's crossing ways actually connect to - a crossing
     runs sidewalk-centerline to sidewalk-centerline, not curb to curb. That makes them an
-    independent bound on a leg's width (src/geometry/model.py:sidewalk_span_ft), though not
+    independent bound on a leg's width (src/geometry/model/context.py:sidewalk_span_ft), though not
     a measurement of it: the centerline-to-curb gap measured 11.8 ft/side on one
     field-measured leg and 4.0 ft/side on another, on the same street 100 ft apart.
     """

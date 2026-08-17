@@ -462,7 +462,7 @@ def plot_design_state(ax, model: IntersectionModel, state: DesignState, title: s
 
     # Real OSM sidewalk centerlines, drawn behind everything else. These are what the
     # crossing ways actually connect to, and they bound where the curb can possibly be
-    # (src/geometry/model.py:sidewalk_span_ft) - so having them on the plot is what makes
+    # (src/geometry/model/context.py:sidewalk_span_ft) - so having them on the plot is what makes
     # an over-wide leg visible instead of merely arguable.
     _draw(ax, sidewalk_lines_ft(sidewalks), color="steelblue", linewidth=1.0,
           linestyle=(0, (4, 2)), alpha=0.65, zorder=2)

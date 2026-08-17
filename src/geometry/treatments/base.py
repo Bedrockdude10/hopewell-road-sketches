@@ -173,7 +173,7 @@ class CornerApron:
     (add_mountable_apron), for a corner where a hard bulb-out is not an option.
 
     `swept_radius_ft` is the radius a large vehicle needs, and the apron is then the ANNULUS
-    between that and `face_radius_ft` (src/geometry/model.py:corner_apron_annulus). This is the
+    between that and `face_radius_ft` (src/geometry/model/corners.py:corner_apron_annulus). This is the
     one a curb extension lays: the claim it supports is that the swept path survives the
     tightened corner, and a fixed depth cannot support that claim because nothing ties it to
     the radius the vehicle needs.

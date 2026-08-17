@@ -5,7 +5,7 @@ the repo root WITHOUT `source .venv/bin/activate` picks up whatever `python` is 
 here a pyenv 3.13.0 that happens to have pytest installed but none of this project's
 scientific stack. Collection then fails five times over, once per test module, with a wall
 of `ModuleNotFoundError: No module named 'geopandas'` tracebacks pointing into
-src/geometry/model.py. Nothing in that output says "wrong interpreter"; it reads like the
+src/geometry/model/. Nothing in that output says "wrong interpreter"; it reads like the
 repo is broken, and the obvious next move (debugging the imports) is the wrong one.
 
 So: probe for the project's third-party imports here, in the root conftest, which pytest
@@ -31,7 +31,7 @@ VENV_PYTHON = REPO_ROOT / ".venv" / "bin" / "python"
 
 # Top-level third-party imports that src/ does at module scope, so a missing one is fatal at
 # collection rather than at some later test. geopandas is the one that actually blows up
-# first (src/geometry/model.py line 5), the rest are here so the message lists everything
+# first (src/geometry/model/ line 5), the rest are here so the message lists everything
 # that's wrong instead of dripping them out one re-run at a time.
 REQUIRED = ("geopandas", "shapely", "matplotlib", "numpy", "pyproj", "yaml", "trimesh")
 

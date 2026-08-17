@@ -1,6 +1,6 @@
 """3D mesh utilities for background/context geometry (OSM buildings) that isn't
 the subject of the render and doesn't need full poly density. Not used for the
-authoritative pavement/curb geometry - see src/geometry/model.py for that."""
+authoritative pavement/curb geometry - see src/geometry/model/ for that."""
 import contextlib
 
 from shapely.geometry import Polygon

@@ -468,7 +468,7 @@ Listed so nobody goes looking for a standard behind them.
 > | file | value | meaning |
 > |---|---|---|
 > | `src/geometry/daylighting.py` | **25.0 ft** | R.S. 39:4-138(e) — how far from a crosswalk parking is forbidden |
-> | `src/geometry/model.py` | **8.3 ft** | measured — how far beyond a cross street's kerb line a crosswalk actually sits, fitted to the 11 surveyed crossings (σ 2.4 ft, range 5.1–13.9) |
+> | `src/geometry/model/context.py` | **8.3 ft** | measured — how far beyond a cross street's kerb line a crosswalk actually sits, fitted to the 11 surveyed crossings (σ 2.4 ft, range 5.1–13.9) |
 >
 > Different modules, so nothing is shadowed and there is no bug today. But one grep for the
 > name returns both, and only one of them is a legal figure. Renaming the measured one

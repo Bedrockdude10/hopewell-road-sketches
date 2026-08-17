@@ -1,4 +1,4 @@
-"""Property-based tests for the station/offset frame (src/geometry/model.py).
+"""Property-based tests for the station/offset frame (src/geometry/model/).
 
 Every measurement this project makes goes through this frame: a leg's centerline defines
 "distance along" and "signed distance from", and every kerb vertex, crosswalk bar, stop line
@@ -20,7 +20,7 @@ The contracts, in the order they are tested:
      that keeps a station behind the junction negative.
   3. Offset is signed and antisymmetric about the centerline: left is positive.
   4. On a straight centerline the transform and its inverse round-trip exactly, at any offset.
-  5. On a bent one they do not, and _place_in_measured_frame's whole contract is that it is
+  5. On a bent one they do not, and place_in_measured_frame's whole contract is that it is
      never WORSE than the naive placement it corrects. That is the invariant that holds even
      inside the fold, where a round-trip flatly does not.
   6. Away from a kink, that same placement measures back to within the tolerance a painted
@@ -45,7 +45,7 @@ from hypothesis import HealthCheck, assume, given, settings
 from hypothesis import strategies as st
 from shapely.geometry import LineString
 
-from src.geometry.model import _place_in_measured_frame, _point_at, station_offset_many
+from src.geometry.model import place_in_measured_frame, point_at, station_offset_many
 
 # Feet. Every tolerance here is a claim about float arithmetic, not about geometry: the frame
 # is exact maths, so anything above this is a real disagreement, not accumulated error.
@@ -139,8 +139,8 @@ def test_offset_is_signed_and_antisymmetric(line, offset, fraction):
     magnitude. Leg.left_curb / right_curb depend on this sign; getting it wrong mirrors a
     street rather than failing."""
     station = fraction * line.length
-    left = _point_at(line, station, offset)
-    right = _point_at(line, station, -offset)
+    left = point_at(line, station, offset)
+    right = point_at(line, station, -offset)
     _s, offsets = station_offset_many(line, np.array([left, right]))
     assert offsets[0] == pytest.approx(offset, abs=EXACT_FT * max(1.0, abs(offset)))
     assert offsets[1] == pytest.approx(-offset, abs=EXACT_FT * max(1.0, abs(offset)))
@@ -150,10 +150,10 @@ def test_offset_is_signed_and_antisymmetric(line, offset, fraction):
        fraction=st.floats(min_value=-0.5, max_value=1.5, allow_nan=False))
 @SETTINGS
 def test_the_transform_round_trips_exactly_on_a_straight_line(line, offset, fraction):
-    """_point_at and station_offset_many are exact inverses where there is no bend - the claim
-    _polyline_frame's docstring makes, and the reason both directions read one frame."""
+    """point_at and station_offset_many are exact inverses where there is no bend - the claim
+    polyline_frame's docstring makes, and the reason both directions read one frame."""
     station = fraction * line.length
-    x, y = _point_at(line, station, offset)
+    x, y = point_at(line, station, offset)
     stations, offsets = station_offset_many(line, np.array([[x, y]]))
     scale = max(1.0, line.length, abs(offset))
     assert stations[0] == pytest.approx(station, abs=EXACT_FT * scale)
@@ -166,7 +166,7 @@ def test_the_transform_round_trips_exactly_on_a_straight_line(line, offset, frac
        offset=OFFSET)
 @SETTINGS
 def test_placing_in_the_measured_frame_is_never_worse_than_not(line, stations, offset):
-    """_place_in_measured_frame's actual contract, and the only one that survives a fold.
+    """place_in_measured_frame's actual contract, and the only one that survives a fold.
 
     Around a bend the two directions of the transform disagree (they resolve the wedge outside
     the corner against different segments), and past the radius of curvature the offset curve
@@ -179,8 +179,8 @@ def test_placing_in_the_measured_frame_is_never_worse_than_not(line, stations, o
     target_s = np.array(stations, dtype=float)
     target_o = np.full(len(stations), offset, dtype=float)
 
-    naive = np.array([_point_at(line, s, offset) for s in target_s])
-    corrected = np.array(_place_in_measured_frame(line, target_s, target_o), dtype=float)
+    naive = np.array([point_at(line, s, offset) for s in target_s])
+    corrected = np.array(place_in_measured_frame(line, target_s, target_o), dtype=float)
 
     naive_error = _frame_residual(line, naive, target_s, target_o)
     corrected_error = _frame_residual(line, corrected, target_s, target_o)
@@ -223,7 +223,7 @@ def test_a_placed_point_measures_back_as_what_was_asked_for(line, stations, offs
     assume(all(_well_conditioned(line, s, offset) for s in stations))
     target_s = np.array(stations, dtype=float)
     target_o = np.full(len(stations), offset, dtype=float)
-    placed = np.array(_place_in_measured_frame(line, target_s, target_o), dtype=float)
+    placed = np.array(place_in_measured_frame(line, target_s, target_o), dtype=float)
     residual = _frame_residual(line, placed, target_s, target_o)
     assert np.all(residual < PLACEMENT_TOLERANCE_FT), (
         f"placed points measure back {residual} ft from the frame they were asked for "
@@ -258,7 +258,7 @@ def test_the_worst_place_on_a_real_centerline_is_still_within_tolerance(turn_deg
     # inside the fold and unreachable by anything - see _reachable.
     outside = np.array([-offset_ft])
 
-    placed = np.array(_place_in_measured_frame(line, at_vertex, outside), dtype=float)
+    placed = np.array(place_in_measured_frame(line, at_vertex, outside), dtype=float)
     residual = _frame_residual(line, placed, at_vertex, outside)
     assert residual[0] < worst_ft, (
         f"a {turn_deg} deg kink at {offset_ft} ft offset places {residual[0]:.4f} ft from the "
@@ -316,8 +316,8 @@ def _well_conditioned(line: LineString, station: float, offset: float, margin: f
 
 
 def _frame_arrays(line: LineString):
-    from src.geometry.model import _polyline_frame
-    return _polyline_frame(line)
+    from src.geometry.model import polyline_frame
+    return polyline_frame(line)
 
 
 def _extrapolated_point(line: LineString, verts, fraction: float):

@@ -23,9 +23,10 @@ from src.geometry.model import hatch_lines_ft
 from src.geometry.intersection import (IntersectionModel, drawn_kerb_radius_ft,
                                        kerb_lines_with_tags_ft)
 from src.geometry.kerbs import KerbType
+from src.geometry.surveyed import crossing_bars_ft, crossing_lines_ft
 from src.geometry.markings import CHANNELS, KINDS, Role, kinds_in
 from src.geometry.paint import RimCause, in_channel
-from src.render.frame import junction_frame
+from src.render.frame import frame_covering_radius_m, junction_frame
 from src.render.mesh_utils import build_decimated_building_mesh
 from src.render.scene import SceneGeometry
 from src.sources.assessor import (BuildingHeight, assessor_path, describe_building_heights,
@@ -153,10 +154,17 @@ def export_scenario(model: IntersectionModel, state: DesignState, name: str, out
     if theme is None:
         from src.render.theme import build_default_theme
         theme = build_default_theme()
+    # THROUGH context_radius_m, like the kerbs, roads and cross streets already are. These two were
+    # the last surveyed layers on a flat radius, and at 2.5x the frame reaches 431.2 ft = 131.4 m
+    # against a 130 m fetch - the picture is already 4.7 ft wider than the data it is drawn from, and
+    # every step past 2.5x widens the band. Nothing falls in it at these four sites today, so this is
+    # a latent defect being closed rather than a visible one being fixed. At 1x the call is
+    # unchanged, so no existing render moves.
+    context_m = frame_covering_radius_m(model, BUILDING_CONTEXT_RADIUS_M)
     if buildings is None:
-        buildings = fetch_buildings(model.center_wgs84, radius_m=BUILDING_CONTEXT_RADIUS_M)
+        buildings = fetch_buildings(model.center_wgs84, radius_m=context_m)
     if crossings is None:
-        crossings = fetch_crossings(model.center_wgs84, radius_m=BUILDING_CONTEXT_RADIUS_M)
+        crossings = fetch_crossings(model.center_wgs84, radius_m=context_m)
     if traffic_control is None:
         traffic_control = fetch_traffic_control(model.center_wgs84, radius_m=TRAFFIC_CONTROL_RADIUS_M)
     if street_furniture is None:
@@ -191,6 +199,13 @@ def export_scenario(model: IntersectionModel, state: DesignState, name: str, out
     # Resolved once and read twice - written into the JSON for the camera, and used to decide
     # which traced kerbs are in the picture at all. Two calls would be two chances to disagree.
     frame = junction_frame(model)
+    # THE TRACED KERBS, resolved once for the same reason. Written out as `kerbs` below and used to
+    # trim each surveyed crossing to the carriageway; two calls would be two chances to disagree
+    # about which kerbs are in the picture, and the trim would then cut against a different set from
+    # the one drawn beside it.
+    drawn_kerbs_with_tags = list(kerb_lines_with_tags_ft(model.center_wgs84, center_ft,
+                                                         radius_ft=drawn_kerb_radius_ft()))
+    drawn_kerbs = list(scene.drawn_kerbs)
 
     near_radius_ft = max((v[0] for v in crosswalk_offsets.values()), default=30) + NEAR_ZONE_BUFFER_FT
     pavement_near, pavement_far = _split_near_far([pavement], center_ft, near_radius_ft)
@@ -209,6 +224,9 @@ def export_scenario(model: IntersectionModel, state: DesignState, name: str, out
     # about the street. Checked on the same shared band geometry the plan view checks, so
     # the two views can't diverge on what they consider valid. See src/checks.py.
     scene.assert_valid(props, paint, scenario=name)
+    # What the surveyor recorded inside this frame that the drawing does not contain.
+    # Printed rather than raised - see SceneGeometry.report_coverage.
+    scene.report_coverage(props, paint)
 
     # Paint-only / no-curb-change proposal treatments - lane-narrowing buffers, marked
     # parking, corner hatching, aprons. All of it is built by src/geometry/paint.py, which
@@ -479,8 +497,7 @@ def export_scenario(model: IntersectionModel, state: DesignState, name: str, out
             {"coords": ring_to_local_m(line.coords, center_ft),
              "kerb": str(KerbType.from_tags(tags)),
              "height_m": KERB_HEIGHT_M[KerbType.from_tags(tags)]}
-            for line, tags, _way_id in kerb_lines_with_tags_ft(model.center_wgs84, center_ft,
-                                                                radius_ft=drawn_kerb_radius_ft())
+            for line, tags, _way_id in drawn_kerbs_with_tags
         ],
         # The driveways the kerb openings exist for. Drawn as a narrow strip of the same asphalt
         # rather than as a marking: it is a minor carriageway, and its job in the render is to
@@ -494,6 +511,28 @@ def export_scenario(model: IntersectionModel, state: DesignState, name: str, out
              "surveyed": paved.extent_is_surveyed,
              "coords": ring_to_local_m(paved.surface.exterior.coords, center_ft)}
             for paved in model.paved_surfaces if paved.surface is not None
+        ],
+        # EVERY SURVEYED CROSSING IN THE PICTURE, drawn from its own traced way. Alongside `kerbs`
+        # and `paved_surfaces` rather than in the paint channels, because like those two it is
+        # surveyed context and not a treatment this project proposes: it is already in the ground's
+        # coordinates, belongs to no leg, and nothing should be cut around it.
+        #
+        # The per-leg crosswalk fields above still draw the four crossings this junction models, so
+        # only the ones belonging to NO modelled leg travel here - `leg is None`. Without that split
+        # the four matched ones would be drawn twice, once from the leg's rebuilt band and once from
+        # their own way, and the two disagree by 1.44-2.73 ft.
+        #
+        # Trimmed to the carriageway at the traced kerbs (surveyed.carriageway_geometry_ft): the
+        # traced way runs sidewalk to sidewalk, 6-22 ft longer than the road it spans here, so
+        # untrimmed bars are painted across the footway.
+        "surveyed_crossings": [
+            {"markings": crossing.markings,
+             "distance_m": crossing.distance_ft * FT_TO_M,
+             "bars": [ring_to_local_m(bar.exterior.coords, center_ft)
+                      for bar in crossing_bars_ft(crossing, drawn_kerbs)],
+             "lines": [ring_to_local_m(line.coords, center_ft)
+                       for line in crossing_lines_ft(crossing, drawn_kerbs)]}
+            for crossing in scene.unmodelled_crossings
         ],
         "corner_parcels": [
             {"name": str(row["quadrant"]), "coords": ring_to_local_m(row.geometry.exterior.coords, center_ft)}

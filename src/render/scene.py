@@ -66,6 +66,20 @@ class SceneGeometry:
     crosswalk_bands: dict            # leg -> the painted footprint
     stop_bar_offsets: dict           # leg -> station, signalized junctions only
     stop_bar_bands: dict             # leg -> the painted footprint
+    # EVERY SURVEYED CROSSING IN THE FRAME, drawn from its own traced way - including the ones at
+    # junctions this site does not model, which the per-leg fields above cannot reach at all. Six of
+    # the ten in Broad & Greenwood's 2.5x frame, three of them a zebra.
+    #
+    # Resolved HERE rather than in each renderer, which is the whole reason this class exists: the
+    # 2D view, the 3D export and the coverage check all have to draw and audit the same crossings,
+    # and the first version of this change computed them separately in export.py and plan_view.py.
+    # That is the "two consumers assembling the same markings independently" failure this module's
+    # docstring is about, and it showed immediately - the coverage check could not see what the
+    # export drew, so it reported crossings as dropped that were on the page.
+    surveyed_crossings: tuple = ()
+    # The traced kerbs the crossings above are trimmed against, kept so a consumer that wants to
+    # draw them does not fetch a second, possibly different set.
+    drawn_kerbs: tuple = ()
 
     @classmethod
     def resolve(cls, model, state, crossings: list[dict], stop_lines: list[dict] | None = None
@@ -95,12 +109,45 @@ class SceneGeometry:
             stop_bar_offsets = resolve_stop_bar_offsets(state, offsets, stop_lines)
         else:
             stop_bar_offsets = {}
+        from src.geometry.intersection import drawn_kerb_radius_ft, kerb_lines_with_tags_ft
+        from src.geometry.surveyed import surveyed_crossings_in_frame
+
+        drawn_kerbs = tuple(line for line, _tags, _way_id in kerb_lines_with_tags_ft(
+            model.center_wgs84, model.center_ft, radius_ft=drawn_kerb_radius_ft()))
         return cls(
             model=model, state=state, pavement=pavement, marked_crosswalks=marked,
             crosswalk_offsets=offsets, crosswalk_skews=skews, crosswalk_reaches=reaches,
             crosswalk_bands=bands, stop_bar_offsets=stop_bar_offsets,
             stop_bar_bands=stop_bar_bands_ft(state, stop_bar_offsets, skews),
+            # `crossings` is the same fetched layer the per-leg offsets above came from, so the two
+            # cannot disagree about which crossings exist - only about which of them belong to a leg.
+            surveyed_crossings=tuple(surveyed_crossings_in_frame(model, crossings)),
+            drawn_kerbs=drawn_kerbs,
         )
+
+    @property
+    def unmodelled_crossings(self) -> tuple:
+        """The surveyed crossings belonging to NO modelled leg - the ones only this path can draw.
+
+        The four a junction models are drawn from their leg's own band, including whatever a proposal
+        restyles them to; drawing both would put two crossings 1.44-2.73 ft apart on one piece of
+        ground. So every consumer wants this, not `surveyed_crossings`, and it is a property here
+        rather than a filter each of them repeats.
+        """
+        return tuple(c for c in self.surveyed_crossings if c.leg is None)
+
+    def surveyed_crossing_paint(self) -> list:
+        """The bars and lines for every unmodelled surveyed crossing, trimmed to the carriageway.
+
+        One list, so the 2D view, the 3D export and the coverage check draw and audit exactly the
+        same geometry rather than three near-copies of it.
+        """
+        from src.geometry.surveyed import crossing_bars_ft, crossing_lines_ft
+
+        kerbs = list(self.drawn_kerbs)
+        return [piece for crossing in self.unmodelled_crossings
+                for piece in (crossing_bars_ft(crossing, kerbs)
+                              + crossing_lines_ft(crossing, kerbs))]
 
     def build_paint(self, props: list[dict] | None = None) -> list:
         """Every painted marking this scenario puts down (src/geometry/paint.py).
@@ -163,6 +210,28 @@ class SceneGeometry:
         from src.checks import check_scene
 
         return check_scene(self.context(props, paint))
+
+    def report_coverage(self, props: list[dict], paint: list) -> list:
+        """Print, and return, the surveyed features inside the frame that the drawing does not draw.
+
+        A NOTE RATHER THAN A FAILURE, deliberately, and the distinction is the point of putting it
+        here. Two of the four layers are genuinely still dropped - kerb ramps and traffic control are
+        PROPS placed per leg, so a neighbouring junction's have nowhere to come from, the same
+        structural problem crossings had. Raising on that would make every wide render fail for a
+        reason no scenario can fix, and a check that cannot go green is a check people learn to
+        ignore. Printed, it is in front of whoever reads the build.
+
+        The crossings layer IS clean now, at all four sites and both frame scales, which is what
+        makes the rest worth printing: this is not a permanent grumble, it is three layers of which
+        one has been closed and two are named. See src/geometry/coverage.py.
+        """
+        from src.geometry.coverage import coverage_gaps, describe_coverage
+
+        gaps = coverage_gaps(self.model, [*paint, *self.crosswalk_bands.values(), *props,
+                                          *self.surveyed_crossing_paint()])
+        if gaps:
+            print(describe_coverage(gaps))
+        return gaps
 
     def assert_valid(self, props: list[dict], paint: list, scenario: str = "") -> None:
         """Raise SceneInvariantError listing every violation, or return quietly."""

@@ -91,6 +91,28 @@ def context_radius_m(base_m: float) -> float:
     """
     return base_m * frame_scale()
 
+
+def frame_covering_radius_m(model, base_m: float) -> float:
+    """Enough to cover the FRAME, for a layer whose extent is radial rather than along a street.
+
+    THE DIFFERENCE FROM context_radius_m, which is easy to get wrong and expensive when you do.
+    That one multiplies a base radius by the frame scale, which is right for a layer that follows
+    the street: kerbs and roads run along a leg, so a wider frame needs more of their length and
+    the scale is the honest multiplier.
+
+    Buildings and crossings are not like that. They fill the picture, and the picture is a circle of
+    known radius - so what they need is the frame's own radius, not the base times the zoom. Those
+    two diverge fast: at Broad & Greenwood at 2.5x the frame reaches 131.4 m while
+    context_radius_m(130) asks for 325 m, which fetched 352 buildings instead of the 80 in shot and
+    made a single 3D render take 85 minutes instead of 13. Over-fetching is not free here, because
+    every building is meshed and decimated.
+
+    Still floored at `base_m`, so at 1x this returns exactly the radius each layer used before and no
+    existing render moves. The 10% margin covers the difference between a circular fetch and the
+    square-ish ground the camera actually sees.
+    """
+    return max(base_m, junction_frame(model).radius_ft * FT_TO_M * 1.1)
+
 # How far past a leg's far end a pavement vertex may still count as part of this junction. The
 # corner fillets trim the curbs a little past the leg's own end, so a hard cut at the leg length
 # would drop legitimate ring vertices.

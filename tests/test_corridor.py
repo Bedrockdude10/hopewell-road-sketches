@@ -1,0 +1,319 @@
+"""THE CHECKPOINT FOR STEP 2 of docs/network-model.md: a road that runs the length of the borough.
+
+tests/test_network.py established that a road through ONE junction reproduces the per-leg widths.
+This file asks the same question of a road that spans several junctions and carries on past them
+along NJDOT's alignment, plus the two things a corridor has to get right that a 300 ft road cannot
+get wrong:
+
+  * it must not SKIP a junction. Broad St resolves as one road across all three modelled ones, and
+    the axis has to run one way over all 2,800+ ft of it, not just through each node.
+  * every figure taken off it must carry the coverage it was measured over. That is asserted
+    STRUCTURALLY - Coverage has no defaults and Figure cannot be built without one - rather than by
+    matching strings in the output, because the failure being guarded against is a future question
+    added without a denominator, and a string test would pass for that until someone read it.
+
+The numbers here are deliberately PROPERTIES, not values. The committed OSM snapshot is a moment in
+a survey that is still being traced (the live cache already has ~50% more kerb along Broad St than
+the fixture does), so a test that pinned "1,227 ft traced" would fail on the next refresh for the
+best possible reason. What must not change is that the road is one road, that its widths still
+agree with the legs', and that nothing is counted without saying over how much.
+"""
+import dataclasses
+
+import numpy as np
+import pytest
+from shapely.geometry import Point
+
+from scripts.corridor_report import Coverage, Figure, corridor_report
+from src.geometry.network import (KERB_FROM_TRACING, corridor_facts, corridors_from_models,
+                                 marked_parking_capacity, osm_window_spans)
+from tests.conftest import needs_source_data
+from tests.test_network import AGREEMENT_TOL_FT, _leg_width_at
+
+# The three sites this project models on Broad St / CR 518. Columbia & Princeton is deliberately in
+# the model set too: it is on neither Broad St nor its SRI, so it is what proves the chaining
+# discriminates rather than merely joining everything it is given.
+BROAD_ST_SITES = ("wbroad_louellen", "broad_st_greenwood", "ebroad_princeton")
+
+# A single junction's Road is 260-300 ft (tests/test_network.py). A corridor across three of them
+# has to be several times that, and this is the floor: the 2,435 ft between the outer two junction
+# nodes, which is a measured distance and not a guess about how far the extensions reach.
+MIN_BROAD_ST_LENGTH_FT = 2435.0
+
+
+@pytest.fixture(scope="session")
+def corridors(site_models):
+    return corridors_from_models(site_models)
+
+
+@pytest.fixture(scope="session")
+def broad_st(corridors):
+    matches = [road for road in corridors if set(BROAD_ST_SITES) <= set(road.sites)]
+    assert len(matches) == 1, (
+        f"expected exactly one road across all of {BROAD_ST_SITES}, got "
+        f"{[(road.name, road.sites) for road in corridors]}")
+    return matches[0]
+
+
+@needs_source_data
+def test_broad_st_is_one_road_across_all_three_junctions(broad_st):
+    """THE HEADLINE. All three modelled junctions land on a single road, in order along it.
+
+    The failure this is written against is a chain that SKIPS the middle junction: E Broad &
+    Princeton faces W Broad & Louellen at 2,417 ft on the same SRI with opposed bearings and passes
+    every geometric test, so a matcher that took the first plausible link would produce a road with
+    a 2,400 ft hole and Broad & Greenwood sitting on a road of its own.
+    """
+    assert set(broad_st.sites) == set(BROAD_ST_SITES)
+    nodes = [junction.node_ft for junction in broad_st.junctions]
+    assert nodes == sorted(nodes), (
+        f"{broad_st.name}'s junctions are at stations {nodes} - a chain out of order means the "
+        f"pieces were assembled in one order and stationed in another")
+    assert broad_st.length_ft > MIN_BROAD_ST_LENGTH_FT, (
+        f"{broad_st.name} is only {broad_st.length_ft:.0f} ft long; the outer two junction nodes "
+        f"alone are {MIN_BROAD_ST_LENGTH_FT:.0f} ft apart, so it cannot be spanning them")
+    assert nodes[-1] - nodes[0] > MIN_BROAD_ST_LENGTH_FT
+    assert "broad" in broad_st.name.lower(), (
+        f"the corridor across Broad St is called {broad_st.name!r} - the compass halves OSM and "
+        f"NJDOT split this street into should collapse to one name")
+
+
+@needs_source_data
+def test_broad_st_carries_two_njdot_routes(broad_st):
+    """CR 518 turns west onto Louellen St, so this street is two SRIs and must say so.
+
+    Not bookkeeping. A corridor report that called the whole thing SRI 00000518__ would be wrong
+    about everything southwest of Louellen, which is CR 654 - and the mistake is invisible in a
+    render. The road is a STREET; an SRI is a route reference that happens to leave it.
+    """
+    sris = [sri for _lo, _hi, sri in broad_st.sri_spans]
+    assert len(sris) == len(set(sris)) and len(sris) >= 2, (
+        f"{broad_st.name} reports routes {sris}; CR 518 (00000518__) turns off it at Louellen St "
+        f"and CR 654 (11000654__) carries on, so it has at least two")
+    assert broad_st.sri_spans[0][0] == pytest.approx(0.0)
+    assert broad_st.sri_spans[-1][1] == pytest.approx(broad_st.length_ft)
+    for (_lo, hi, _sri), (next_lo, _next_hi, _next) in zip(broad_st.sri_spans,
+                                                           broad_st.sri_spans[1:]):
+        assert hi == pytest.approx(next_lo), "the route spans must tile the road with no gap"
+
+
+@needs_source_data
+def test_the_borough_length_road_still_reproduces_every_leg_width(corridors, site_models):
+    """THE GUARD ON THE DATUM: extending the road did not move the widths it reports.
+
+    Same measurement as tests/test_network.py's checkpoint and the same tolerance, asked of the
+    long road instead of the per-junction one. It is the whole reason the corridor is built by
+    CHAINING the junction Roads rather than re-reading the traced kerbs against NJDOT's raw
+    alignment: measured that way the two agree to 0.03-0.36 ft out along the street and disagree by
+    up to 2.8 ft in a junction throat, where the kerb flares 0.68 ft per foot of station.
+    """
+    disagreements, compared = [], 0
+    for corridor in corridors:
+        for junction in corridor.junctions:
+            for leg_name, _sign in junction.legs:
+                leg = site_models[junction.site].legs[leg_name]
+                for leg_station in np.linspace(5.0, max(leg.centerline.length - 5.0, 6.0), 8):
+                    leg_width = _leg_width_at(leg, float(leg_station))
+                    width = corridor.width_at_ft(corridor.station_of(leg_name, float(leg_station)))
+                    if leg_width is None or width is None:
+                        continue
+                    compared += 1
+                    if abs(width - leg_width) > AGREEMENT_TOL_FT:
+                        disagreements.append(
+                            f"{corridor.name} @ {corridor.station_of(leg_name, leg_station):.1f} "
+                            f"({junction.site}/{leg_name} @ {leg_station:.1f}): road says "
+                            f"{width:.2f} ft, leg says {leg_width:.2f} ft")
+    assert compared >= 24, (
+        f"only {compared} station(s) could be compared across {len(corridors)} corridor(s) - the "
+        f"guard is not exercising the roads it is meant to")
+    assert not disagreements, (
+        f"{len(disagreements)} of {compared} station(s) disagree by more than {AGREEMENT_TOL_FT} "
+        f"ft:\n  " + "\n  ".join(disagreements[:8]))
+
+
+@needs_source_data
+def test_the_corridor_axis_runs_one_way_over_its_whole_length(corridors):
+    """Stations increase monotonically along every corridor, bridges and extensions included.
+
+    tests/test_network.py pins this per junction, where the only way it can fail is a leg that was
+    not reversed. A corridor has three more ways to fail it, and all three are in the assembly: a
+    bridge laid in the alignment's direction rather than the road's, an extension pointing back
+    into the road instead of away from it, and a lateral correction steep enough to fold the frame.
+    Every station-based clip downstream assumes this does not happen.
+    """
+    for corridor in corridors:
+        coords = np.asarray(corridor.centerline.coords, dtype=float)
+        stations = np.asarray([corridor.centerline.project(Point(point)) for point in coords])
+        backwards = [(i, stations[i - 1], stations[i]) for i in range(1, len(stations))
+                     if stations[i] < stations[i - 1] - 1e-6]
+        assert not backwards, (
+            f"{corridor.name}'s axis doubles back at vertex {backwards[0][0]} of {len(coords)}: "
+            f"{backwards[0][1]:.2f} -> {backwards[0][2]:.2f} ft")
+        # ...and the arc length has to agree with the axis, or a station means two places.
+        assert stations[-1] == pytest.approx(corridor.length_ft, abs=0.5)
+
+
+@needs_source_data
+def test_a_leg_station_of_zero_is_its_own_junction_node(corridors):
+    """Both of a junction's legs start at its node, so both map to that node's station."""
+    for corridor in corridors:
+        for junction in corridor.junctions:
+            for leg_name, _sign in junction.legs:
+                assert corridor.station_of(leg_name, 0.0) == pytest.approx(junction.node_ft)
+            assert junction.start_ft < junction.node_ft < junction.end_ft
+
+
+@needs_source_data
+def test_asking_for_a_leg_that_is_not_on_the_road_raises(corridors, site_models):
+    """A leg on another street is not on this road, and a quiet answer would put a corridor
+    figure on the wrong street."""
+    for corridor in corridors:
+        on_it = set(corridor.leg_names)
+        others = {name for site in corridor.sites for name in site_models[site].legs} - on_it
+        for other in sorted(others):
+            with pytest.raises(KeyError, match=other):
+                corridor.station_of(other, 10.0)
+
+
+@needs_source_data
+def test_the_road_refuses_a_width_where_the_kerb_is_not_traced(broad_st):
+    """No width is reported across a stretch nobody traced - the honesty requirement, as a test.
+
+    This is the one property that makes every width figure in the report trustworthy. np.interp
+    will happily hold the last traced offset flat forever, so without the span test the 1,126 ft of
+    W Broad between Greenwood Ave and Louellen St that has no `barrier=kerb` on either side in the
+    committed snapshot would come back as a confident cross-section straight across it.
+    """
+    gaps = broad_st.unmeasurable_gaps_ft(min_ft=20.0)
+    if not gaps:
+        pytest.skip("every stretch of this road now has a kerb on both sides - nothing to refuse")
+    for lo, hi in gaps:
+        middle = (lo + hi) / 2
+        assert broad_st.width_at_ft(middle) is None, (
+            f"{broad_st.name} reports a width at station {middle:.0f}, inside the "
+            f"{hi - lo:.0f} ft stretch {lo:.0f}-{hi:.0f} where it has no kerb to read")
+    # ...and the surveyed-coverage gaps are at least as big, because a modelled junction's kerb
+    # line is not a survey: no width figure may be counted over one.
+    assert (sum(hi - lo for lo, hi in broad_st.untraced_gaps_ft())
+            >= sum(hi - lo for lo, hi in gaps) - 1e-6)
+
+
+@needs_source_data
+def test_traced_coverage_is_counted_over_the_surveyors_own_kerb_only(broad_st):
+    """Coverage comes from the TRACED runs, never from a modelled junction's assembled kerb line.
+
+    The distinction is the point of KerbRun.source. A junction's kerb line has been extended to its
+    leg's working length by curb_line_from_points, so counting it as coverage would report the
+    project's own extrapolation as somebody's survey - which is the reporting failure this whole
+    stream exists to remove, pointed the other way.
+    """
+    for side in ("left", "right"):
+        traced = broad_st.traced_ft(side)
+        runs = [run for run in broad_st.kerb_runs if run.side == side]
+        assert any(run.source == KERB_FROM_TRACING for run in runs)
+        assert any(run.source != KERB_FROM_TRACING for run in runs), (
+            "this road spans modelled junctions, so some of its kerb must come from them")
+        from_tracing = sum(run.length_ft for run in runs if run.source == KERB_FROM_TRACING)
+        assert traced <= from_tracing + 1e-6, (
+            f"{side} coverage of {traced:.0f} ft exceeds the {from_tracing:.0f} ft of traced runs "
+            f"it is supposed to be measured over - a modelled kerb is being counted as survey")
+        assert traced <= broad_st.length_ft + 1e-6
+    assert broad_st.both_traced_ft <= min(broad_st.traced_ft("left"),
+                                          broad_st.traced_ft("right")) + 1e-6
+
+
+@needs_source_data
+def test_every_figure_the_report_emits_carries_a_coverage_denominator(corridors, site_models):
+    """THE STRUCTURAL GUARANTEE, asserted three ways rather than by reading the printed text.
+
+    A count over the part of a corridor that happens to be surveyed, printed as a fact about the
+    corridor, is what produced all three wrong answers recorded in docs/network-model.md. So the
+    denominator is not a formatting convention here - it is a field with no default, on a type that
+    cannot be constructed without it, checked on every figure of every road.
+    """
+    coverage_field = next(f for f in dataclasses.fields(Figure) if f.name == "coverage")
+    assert coverage_field.default is dataclasses.MISSING, (
+        "Figure.coverage has a default, so a figure can be emitted without one")
+    assert coverage_field.default_factory is dataclasses.MISSING
+    for field in dataclasses.fields(Coverage):
+        assert field.default is dataclasses.MISSING, (
+            f"Coverage.{field.name} has a default - an omitted denominator is the failure this "
+            f"guards against, so none of its fields may be optional")
+
+    seen = 0
+    for corridor in corridors:
+        report = corridor_report(corridor, corridor_facts(corridor, site_models), site_models)
+        assert report.figures, f"{corridor.name} produced no figures at all"
+        for figure in report.figures:
+            seen += 1
+            assert figure.coverage is not None, f"{corridor.name}/{figure.label} has no coverage"
+            assert figure.coverage.total_ft > 0, (
+                f"{corridor.name}/{figure.label} has a zero denominator, which reads as 0% "
+                f"coverage of everything rather than as the length it was measured against")
+            assert 0.0 <= figure.coverage.measured_ft <= figure.coverage.total_ft + 1e-6, (
+                f"{corridor.name}/{figure.label} claims {figure.coverage.measured_ft:.0f} ft "
+                f"measured out of {figure.coverage.total_ft:.0f} ft")
+            assert figure.coverage.basis.strip(), (
+                f"{corridor.name}/{figure.label}'s coverage does not say what it measured")
+            assert str(figure.coverage) in figure.line(), (
+                f"{corridor.name}/{figure.label} prints its value without its coverage")
+    assert seen >= 4 * len(corridors), "every road should answer every corridor question"
+
+
+@needs_source_data
+def test_the_report_covers_the_questions_the_plan_names(broad_st, site_models):
+    """Length, narrowest width, driveway openings, street crossings, parking - all five present.
+
+    Named individually rather than counted, because the point of docs/network-renderer-plan.md's
+    stream C is that these particular questions become answerable, and a report that quietly
+    dropped one would still pass a "figures exist" test.
+    """
+    report = corridor_report(broad_st, corridor_facts(broad_st, site_models), site_models)
+    labels = " | ".join(figure.label for figure in report.figures)
+    for wanted in ("length", "narrowest", "driveway openings", "streets crossing",
+                   "marked parking"):
+        assert wanted in labels, f"no figure for {wanted!r}; the report has {labels}"
+
+
+@needs_source_data
+def test_parking_capacity_never_exceeds_the_kerb_it_is_counted_over(broad_st, site_models):
+    """A stall is 22 ft, so a count times 22 cannot exceed the kerb it was counted over.
+
+    The arithmetic sanity check the scratch scripts did not have. It catches the specific mistake
+    of counting a run twice - once per side, or once per overlapping no-parking zone - which is how
+    a corridor grows more parking than it has kerb.
+    """
+    from src.geometry.treatments import PARKING_STALL_LENGTH_DEFAULT_FT
+
+    facts = corridor_facts(broad_st, site_models)
+    for side in ("left", "right"):
+        stalls, measured_ft = marked_parking_capacity(broad_st, facts, side)
+        assert stalls * PARKING_STALL_LENGTH_DEFAULT_FT <= measured_ft + 1e-6
+        assert measured_ft <= broad_st.length_ft + 1e-6, (
+            f"{side} has {measured_ft:.0f} ft of parkable kerb on a {broad_st.length_ft:.0f} ft "
+            f"road - the runs overlap")
+        tested, tested_ft = marked_parking_capacity(broad_st, facts, side,
+                                                   within=broad_st.both_traced_spans())
+        assert tested <= stalls and tested_ft <= measured_ft + 1e-6, (
+            "the width-tested count is a subset of the length-only count by construction")
+
+
+@needs_source_data
+def test_everything_counted_from_osm_is_inside_a_fetch_window(broad_st, site_models):
+    """Nothing is counted where nothing was fetched - "unmapped" and "unfetched" are not the same.
+
+    The measurement that made CORRIDOR_KERB_RADIUS_M 400 m rather than the junction fetch's 120 m:
+    at 120 m the three circles on Broad St leave 173 m of the Greenwood-to-Louellen block outside
+    every window, and an opening count over that road would have covered 80% of it while reading as
+    a total. Asserted as a property so a future radius change cannot quietly reintroduce it.
+    """
+    window = osm_window_spans(broad_st, site_models)
+    covered = sum(hi - lo for lo, hi in window)
+    assert covered == pytest.approx(broad_st.length_ft, abs=broad_st.length_ft * 0.02), (
+        f"only {covered:.0f} of {broad_st.length_ft:.0f} ft of {broad_st.name} is inside an OSM "
+        f"fetch window, so its OSM-derived counts describe part of it")
+    facts = corridor_facts(broad_st, site_models)
+    for _side, opening in facts.openings:
+        assert opening.start_ft >= 0.0 and opening.end_ft <= broad_st.length_ft + 1e-6
+    for cross in facts.crossings:
+        assert 0.0 <= cross.station_ft <= broad_st.length_ft + 1e-6

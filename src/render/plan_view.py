@@ -294,19 +294,57 @@ def _draw_props(ax, model: IntersectionModel, state: DesignState, crosswalk_offs
 def _draw_surveyed_crossings(ax, crossings: list[dict] | None):
     """Draw each OSM crossing way as surveyed - its real endpoints, length and skew.
 
-    We do NOT paint the crosswalk here: a crossing way runs sidewalk-centerline to
-    sidewalk-centerline, so it is consistently 8-24 ft longer than the roadway it spans
-    and drawing it as the marking would run paint across the sidewalks. It goes on the
-    plot as a reference line, behind the curb-to-curb band we actually draw, so the two
-    can be compared by eye. Where the band sticks out past the ends of this line, the
-    leg's configured width is too big - which is precisely the failure that was
-    previously only arguable from the 3D render.
+    THE REFERENCE LINE, not the paint - and it stays a reference line even now that the paint is
+    drawn too (_draw_unmodelled_crossings below). A crossing way runs sidewalk-centreline to
+    sidewalk-centreline, so it is consistently 8-24 ft longer than the roadway it spans; behind the
+    kerb-to-kerb band, the two can be compared by eye, and where the band sticks out past the ends
+    of this line the leg's configured width is too big. That comparison is the reason this overlay
+    exists and is worth keeping.
+
+    What has changed is the CONCLUSION this docstring used to draw from that overshoot - that a
+    surveyed crossing therefore could not be painted at all. It can: trimmed at the traced kerbs it
+    crosses (src/geometry/surveyed.py:carriageway_geometry_ft), which cuts 6-22 ft off the ways at
+    Broad & Greenwood and needs no leg, so it works at the junctions this site does not model. Six
+    of the ten crossings in that frame were being dropped for want of that trim.
     """
     lines = sidewalk_lines_ft(crossings)
     _draw(ax, lines, color="darkviolet", linewidth=1.0, linestyle=":", alpha=0.8, zorder=5)
     ends = [line.coords[i] for line in lines for i in (0, -1)]
     if ends:
         ax.scatter(*zip(*ends), color="darkviolet", s=8, marker="o", zorder=5)
+
+
+def _draw_unmodelled_crossings(ax, scene):
+    """Paint every surveyed crossing that belongs to NO modelled leg, from its own traced way.
+
+    The network-renderer change, in the 2D view (docs/network-renderer-plan.md). These are the
+    crossings the drawing used to discard: at Broad & Greenwood framed 2.5x, 6 of the 10 inside the
+    frame, 263-420 ft out, three of them tagged as a zebra - Blackwell & Broad among them, rendered
+    as bare asphalt where its crosswalks are traced.
+
+    Only `leg is None`. The four this junction models are drawn by _draw_crosswalks from the leg's
+    own band, including whatever a proposal restyles them to, and drawing both would put two
+    crossings 1.44-2.73 ft apart on the same ground.
+
+    Styled from each way's own tags, so an unrecorded crossing gets nothing rather than the two
+    transverse lines src/render/crosswalks.py's default would invent. Drawn in the same white as the
+    modelled crosswalks: on the ground they are the same paint, and colouring them differently would
+    say the survey is worth less than our reconstruction of it.
+    """
+    from src.geometry.surveyed import crossing_bars_ft, crossing_lines_ft
+
+    kerbs = list(scene.drawn_kerbs)
+    unmodelled = scene.unmodelled_crossings
+    bars = [bar for c in unmodelled for bar in crossing_bars_ft(c, kerbs)]
+    lines = [line for c in unmodelled for line in crossing_lines_ft(c, kerbs)]
+    if bars:
+        _draw(ax, bars, facecolor="white", edgecolor="0.35", linewidth=0.4, zorder=6)
+    if lines:
+        # The dark stroke goes down FIRST and slightly wider, so the white sits inside it: white on
+        # grey asphalt at a 431 ft frame is nearly invisible, and a marking a reviewer cannot see is
+        # a marking they cannot check.
+        _draw(ax, lines, color="0.35", linewidth=2.4, zorder=5)
+        _draw(ax, lines, color="white", linewidth=1.6, zorder=6)
 
 
 def _draw_crosswalks(ax, scene: SceneGeometry, dimension_labels: bool):
@@ -520,6 +558,9 @@ def plot_design_state(ax, model: IntersectionModel, state: DesignState, title: s
                         ha="center", va="center", fontweight="bold")
 
     _draw_surveyed_crossings(ax, crossings)
+    # Before the modelled crosswalks, so where the two ever overlap the modelled one wins
+    # the pixel - and the four this junction models are drawn by _draw_crosswalks below.
+    _draw_unmodelled_crossings(ax, scene)
     _draw_crosswalks(ax, scene, dimension_labels)
     props = _draw_props(ax, model, state, scene.crosswalk_offsets, traffic_control,
                          street_furniture, crossings, dimension_labels)

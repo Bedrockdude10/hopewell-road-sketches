@@ -355,6 +355,29 @@ def build_scene(data: dict):
         add_paint_polyline(f"bike_contraflow_{i}", line, CENTERLINE_WIDTH_M, centerline_mat,
                             z_base=marking_z)
 
+    # EVERY SURVEYED CROSSING IN THE PICTURE, drawn from its own traced way rather than rebuilt
+    # from a leg. This is the network-renderer change (docs/network-renderer-plan.md): a crossing
+    # used to reach the render only by matching one of the modelled junction's legs, so at Broad &
+    # Greenwood framed 2.5x, 6 of the 10 OSM crossings inside the frame were dropped - three of
+    # them tagged crossing:markings=zebra, and Blackwell & Broad rendered as bare asphalt where its
+    # crosswalks are traced. A render that shows a marked crosswalk as unmarked is a false claim
+    # about the street, which is the one thing these drawings cannot afford.
+    #
+    # Alongside `kerbs` and `paved_surfaces` rather than in the paint channels, and for the same
+    # reason those two are: this is SURVEYED CONTEXT, not a treatment this project proposes. It is
+    # already in the ground's coordinates, it belongs to no leg, and nothing should be cut around it.
+    #
+    # The style comes from the crossing's own tags upstream - zebra becomes bars, `lines` becomes
+    # two transverse lines, and a crossing with nothing recorded contributes neither. Blender
+    # derives nothing here, which is the rule on this side of the boundary.
+    for i, crossing in enumerate(data.get("surveyed_crossings", [])):
+        for j, ring in enumerate(crossing.get("bars", [])):
+            extrude_polygon(f"surveyed_crossing_{i}_bar_{j}", ring, MARKING_CLEARANCE_M / 2,
+                             marking_mat, z_base=marking_z)
+        for j, line in enumerate(crossing.get("lines", [])):
+            add_paint_polyline(f"surveyed_crossing_{i}_line_{j}", line, 0.25, marking_mat,
+                                z_base=marking_z)
+
     for island in data.get("refuge_islands", []):
         extrude_polygon(f"refuge_{island['name']}", island["coords"], island.get("height_m", 0.15), refuge_mat)
 

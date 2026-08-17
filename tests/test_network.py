@@ -139,3 +139,21 @@ def test_asking_for_a_leg_that_is_not_on_the_road_raises(site, site_models):
         for other in others:
             with pytest.raises(KeyError, match=other):
                 road_station_of_leg_station(road, other, 10.0)
+
+
+@needs_source_data
+@pytest.mark.parametrize("site", SITES)
+def test_a_width_is_refused_outside_the_traced_span_rather_than_extrapolated(site, site_models):
+    """No width is reported past the end of the tracing, however far past it you ask.
+
+    The property `Corridor` depends on and `Road` has always had, pinned here because the two now
+    share one implementation (network._kerb_offset_at). np.interp holds the first and last traced
+    offset flat forever, so without the span test a road would answer a mile out with the width it
+    last measured - and on a corridor that is what turns 1,126 ft of unmapped street into a
+    confident cross-section.
+    """
+    for road in roads_from_model(site_models[site]):
+        for station in (-500.0, -1.0e4, road.length_ft + 500.0, road.length_ft + 1.0e4):
+            assert road.width_at_ft(station) is None, (
+                f"{road.name} reports a width at station {station:.0f} on a "
+                f"{road.length_ft:.0f} ft road, which is outside anything anybody traced")

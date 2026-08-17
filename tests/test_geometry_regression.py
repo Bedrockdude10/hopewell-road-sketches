@@ -45,6 +45,18 @@ from tests.conftest import SITES, needs_source_data
 # and coarse enough that the same arithmetic in a different order lands on the same number.
 # scripts/diff_exports.py uses 1e-4 for the same reason; this is rounded rather than compared
 # with a tolerance, so it sits a decade coarser to stay off the rounding boundary.
+#
+# THIS IS NOW THE SECOND ROUNDING, not the first: the export itself quantises to
+# coords.EXPORT_DECIMALS (1 um) so its diffs mean something, and this digests that. Rounding
+# twice is not the same as rounding once, and one vertex found the seam - broad_st_east's
+# centreline paint is 21.396500330568525 m raw, which is 21.397 at 3 places, but 21.3965 at 6
+# places, which is an exact tie that round-half-to-even sends to 21.396. A 1 mm move in the
+# digest, no move in the geometry.
+#
+# Left as it is rather than papered over. Quantising first makes the pipeline DETERMINISTIC at
+# this precision, so this can only bite once per vertex ever - whereas the raw value drifting
+# across a 3-place boundary was possible on any run before. If a golden regenerates with a
+# single 1 mm coordinate and nothing else, this is the reason to check for first.
 PLACES = 3
 
 # Channels that are lists of polylines/polygons: summarised by shape rather than listed. A

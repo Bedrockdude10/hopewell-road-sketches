@@ -260,7 +260,7 @@ def test_the_along_a_leg_kerb_test_accepts_the_outer_half_of_a_leg():
     KERB_NEAR_JUNCTION_FT radius that is right for fitting a corner radius throws it away.
     14 traced ways across the four junctions are in that position.
     """
-    from src.geometry.intersection import _runs_along_a_leg
+    from src.geometry.intersection.kerb_sources import _runs_along_a_leg
     from src.geometry.model import Leg, point_at
 
     leg = Leg(name="east", centerline=LineString([(0, 0), (130, 0)]), curb_to_curb_ft=31.0)
@@ -293,7 +293,9 @@ def test_the_width_fit_never_ends_up_using_less_traced_kerb_than_it_found(monkey
     import contextlib
     import io
 
-    import src.geometry.intersection as intersection
+    # The FITTING submodule, not the package: the patch below has to land where
+    # _fit_legs_to_traced_kerbs resolves the name, which is its own module's globals.
+    import src.geometry.intersection.fitting as intersection
     from src.geometry.model import Leg, point_at
 
     leg = Leg(name="east", centerline=LineString([(0, 0), (130, 0)]), curb_to_curb_ft=12.0)
@@ -332,7 +334,7 @@ def test_the_width_fit_measures_a_badly_configured_leg_from_its_kerbs():
     import contextlib
     import io
 
-    from src.geometry.intersection import _fit_legs_to_traced_kerbs, _traced_side_count
+    from src.geometry.intersection.fitting import _fit_legs_to_traced_kerbs, _traced_side_count
     from src.geometry.model import Leg, point_at
 
     leg = Leg(name="east", centerline=LineString([(0, 0), (130, 0)]), curb_to_curb_ft=12.0)

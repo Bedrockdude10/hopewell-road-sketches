@@ -212,7 +212,7 @@ def midpoint_drift_ft(leg, samples=60):
 
 def recentre(legs):
     """The final centring pass, which is where the profile correction lives."""
-    from src.geometry.intersection import _centre_legs_on_traced_kerbs
+    from src.geometry.intersection.fitting import _centre_legs_on_traced_kerbs
 
     _centre_legs_on_traced_kerbs(legs, quiet=True)
     return legs

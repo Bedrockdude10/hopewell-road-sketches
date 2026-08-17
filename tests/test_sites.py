@@ -174,7 +174,7 @@ def test_every_leg_curb_comes_from_the_traced_kerb(site, site_models):
     W Broad & Louellen carried an xfail here for "two sides not traced in OSM yet". They
     were traced; the width fit was throwing them away, because it judged each traced vertex
     against a half-width it had derived from the vertices it had already kept. All six
-    sides pass now. See src/geometry/intersection.py:_fit_legs_to_traced_kerbs.
+    sides pass now. See src/geometry/intersection/fitting.py:_fit_legs_to_traced_kerbs.
     """
     model = site_models[site]
     untraced = [f"{name} {side}" for name, leg in model.legs.items()
@@ -583,7 +583,7 @@ def test_the_two_halves_of_a_through_street_line_up(site, site_models):
     legs' origins is invisible, since each paints outward from its own start and the junction
     box sits between them.
     """
-    from src.geometry.intersection import _through_leg_pairs
+    from src.geometry.intersection.fitting import _through_leg_pairs
 
     model = site_models[site]
     pairs = _through_leg_pairs(model.legs)
@@ -765,7 +765,7 @@ def test_a_street_too_narrow_for_two_target_lanes_gets_no_paint():
 
     On a built leg, not a real one: this used to run against louellen_st_west, which was
     "19.3 ft wide" only because its south kerb had been discarded by the width fit
-    (src/geometry/intersection.py:_fit_legs_to_traced_kerbs). Measuring it properly made it
+    (src/geometry/intersection/fitting.py:_fit_legs_to_traced_kerbs). Measuring it properly made it
     42 ft, the test passed vacuously, and the rule it guards went unchecked - no leg at any
     of the four junctions is under 22 ft. A width is the input to this rule, so the test
     supplies one.
@@ -1836,7 +1836,10 @@ def test_how_far_a_leg_is_drawn_does_not_change_how_wide_it_is_measured(site_mod
 
     Fails without TRACED_SECTION_END_FT: the two widths below come out 2.1 ft apart.
     """
-    import src.geometry.intersection as I
+    # TRACED_SECTION_END_FT is read by the fitting submodule, so it is the one to
+    # rebind - the package re-export is a separate reference nothing reads.
+    import src.geometry.intersection.fitting as I
+    from src.geometry.intersection import load_intersection_model
 
     measured = {}
     for cap in (I.TRACED_SECTION_END_FT, 1e9):
@@ -1844,7 +1847,7 @@ def test_how_far_a_leg_is_drawn_does_not_change_how_wide_it_is_measured(site_mod
         try:
             I.TRACED_SECTION_END_FT = cap
             with contextlib.redirect_stdout(io.StringIO()):
-                model = I.load_intersection_model(site="broad_st_greenwood")
+                model = load_intersection_model(site="broad_st_greenwood")
             measured[cap] = model.legs["broad_st_east"].curb_to_curb_ft
         finally:
             I.TRACED_SECTION_END_FT = saved

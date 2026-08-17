@@ -122,7 +122,7 @@ def cross_streets_from_model(model) -> dict:
 
     Reads what `load_intersection_model` already worked out (IntersectionModel.cross_streets)
     rather than deriving it again. It was derived twice - once for the kerb openings and once
-    seeding the DesignState - which is the shape src/geometry/intersection.py:PavedSurface's
+    seeding the DesignState - which is the shape src/geometry/intersection/junction.py:PavedSurface's
     docstring is about: two consumers assembling the same geometry, free to diverge the moment
     one of their tolerances is touched.
 
@@ -144,7 +144,7 @@ def cross_streets_ft(center_wgs84, center_ft, legs: dict) -> dict:
     model is still being assembled - the same shape _paved_surfaces_ft has, and for the same
     reason. Guarded: no OSM reachable answers "none" rather than raising.
     """
-    from src.geometry.intersection import ROAD_CONTEXT_RADIUS_M, _to_state_plane
+    from src.geometry.intersection import ROAD_CONTEXT_RADIUS_M, to_state_plane
     from src.render.frame import context_radius_m
     from src.sources.osm_context import fetch_roads
 
@@ -160,7 +160,7 @@ def cross_streets_ft(center_wgs84, center_ft, legs: dict) -> dict:
             coords = way.get("coords_wgs84") or []
             if not is_carriageway(tags) or len(coords) < 2:
                 continue
-            way_line = LineString(_to_state_plane(coords))
+            way_line = LineString(to_state_plane(coords))
             # NOT a geometric intersection. A side street's OSM way stops on OSM's centreline for
             # the main road, and our leg is the NJDOT alignment - the two are a few feet apart, so
             # `intersects` is False for every real side street on the block. Measured at Broad &

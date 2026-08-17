@@ -17,7 +17,7 @@ import re
 import pytest
 from shapely.geometry import LineString, Point
 
-from src.geometry.intersection import _assign_leg_pieces
+from src.geometry.intersection.osm_roads import _assign_leg_pieces
 
 CENTRE = Point(0.0, 0.0)
 NORTH = LineString([(0, 0), (0, 130)])

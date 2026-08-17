@@ -221,7 +221,7 @@ def split_at_surveyed_end(geometry: LineString, leg, surveyed_length_ft: float |
     """(measured_ft, projected_ft) for a run, split where the SURVEYED leg ends.
 
     The frame scale carries the legs out so a treatment runs the length of the drawn street
-    (src/geometry/intersection.py). That is a drawing decision, and it must not become an
+    (src/geometry/intersection/). That is a drawing decision, and it must not become an
     arithmetic one: the same proposal reported 8 stalls at 1x and 17 at 2.2x, which is a stall
     count moving with a camera setting. So the part of a run past the length the site actually
     configured is measured separately and reported as projected.

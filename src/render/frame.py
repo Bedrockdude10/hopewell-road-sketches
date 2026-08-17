@@ -119,7 +119,7 @@ def leg_reach_ft(model) -> float:
     """How far from the junction the SURVEYED street extends, along its longest leg.
 
     The site's configured working length, not the built centerline, once the frame scale began
-    carrying the legs out with it (src/geometry/intersection.py). Otherwise the two compound:
+    carrying the legs out with it (src/geometry/intersection/). Otherwise the two compound:
     longer legs make a longer pavement ring, this measures the ring, the radius is multiplied by
     the scale a second time, and a 2.2x frame comes out 4.8x. Measuring against the surveyed
     length keeps the radius exactly what it has always been at 1x and a clean multiple of it

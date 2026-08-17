@@ -749,7 +749,7 @@ def _centred(leg, name="east"):
     load_intersection_model: this is about the arithmetic on a known cross-section, and a
     real junction supplies neither a known one nor a fast one.
     """
-    from src.geometry.intersection import _resize_and_centre_from_traced_kerbs
+    from src.geometry.intersection.fitting import _resize_and_centre_from_traced_kerbs
 
     # `traced` attaches the kerb geometry; the fit also wants the leg to SAY which sides are
     # traced, which is what _apply_traced_curb_lines does for it on the real path.

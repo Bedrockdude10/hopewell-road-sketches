@@ -121,7 +121,7 @@ class ParkingRestriction:
     A stretch and not a whole side, because a restriction that changes part way along a street
     is recorded in OSM by splitting the way - which is how "no parking for the first 100 ft from
     the junction" is expressed, and it is what this project used to discard. See
-    src/geometry/intersection.py:RoadSpan.
+    src/geometry/intersection/junction.py:RoadSpan.
 
     `value` is the raw OSM value: no_parking / no_standing / no_stopping, or "none" for an
     explicit statement that parking IS allowed, or None where that way says nothing at all. The

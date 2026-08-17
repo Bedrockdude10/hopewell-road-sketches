@@ -139,7 +139,7 @@ def _draw_paved_surfaces(ax, paved) -> None:
     """The junction's driveways, parking aisles and parking lots, off the MODEL - already
     projected and already turned into the polygon both views draw, so the plan view and the 3D
     render cannot disagree about where any of it is or how wide it is. See
-    src/geometry/intersection.py:PavedSurface."""
+    src/geometry/intersection/junction.py:PavedSurface."""
     for surveyed, edge in ((True, PAVED_EDGE), (False, PAVED_EDGE_ASSUMED)):
         _draw(ax, [p.surface for p in paved or ()
                    if p.surface is not None and p.extent_is_surveyed == surveyed],
@@ -235,7 +235,7 @@ def _draw_props(ax, model: IntersectionModel, state: DesignState, crosswalk_offs
     3D render of the same scenario showed thirteen.
     """
     # Every traced kerb inside the frame, which is the same set the 3D export writes - see
-    # src/geometry/intersection.py:kerb_lines_with_tags_ft on why the drawing test is not the
+    # src/geometry/intersection/kerb_sources.py:kerb_lines_with_tags_ft on why the drawing test is not the
     # corner-fit's near set, and src/render/export.py for the matching call.
     kerb_lines = kerb_lines_with_tags_ft(model.center_wgs84, model.center_ft,
                                           radius_ft=drawn_kerb_radius_ft())

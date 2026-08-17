@@ -250,7 +250,7 @@ def _match_key(legs: dict):
 
     Spelled out rather than keyed on the Leg objects' identity, because a Leg is mutable - the
     curb lines and traced_sides are assigned in place while the widths are being fitted
-    (src/geometry/intersection.py:_apply_traced_curb_lines). The matcher does not read those
+    (src/geometry/intersection/fitting.py:_apply_traced_curb_lines). The matcher does not read those
     today, but a cache whose correctness rests on that staying true is a trap. Centerlines are
     shapely geometries, which hash by value.
     """

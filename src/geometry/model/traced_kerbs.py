@@ -311,7 +311,7 @@ def assign_curb_points_to_legs(legs: dict, kerb_lines: list[LineString],
     the leg measured 19 ft wide off its north kerb alone; and W Broad's near kerb, 6.5 ft off
     NJDOT's badly off-centre alignment, sat at 0.43x and was discarded as a median. Opening
     the window admits both, and the proportional scoring still hands each vertex to the leg
-    it best fits. See src/geometry/intersection.py:_fit_legs_to_traced_kerbs.
+    it best fits. See src/geometry/intersection/fitting.py:_fit_legs_to_traced_kerbs.
     """
     if not kerb_lines:
         return {}

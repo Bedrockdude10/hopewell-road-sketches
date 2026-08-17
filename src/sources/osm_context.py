@@ -54,7 +54,7 @@ def refresh_requested() -> bool:
 
     Read from the environment instead of threaded through every fetch signature: the six
     fetchers are called from a dozen places (src/render/export.py, src/render/plan_view.py,
-    src/geometry/intersection.py, the phase scripts, tests), and a parameter that has to be
+    src/geometry/intersection/, the phase scripts, tests), and a parameter that has to be
     forwarded at each of them is a parameter someone eventually forgets - which lands you
     right back at "I traced the kerb in OSM and the render didn't change".
 

@@ -45,7 +45,7 @@ from src.provenance import VALID_PROVENANCE, VALID_WIDTH_LOCATIONS
 VALID_CENTERLINE_STYLES = ("single_yellow_dashed", "double_yellow", "none")
 
 # Two legs of one junction cannot leave the centre on the same heading. The leg matcher
-# (src/geometry/intersection.py:_assign_legs_by_bearing) tells legs sharing an SRI apart by
+# (src/geometry/intersection/osm_roads.py:_assign_leg_pieces) tells legs sharing an SRI apart by
 # picking the nearest bearing, so a duplicate does not produce a warning - it produces a
 # coin flip about which half of a road is which, and a render that may be mirrored.
 MIN_BEARING_SEPARATION_DEG = 1.0

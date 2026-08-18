@@ -76,9 +76,8 @@ MIN_ALONG_LENGTH_FRACTION = 0.5
 def _direction(line: LineString) -> float:
     """A line's overall bearing in degrees, folded to 0-180 so direction of travel does not matter.
 
-    From the CHORD rather than the first segment: a crossing way here has 2-5 vertices and its
-    opening segment can point somewhere the way as a whole does not - the same error leg_bearing_deg
-    was written to avoid for a bent leg.
+    From the CHORD rather than the first segment: a crossing way has 2-5 vertices and its opening
+    segment can point somewhere the way as a whole does not.
     """
     (x0, y0), (x1, y1) = line.coords[0], line.coords[-1]
     return math.degrees(math.atan2(y1 - y0, x1 - x0)) % 180.0
@@ -88,10 +87,8 @@ def _direction(line: LineString) -> float:
 class Uncovered:
     """One layer's worth of surveyed features the drawing does not contain.
 
-    `total` is carried beside `count` because a bare count cannot be read: "6 crossings not
-    drawn" is a disaster at a junction with 6 and a rounding error at one with 600, and the
-    ratio is what says whether a layer is broken or merely incomplete. It is also what lets a
-    test assert on the RELATIONSHIP - gap == total - drawn - so the assertion survives the fix.
+    `total` beside `count`: the ratio says whether a layer is broken or merely incomplete,
+    and it lets a test assert gap == total - drawn so the assertion survives the fix.
     """
     layer: str
     count: int
@@ -109,26 +106,16 @@ class Uncovered:
 def coverage_gaps(model, paint, frame_radius_ft: float | None = None) -> list[Uncovered]:
     """Every layer where the drawing omits a surveyed feature inside its own frame.
 
-    `paint` is EVERYTHING THE DRAWING PUTS ON THE GROUND, not only the treatment paint, and it is
-    read permissively - PaintPieces, bare shapely footprints, prop dicts, and any nesting of
-    lists and dicts of those. That breadth is not convenience, it is the only way to ask the
-    question honestly: a crossing band is not a PaintPiece today (it travels in its own dict on
-    SceneGeometry and its own key in the exported JSON), and a tactile pad is not paint at all,
-    it is a prop. A check that read `SceneGeometry.build_paint()` alone would report all ten of
-    Greenwood's crossings dropped, including the four that are plainly drawn in both views - and
-    a guard that cries wolf on a layer that works gets switched off.
-
-    So a caller hands in the whole drawing:
+    `paint` is EVERYTHING THE DRAWING PUTS ON THE GROUND - PaintPieces, bare shapely footprints,
+    prop dicts, any nesting of those. A check that read only SceneGeometry.build_paint() would
+    report every crossing as dropped (bands travel in their own dict), and a guard that cries
+    wolf on a working layer gets switched off. So a caller hands in the whole drawing::
 
         paint, props = scene.build_paint_and_posts(props)
         coverage_gaps(model, [*paint, *scene.crosswalk_bands.values(), *props])
 
-    `frame_radius_ft` defaults to the frame both views are actually drawn at
-    (src/render/frame.py:junction_frame). Overridable so a caller can ask the question about a
-    frame it is about to draw rather than the one the environment currently says.
-
-    Only layers WITH a gap come back, so an empty list means the drawing is faithful and the
-    return value is directly usable as a pass/fail.
+    `frame_radius_ft` defaults to the frame both views draw (src/render/frame.py:junction_frame).
+    Only layers WITH a gap come back; an empty list means the drawing is faithful.
     """
     # The same guard kerbs.py:kerb_openings_from_model uses, for the same reason: a model can be a
     # stand-in that carries legs and config and no OSM at all, and every geometry test in this
@@ -144,10 +131,9 @@ def coverage_gaps(model, paint, frame_radius_ft: float | None = None) -> list[Un
 def describe_coverage(gaps: list[Uncovered]) -> str:
     """One block for a build log, saying either what was dropped or that nothing was.
 
-    NEVER THE EMPTY STRING. A phase script prints this every run, and a check whose clean state
-    prints nothing is indistinguishable from a check that did not run - which is how the OSM cache
-    staleness went unnoticed until cache_summary started printing an age on every build. A reader
-    has to be able to see that the question was asked and the answer was no.
+    NEVER THE EMPTY STRING. A check whose clean state prints nothing is indistinguishable from
+    a check that did not run - the trap the OSM cache staleness fell into before cache_summary
+    printed an age on every build.
     """
     if not gaps:
         return ("COVERAGE: nothing dropped - every surveyed feature inside the drawn frame is in "
@@ -187,16 +173,10 @@ class _Drawing:
     def has_line_along(self, line: LineString) -> bool:
         """Whether a drawn LINE runs along `line` - a crosswalk's own transverse lines.
 
-        The narrow exception to keeping lines out of `ground`. A `lines`-style crossing is drawn as
-        two thin lines with no area at all, so an area-only union reports every one of them as
-        dropped however correctly it was drawn: 2 of the 3 remaining at Greenwood and both of
-        Louellen's.
-
-        ALONG, not merely near, is what keeps the false positive out. The reason lines are excluded
-        from the union is that a lane edge line runs the length of the leg and crosses every crossing
-        way on it at RIGHT ANGLES; a crosswalk's own lines are parallel to the way, by construction
-        (they are offset curves of it). So the direction test does the work the area test cannot, and
-        the lane line still cannot claim to cover a crossing.
+        The narrow exception to keeping lines out of `ground`: a lines-style crossing is two thin
+        lines with no area, so an area-only union reports every one as dropped. ALONG, not merely
+        near: a lane edge line runs the length of the leg and crosses every crossing way at right
+        angles, so the direction test does the work the area test cannot.
         """
         if line.length <= 0:
             return False
@@ -214,10 +194,9 @@ class _Drawing:
 def _read_drawing(paint) -> _Drawing:
     """Normalise whatever the caller called the drawing into one _Drawing.
 
-    Deliberately structural rather than typed. The three renderers' notion of "a drawn thing" is
-    already three things (a PaintPiece, a bare band Polygon, a prop dict) and stream A is about to
-    add a fourth; a check that accepted only today's types would report the new one as missing
-    from the drawing that draws it.
+    Structural rather than typed: the three renderers' notion of "a drawn thing" is already three
+    things (PaintPiece, bare band Polygon, prop dict), and a check that accepted only today's
+    types would report a new one as missing.
     """
     shapes, props = [], []
 
@@ -249,10 +228,8 @@ def _read_drawing(paint) -> _Drawing:
             walk(child)
 
     walk(paint)
-    # Only what covers GROUND. A line cannot draw a crossing, and letting one try is a real false
-    # positive rather than a hypothetical: a lane edge line runs the length of the leg and crosses
-    # every crossing way on it at right angles, so buffered by any tolerance at all it would
-    # "cover" a fifth of each of them and report a dropped crossing as drawn.
+    # Only what covers GROUND. A lane edge line runs the length of the leg and crosses every
+    # crossing way at right angles, so buffered by any tolerance it would "cover" a fifth of each.
     areas = [shape for shape in shapes if not shape.is_empty and shape.area > 0]
     drawn_lines = [shape for shape in shapes
                    if not shape.is_empty and shape.area == 0 and shape.geom_type == "LineString"]
@@ -263,9 +240,8 @@ def _read_drawing(paint) -> _Drawing:
 def _frame_radius_ft(model, given: float | None) -> float:
     """The radius of the frame both views draw, or the caller's own.
 
-    Imported here rather than at module scope for the reason
-    intersection/kerb_sources.py gives for the same import: src.render.frame reaches back into
-    src.geometry.model, and this module is imported from src.geometry.
+    Local import: src.render.frame reaches back into src.geometry.model, and this module is
+    imported from src.geometry.
     """
     if given is not None:
         return float(given)
@@ -277,14 +253,10 @@ def _frame_radius_ft(model, given: float | None) -> float:
 def _in_frame(model, radius_ft: float):
     """A test for "this is in the picture", and the distance to report it at.
 
-    Two different centres, on purpose. Membership is measured from the FRAME's centre, because the
-    frame is what is drawn and it sits up to 12.5 ft off the junction node (src/render/frame.py).
-    The distance in the report is measured from the JUNCTION, because that is what a reader means
-    by "263 ft out" and it is the number docs/network-renderer-plan.md records.
-
-    Against the radius rather than the square the plan view's axes make of it: the square is
-    larger, so the radius is the set of features that are definitely in BOTH pictures, and a
-    feature this reports as dropped cannot be dismissed as one the 3D camera never framed.
+    Two different centres: membership from the FRAME's centre (what is drawn), distance from
+    the JUNCTION (what a reader means by "263 ft out"). Against the radius rather than the
+    square, so a feature reported as dropped cannot be dismissed as one the 3D camera never
+    framed.
     """
     from src.render.frame import junction_frame
 
@@ -309,8 +281,7 @@ def _line_ft(coords_wgs84) -> LineString:
 def _uncovered(layer: str, features: list[tuple]) -> Uncovered | None:
     """`features` is [(is_drawn, distance_ft, description)] - the shape every layer ends in.
 
-    Nearest first, because the nearest omission is the conspicuous one: a crossing missing 263 ft
-    from the junction is in the middle of the picture, while one at 420 ft is at its edge.
+    Nearest first: the nearest omission is the conspicuous one.
     """
     if not features:
         return None
@@ -329,40 +300,25 @@ def _uncovered(layer: str, features: list[tuple]) -> Uncovered | None:
 def crossing_gaps(model, drawing: _Drawing, radius_ft: float) -> Uncovered | None:
     """Surveyed pedestrian crossings the drawing does not draw.
 
-    The layer this module was written for. All 17 crossings mapped around Broad & Greenwood are
-    traced WAYS - 2-5 points, 38-77 ft long - so each one already carries its own position, length
-    and skew in state-plane feet, and needs nothing from a leg to be drawn. Ten are inside the
-    2.5x frame; four are drawn, being the four the render could match to a modelled leg; the six
-    it drops are 263-420 ft out. Three of those six say zebra, so the render is showing painted
-    zebra crossings as bare asphalt.
+    All crossings are traced WAYS carrying their own position, length and skew, so each one
+    can be drawn without a leg. THE MARKINGS TAG IS REPORTED UNDER THE KEY THAT ACTUALLY
+    CARRIES IT - `crossing:markings=zebra` vs `crossing=zebra` are not collapsed, because the
+    difference is the whole question for a way with no tag at all.
 
-    THE MARKINGS TAG IS REPORTED UNDER THE KEY THAT ACTUALLY CARRIES IT, not normalised into one.
-    Two of Greenwood's three zebras are `crossing:markings=zebra` and the third is the older
-    `crossing=zebra`; a fourth dropped way carries neither tag. Collapsing those into one label
-    would have the report assert a tag the way does not have, and the difference is the whole
-    question for the way with no tag at all - see the module docstring on what a crossing nobody
-    recorded markings for is entitled to.
+    TWO KINDS OF NOT-DRAWN, and only one is this module's business:
 
-    TWO KINDS OF NOT-DRAWN, and only one of them is this module's business:
+      * the renderer HAD markings and did not draw them - dropped ground truth.
+      * the SURVEY records no markings, so there is nothing to draw. Counting it as a gap makes
+        this check permanently red for a reason no code change can fix.
 
-      * the renderer HAD markings to draw and did not draw them. That is dropped ground truth.
-      * the SURVEY records no markings, so there is nothing to draw. Drawing something would
-        invent paint; drawing nothing is correct. Counting it as a gap makes this check permanently
-        red for a reason no code change can fix, and a check that cannot go green gets ignored.
+    A crossing with no drawable markings is excluded from the count and named in `unrecorded`
+    instead - visible, but not an accusation against the drawing. That is the "named rather than
+    silently dropped" half of docs/network-renderer-plan.md's property.
 
-    So a crossing whose survey records no drawable markings is excluded from the count and named in
-    `unrecorded` instead - visible, because a crossing nobody has recorded the markings of is worth
-    knowing about, but not an accusation against the drawing. That is the "named rather than
-    silently dropped" half of docs/network-renderer-plan.md's property, and this is the channel for
-    it that the first version of this module noted was missing.
-
-    COVERAGE COUNTS PAINT OF EITHER SHAPE. Bars have area and a `lines`-style crossing does not -
-    it is two thin transverse lines - so a union of drawn AREAS alone reports every line-style
-    crossing as dropped even when it is drawn correctly. That was 2 of the 3 remaining at Greenwood
-    and 2 of 2 at Louellen. Lines are still kept out of the general union (a lane edge line crosses
-    every crossing way on its leg at right angles, and buffering it would let it "cover" a fifth of
-    each); what counts here is a drawn line that runs ALONG the crossing rather than across it,
-    which is what a crosswalk's own transverse lines do and what a lane line never does.
+    COVERAGE COUNTS PAINT OF EITHER SHAPE. Bars have area; a lines-style crossing does not.
+    Lines are kept out of the general union (a lane edge line crosses every crossing way at right
+    angles, and buffering it would let it "cover" a fifth of each); what counts here is a drawn
+    line that runs ALONG the crossing rather than across it.
     """
     from src.sources.osm_context import fetch_crossings
 
@@ -390,10 +346,9 @@ def crossing_gaps(model, drawing: _Drawing, radius_ft: float) -> Uncovered | Non
 def _has_drawable_markings(tags: dict | None) -> bool:
     """Whether the survey records paint this project knows how to draw.
 
-    Delegates to src/geometry/surveyed.py rather than re-reading the tags, because the two must
-    agree exactly: a crossing the renderer declines to draw and this check counts as dropped would
-    make the build permanently red, and the opposite pairing would hide a real omission. One
-    decision, one place - which includes the deprecated `crossing=zebra` that surveyed.py reads.
+    Delegates to src/geometry/surveyed.py: one decision, one place. The two must agree exactly -
+    a crossing the renderer declines to draw and this check counts as dropped makes the build
+    permanently red.
     """
     from src.geometry.surveyed import drawable_markings
 
@@ -403,10 +358,9 @@ def _has_drawable_markings(tags: dict | None) -> bool:
 def _markings_label(tags: dict | None) -> str:
     """What OSM says this crossing is painted with, under the key that says it.
 
-    `crossing:markings` is the current tag and `crossing` is the older one that carried the same
-    values; both are in use in this borough on ways 250 ft apart. Neither is invented when absent -
-    "no markings tag" is a different statement from "unmarked", and only one of them is true of a
-    way nobody has recorded.
+    `crossing:markings` is current; `crossing` is the older tag carrying the same values.
+    "no markings tag" is a different statement from "unmarked" - only one is true of a way
+    nobody has recorded.
     """
     tags = tags or {}
     for key in ("crossing:markings", "crossing"):
@@ -418,18 +372,12 @@ def _markings_label(tags: dict | None) -> str:
 def kerb_gaps(model, drawing: _Drawing, radius_ft: float) -> Uncovered | None:
     """Traced kerb ways in the frame that the render does not draw. THE CONTROL CASE.
 
-    Expected clean, and clean at all four sites at 1x and 2.5x - 29 of 29 at Broad & Greenwood's
-    431 ft frame. That is not luck: `cb9c8b6` moved this layer onto the drawing radius, and both
-    renderers now take the same one number (src/render/plan_view.py and src/render/export.py both
-    call kerb_lines_with_tags_ft at drawn_kerb_radius_ft()), which at 2.5x is 984 ft - well past
-    the 431 ft frame. Before that they took the default NEAR set, 80 ft of the junction centre,
-    and 8,938 ft of traced kerb along the corridor was thrown away by a filter written to keep a
-    neighbouring junction out of a corner-radius circle fit.
+    Expected clean: both renderers take the same one number (drawn_kerb_radius_ft), so the
+    only question is whether the drawing radius covers the frame radius.
 
     Compared BY WAY ID rather than geometrically, because both sides of this comparison are the
-    same fetch through the same projection - the only question is whether the radius that decides
-    what is drawn still covers the radius that decides what is in shot. A geometric test would
-    add a tolerance to a comparison that has an exact answer.
+    same fetch through the same projection - a geometric test would add a tolerance to a
+    comparison that has an exact answer.
     """
     from src.geometry.intersection import drawn_kerb_radius_ft, kerb_lines_with_tags_ft
 
@@ -449,18 +397,11 @@ def kerb_gaps(model, drawing: _Drawing, radius_ft: float) -> Uncovered | None:
 def kerb_ramp_gaps(model, drawing: _Drawing, radius_ft: float) -> Uncovered | None:
     """Surveyed kerb ramps - kerb ways tagged tactile_paving=yes - with no pad drawn on them.
 
-    The traced KERB WAY is the ramp's geometry, which is why this reads the kerb layer rather than
-    looking for a fetcher of its own: OSM records a ramp as a stretch of `barrier=kerb` tagged
-    `kerb=lowered` + `tactile_paving=yes` + `wheelchair=yes` (14 of them borough-wide, against 12
-    dropped kerbs for vehicles - see src/geometry/kerbs.py for the convention). A crossing way's
-    own `tactile_paving=yes` tag is deliberately NOT counted here: it says a ramp exists at that
-    crossing's ends without saying where, so it is an attribute of a crossing rather than a second
-    surveyed feature, and the crossings layer already accounts for the crossing.
-
-    Seven ramps are inside Greenwood's 2.5x frame and four are drawn - the three dropped are the
-    ramps of the same neighbouring junctions whose crossings are dropped, which is the point: the
-    render is leg-gated, and a junction this site does not model contributes no legs, so its
-    accessibility features are unreachable at any radius.
+    The traced KERB WAY is the ramp's geometry (OSM records a ramp as `barrier=kerb` tagged
+    `kerb=lowered` + `tactile_paving=yes` + `wheelchair=yes`), so this reads the kerb layer
+    rather than looking for a fetcher of its own. A crossing way's own `tactile_paving=yes` is
+    NOT counted: it says a ramp exists at the crossing's ends without saying where, so the
+    crossings layer already accounts for the crossing.
     """
     from src.geometry.intersection import kerb_lines_with_tags_ft
 
@@ -481,20 +422,12 @@ def kerb_ramp_gaps(model, drawing: _Drawing, radius_ft: float) -> Uncovered | No
 def traffic_control_gaps(model, drawing: _Drawing, radius_ft: float) -> Uncovered | None:
     """Surveyed stop / give-way / signal nodes with no hardware drawn for them.
 
-    Two of Greenwood's three are dropped, both stop nodes, 298 and 409 ft out - and the cause is
-    the same leg-gating in a different disguise. src/render/props.py places a sign by matching the
-    node to a leg and refusing past STOP_NODE_MAX_ALONG_FT (100 ft), which is a correct rule for
-    "does this node govern THIS junction" and the wrong rule for "is this node in the picture".
-    At a 431 ft frame the picture contains two more junctions' stop signs, and the render draws a
-    priority junction with no control on it at all.
-
     Matched on the prop TYPE as well as the distance, so a node is only covered by hardware of
-    its own kind - which is what makes CONTROL_NEAR_NODE_FT's 60 ft safe. The one place it stays
-    genuinely coarse: several nodes of one kind at one junction are covered by any of that
-    junction's signs rather than each by its own, so a junction that drew one of its two stop
-    signs would read as clean. Left as it is because a node on the carriageway carries nothing
-    that says which kerb its sign stands on (see _osm_control_props), so there is no honest way to
-    pair them one to one, and overstating the pairing would be worse than reporting the junction.
+    its own kind - which is what makes CONTROL_NEAR_NODE_FT's 60 ft safe. Coarse at junction
+    level: several nodes of one kind at one junction are covered by any of that junction's signs
+    rather than each by its own, because a node on the carriageway carries nothing that says
+    which kerb its sign stands on (see _osm_control_props), and overstating the pairing would
+    be worse than reporting the junction.
     """
     from src.render.props import control_nodes_ft  # local: props imports geometry, avoid a cycle
     from src.sources.osm_context import fetch_traffic_control
@@ -521,11 +454,8 @@ def traffic_control_gaps(model, drawing: _Drawing, radius_ft: float) -> Uncovere
 def _hardware_for(kind: str) -> tuple:
     """The prop types the render draws for one kind of control node.
 
-    Read off src/render/props.py:OSM_CONTROL_TO_PROP rather than restated, so a control node that
-    gains a prop type there is not reported as undrawn here. Signals are the exception because
-    they do not come from that table at all: a signalized junction is drawn from the site config's
-    own `signals` block (props.py:_traffic_signal_props), the OSM node only attesting that the
-    junction is signalized.
+    Read off OSM_CONTROL_TO_PROP rather than restated. Signals are the exception: drawn from the
+    site config's `signals` block, the OSM node only attesting that the junction is signalized.
     """
     from src.render.props import OSM_CONTROL_TO_PROP
 
@@ -535,7 +465,7 @@ def _hardware_for(kind: str) -> tuple:
     return (drawn,) if drawn else ()
 
 
-# Every layer, in report order. A registry rather than a chain of calls inside coverage_gaps, for
-# the reason src/checks.py:CHECKS is one: a layer that is written and never called is dead code
-# that looks live, and this is a module whose whole job is noticing that something is missing.
+# Every layer, in report order. A registry rather than a chain of calls inside coverage_gaps:
+# a layer that is written and never called is dead code that looks live, and this module's job
+# is noticing that something is missing.
 LAYERS = (crossing_gaps, kerb_gaps, kerb_ramp_gaps, traffic_control_gaps)

@@ -1,32 +1,23 @@
 """THE FACILITY PAINTED ALONG A ROAD, not along a leg.
 
-A treatment targets one kerb of one approach, and an approach is a 130-170 ft stub either side of
-a node. Broad Street is 3,693 ft with 91% of both kerbs traced and no untraced gap over 50 ft, and
-the three modelled junctions' Broad St legs cover 820 ft of it - 22%. So the survey is four times
-ahead of what can be drawn, and a corridor drawing made from leg paint shows a protected bikeway
-appearing and vanishing three times along a street it is supposed to run the length of.
+A treatment targets one kerb of one approach, and an approach is a 130-170 ft stub. Broad Street
+is 3,693 ft with 91% of both kerbs traced - the survey is four times ahead of what can be drawn,
+and a corridor drawing made from leg paint shows a protected bikeway appearing and vanishing
+three times along a street it is supposed to run the length of.
 
-WHY NOT JUST CARRY THE LEGS FURTHER. Measured, because it is the obvious cheap answer: legs were
-capped at 130-170 ft because the tracing stopped there, and it no longer does. At
-HOPEWELL_FRAME_SCALE=2.5 Broad & Greenwood's legs reach 325-425 ft and the junction still builds;
-at 4 and 5 it DOES NOT BUILD AT ALL - `build_pavement_polygon` raises "Pavement ring is
-self-intersecting", the same failure that stops nj31_wdelaware from building on today's OSM. Four
-legs each carrying their own full-width envelope out of one node have envelopes that cross once
-they are long enough and the street bends. The corner-fillet model is the ceiling, and it is a
-ceiling at roughly a tenth of the corridor.
+WHY NOT JUST CARRY THE LEGS FURTHER. At HOPEWELL_FRAME_SCALE=2.5 the legs reach 325-425 ft and
+the junction still builds; at 4 and 5 it DOES NOT BUILD AT ALL. Four legs each carrying their
+own full-width envelope out of one node have envelopes that cross once they are long enough and
+the street bends. The corner-fillet model is the ceiling, at roughly a tenth of the corridor.
 
-A road has no such ceiling, because away from a node there is no fillet: there is a centreline, two
-traced kerbs, and a cross-section between them.
+A road has no such ceiling, because away from a node there is no fillet: there is a centreline,
+two traced kerbs, and a cross-section between them.
 
-WHAT IS NOT REDEFINED HERE. The cross-section is `treatments.bikeways.BikeLane` and its subclass,
-exactly the object the per-leg treatment uses - `offsets_from_kerb_ft()` and `section_ft` are asked
-of the same class, so the corridor and the junctions cannot come to different answers about where
-the stripes go. What this module owns is only WHERE the section is placed: which stations it fits
-at, and what to do at the ones where it does not. The leg treatment's own `paint` method is not
-reachable from here - it needs a PaintContext, crossing bands and a junction's anchors - and
-duplicating it would be the second definition this project keeps paying for. It is deliberately
-NOT duplicated: the junction detail in a corridor drawing comes from the junction models, and this
-supplies the run between them.
+WHAT IS NOT REDEFINED HERE. The cross-section is `treatments.bikeways.BikeLane` and its subclass -
+`offsets_from_kerb_ft()` and `section_ft` are asked of the same class, so the corridor and the
+junctions cannot come to different answers about where the stripes go. This module owns only
+WHERE the section is placed. The junction detail in a corridor drawing comes from the junction
+models; this supplies the run between them.
 """
 from dataclasses import dataclass, field
 
@@ -38,9 +29,8 @@ from src.geometry.model import (Alignment, band_from_offsets, line_from_offsets,
 from src.geometry.treatments.bikeways import TwoWayBikeLane
 
 #: How finely the section is sampled along the corridor. The kerb is traced, so its offset moves
-#: with every vertex the surveyor placed; 5 ft follows a real kerb's course without turning every
-#: click into a corner in the paint. Coarser than the junction paint's STRIP_SAMPLE_FT because
-#: this runs 3,693 ft rather than 130 and nothing here is measured against a corner return.
+#: with every vertex the surveyor placed; 5 ft follows a real kerb's course. Coarser than the
+#: junction paint's STRIP_SAMPLE_FT because this runs 3,693 ft rather than 130.
 CORRIDOR_SAMPLE_FT = 5.0
 
 #: A stretch shorter than this is not a facility, it is a gap between two of them. A rider cannot
@@ -72,8 +62,7 @@ class FacilityRefusal:
     """One stretch where the section does NOT fit, and the measurement that says so.
 
     A refusal is an output, not an error. A corridor plan that quietly stops at its hardest point
-    is the plan nobody costed, so every stretch the facility cannot cross is carried out of here
-    with the width that refused it and drawn as a gap in the route.
+    is the plan nobody costed, so every refusal is carried out and drawn as a gap.
     """
     start_ft: float
     end_ft: float
@@ -196,16 +185,11 @@ CROSSING_BREAK_FT = 10.0
 def opening_spans(corridor, facts, side: str) -> tuple:
     """Driveway and side-street mouths on the facility's OWN kerb - where the lane goes DOTTED.
 
-    IT DOES NOT BREAK HERE, and getting that wrong is the defect this function replaces. NACTO
-    (STANDARDS.md, verified 2026-08-18) requires a bidirectional lane to continue through every
-    intersection and driveway as a crossbike, and explicitly rejects the alternative because
-    merging riders into traffic would send the contraflow direction against its flow. This
-    project already knew that: `markings.AT_AN_OPENING` gives BIKE_LANE_SURFACE and the lane's
-    edge lines `DOTTED / DOTTED`, and the per-leg paint has always dotted them across.
-
-    The corridor path invented a SECOND opinion - it deleted the lane at each mouth - which is the
-    "two records of one decision" failure this repo has now paid for four times. The spans come
-    back so the drawing can dot the lane over them; nothing is cut.
+    IT DOES NOT BREAK HERE. NACTO requires a bidirectional lane to continue through every
+    intersection and driveway as a crossbike (STANDARDS.md, verified 2026-08-18), explicitly
+    rejecting the alternative because merging riders into traffic would send the contraflow
+    direction against its flow. The spans come back so the drawing can dot the lane over them;
+    nothing is cut.
 
     FROM THIS KERB ONLY. A mouth on the far kerb does not touch this lane.
     """
@@ -218,8 +202,7 @@ def opening_spans(corridor, facts, side: str) -> tuple:
 def crossing_spans(corridor, facts) -> tuple:
     """Pedestrian crossings - the ONE thing that does cut the lane.
 
-    A crossing outranks whatever runs along the kerb, which is the rule PaintContext's crossing
-    bands apply per leg and the one part of the old break_spans that was right.
+    A crossing outranks whatever runs along the kerb.
     """
     return tuple(sorted((max(station_ft - CROSSING_BREAK_FT / 2, 0.0),
                          min(station_ft + CROSSING_BREAK_FT / 2, corridor.length_ft))
@@ -230,9 +213,7 @@ def _cut_around(geometry, corridor, side: str, spans, reach_ft: float = 60.0):
     """`geometry` with the break spans taken out of it.
 
     Cut as full-depth bands across the kerbside rather than as station ranges of the polygon,
-    because the lane, its buffer and its edge lines all have to break at the SAME stations - a
-    drawing where the green stops and the stripe carries on is worse than one that breaks
-    neither.
+    because the lane, its buffer and its edge lines all have to break at the SAME stations.
     """
     from shapely.ops import unary_union
 
@@ -257,10 +238,9 @@ def _cut_around(geometry, corridor, side: str, spans, reach_ft: float = 60.0):
 def paint_facility(corridor, facility, facts=None) -> CorridorFacilityPaint:
     """Place `facility` along `corridor`, wherever the street can carry it.
 
-    Walks the stations at which BOTH kerbs are traced - the only stations at which a width is a
-    measurement rather than an interpolation - and asks the section itself whether it fits at
-    each. Everything else comes back as a refusal or as an unsurveyed gap, and both are drawn: a
-    corridor plan that quietly stops at its hardest point is the plan nobody costed.
+    Walks the stations at which BOTH kerbs are traced - the only stations where a width is a
+    measurement - and asks the section itself whether it fits. Everything else comes back as a
+    refusal or an unsurveyed gap.
     """
     side = facility_side(corridor, facility.side)
     other = "right" if side == "left" else "left"
@@ -292,9 +272,8 @@ def paint_facility(corridor, facility, facts=None) -> CorridorFacilityPaint:
 def _collect(paint, corridor, facility, side, stations, near, far, fits):
     """Split one traced span into the stretches that fit and the ones that do not.
 
-    The section for a run is rebuilt at the run's NARROWEST cross-section, not at each station:
-    a facility drawn along a stretch of kerb is a promise about the whole of that stretch, which
-    is the same reason AddBikeLane sizes against a leg's narrowest traced point.
+    The section for a run is rebuilt at the run's NARROWEST cross-section: a facility drawn
+    along a stretch of kerb is a promise about the whole of that stretch.
     """
     for lo_i, hi_i, ok in _blocks(fits):
         lo, hi = float(stations[lo_i]), float(stations[hi_i])
@@ -306,12 +285,8 @@ def _collect(paint, corridor, facility, side, stations, near, far, fits):
             paint.refusals.append(FacilityRefusal(lo, hi, "one or both kerbs untraced here"))
             continue
         # THE GOVERNING CROSS-SECTION is the narrowest station's OWN two half-widths, not the
-        # smallest half-width on each side taken separately. Those are different numbers and the
-        # second one is wrong: a street that is narrow at one end and off-centre at the other has
-        # no station where both minima occur, so combining them invents a cross-section that is
-        # nowhere on the road. It refused 464 ft of Broad St for a 29.57 ft width whose narrowest
-        # real section is 31.9 ft - and refused it after every station in it had individually
-        # passed, which is how the disagreement showed up.
+        # smallest half-width on each side taken separately - those are different numbers and the
+        # second one is wrong.
         at = int(np.nanargmin(total))
         narrowest = float(total[at])
         section, refusal = section_at(facility, float(block_near[at]), float(block_far[at]))
@@ -348,10 +323,9 @@ def _blocks(flags: np.ndarray):
 def _build_run(corridor, side: str, section, stations, offs, breaks=()):
     """The paint itself, from the SAME section accounting the per-leg treatment uses.
 
-    The lane hugs the kerb (TwoWayBikeLane.hugs_kerb), so its three boundaries are insets from the
-    traced kerb and follow it; the travel lane's edge is measured from the alignment so it holds
-    its target whatever the kerb does; the buffer between them absorbs the difference. That split
-    is bikeways.BikeLane.offsets_from_kerb_ft's, quoted rather than re-derived.
+    The lane hugs the kerb (TwoWayBikeLane.hugs_kerb); the travel lane's edge is measured from
+    the alignment; the buffer between them absorbs the difference. That split is
+    bikeways.BikeLane.offsets_from_kerb_ft's, quoted rather than re-derived.
     """
     kerb = section.offsets_from_kerb_ft()
     on = Alignment(corridor.centerline)
@@ -402,25 +376,13 @@ def _bollards(on: Alignment, side: str, stations, offsets) -> tuple:
 def centred_on_its_kerbs(corridor, sample_ft: float = 10.0, smooth_ft: float = 60.0):
     """The corridor with its centreline moved onto the midpoint of its two traced kerbs.
 
-    WITHOUT THIS THE CORRIDOR CANNOT BE PAINTED, and the measurement is stark. Between the
-    modelled junctions a corridor's centreline is NJDOT's raw SRI alignment, which is a
-    linear-referencing reference and not a surveyed carriageway centre. Sampled over Broad St
-    stations 921-1959, the south kerb sits a median 15.1 ft out and the north kerb 31.2 ft - a 16
-    ft asymmetry on a 47 ft street. Every offset in a section is measured from this line, so a
-    two-way lane placed against the south kerb had its travel-lane edge land at a NEGATIVE offset
-    at 21 of 209 stations: paint on the far side of the line it is measured from.
+    WITHOUT THIS THE CORRIDOR CANNOT BE PAINTED. Between modelled junctions the centreline is
+    NJDOT's raw SRI alignment - a linear-referencing reference, not a carriageway centre. An
+    asymmetric street (south kerb 15.1 ft out, north kerb 31.2 ft) puts the travel-lane edge at
+    a NEGATIVE offset at some stations: paint on the far side of the line it is measured from.
 
-    Inside each modelled junction the alignment is already centred - fitting.py's
-    _centre_legs_on_traced_kerbs bends each leg onto its own carriageway centre over the whole leg
-    - and that pass simply does not reach the 78% of the corridor no junction models. This is the
-    same correction, applied to the road instead of to a leg, which is what
-    docs/network-model.md's step 4 says the centring becomes.
-
-    Held FLAT where only one kerb is traced, rather than extrapolated: with one kerb there is no
-    midpoint, only a distance to one edge, and inventing the other half of a cross-section is the
-    one thing this project must not do. Smoothed over `smooth_ft` for the reason the per-leg pass
-    gives - the result has to be a line a striper would lay, following the street's bend and not
-    every wobble in the tracing.
+    Held FLAT where only one kerb is traced (no midpoint, only a distance to one edge), smoothed
+    over `smooth_ft` to follow the street's bend rather than every wobble in the tracing.
     """
     import dataclasses
 
@@ -452,15 +414,10 @@ def centred_on_its_kerbs(corridor, sample_ft: float = 10.0, smooth_ft: float = 6
 def _restationed(run, centerline: LineString):
     """One kerb run's station span, re-measured against a centreline that has moved.
 
-    MOVING THE CENTRELINE MOVES EVERY STATION ON IT, and a KerbRun carries its own start_ft and
-    end_ft. Left alone they describe where the run sat on the OLD line, while `kerb_run_at` picks
-    a run by those numbers and `_kerb_offset_at` then reads the run's line against the NEW one. The
-    two disagree by however far the centreline shifted, so a station inside a run's declared span
-    can fall outside the same kerb's real one and the kerb reads as unreadable - 545 ft of Broad
-    St east of Princeton Ave, where the correction is largest, drawn as bare asphalt.
-
-    Re-measured rather than shifted by a constant: the correction varies along the road, so there
-    is no one number to add.
+    MOVING THE CENTRELINE MOVES EVERY STATION ON IT. A KerbRun carries its own start_ft and
+    end_ft; left alone they describe where the run sat on the OLD line, and a station inside
+    the declared span can fall outside the real one. Re-measured rather than shifted by a
+    constant: the correction varies along the road.
     """
     import dataclasses
 
@@ -475,15 +432,10 @@ def _restationed(run, centerline: LineString):
 def parking_bands(corridor, facts, side: str, depth_ft: float | None = None):
     """[(lo_ft, hi_ft, polygon)] where a stall may legally be marked along one kerb.
 
-    The spans are `CorridorFacts.parkable`, which is R.S. 39:4-138 applied along the whole road -
-    25 ft from the side line of EVERY intersecting street, 50 ft from a stop sign, 10 ft from a
-    hydrant, plus whatever OSM records - rather than the four rules applied to one junction's legs.
-    This only gives them a footprint: a band `depth_ft` deep against the traced kerb, so the
-    drawing shows where the law leaves room rather than asserting a stall is painted there.
-
-    Drawn against the KERB and not the alignment, for the reason the bike lane is: a parked car
-    sits against the kerb wherever the kerb happens to be, and a band measured from the centreline
-    wanders off it exactly where the street widens.
+    The spans are `CorridorFacts.parkable` - R.S. 39:4-138 applied along the whole road rather
+    than to one junction's legs. This only gives them a footprint: a band `depth_ft` deep
+    against the traced kerb, drawn against the KERB and not the alignment (a parked car sits
+    against the kerb wherever the kerb happens to be).
     """
     from src.geometry.treatments.parking import PARKING_STALL_DEPTH_DEFAULT_FT
 
@@ -506,16 +458,10 @@ def parking_bands(corridor, facts, side: str, depth_ft: float | None = None):
 def stall_room_spans(corridor, side: str, lane_edge_at, sample_ft: float = CORRIDOR_SAMPLE_FT):
     """Where this kerb has room for a usable stall once the travel lane holds its target.
 
-    THE OTHER HALF OF A STALL COUNT, and the reason a legal figure and a drawn figure differ.
-    `CorridorFacts.parkable` says where the LAW leaves room; this says where the STREET does. A
-    length that is legal and 4 ft wide holds no car, and counting it inflates the very number a
-    parking argument turns on.
-
-    Exactly parking.py:hold_travel_lane_at_target's arithmetic, per station instead of per leg:
-    the travel lane's edge is `lane_edge_at(station)` from the alignment, the surplus is whatever
-    the traced kerb leaves beyond it, and MIN_USABLE_STALL_FT is the floor below which the
-    surplus is hatched rather than marked. Both figures are imported, so a corridor total and a
-    drawn stall cannot disagree about what fits.
+    THE OTHER HALF OF A STALL COUNT. `CorridorFacts.parkable` says where the LAW leaves room;
+    this says where the STREET does. Exactly parking.py:hold_travel_lane_at_target's arithmetic,
+    per station: the surplus is whatever the traced kerb leaves beyond the travel lane's edge, and
+    MIN_USABLE_STALL_FT is the floor below which it is hatched rather than marked.
     """
     from src.geometry.treatments.parking import MIN_USABLE_STALL_FT
 
@@ -533,10 +479,9 @@ def stall_room_spans(corridor, side: str, lane_edge_at, sample_ft: float = CORRI
 def far_kerb_lane_edge(paint: CorridorFacilityPaint, default_ft: float | None = None):
     """station -> where the FAR kerb's travel lane edge sits, given what the facility placed.
 
-    Taking width out of one kerbside pushes the divider toward the other, so the far kerb's lane
-    edge is `travel_lane_divider_shift_ft` plus the target width wherever the section is actually
-    down - and the plain target width everywhere it is not. Per run rather than per corridor,
-    because a constrained rung shifts the divider by a different amount from a standard one.
+    Taking width out of one kerbside pushes the divider toward the other, so the far kerb's
+    lane edge is `travel_lane_divider_shift_ft` plus the target width wherever the section is
+    actually down. Per run, because a constrained rung shifts the divider by a different amount.
     """
     from src.geometry.treatments.base import TARGET_LANE_WIDTH_FT
     from src.geometry.treatments.bikeways import travel_lane_divider_shift_ft
@@ -559,17 +504,12 @@ def stall_marks(corridor, side: str, spans, depth_ft: float | None = None,
                 stall_ft: float | None = None):
     """(divider lines, stall count) - the stalls DRAWN, one mark per boundary between two cars.
 
-    COUNTED BY DRAWING RATHER THAN BY DIVISION, which is the point of it. Every parking figure in
-    this project so far has been a length divided by a stall length, and a quotient is not a count:
-    it cannot see that a 30 ft stretch holds one car and wastes 8 ft, and it silently rounds
-    fractional stalls into existence across ten separate stretches. Here a stall exists when there
-    is room to draw it against the traced kerb, and the number returned is the number of boxes on
-    the page - so the drawing and the total cannot disagree, which is the same reason
-    marked_parking_capacity goes through parking_stall_count_ft.
+    COUNTED BY DRAWING rather than by division: a quotient cannot see that a 30 ft stretch holds
+    one car and wastes 8 ft. Here a stall exists when there is room to draw it, and the number
+    returned is the number of boxes on the page.
 
     Marks run from the kerb inward by `depth_ft`, following the kerb rather than standing off the
-    narrowest point, for the reason the bike lane's outer edge does: a parked car sits where the
-    kerb is.
+    narrowest point - a parked car sits where the kerb is.
     """
     from src.geometry.treatments import PARKING_STALL_LENGTH_DEFAULT_FT
     from src.geometry.treatments.parking import PARKING_STALL_DEPTH_DEFAULT_FT
@@ -618,8 +558,7 @@ def symbol_stations(paint: CorridorFacilityPaint) -> tuple:
     """Stations for the BIKE LANE symbol: after each opening, and every SYMBOL_INTERVAL_FT.
 
     Both rules, not either - NACTO asks for the reminder after every mouth AND a floor on the
-    interval, and on a corridor with 19 junctions the interval alone would leave long stretches
-    unmarked while the mouths alone would cluster them.
+    interval.
     """
     at = []
     for run in paint.runs:
@@ -646,9 +585,8 @@ def green_extension_spans(paint: CorridorFacilityPaint, reach_ft: float | None =
 def contraflow_centreline(corridor, paint: CorridorFacilityPaint):
     """The dotted yellow centreline down each run, CONTINUING across every opening.
 
-    Continuing is the point: NACTO asks for the dotted yellow both along a bidirectional lane and
-    in its crossbikes, so the mark that tells a driver two directions of riders are present is the
-    one mark that must not stop where they cross.
+    NACTO asks for the dotted yellow both along a bidirectional lane and in its crossbikes,
+    so the mark that tells a driver two directions are present must not stop where they cross.
     """
     dash_ft, gap_ft = _contraflow_cadence()
     on = Alignment(corridor.centerline)

@@ -1,35 +1,26 @@
 """The schema every site's config.yaml must satisfy, as code rather than prose.
 
-sites/README.md documented this schema in 138 lines of comments, and nothing checked that a
-config.yaml agreed with them. A `config.yaml` is not a preferences file - it is the entire
-factual basis for what gets drawn, so the ways it goes wrong are the ways a render ends up
-confidently describing a street that isn't there:
+A config.yaml is the entire factual basis for what gets drawn, so its failures are silent:
+the render confidently describes a street that isn't there. The three shapes each rule here
+exists for:
 
-  * A TYPO IS A MISSING FACT. `bearing_dg: 235.6` is not an error anywhere; the key is simply
-    absent, and a leg with no bearing fails several hundred lines later inside leg matching,
-    naming neither the file nor the key.
-  * A NAME THAT REFERS TO NOTHING. `existing_marked_crosswalks: [broad_st_wst]` silently
-    marks no crossing at all: the name is looked up in a set, misses, and the render just
-    quietly omits a crosswalk that exists in the real world. Same for a signal corner naming
-    a leg that isn't there, and for `no_turn_on_red_legs`.
-  * AN UNSOURCED NUMBER. The project's own rule (README, STANDARDS.md) is that a width or a
-    radius nobody can trace to a source is a plausible-looking number, not a measurement. The
-    `source:` fields were required by documentation only.
+  * A TYPO IS A MISSING FACT. `bearing_dg:` is not an error anywhere - the key is simply
+    absent, and the leg fails several hundred lines later inside leg matching, naming
+    neither the file nor the key. Hence `extra="forbid"` on every section.
+  * A NAME THAT REFERS TO NOTHING. A crosswalk, signal corner or no-turn-on-red entry
+    naming a leg that isn't there matches nothing and draws nothing, with no warning.
+  * AN UNSOURCED NUMBER. Per README/STANDARDS.md, a width or radius nobody can trace to a
+    source is a plausible-looking number, not a measurement; `source:` fields were required
+    by documentation only.
 
-So each of those is a field constraint or a cross-field validator here, and every site is
-validated on load (src/site.py:load_site_config). The failure arrives naming the file, the
-key path and what was expected, before any geometry is built.
-
-The vocabularies come from wherever they are already defined - provenance tiers from
-src/provenance.py - rather than being re-listed, since a copy is a second place for them to
-drift. The one exception is the centerline styles, which live in src/geometry/treatments/
-and cannot be imported here without pulling shapely and the whole geometry stack into the
-import path of every phase script that only wanted to read a config. That copy is pinned to
-the original by tests/test_site_schema.py rather than by an import.
+Every site is validated on load (src/site.py:load_site_config), raising before any geometry
+is built. Vocabularies are imported from their one home (provenance tiers from
+src/provenance.py); the centerline styles are the sole copy, because importing them would
+drag shapely into every phase script that only wanted to read a config.
 
 This validates; it does not replace dict access. load_site_config still returns the plain
-dict every existing call site reads, so this is a gate at the boundary rather than a
-migration of 15k lines - see load_site_schema() for the typed view of the same file.
+dict every call site reads - a gate at the boundary, not a migration. See load_site_schema()
+for the typed view.
 """
 import itertools
 from pathlib import Path
@@ -58,11 +49,8 @@ Sourced = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
 
 class Strict(BaseModel):
     """Base for every section: an unrecognised key is an error, not something to ignore.
-
-    This is the single most valuable line in the file. Every other rule here catches a fact
-    stated wrongly; `extra="forbid"` catches a fact that was never stated at all because its
-    key was misspelled - which is otherwise indistinguishable from choosing to omit it.
-    """
+    Every other rule catches a fact stated wrongly; this catches a fact never stated at all
+    because its key was misspelled."""
     model_config = ConfigDict(extra="forbid")
 
 
@@ -88,17 +76,10 @@ class Intersection(Strict):
 
     @model_validator(mode="after")
     def _on_the_globe(self):
-        """center_wgs84 is [lon, lat], the opposite order from how a coordinate is usually
-        spoken, so writing it backwards is the obvious mistake to make.
-
-        WHAT THIS DOES NOT CATCH, stated plainly because the range check looks stronger than
-        it is: a swap is only detectable this way when one value lands outside the other's
-        range. New Jersey is near lon -74.8 / lat 40.4, and both of those are legal latitudes,
-        so a swapped Hopewell coordinate passes every bound here and lands in the South
-        Atlantic. The guard against THAT is `resolution_method`, which requires saying how the
-        point was cross-checked, and phase1_audit, which resolves it from OSM rather than
-        trusting the file.
-        """
+        """center_wgs84 is [lon, lat], the reverse of spoken order — writing it backwards is
+        the obvious mistake. This catches less than it looks: NJ coordinates are legal
+        latitudes, so a swap lands in the ocean only by luck. resolution_method and
+        phase1_audit are the real guards."""
         lon, lat = self.center_wgs84
         if not -180 <= lon <= 180 or not -90 <= lat <= 90:
             raise ValueError(
@@ -135,8 +116,7 @@ class SignalCorner(Strict):
 
 
 class Signals(Strict):
-    """Presence of this block IS what "signalized" means (it replaced a `signalized: true`
-    flag nothing downstream ever read)."""
+    """Presence of this block IS what "signalized" means."""
     source: Sourced
     pole_type: str | None = None
     corners: list[SignalCorner] = []
@@ -176,11 +156,9 @@ class SiteConfig(Strict):
 
     @model_validator(mode="after")
     def _leg_references_resolve(self):
-        """Every leg name mentioned anywhere else in the file must be a leg.
-
-        Collected into ONE error rather than raised at the first miss, matching how
-        src/checks.py reports scene violations: a config with three renamed legs should take
-        one edit to fix, not three runs.
+        """Every leg name mentioned anywhere else in the file must be a leg. Collected into
+        ONE error rather than raised at the first miss, as src/checks.py reports violations:
+        three renamed legs should take one edit to fix, not three runs.
         """
         known = set(self.legs)
         problems = []
@@ -242,13 +220,8 @@ class SiteConfigError(ValueError):
 
 def validate_site_config(raw: dict, path: Path | str | None = None) -> SiteConfig:
     """Validate a parsed config.yaml, or raise SiteConfigError naming the file and every
-    problem in it.
-
-    Pydantic's own report is re-laid-out rather than passed through: its default renders a
-    key path as `legs.broad_st_west.source` on one line and the explanation on the next,
-    which reads fine for one error and badly for the twelve a half-converted config produces.
-    The header carries the file, because a phase script builds four sites and "field required"
-    with no filename means re-running them one at a time to find out which.
+    problem in it — one line per problem, because "field required" with no filename means
+    re-running phase scripts one at a time to find out which.
     """
     try:
         return SiteConfig.model_validate(raw)

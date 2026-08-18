@@ -17,13 +17,10 @@ CROSS_STREET_MAX_ANGLE_DEG = 150.0
 # 8.3 ft with a standard deviation of 2.4 ft (range 5.1-13.9). See
 # tests/test_sites.py:test_the_crosswalk_estimate_reproduces_the_surveyed_crossings.
 #
-# RENAMED FROM `CROSSWALK_SETBACK_FT` (2026-08-17), which STANDARDS.md had been carrying as an
-# open item: src/geometry/daylighting.py declares a constant of that name meaning R.S.
-# 39:4-138(e)'s 25 ft, and one grep returned both while only one of them is a legal figure.
-# Different modules, so nothing was ever shadowed - but src/geometry/cross_streets.py now reads
-# THIS one (to place the unmarked crosswalk N.J.S.A. 39:1-1 puts at every intersection approach)
-# and hands the result to daylighting.py, which measures the statutory 25 ft from it. Two
-# constants called CROSSWALK_SETBACK_FT one call apart is where a latent clash becomes a real one.
+# NOT named CROSSWALK_SETBACK_FT: daylighting.py already uses that name for R.S. 39:4-138(e)'s
+# 25 ft, and cross_streets.py reads THIS one (placing the unmarked crosswalk N.J.S.A. 39:1-1
+# puts at every approach) and hands the result to daylighting.py, which measures the statutory
+# 25 ft from it. Only one of the two is a legal figure; one grep must not return both.
 CROSSWALK_OFFSET_FROM_KERB_FT = 8.3
 
 
@@ -32,20 +29,13 @@ def crosswalk_estimate_ft(leg_name: str, legs: dict) -> float:
 
     The controlling dimension is the CROSS street's half-width, not this leg's own kerb: a
     crosswalk sits just outside the box the intersecting roadway occupies, and the corner
-    return it also has to clear scales with that same roadway. Two other candidate rules were
-    tried against the 11 surveyed crossings first and both failed - the fillet tangent point
-    this replaces (leg_clearance_ft, which is what a crossing used to be placed on) scattered
-    -31.5 to +41.7 ft, and projecting the cross street's kerb lines onto this leg's centerline
-    scattered -38.0 to -2.3 ft and returned 119.7 ft for W Broad's northeast leg, where the
-    near-parallel through street's kerbs meet it at a shallow angle far up the road.
+    return it also has to clear scales with that same roadway. Reproduces all 11 surveyed
+    crossings to a standard deviation of 2.4 ft.
 
-    This rule reproduces all 11 to a standard deviation of 2.4 ft.
-
-    The failure it fixes is not subtle. At W Broad & Louellen the fillet-tangent rule put the
-    southwest leg's crossing 67.8 ft out - past the far kerb of the cross street, into the
-    middle of the block - and the northeast leg's 11.5 ft out, inside a corner return whose
-    kerb is still 25.4 ft off the centerline against a 17.6 ft half-width. One crossing too
-    far out and its opposite too far in, at the same junction, from the same rule.
+    WHY NOT the two obvious alternatives, both fitted against those 11 and both rejected: the
+    fillet tangent point (leg_clearance_ft) scattered -31.5 to +41.7 ft, and projecting the
+    cross street's kerb lines onto this leg's centerline scattered -38.0 to -2.3 ft and
+    returned 119.7 ft where a near-parallel through street meets the leg at a shallow angle.
     """
     leg = legs[leg_name]
     bearing = leg_bearing_deg(leg)

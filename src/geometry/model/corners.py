@@ -16,19 +16,14 @@ from src.geometry.model.traced_kerbs import traced_corner_arc, traced_corner_joi
 
 
 # Beyond this, two adjacent legs are the same street running through the junction, and the
-# pair of curbs facing away from the stem is one continuous kerb with no corner in it. The
-# original 179 deg only caught a perfectly straight through road; W Broad kinks 9.1 deg at
-# Louellen, and rounding that "corner" is meaningless - the two curb rays converge so slowly
-# that their crossing point lands 47 ft up the street, dragging the fillet's tangent points
-# and the whole pavement ring with it. These are old streets; a through road that bends a
-# few degrees at a side street is the normal case, not a corner.
+# pair of curbs facing away from the stem is one continuous kerb with no corner in it. These
+# are old streets: a through road that bends a few degrees at a side street is the normal
+# case, not a corner, and rounding it is meaningless - two curb rays converging that slowly
+# cross 47 ft up the street, dragging the tangent points and the whole pavement ring with them.
+#
+# 160, not 165 or 179, so that W Broad at Louellen (162.7 deg between the legs) counts as the
+# one street it is: its outer kerb runs unbroken past the junction and carries no crossing.
 THROUGH_STREET_ANGLE_DEG = 160.0
-# 160 rather than 165 so that W Broad, which kinks 17.3 deg at Louellen (162.7 deg between
-# the legs), counts as one street passing through - which is what it is. Its outer kerb runs
-# unbroken past the junction and carries no crossing. Raising the tolerance meant the two
-# legs' zones met at an angle and overlapped by 5.6 sq ft in the wedge between their frames;
-# curbside_paint_ft's `shares_a_kerb` now has them butt instead. At E Broad & Princeton the
-# pair is 179.9 deg apart, where the wedge is negligible and neither issue arises.
 
 
 def fillet_curb_corner(
@@ -43,28 +38,22 @@ def fillet_curb_corner(
     Returns (trimmed_curb_a, arc, trimmed_curb_b): concatenate the three pieces,
     in that order, for one continuous rounded curb path.
 
-    Two curb lines meeting at ~180 degrees are not a corner at all - they're one
-    straight run of curb. That is the normal case on the far side of a T or Y
-    junction, where the through road's two legs are collinear and the pair of curbs
-    facing away from the stem never actually turns (e.g. e_broad_st_east's left curb
-    and e_broad_st_west's right curb, the continuous north edge of E Broad St at
-    E Broad & Princeton, at 179.9 degrees). There's nothing to round, and no true
-    corner vertex to round it about - the two curb rays are parallel, so solving for
-    their crossing point is singular. Joined with a straight bridge instead.
+    Curb lines meeting at ~180 degrees are one straight run of curb, not a corner - the
+    normal case on the far side of a T or Y. There is nothing to round and no corner vertex
+    to round it about (the rays are parallel, so solving for their crossing is singular), so
+    they are joined with a straight bridge.
     """
     pa, da = np.array(curb_a.coords[0]), unit_vector(np.array(curb_a.coords[1]) - np.array(curb_a.coords[0]))
     pb, db = np.array(curb_b.coords[0]), unit_vector(np.array(curb_b.coords[1]) - np.array(curb_b.coords[0]))
 
     theta = np.arccos(np.clip(np.dot(da, db), -1, 1))
     if theta < np.radians(1):
-        # The curbs double back along each other - a real geometry problem, not a
-        # flat corner. Still an error.
+        # The curbs double back along each other - a real geometry problem, not a flat corner.
         raise ValueError(f"Curb lines meet at an implausible angle ({np.degrees(theta):.1f} deg) - check inputs.")
     if theta > np.radians(THROUGH_STREET_ANGLE_DEG):
-        # Collinear: no rounding, no trimming. The "arc" is the straight bridge
-        # across the small gap between the two curb lines' start points, which keeps
-        # the (trimmed_a, arc, trimmed_b) contract - and build_pavement_polygon's
-        # ring walk - working unchanged.
+        # Collinear: no rounding, no trimming. The "arc" is a straight bridge across the gap
+        # between the two start points, keeping the (trimmed_a, arc, trimmed_b) contract that
+        # build_pavement_polygon's ring walk depends on.
         bridge = LineString([tuple(pa), tuple(pb)])
         return curb_a, bridge, curb_b
 
@@ -96,13 +85,12 @@ def is_through_street(leg_a, leg_b) -> bool:
     """Whether these two legs are one street running through the junction rather than two
     streets meeting at a corner.
 
-    Measured between the leg CENTERLINES, not between the first segments of their traced
-    curbs. The curbs' first segments are wherever the surveyor's tracing happens to begin,
-    which on a partially-traced side is somewhere up the block; and using each leg's chord
-    rather than its near end matters at W Broad & Louellen, where louellen_st_west leaves the
-    junction on a 15 ft stub bearing 239 deg before settling onto 269. By the stub it reads as
-    178.6 deg from w_broad_st_northeast - a through street - and by the chord as 149.2, which
-    is the truth: the route turns there, and the traced kerbs show a real 14 ft return.
+    DATUM: measured between the leg CENTERLINES' chords, never between the first segments of
+    the traced curbs (which begin wherever the surveyor started) and never off a leg's near
+    end. At W Broad & Louellen, louellen_st_west leaves on a 15 ft stub bearing 239 deg before
+    settling onto 269: by the stub it reads 178.6 deg from w_broad_st_northeast - a through
+    street - and by the chord 149.2, which is the truth, and the traced kerbs show a real
+    14 ft return there.
     """
     theta = np.arccos(np.clip(np.dot(line_direction(leg_a.centerline),
                                      line_direction(leg_b.centerline)), -1, 1))
@@ -133,24 +121,18 @@ def build_corner_fillets(legs: dict, radius_ft, corner_radii: dict | None = None
         corner_key = frozenset((name_a, name_b))
 
         # A pair of legs that are the same street running THROUGH the junction has no corner
-        # between them, so neither branch below applies: there is no return to trace and
-        # nothing to round. Tested first because both of them would otherwise happily invent
-        # one. e_broad_st_east and e_broad_st_west are 179.9 deg apart - the continuous north
-        # edge of E Broad St, opposite the stem of the T - and traced_corner_join drew a
-        # diagonal from one curb to the other whose start sat 67.1 ft up the leg. That became
-        # the leg's corner-return "tangent point", which held the kerbside hatching 75 ft out
-        # from a junction whose surveyed stop bar is at 52.9 ft. fillet_curb_corner has had
-        # this test since the fitted path was the only path; it just never ran for a traced
-        # corner, because the traced branches return before reaching it.
+        # between them: no return to trace and nothing to round. Tested FIRST, because both
+        # branches below would otherwise invent one - traced_corner_join draws a diagonal
+        # from one curb to the other and its start becomes a bogus "tangent point" far up
+        # the leg.
         if is_through_street(leg_a, leg_b):
             results[(name_a, name_b)] = {
                 "trimmed_a": leg_a.left_curb,
                 "arc": LineString([leg_a.left_curb.coords[0], leg_b.right_curb.coords[0]]),
                 "trimmed_b": leg_b.right_curb,
                 # No radius key at all, rather than a None one: there is no corner here to
-                # have a radius, and the plan view labels a corner's radius wherever the key
-                # is present. A None slipped straight past that guard and crashed the 2D
-                # build on an f-string.
+                # have a radius, and the plan view labels a radius wherever the key is
+                # present - a None slips past that guard and crashes on an f-string.
                 "source": "through_street", "through_street": True,
             }
             continue
@@ -158,8 +140,7 @@ def build_corner_fillets(legs: dict, radius_ft, corner_radii: dict | None = None
         # Both sides traced means the corner between them is traced too - the return's own
         # vertices are already the inner ends of these two curbs. Nothing to fit: walk from
         # one to the other and smooth the seam. Fitting a circle here and redrawing it off
-        # our own curb lines is what put the synthesised arcs 0.2-5.9 ft from the mapped
-        # kerb at Broad & Greenwood.
+        # OUR OWN curb lines puts the arc 0.2-5.9 ft off the mapped kerb.
         if "left" in leg_a.traced_sides and "right" in leg_b.traced_sides:
             trimmed_a, arc, trimmed_b = traced_corner_join(leg_a.left_curb, leg_b.right_curb)
             results[(name_a, name_b)] = {
@@ -204,17 +185,16 @@ def corner_apron_annulus(curb_a: LineString, curb_b: LineString, face_radius_ft:
     """The mountable ground between a tightened corner face and the radius a bus still needs.
 
     A curb extension presents a `face_radius_ft` corner to a passenger car. A bus tracking the
-    same corner needs the radius the corner was BUILT to, which at these junctions is a traced,
-    measured figure per corner (29.2 / 24.6 / 29.0 / 22.9 ft at Broad & Greenwood). The ground
-    between the two arcs is the difference: paved and flush, so a bus rides over it, but read
-    by a driver as corner rather than carriageway.
+    same corner needs the radius the corner was BUILT to - DATUM: a traced, measured figure
+    per corner (29.2 / 24.6 / 29.0 / 22.9 ft at Broad & Greenwood), not a nominal one. The
+    ground between the two arcs is paved and flush, so a bus rides over it, but reads to a
+    driver as corner rather than carriageway.
 
-    That region is what makes the "swept path is preserved by construction" claim true rather
-    than asserted, so it is built as the actual annulus between the two arcs - both solved by
-    the same fillet math off the same two curb lines. corner_overlay_polygon, which the
-    standalone add_mountable_apron uses, draws a fixed-depth kite off one arc instead; it is
-    the right shape for "hatch this corner" and the wrong one for "a bus fits through here",
-    because nothing ties its depth to the radius a bus needs.
+    Built as the ACTUAL annulus between the two arcs, both solved by the same fillet math off
+    the same two curb lines, which is what makes "swept path preserved by construction" true
+    rather than asserted. WHY NOT corner_overlay_polygon: it draws a fixed-depth kite off one
+    arc, right for "hatch this corner" and wrong for "a bus fits through here", because
+    nothing ties its depth to the radius a bus needs.
 
     Returns None where there is nothing to pave: a face radius at or above the swept radius
     means the corner was not tightened.
@@ -238,20 +218,15 @@ def corner_apron_annulus(curb_a: LineString, curb_b: LineString, face_radius_ft:
 
 
 def corner_overlay_polygon(pieces: dict, center_ft: Point, depth_ft: float) -> Polygon:
-    """A 'virtual bump-out' zone hugging a corner's fillet arc, extending
-    depth_ft inward toward the intersection center - flush with the pavement,
-    no elevation/curb change. Shared shape for two different render
-    treatments: diagonal paint hatching (src/geometry/treatments/corners.py:CornerHatching)
-    and a textured mountable apron (add_mountable_apron) - same footprint,
-    different surface finish.
+    """A 'virtual bump-out' zone hugging a corner's fillet arc, extending depth_ft inward
+    toward the intersection center - flush with the pavement, no elevation or curb change.
+    One footprint for two finishes: diagonal paint hatching
+    (treatments/corners.py:CornerHatching) and a textured mountable apron (add_mountable_apron).
 
-    A clean 4-point kite (arc start -> arc mid -> arc end -> inner point), NOT
-    every point along the arc: using all ~24 arc vertices here produced a
-    self-intersecting ring for some corners (GEOS then rejected it) and, once
-    patched, a jagged boundary that fragmented any hatch line clipped against
-    it into many small pieces - a visibly "tessellated" paint pattern for no
-    benefit, since 3 points already approximate this size of curve smoothly
-    enough for a paint-only overlay."""
+    A 4-point kite (arc start -> mid -> end -> inner point), NOT every arc vertex: all ~24
+    self-intersect at some corners, and once patched give a jagged boundary that fragments
+    hatch lines clipped against it. 3 points approximate this size of curve well enough for a
+    paint-only overlay."""
     arc = pieces["arc"]
     start, mid, end = (arc.interpolate(t, normalized=True) for t in (0.0, 0.5, 1.0))
     inward = np.array([center_ft.x - mid.x, center_ft.y - mid.y])
@@ -306,17 +281,15 @@ def build_pavement_polygon(corner_fillets: dict) -> Polygon:
 def _acute_corner_diagnosis(corner_fillets: dict, order: list[str]) -> str:
     """Explain a self-intersecting pavement ring in terms of the legs that caused it.
 
-    The corner-fillet model assumes each pair of angularly-adjacent legs meets at a
-    distinct, roundable corner - which requires the two roads' pavement envelopes to
-    be separate everywhere outside that corner. At a sharply acute junction (a Y, a
-    skewed fork) that fails: two wide roads diverging at a narrow angle overlap near
-    the junction, forming one continuous paved throat/gore rather than two roads with
-    a corner between them. The ring then folds through itself, and no corner radius
-    fixes it - the overlap is a function of the legs' widths and the angle only.
+    The corner-fillet model assumes each pair of angularly-adjacent legs meets at a distinct,
+    roundable corner, which requires the two roads' pavement envelopes to be separate
+    everywhere outside it. At a sharply acute junction (a Y, a skewed fork) two wide roads
+    diverging at a narrow angle overlap near the junction, forming one paved throat rather
+    than two roads with a corner between them, and the ring folds through itself. NO CORNER
+    RADIUS FIXES THIS - the overlap is a function of the legs' widths and the angle only.
 
-    W Broad St & Louellen St is the worked example: W Broad southwest (50 ft) and
-    Louellen west (34 ft) diverge at 43.6 degrees, so their curb envelopes overlap
-    within ~56 ft of the junction.
+    Worked example: W Broad southwest (50 ft) and Louellen west (34 ft) diverge at 43.6 deg,
+    so their curb envelopes overlap within ~56 ft of the junction.
     """
     culprits = []
     for i, name_a in enumerate(order):
@@ -324,8 +297,8 @@ def _acute_corner_diagnosis(corner_fillets: dict, order: list[str]) -> str:
         pieces = corner_fillets.get((name_a, name_b))
         if pieces is None or "error" in pieces:
             continue
-        # The fillet arc bulges toward the corner vertex; an acute corner is the one
-        # whose trimmed curbs run far past where the opposite leg's curb already is.
+        # An acute corner is the one whose trimmed curbs run far past where the opposite
+        # leg's curb already is.
         if pieces["trimmed_a"].intersects(pieces["trimmed_b"]):
             culprits.append(f"{name_a}/{name_b}")
     detail = (
@@ -344,13 +317,11 @@ def _acute_corner_diagnosis(corner_fillets: dict, order: list[str]) -> str:
 def through_street_sides(legs: dict) -> set:
     """{(leg name, side)} for the kerbs that run STRAIGHT THROUGH the junction.
 
-    Two angularly-adjacent legs more than THROUGH_STREET_ANGLE_DEG apart are one street
-    passing through, and the pair of kerbs facing away from the stem is one unbroken kerb with
-    no corner in it. Paired the way build_corner_fillets pairs them - leg A's LEFT with leg B's
-    RIGHT - so the answer is per side.
+    Paired the way build_corner_fillets pairs them - leg A's LEFT with leg B's RIGHT - so the
+    answer is per side.
 
-    Computed from the leg centerlines alone, which is what lets _apply_traced_curb_lines use it:
-    the corner fillets are not built yet at that point, and they depend on the curb lines.
+    Computed from the leg centerlines ALONE, which is what lets _apply_traced_curb_lines use
+    it: the corner fillets are not built at that point, and they depend on the curb lines.
     """
     usable = {name: leg for name, leg in legs.items() if leg.left_curb is not None}
     if len(usable) < 2:
@@ -368,21 +339,18 @@ def through_street_sides(legs: dict) -> set:
 def corner_tangent_station_ft(leg_name: str, side: str, legs: dict, corner_fillets: dict) -> float:
     """Where this kerb stops running straight and begins turning into the corner, as a station.
 
-    ONE geometric fact with two readers, which is why it lives here rather than with either of
-    them. src/geometry/daylighting.py calls it the SIDE LINE of the intersecting street, because
-    that is what R.S. 39:4-138(e) measures its 25 ft from; src/geometry/kerbs.py calls it the far
-    end of the JUNCTION'S OWN MOUTH, because that is where the kerb a marking runs beside starts
-    existing. Both are the same point - the corner fillet's tangent point - and the statute and
-    the marking rule have no business each finding it for themselves.
+    ONE geometric fact with two readers, which is why it lives here rather than with either.
+    src/geometry/daylighting.py calls it the SIDE LINE of the intersecting street, because that
+    is what R.S. 39:4-138(e) measures its 25 ft from; src/geometry/kerbs.py calls it the far end
+    of the JUNCTION'S OWN MOUTH. Same point - the corner fillet's tangent point - and the statute
+    and the marking rule must not each find it for themselves.
 
-    ZERO WHERE THE KERB RUNS STRAIGHT THROUGH, which is not a special case bolted on: a pair of
-    legs more than THROUGH_STREET_ANGLE_DEG apart is one street, their outer kerbs are one
-    unbroken kerb, and the fillet between them has no tangent point out along either leg. Reading
-    that off the fillet alone would leave it to a clamp; through_street_sides is asked directly so
-    the answer is stated rather than inferred. It is what makes MUTCD 11th ed. 3B.11(07) - a solid
-    edge line MAY continue "through that part of an intersection with no intersecting approach
-    (such as at the far side of a T-intersection)" - fall out of the geometry instead of needing a
-    rule of its own.
+    ZERO WHERE THE KERB RUNS STRAIGHT THROUGH, and through_street_sides is asked DIRECTLY rather
+    than the answer being inferred from the fillet by a clamp: legs more than
+    THROUGH_STREET_ANGLE_DEG apart are one street with one unbroken kerb and no tangent point
+    along either leg. That is what makes MUTCD 11th ed. 3B.11(07) - a solid edge line MAY
+    continue through the part of an intersection with no intersecting approach, such as the far
+    side of a T - fall out of the geometry instead of needing a rule of its own.
     """
     leg = legs.get(leg_name)
     if leg is None:
@@ -414,16 +382,14 @@ def junction_mouth_ft(leg_name: str, side: str, legs: dict, corner_fillets: dict
     the same (start, end) form src/geometry/cross_streets.py gives Blackwell Avenue's.
 
     IT ENDS AT THE CROSSWALK where the leg has one painted - `crossing_reach_ft`, how far that
-    crossing reaches along THIS kerb - because the crosswalk is where a person reads the
-    intersection as ending, and the corner outside it is the ground a painted curb extension goes
-    on. Only where nothing is painted does it fall back to the corner return's tangent point,
-    which is where the kerb starts and also the side line R.S. 39:4-138(e) measures from on
-    exactly those legs. See paint.junction_mouths_ft, which resolves the reach; this function is
-    the geometry and takes it as a number so it stays usable before any crossing is resolved.
+    crossing reaches along THIS kerb - because that is where a person reads the intersection as
+    ending, and the corner outside it is the ground a painted curb extension goes on. Only with
+    nothing painted does it fall back to the corner return's tangent point, which is also the
+    side line R.S. 39:4-138(e) measures from on those legs. The reach is resolved by
+    paint.junction_mouths_ft; taking it as a number keeps this usable before any crossing is.
 
-    None, not (0, 0), where the kerb runs straight through. An opening of zero length is a fact
-    that has to be filtered downstream by everyone who reads it; the absence of one is the same
-    fact stated once, here.
+    None, not (0, 0), where the kerb runs straight through: a zero-length opening is a fact
+    every reader then has to filter, and the absence of one is the same fact stated once, here.
     """
     if (leg_name, side) in through_street_sides(legs):
         return None

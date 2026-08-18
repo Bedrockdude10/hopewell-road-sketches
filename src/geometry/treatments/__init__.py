@@ -2,11 +2,8 @@
 DesignState. Each treatment returns a new DesignState so scenarios can be stacked
 without mutating the baseline (existing-conditions) model.
 
-WHY THIS IS A PACKAGE. It was one 2,754-line module, which is a poor unit for both readers:
-a person looking for how a bike lane decides its width read past 1,700 lines of corners and
-parking to find it, and every tool that has to load the file paid for all of it. Split by the
-thing being treated - what a treatment CHANGES about the street - rather than by mechanism,
-because that is the question anyone arrives with.
+SPLIT BY THE THING BEING TREATED - what a treatment CHANGES about the street - rather than by
+mechanism, because that is the question anyone arrives with.
 
     base       the Treatment ABC, the shared value objects, and constants more than one
                family reads. Imports nothing else here.
@@ -18,16 +15,14 @@ because that is the question anyone arrives with.
     parking    marked stalls, buffers, and the borough's restrictions
     extras     ExtraProp and the sidewalk band
 
-THE LAYERING IS base <- state <- everything else, and it is one-directional except in one
-place: DesignState reaches for SetCenterlineStyle, AddTwoWayBikeLane and
-divider_shift_toward_ft, which sit above it. Those are imported INSIDE the methods that use
-them. That is not a workaround bolted on for the split - the module already had 33
-function-local imports for exactly this reason before it was one.
+THE LAYERING IS base <- state <- everything else, one-directional except in one place:
+DesignState reaches for SetCenterlineStyle, AddTwoWayBikeLane and divider_shift_toward_ft, which
+sit above it. Those are imported INSIDE the methods that use them.
 
-EVERY PUBLIC NAME IS RE-EXPORTED HERE, so `from src.geometry.treatments import X` keeps
-working for the 38 modules that do it. That is deliberate and not a transitional shim: the
-import site should not have to know which file a treatment happens to live in, and moving one
-between modules should not be a 38-file change.
+EVERY PUBLIC NAME IS RE-EXPORTED HERE, so `from src.geometry.treatments import X` works for the
+38 modules that do it. Deliberate, not a transitional shim: an import site should not have to
+know which file a treatment lives in, and moving one between modules should not be a 38-file
+change.
 """
 
 from src.geometry.treatments.base import (BOLLARD_DEFAULT_SPACING_FT,

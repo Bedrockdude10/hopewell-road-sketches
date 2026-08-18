@@ -19,10 +19,9 @@ class RefugeIsland(Treatment):
     """A raised pedestrian refuge island splitting a leg's roadway, centered `offset_ft` from the
     intersection along the centerline.
 
-    width_ft is the island's extent in the direction pedestrians cross (i.e.
-    perpendicular to the road) - NACTO's minimum is 6 ft so a person/wheelchair
-    can wait clear of both travel directions. along_road_ft is the island's
-    length parallel to the road (how much of the crosswalk it shelters).
+    width_ft is the island's extent ACROSS the road, in the direction pedestrians cross -
+    NACTO's minimum is 6 ft, so a person or wheelchair can wait clear of both travel directions.
+    along_road_ft is its length ALONG the road: how much of the crosswalk it shelters.
     """
     offset_ft: float = 0.0
     width_ft: float = NACTO_MIN_REFUGE_ISLAND_WIDTH_FT
@@ -34,9 +33,8 @@ class RefugeIsland(Treatment):
             raise ValueError(
                 f"Refuge island width {self.width_ft} ft is below the NACTO minimum of "
                 f"{NACTO_MIN_REFUGE_ISLAND_WIDTH_FT} ft.")
-        # No along_road_ft check here: _band_across_the_road already refuses a zero-length span,
-        # and it says which treatment asked for it and that the two stations resolved to the same
-        # point - a better message than anything this constructor knows enough to write.
+        # No along_road_ft check: _band_across_the_road already refuses a zero-length span, and
+        # its message names the treatment and the leg, which this constructor cannot.
 
     def describe(self) -> str:
         return (f"RefugeIsland({self.target}, offset_ft={self.offset_ft}, "
@@ -51,11 +49,9 @@ class RefugeIsland(Treatment):
     def polygon(self, state: "DesignState") -> Polygon:
         """The ground this island occupies, measured against the design it is asked about.
 
-        Resolved here rather than frozen into state.refuge_islands when the treatment was
-        applied. Both raise_crossing and this one used to build their polygon in apply_to, which
-        made the shape depend on WHEN in a scenario the treatment ran - a design is a set of
-        decisions, not a sequence of snapshots, and every marking in this project is already
-        resolved against the final street for exactly that reason.
+        Resolved here rather than frozen in at apply time: a design is a set of decisions, not a
+        sequence of snapshots, so the shape must not depend on WHEN in a scenario the treatment
+        ran. Every marking in this project is resolved against the final street for that reason.
         """
         leg = state.legs[self.target.leg]
         return _band_across_the_road(leg.centerline, self.offset_ft - self.along_road_ft / 2,
@@ -86,20 +82,18 @@ class RaiseCrossing(Treatment):
     def polygon(self, state: "DesignState") -> Polygon:
         """The speed table's footprint, measured against the design it is asked about.
 
-        Resolved here rather than frozen into state.raised_crossings at apply time, and for this
-        treatment that is not merely tidier: the start station comes from leg_clearance_ft, which
-        reads the corner fillets, and AddCurbExtension re-cuts them. Applied before an extension
-        on the same leg, this used to keep the corner it happened to be measured against while
-        every other marking followed the kerb that moved.
+        Resolved here rather than frozen in at apply time, and here that is load-bearing: the
+        start station comes from leg_clearance_ft, which reads the corner fillets, and
+        AddCurbExtension re-cuts them. Frozen, a table applied before an extension on the same
+        leg keeps the corner it was measured against while every other marking follows the kerb.
         """
         leg = state.legs[self.target.leg]
         if leg.left_curb is None or leg.right_curb is None:
             raise ValueError(f"Leg {self.target.leg!r} has no curb lines (width unknown) - "
                               f"can't place a crossing on it.")
-        # Start beyond the curve of this leg's corner fillets, not at the
-        # intersection point itself - a crossing placed right at the corner point
-        # lands inside the curb-return curve rather than on the straight section
-        # of roadway where a real crosswalk would sit.
+        # Start beyond the corner fillets, not at the intersection point: a crossing placed at
+        # the corner point lands inside the curb-return curve rather than on the straight
+        # roadway where a real crosswalk sits.
         start = leg_clearance_ft(self.target.leg, state.legs, state.corner_fillets)
         return _band_across_the_road(
             leg.centerline, start, start + self.crossing_width_ft, leg.curb_to_curb_ft / 2,
@@ -107,18 +101,15 @@ class RaiseCrossing(Treatment):
 
     def apply_to(self, state: "DesignState", model=None) -> None:
         # Built and discarded, for the refusals only - a leg with no traced kerbs, or one whose
-        # corner return consumes its whole length (W Broad & Louellen's southwest leg: 133 ft of
-        # clearance on 130 ft of leg). Both are things the scenario author needs told.
+        # corner return consumes its whole length. Both are things the scenario author needs told.
         self.polygon(state)
 
 
 @dataclass(frozen=True)
 class UpgradeCrosswalkMarkings(Treatment):
-    """Repaint a leg's crosswalk to a more visible marking style. FHWA/NACTO both
-    rank visibility roughly lines < continental < ladder - "lines" (two thin
-    transverse boundary lines) is what most of this intersection has today;
-    upgrading to continental or ladder is a real, low-cost pedestrian-safety
-    treatment on its own, independent of any geometry change."""
+    """Repaint a leg's crosswalk to a more visible marking style. FHWA and NACTO both rank
+    visibility roughly lines < continental < ladder; "lines" is what most of this intersection
+    has today, and repainting is a low-cost treatment independent of any geometry change."""
     style: str = "continental"
 
     def __post_init__(self):
@@ -132,13 +123,10 @@ class UpgradeCrosswalkMarkings(Treatment):
 
 @dataclass(frozen=True)
 class SetCenterlineStyle(Treatment):
-    """Change what's painted down the middle of a leg: 'single_yellow_dashed'
-    (ordinary two-way marking), 'double_yellow' (solid no-passing zone), or
-    'none' (some real local streets have no centerline paint at all). Unlike
-    UpgradeCrosswalkMarkings, this isn't a visibility ranking - it's just
-    what's actually there, or a proposal's choice to change it - so any value
-    is a valid target, not just an "upgrade."
-    """
+    """Change what is painted down the middle of a leg: 'single_yellow_dashed' (ordinary two-way
+    marking), 'double_yellow' (solid no-passing zone), or 'none'. Unlike UpgradeCrosswalkMarkings
+    this is not a visibility ranking, so any value is a valid target rather than only an
+    "upgrade"."""
     style: str = DEFAULT_CENTERLINE_STYLE
 
     def __post_init__(self):
@@ -153,10 +141,8 @@ class SetCenterlineStyle(Treatment):
 def resolved_crossing_stations(model, state: DesignState) -> dict:
     """{leg name: the station its crossing is resolved to}, for treatments measured off it.
 
-    A curb extension has to cover its leg's crossing, so it needs to know where that crossing
-    is - and the answer is resolved data, not a parameter: a real OSM-surveyed position where
-    one was matched, else the geometric estimate. Reaching for it here rather than making every
-    scenario re-derive it is what keeps a bulb-out's length tied to the same crossing the
+    RESOLVED DATA, not a parameter: a real OSM-surveyed position where one was matched, else the
+    geometric estimate. One home for it keeps a bulb-out's length tied to the same crossing the
     renderers draw.
 
     Local imports for the usual cycle: src/render/crosswalks.py imports DesignState from here.
@@ -176,15 +162,12 @@ CROSSING_CONTEXT_RADIUS_M = 130
 
 @dataclass(frozen=True)
 class ShiftCrosswalk(Treatment):
-    """Shift a leg's crosswalk further from (positive) or closer to (negative)
-    the intersection, on top of whatever src/render/crosswalks.py:resolve_crosswalk_offsets
-    would otherwise resolve (a real OSM-surveyed position or the geometric
-    curve-clearance estimate) - e.g. to give a turning fire apparatus more room
-    before it encounters the crosswalk mid-turn.
+    """Shift a leg's crosswalk further from (positive) or closer to (negative) the intersection,
+    on top of whatever src/render/crosswalks.py:resolve_crosswalk_offsets resolves - e.g. to give
+    a turning fire apparatus room before it meets the crosswalk mid-turn.
 
-    Accumulates rather than replaces, so two shifts of the same leg add up - which is what a
-    dict of overrides already did, and worth stating since it is the one treatment here that is
-    not idempotent.
+    ACCUMULATES rather than replacing, so two shifts of one leg add up. Worth stating: it is the
+    one treatment here that is not idempotent.
     """
     delta_ft: float = 0.0
 
@@ -195,23 +178,21 @@ class ShiftCrosswalk(Treatment):
 def complete_centerlines(state: DesignState, style: str = "double_yellow") -> DesignState:
     """Give every leg that has no centerline paint one.
 
-    An unmarked centerline is a real gap in the street's markings, not a design preference -
-    Greenwood Ave south of Broad has none today, so nothing tells a driver where their half
-    of the road ends. Adding it is part of completing the markings, and it is exactly the
-    kind of thing a proposal should carry.
+    An unmarked centerline is a gap in the street's markings, not a design preference - Greenwood
+    Ave south of Broad has none today, so nothing tells a driver where their half of the road
+    ends.
 
-    Only legs recorded as having NOTHING are changed. A leg already marked - dashed or
-    double - is left alone: whether to upgrade a dashed line to a no-passing double is a
-    traffic-engineering judgement about sight lines, not a gap to be filled in.
+    ONLY legs recorded as having NOTHING. A leg already marked, dashed or double, is left alone:
+    upgrading a dashed line to a no-passing double is a traffic-engineering judgement about sight
+    lines, not a gap to be filled in.
     """
     new_state = state
     for leg_name in sorted(state.legs):
         if state.centerline_style(leg_name) != "none":
             continue
-        # Through the treatment rather than writing the dict, so the design records the change
-        # as a treatment like any other - a policy that edits state directly leaves
-        # state.treatments an incomplete account of what was applied. The explanation is the
-        # POLICY's, not the treatment's, so it is a note of its own.
+        # Through the treatment rather than writing state directly, or state.treatments is an
+        # incomplete account of what was applied. The explanation belongs to the POLICY, not to
+        # the treatment, so it is a note of its own.
         new_state = new_state.apply(SetCenterlineStyle(LegTarget(leg_name), style))
         new_state.notes.append(
             f"complete_centerlines({leg_name}): {style} added - the leg has no centerline "
@@ -222,20 +203,16 @@ def complete_centerlines(state: DesignState, style: str = "double_yellow") -> De
 def all_crosswalks_continental(state: DesignState) -> DesignState:
     """Repaint every marked crossing IN THE FRAME to continental.
 
-    FHWA and NACTO both rank crosswalk visibility roughly lines < continental < ladder, and
-    continental is the low-cost repaint that every proposal here starts from - so it applies
-    to all of them rather than being chosen one at a time. Existing conditions keep whatever
-    OSM's crossing:markings records; this only changes the proposal.
+    The low-cost repaint every proposal here starts from, so it applies to all of them rather
+    than being chosen one at a time. Existing conditions keep whatever OSM's crossing:markings
+    records; this only changes the proposal.
 
-    EVERY CROSSING, NOT EVERY LEG - one treatment against Everywhere() rather than one per leg.
-    This looped over `state.legs`, which is this junction's four approaches, and a frame drawn
-    at 2.5x holds ten surveyed crossings: the other six belong to Blackwell, Model and Seminary
-    Avenue, have no leg here, and were drawn from their own OSM tag whatever the proposal said.
-    Two of them are tagged `crossing:markings=lines`, so a render captioned "all crosswalks
-    continental" showed two crossings still striped as a pair of parallel lines, 260 ft from
-    four that had been upgraded. See src/geometry/targets.py:Everywhere.
+    EVERY CROSSING, NOT EVERY LEG - one treatment against Everywhere(), not one per leg. A frame
+    drawn at 2.5x holds crossings belonging to streets with no leg at this junction, and looping
+    over `state.legs` left those drawn from their own OSM tag whatever the proposal said. See
+    src/geometry/targets.py:Everywhere.
 
-    A PER-LEG UpgradeCrosswalkMarkings STILL WINS where a scenario applies one, which is what
-    makes this a default rather than an override - resolve_crosswalk_style checks the leg first.
+    A PER-LEG UpgradeCrosswalkMarkings STILL WINS, which makes this a default rather than an
+    override - resolve_crosswalk_style checks the leg first.
     """
     return state.apply(UpgradeCrosswalkMarkings(Everywhere(), "continental"))

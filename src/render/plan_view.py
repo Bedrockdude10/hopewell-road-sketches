@@ -47,11 +47,9 @@ def sidewalk_lines_ft(sidewalks: list[dict] | None) -> list[LineString]:
 def _draw(ax, geometries, boundary=None, **style) -> None:
     """Draw a group of same-styled geometries as ONE matplotlib collection.
 
-    Every draw in this module used to be `gpd.GeoSeries([one_geometry]).plot(...)`, which
-    makes a collection per geometry, and the cost of adding a collection grows with how many
-    are already on the axes. A plan view of a proposal builds ~170 of them, and measured on
-    this repo's own figures that is 2.44 s against 0.016 s for the same geometry drawn as one
-    collection per style - 156x, and it was the single largest cost in a 2D build.
+    One collection PER STYLE, never per geometry: the cost of adding a matplotlib collection
+    grows with how many are already on the axes, and a proposal builds ~170 of them - measured
+    at 2.44 s against 0.016 s, the single largest cost in a 2D build.
 
     `boundary` is the kwargs for outlining filled shapes, drawn from the same series, so a
     fill and its outline stay one pair rather than two independent draws.
@@ -79,11 +77,9 @@ def _scatter_groups(ax, points_by_style: dict) -> None:
 # this colour rather than trusting that the dispatch has a branch for them at all.
 BOLLARD_PLAN_COLOR = "darkorange"
 
-# How each prop type is marked in plan. Data rather than an if/elif chain, so every marker
-# style is one dict entry and every prop of a type can be scattered in one call - and so a
-# new prop type is a row here instead of another branch that might be forgotten (a
-# daylight-zone bollard once fell through to the generic case and came out as a goldenrod
-# triangle, drawn but not as the thing the legend said it was).
+# How each prop type is marked in plan. Data rather than an if/elif chain, so every prop of a
+# type scatters in one call and a new type is a row here rather than a branch that can be
+# forgotten and fall through to the generic marker.
 PROP_MARKERS = {
     "traffic_signal_pole":    (dict(color="black", marker="o", s=46, zorder=7),
                                dict(color="limegreen", marker="o", s=16, zorder=7)),
@@ -110,9 +106,9 @@ PROP_MARKERS = {
 # other, so the drawing has to show which is which or the gap in the paint looks like a mistake.
 # Every one of the 95 kerbs mapped here is tagged, so UNKNOWN is drawn only if that stops being
 # true - and drawn distinctly rather than as raised, because "nobody said" is not "raised".
-# Named linestyles, not dash tuples: these go through GeoSeries.plot to a LineCollection, and a
-# (offset, (on, off)) tuple there is read as per-element data - "inhomogeneous shape" from numpy
-# rather than a dashed line.
+# THE TRAP: named linestyles, not dash tuples. These go through GeoSeries.plot to a
+# LineCollection, where a (offset, (on, off)) tuple is read as per-element data - numpy raises
+# "inhomogeneous shape" rather than drawing a dashed line.
 KERB_STYLE = {
     KerbType.RAISED:  dict(color="black", linewidth=2.2, zorder=6),
     KerbType.LOWERED: dict(color="black", linewidth=1.1, linestyle="--", zorder=6),
@@ -122,10 +118,9 @@ KERB_STYLE = {
 
 
 # A driveway is PAVING, so it is drawn as paving: a filled strip under everything else, in a
-# browner grey than the roadway so it reads as private access rather than carriageway. It was a
-# thin dashed centreline, which on a drawing already carrying parcel lines, sidewalk centrelines
-# and leg centrelines was indistinguishable from them - the thing it exists to explain (the gap in
-# the markings at its mouth) needs to be visibly a surface a car drives on.
+# browner grey than the roadway so it reads as private access rather than carriageway. Not a
+# centreline - this drawing already carries three kinds of those, and the thing a driveway
+# exists to explain (the gap in the kerbside markings at its mouth) has to read as a surface.
 PAVED_STYLE = dict(color="#8a7a68", alpha=0.55, zorder=2)
 PAVED_EDGE = dict(color="#5d5044", linewidth=0.8, zorder=2)
 # A surveyed outline gets a solid edge and a widened one a dashed edge, because the difference is
@@ -212,7 +207,6 @@ PAINT_STYLE = require_every_kind({
     # sits on for the same reason the contraflow stripe is.
     markings.BIKE_LANE_SYMBOL:    dict(color="white", alpha=0.95, zorder=4),
 }, "plan_view.PAINT_STYLE")
-# Outline colour for each filled zone's own fill colour.
 # Outline colour for each filled zone's own fill colour. White outlines white: a symbol is a
 # SOLID glyph, not a hatched zone that needs a rim to read as bounded, so giving it a contrasting
 # edge would draw a border no striper paints.
@@ -225,20 +219,15 @@ def _draw_props(ax, model: IntersectionModel, state: DesignState, crosswalk_offs
                  crossings: list[dict] | None, dimension_labels: bool):
     """Draw the street furniture the 3D render will build - signals above all.
 
-    This calls the SAME src/render/props.py:build_props the export does, so the plan view
-    shows exactly the hardware Blender will place, not a second guess at it. Without
-    this, nothing in the 2D reconstruction revealed whether an intersection was
-    signalized, which matters twice over: three of these four junctions have signals and
-    one does not, and a proposal that isn't proposing new signals must not quietly render
-    them. A traffic signal appearing here that you didn't intend is now a visible error
-    rather than a surprise three phases later.
+    This calls the SAME src/render/props.py:build_props the export does, so the plan view shows
+    exactly the hardware Blender will place - a signal appearing here that nobody proposed is a
+    visible error rather than a surprise three phases later. Three of these four junctions are
+    signalized and one is not.
 
-    Bollards tagged DRAWN_BY_PAINT are skipped, because the treatment layer above already
-    drew them - LaneNarrowingBollards and ParkingBufferBollards each emit their own paint
-    pieces. The ones that are NOT so tagged - the daylight-zone posts from
-    ProtectDaylightZone - exist only as props, and skipping every bollard the
-    way this used to meant the plan view of a bollard proposal showed no bollards while the
-    3D render of the same scenario showed thirteen.
+    Bollards tagged DRAWN_BY_PAINT are skipped because the treatment layer already drew them
+    (LaneNarrowingBollards, ParkingBufferBollards emit their own paint pieces). Bollards WITHOUT
+    that tag - ProtectDaylightZone's posts - exist only as props, so skipping every bollard shows
+    none in plan while the render of the same scenario shows thirteen.
     """
     # Every traced kerb inside the frame, which is the same set the 3D export writes - see
     # src/geometry/intersection/kerb_sources.py:kerb_lines_with_tags_ft on why the drawing test is not the
@@ -300,18 +289,11 @@ def _draw_props(ax, model: IntersectionModel, state: DesignState, crosswalk_offs
 def _draw_surveyed_crossings(ax, crossings: list[dict] | None):
     """Draw each OSM crossing way as surveyed - its real endpoints, length and skew.
 
-    THE REFERENCE LINE, not the paint - and it stays a reference line even now that the paint is
-    drawn too (_draw_unmodelled_crossings below). A crossing way runs sidewalk-centreline to
-    sidewalk-centreline, so it is consistently 8-24 ft longer than the roadway it spans; behind the
-    kerb-to-kerb band, the two can be compared by eye, and where the band sticks out past the ends
-    of this line the leg's configured width is too big. That comparison is the reason this overlay
-    exists and is worth keeping.
-
-    What has changed is the CONCLUSION this docstring used to draw from that overshoot - that a
-    surveyed crossing therefore could not be painted at all. It can: trimmed at the traced kerbs it
-    crosses (src/geometry/surveyed.py:carriageway_geometry_ft), which cuts 6-22 ft off the ways at
-    Broad & Greenwood and needs no leg, so it works at the junctions this site does not model. Six
-    of the ten crossings in that frame were being dropped for want of that trim.
+    THE REFERENCE LINE, not the paint (_draw_unmodelled_crossings below draws that). A crossing
+    way runs sidewalk-centreline to sidewalk-centreline, so it is consistently 8-24 ft longer than
+    the roadway it spans; behind the kerb-to-kerb band the two can be compared by eye, and where
+    the band sticks out past the ends of this line the leg's configured width is too big. That
+    comparison is why this overlay exists.
     """
     lines = sidewalk_lines_ft(crossings)
     _draw(ax, lines, color="darkviolet", linewidth=1.0, linestyle=":", alpha=0.8, zorder=5)
@@ -323,22 +305,14 @@ def _draw_surveyed_crossings(ax, crossings: list[dict] | None):
 def _draw_unmodelled_crossings(ax, scene):
     """Paint every surveyed crossing that belongs to NO modelled leg, from its own traced way.
 
-    The network-renderer change, in the 2D view (docs/network-renderer-plan.md). These are the
-    crossings the drawing used to discard: at Broad & Greenwood framed 2.5x, 6 of the 10 inside the
-    frame, 263-420 ft out, three of them tagged as a zebra - Blackwell & Broad among them, rendered
-    as bare asphalt where its crosswalks are traced.
+    See docs/network-renderer-plan.md. Only `leg is None`: the four this junction models are
+    drawn by _draw_crosswalks from the leg's own band, including whatever a proposal restyles them
+    to, and drawing both would put two crossings 1.44-2.73 ft apart on the same ground.
 
-    Only `leg is None`. The four this junction models are drawn by _draw_crosswalks from the leg's
-    own band, including whatever a proposal restyles them to, and drawing both would put two
-    crossings 1.44-2.73 ft apart on the same ground.
-
-    Styled by SceneGeometry.surveyed_crossing_markings, NOT from each way's tags here: a proposal
-    that repaints every crossing continental has to reach these too, and this function reading the
-    tags directly is why it did not. An unrecorded crossing still gets nothing rather than the two
-    transverse lines src/render/crosswalks.py's default would invent - that rule moved with the
-    styling, into surveyed.crossing_style_in. Drawn in the same white as the modelled crosswalks:
-    on the ground they are the same paint, and colouring them differently would say the survey is
-    worth less than our reconstruction of it.
+    Styled by SceneGeometry.surveyed_crossing_markings, NOT from each way's tags here, so a
+    proposal that repaints every crossing continental reaches these too and an unrecorded crossing
+    still gets nothing rather than invented transverse lines. Drawn in the same white as the
+    modelled crosswalks: on the ground they are the same paint.
     """
     drawn = scene.surveyed_crossing_markings()
     bars = [bar for _c, crossing_bars, _l in drawn for bar in crossing_bars]
@@ -346,9 +320,8 @@ def _draw_unmodelled_crossings(ax, scene):
     if bars:
         _draw(ax, bars, facecolor="white", edgecolor="0.35", linewidth=0.4, zorder=6)
     if lines:
-        # The dark stroke goes down FIRST and slightly wider, so the white sits inside it: white on
-        # grey asphalt at a 431 ft frame is nearly invisible, and a marking a reviewer cannot see is
-        # a marking they cannot check.
+        # The dark stroke goes down FIRST and slightly wider, so the white sits inside it: white
+        # on grey asphalt at a 431 ft frame is otherwise nearly invisible.
         _draw(ax, lines, color="0.35", linewidth=2.4, zorder=5)
         _draw(ax, lines, color="white", linewidth=1.6, zorder=6)
 
@@ -367,12 +340,9 @@ def _draw_crosswalks(ax, scene: SceneGeometry, dimension_labels: bool):
     Surveyed (OSM) and estimated positions are drawn differently, following the same
     convention this view already uses for confirmed vs. estimated curb widths.
 
-    Both footprints come from `scene`, which is the point. This used to rebuild them: the
-    crossing band without the two-pass reaches the paint and the invariants use (15 sq ft
-    out at W Broad & Louellen), and the stop bar without the skew stretch
-    stop_bar_bands_ft applies (3.8 ft out on Louellen's -44 deg crossing). Both were drawn
-    in a place neither the render nor the checks agreed with, which is the one failure this
-    view exists to catch rather than commit.
+    Both footprints come from `scene` and are never rebuilt here - see src/render/scene.py.
+    Rebuilding them draws them somewhere neither the render nor the checks agree with, which is
+    the one failure this view exists to catch rather than commit.
     """
     state = scene.state
     raised = {t.target.leg for t in state.treatments_of(RaiseCrossing)}
@@ -434,11 +404,9 @@ class PlotResult:
 def draw_change_panel(fig, before: SceneMetrics, after: SceneMetrics) -> Comparison:
     """The summary block beside a before/after pair: what the proposal actually changes.
 
-    Every other number on this drawing is an INPUT - the measured street width, the stall
-    length, the corner radius. They say what is built. This says what it accomplishes, which
-    is the thing the drawing is shown in order to argue, and it was the one thing the figure
-    did not contain: two plan views and a forty-row legend, with the reader left to diff them
-    by eye.
+    Every other number on this drawing is an INPUT - measured street width, stall length, corner
+    radius - saying what is built. This says what it accomplishes, which is what the drawing is
+    shown in order to argue.
 
     Drawn in figure coordinates outside the axes, so it extends the saved image under
     bbox_inches="tight" rather than covering geometry - the same trick the legend already
@@ -475,12 +443,10 @@ def plot_design_state(ax, model: IntersectionModel, state: DesignState, title: s
     for note in signalization_conflicts(model, traffic_control):
         print(f"  NOTE: {note}")
 
-    # Always resolved, not just when a treatment needs them: the crosswalks ARE the subject
-    # of this project, so a plan view that omits them isn't a reconstruction you can check
-    # the 3D render against. Leaving them out is what let a mis-matched OSM crossing (see
-    # src/render/crosswalks.py:_match_crossings_to_legs) sit at the dead centre of E Broad &
-    # Princeton unnoticed - it was only visible in the 3D render. fetch_crossings is
-    # disk-cached per (center, radius), so the network round-trip happens once per site.
+    # Always resolved, not just when a treatment needs them: the crosswalks ARE the subject of
+    # this project, so a plan view that omits them is not a reconstruction the 3D render can be
+    # checked against - a mis-matched OSM crossing (src/render/crosswalks.py:_match_crossings_to_legs)
+    # is then visible only in the render. fetch_crossings is disk-cached per (center, radius).
     if crossings is None:
         try:
             crossings = fetch_crossings(model.center_wgs84, radius_m=BUILDING_CONTEXT_RADIUS_M)
@@ -492,10 +458,8 @@ def plot_design_state(ax, model: IntersectionModel, state: DesignState, title: s
             print(f"  WARNING: could not fetch OSM crossings ({e}) - crosswalk positions "
                   f"shown are geometric estimates, not surveyed.")
             crossings = []
-    # Once, for the whole figure: the pavement, every crossing and stop bar footprint, and
-    # the offsets/skews everything else is measured from. This function used to resolve them
-    # three times over and build the crossing bands twice from different arguments - see
-    # src/render/scene.py for what that cost.
+    # Once, for the whole figure: the pavement, every crossing and stop bar footprint, and the
+    # offsets/skews everything else is measured from. See src/render/scene.py.
     scene = SceneGeometry.resolve(model, state, crossings)
     pavement = scene.pavement
 
@@ -571,11 +535,10 @@ def plot_design_state(ax, model: IntersectionModel, state: DesignState, title: s
     props = _draw_props(ax, model, state, scene.crosswalk_offsets, traffic_control,
                          street_furniture, crossings, dimension_labels)
 
-    # Every painted marking comes from src/geometry/paint.py - the same builder the 3D
-    # export draws from and src/checks.py inspects. This block used to assemble the paint
-    # itself, in parallel with export.py doing the same, and the two had already drifted on
-    # where a parking buffer's taper starts and on whether taper fill is cut around a
-    # crossing. Both views now show the same geometry because it IS the same geometry.
+    # Every painted marking comes from src/geometry/paint.py - the same builder the 3D export
+    # draws from and src/checks.py inspects. Never assembled here in parallel; the two copies
+    # drifted on where a parking buffer's taper starts and on whether taper fill is cut around a
+    # crossing.
     #
     # props comes back extended with the bollards the paint places (see
     # SceneGeometry.build_paint_and_posts). Nothing more is drawn for them here - the loop
@@ -583,9 +546,7 @@ def plot_design_state(ax, model: IntersectionModel, state: DesignState, title: s
     # props the export will, or the check that they reach the 3D render can only fail there.
     paint, props = scene.build_paint_and_posts(props)
 
-    # All pieces of one kind in one collection. A proposal builds well over a hundred, and
-    # adding a matplotlib collection costs more the more are already there - drawn one at a
-    # time this was the single most expensive thing in a 2D build. See _draw.
+    # All pieces of one kind in one collection - see _draw.
     by_kind: dict[markings.PaintKind, list] = {}
     bollards = []
     for piece in paint:
@@ -619,9 +580,8 @@ def plot_design_state(ax, model: IntersectionModel, state: DesignState, title: s
 
     ax.set_title(title, fontsize=11)
     ax.set_aspect("equal")
-    # The frame the 3D render is pointed at as well - see src/render/frame.py for the 1.15-1.57x
-    # the two views used to disagree by, and why it is measured from the model rather than from
-    # this DesignState (a before/after pair has to share one frame).
+    # The frame the 3D render is pointed at as well, measured from the model rather than from
+    # this DesignState so a before/after pair shares one frame - see src/render/frame.py.
     xmin, xmax, ymin, ymax = junction_frame(model).bounds_ft()
     ax.set_xlim(xmin, xmax)
     ax.set_ylim(ymin, ymax)
@@ -632,12 +592,10 @@ def plot_design_state(ax, model: IntersectionModel, state: DesignState, title: s
 def _draw_centerlines(ax, scene: SceneGeometry):
     """The leg centerline (the measurement datum) and the painted centerline on top of it.
 
-    Both were missing. The datum matters because every width in this drawing - the 11 ft
-    lane, the 8 ft stall, the depth of a hatched zone - is an OFFSET FROM IT, and without it
-    drawn there is nothing to check those offsets against by eye. The painted centerline
-    matters because the 3D render draws one (blender_scene.py, from the same
-    DesignState.centerline_style this reads) and this view is supposed to show what that
-    render will show.
+    The datum matters because every width in this drawing - the 11 ft lane, the 8 ft stall, the
+    depth of a hatched zone - is an OFFSET FROM IT, so without it there is nothing to check those
+    offsets against by eye. The painted centerline matters because the render draws one
+    (blender_scene.py, from the same DesignState.centerline_style this reads).
 
     The paint starts where src/render/crosswalks.py:centerline_start_ft says, which is at the
     stop bar - the same rule the export uses, not a second copy of it.
@@ -656,8 +614,7 @@ def _draw_centerlines(ax, scene: SceneGeometry):
                                         scene.stop_bar_offsets.get(leg_name),
                                         leg_name in scene.marked_crosswalks)
         # The stripes themselves come from src/render/crosswalks.py, so this view and the render
-        # draw the same paint - see centerline_paint_ft for the up-to-4 ft they used to differ by
-        # on broad_st_east. Drawn solid whatever the style, because a dashed style now arrives as
+        # draw the same paint. Drawn solid whatever the style, because a dashed style arrives as
         # separate dash segments rather than as one line with a pattern on it.
         # A two-way bike lane on one side pushes the travel lanes off the alignment, so the
         # divider between them moves with them. None on every leg of every other scenario.
@@ -682,11 +639,10 @@ def _label_parking_legality(ax, model, state):
     and nobody has tagged it at all. The first is a restriction being marked; the other two
     are this design's own arithmetic. Only the tag distinguishes them, so the tag is drawn.
 
-    Read per STRETCH of kerb, not per leg. A restriction covering only the approach to the
-    junction is how OSM records "no parking for the first 100 ft", and a label that reduced the
-    kerb to one value could only report one end of it - which is how East Broad came to be
-    labelled "parking OK" over a kerb whose first 80 ft are tagged no_parking. See
-    src/geometry/treatments/parking.py:RestrictionSummary.
+    Read per STRETCH of kerb, not per leg. A restriction covering only the approach is how OSM
+    records "no parking for the first 100 ft", and a label reduced to one value per kerb reports
+    only one end of it - East Broad reads "parking OK" over a kerb whose first 80 ft are tagged
+    no_parking. See src/geometry/treatments/parking.py:RestrictionSummary.
     """
     from src.geometry.model import curb_point_at_station
     from src.geometry.targets import BOTH_SIDES, LegSide, LegTarget
@@ -726,12 +682,10 @@ def _label_parking_legality(ax, model, state):
                 drew = ("stalls beyond it" if at.restricted_in_part else "stalls")
             elif narrowing is not None and side in narrowing.sides:
                 # Three reasons a kerb ends up hatched, and the label may only claim the one
-                # that applies. It used to attribute every unrestricted hatched kerb to
-                # insufficient width, which on Broad St reads "only 15.0 ft spare, under a 8 ft
-                # stall" - self-contradictory, because 15 is not under 8. What is really going
-                # on there is that the borough ordinance prohibits parking where OSM carries no
-                # tag at all, so the scenario hatched it deliberately; the label cannot know
-                # which, so it stops asserting and says what it can see.
+                # that applies. Attributing every unrestricted hatched kerb to insufficient width
+                # produces "only 15.0 ft spare, under a 8 ft stall" on Broad St - 15 is not under
+                # 8; the real reason there is a borough ordinance the geometry cannot see, so the
+                # label stops asserting and reports what it can.
                 if kind == "restricted":
                     drew = "hatched"
                 elif allowance_ft < MIN_MARKED_PARKING_DEPTH_FT:
@@ -783,10 +737,9 @@ def _label_paint(ax, state, paint):
         along_ft = min(leg.centerline.length * 0.6, leg.centerline.length - 5)
         for side in narrowing.sides:
             sign = side.sign
-            # THE LANE IS MEASURED FROM THE DIVIDER, not from the alignment. Those coincide until
-            # a two-way bike lane shifts the travel lanes off it; ignoring that printed
-            # "lane 9.6 ft" next to a lane the geometry had built at 11.00, which is the number a
-            # reviewer would have taken away.
+            # THE LANE IS MEASURED FROM THE DIVIDER, not from the alignment. The two coincide
+            # until a two-way bike lane shifts the travel lanes off it, and then the label reads
+            # 9.6 ft beside a lane the geometry built at 11.00.
             lane_ft = travel_lane_width_ft(state, leg_name, str(side), narrowing.stripe_width_ft)
             # And the label belongs IN that lane, so its position takes the shift too.
             shift_ft = divider_shift_toward_ft(state, leg_name, str(side))
@@ -819,10 +772,8 @@ def _mark_violations(ax, scene: SceneGeometry, props, paint):
     roadway at (419160, 566742)" next to a red ring around that exact pad is the difference
     between one round trip and several.
 
-    Checked against `scene`, so this validates the geometry the figure above actually drew.
-    It used to re-resolve everything from `crossings` and rebuild the crossing bands without
-    the mutual-exclusion reaches, which made it a check on a third set of geometry that
-    neither the 2D view nor the 3D render used.
+    Checked against `scene`, so this validates the geometry the figure above actually drew and
+    not a third set neither view uses.
     """
     violations = scene.check(props, paint)
 

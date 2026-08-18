@@ -10,9 +10,8 @@ see this site config.yaml. Every width here is osm_derived or estimated, NOT fie
 measured, so treat the lane/parking dimensions below as a design study rather than a
 construction drawing.
 """
-from src.geometry.targets import LegSide
 from src.geometry.treatments import (all_crosswalks_continental, apply_osm_parking,
-    complete_centerlines, CORRIDOR_SIDE, DesignState, osm_derived_baseline)
+    complete_centerlines, DesignState, osm_derived_baseline)
 
 # NOTHING IN THIS FILE MAY RESTATE A STANDARD. Lane widths, stall depths, post spacing, which
 # kerb the corridor runs along - all of them are the same answer at the next junction, so they
@@ -66,63 +65,11 @@ def build_proposal_two_way_bike_lane(baseline: DesignState, model=None) -> Desig
     stand a flex post that is not in the bike lane or the travel lane, so it would be paint
     beside 30 mph traffic and the note says as much.
     """
-    from src.geometry.model import side_facing
-    from src.geometry.targets import Side
-    from src.geometry.treatments import (CONSTRAINED_TWO_WAY_BIKE_LANE_FT,
-                                          MIN_TWO_WAY_BIKE_LANE_FT, TWO_WAY_BIKE_LANE_BUFFER_FT,
-                                          AddBikeLaneBollards, AddTwoWayBikeLane,
-                                          hold_travel_lane_at_target)
+    from src.geometry.treatments import BROAD_ST_TWO_WAY_BIKEWAY
 
     if model is None:
         return baseline
     state = apply_osm_parking(baseline, model, legs=("louellen_st_west",))
     state = complete_centerlines(state)
     state = all_crosswalks_continental(state)
-    for leg_name in sorted(state.legs):
-        if "broad" not in leg_name:
-            continue
-        try:
-            side = side_facing(state.legs[leg_name], CORRIDOR_SIDE)
-        except ValueError:
-            continue
-        placed = False
-        # THE STANDARD SECTION, THEN NACTO'S CONSTRAINED ONE - and the buffer is never what gives.
-        #
-        # 32.10 ft between traced kerbs. The 10 + 3 section leaves 9.14 ft travel lanes, under
-        # NJDOT's 10 ft traffic-calming floor, so it is refused. Narrowing the BUFFER instead
-        # (10 + 2) leaves 9.64 - still short, and it would have spent the protection to buy
-        # nothing. NACTO's constrained 8 ft lane with the full 3 ft buffer leaves 10.14 ft lanes:
-        # the pinch keeps its posts, the travel lanes clear NJDOT's floor, and the corridor stays
-        # continuous through the junction.
-        #
-        # An unbuffered fallback was tried earlier and removed. It fits the kerb but leaves the
-        # opposing lane 13.02 ft with no room to narrow (TravelLanesHoldTheTarget fails the
-        # build), and an unbuffered two-way lane is paint beside traffic rather than protection.
-        for width_ft, buffer_ft, constrained in (
-                (MIN_TWO_WAY_BIKE_LANE_FT, TWO_WAY_BIKE_LANE_BUFFER_FT, False),
-                (CONSTRAINED_TWO_WAY_BIKE_LANE_FT, TWO_WAY_BIKE_LANE_BUFFER_FT, True)):
-            try:
-                state = state.apply(AddTwoWayBikeLane(LegSide(leg_name, side), width_ft=width_ft,
-                                                       buffer_ft=buffer_ft,
-                                                       constrained=constrained))
-            except ValueError as too_narrow:
-                print(f"  NOTE: {leg_name} {side} cannot take a {width_ft:.0f} ft lane with a "
-                      f"{buffer_ft:.0f} ft buffer - {too_narrow}")
-                continue
-            placed = True
-            if constrained:
-                print(f"  NOTE: {leg_name} {side} carries NACTO's CONSTRAINED {width_ft:.0f} ft "
-                      f"two-way width, not the {MIN_TWO_WAY_BIKE_LANE_FT:.0f} ft minimum. At 8 ft "
-                      f"two riders cannot pass an oncoming pair - a real cost, accepted here "
-                      f"because this junction is the corridor's pinch and the alternative is a "
-                      f"gap in the route. The full {buffer_ft:.0f} ft buffer is kept, so it stays "
-                      f"a protected lane.")
-            state = state.apply(AddBikeLaneBollards(LegSide(leg_name, side), spacing_ft=8.0))
-            state = hold_travel_lane_at_target(state, leg_name, str(Side(side).other))
-            break
-        if not placed:
-            print(f"  NOTE: {leg_name} {side} carries NO two-way lane. THIS IS WHERE THE "
-                  f"BOROUGH-LENGTH CORRIDOR BREAKS - the section fits the kerb here and fails on "
-                  f"the travel lanes, which is a different limit from the one that stops it "
-                  f"elsewhere. Riders would rejoin the carriageway through this junction.")
-    return state
+    return BROAD_ST_TWO_WAY_BIKEWAY.apply_to(state, model)

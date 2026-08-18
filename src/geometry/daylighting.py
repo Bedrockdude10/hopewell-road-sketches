@@ -1,10 +1,7 @@
 """Where a car may legally park near these intersections, and marking the rest as clear.
 
-"Daylighting" is keeping the approach to a crossing free of parked vehicles so that a driver
-and a person crossing can see each other. New Jersey has no daylighting statute by that
-name - it does it through the ordinary parking prohibitions in R.S. 39:4-138, which already
-forbid parking within 25 ft of a crosswalk. The gap between the law and the street is that
-the setback is usually unmarked, so it gets parked in anyway. Marking it is the treatment.
+"Daylighting" is keeping the approach to a crossing free of parked vehicles. New Jersey does it
+through the ordinary parking prohibitions in R.S. 39:4-138. Marking the setback is the treatment.
 
 WHAT THE LAW SAYS (R.S. 39:4-138, as amended by P.L. 2009 c.257). Parking is prohibited:
 
@@ -14,23 +11,16 @@ WHAT THE LAW SAYS (R.S. 39:4-138, as amended by P.L. 2009 c.257). Parking is pro
   (h)  within 50 ft of a "stop" sign
   (i)  within 10 ft of a fire hydrant
 
-All four are floors, and the binding one is whichever sits furthest from the junction. Two
-of them were missing here: only the crosswalk arm of (e) was applied, so the side line was
-ignored on legs with no marked crossing, and (h) and (i) were not applied at all even though
-this repo already knows where every stop sign and hydrant is from OSM.
+All four are floors, and the binding one is whichever sits furthest from the junction.
 
-WHAT A MUNICIPALITY MAY CHANGE (R.S. 39:4-138.6). Hopewell Borough may set its own
-permissible distances by ordinance, but may not permit parking within 25 ft of a crosswalk
-or side line, nor within 50 ft of a stop sign in a school zone while school is in session.
-The Borough's traffic chapter is not machine-readable here (ecode360 refuses automated
-requests), so these are the STATE figures - which is the correct default in the absence of a
-local ordinance, and for (e) is a hard floor a local ordinance cannot lower anyway. If the
-Borough has adopted something stricter, raise the numbers below; nothing here can be lowered
-without checking 39:4-138.6 first.
+WHAT A MUNICIPALITY MAY CHANGE (R.S. 39:4-138.6). Hopewell Borough may set its own distances
+by ordinance, but may not permit parking within 25 ft of a crosswalk or side line, nor within
+50 ft of a stop sign in a school zone. The Borough's traffic chapter is not machine-readable,
+so these are the STATE figures - the correct default in the absence of a local ordinance.
 
 None of this is a rendering preference. A proposal that marks a stall inside one of these
 distances is proposing something illegal, which is why check_parking_is_legal treats it as a
-scene invariant rather than a note.
+scene invariant.
 """
 from dataclasses import dataclass
 
@@ -48,9 +38,8 @@ CROSSWALK_SETBACK_WITH_BULBOUT_FT = 10.0
 SIDELINE_SETBACK_FT = 25.0
 # The clause reads "within 25 feet of the nearest crosswalk OR SIDE LINE ... or within 10
 # feet of the nearest crosswalk or side line ... if a curb extension or bulbout has been
-# constructed". The reduction applies to both arms, so a curb extension has to cut the side
-# line setback too - applying it to the crosswalk alone leaves the side line binding at 25 ft
-# and the extension buys nothing, which is not what the statute says.
+# constructed". The reduction applies to both arms - applying it to the crosswalk alone
+# leaves the side line binding at 25 ft and the extension buys nothing.
 SIDELINE_SETBACK_WITH_BULBOUT_FT = 10.0
 # R.S. 39:4-138(h).
 STOP_SIGN_SETBACK_FT = 50.0
@@ -65,8 +54,7 @@ _SETBACK_BY_PROP = {
 
 
 # How far beyond the kerb a sign or hydrant can stand and still govern the parking beside
-# it. These things sit ON the footway by definition - a hydrant 2 ft behind the kerb still
-# forbids parking at that kerb - so the test cannot be "is it in the roadway".
+# it. These things sit ON the footway by definition, so the test cannot be "is it in the roadway".
 FOOTWAY_REACH_FT = 15.0
 
 
@@ -74,15 +62,11 @@ FOOTWAY_REACH_FT = 15.0
 class NoParkingZone:
     """A stretch of one kerb where R.S. 39:4-138 forbids parking, and which clause says so.
 
-    An interval, not a start station. That distinction is the whole correction here: the
-    junction setbacks in (e) bound the near end of the leg, but (h) and (i) are RADII around
-    a point - a hydrant mid-block forbids parking for 10 ft either side of itself and leaves
-    the kerb beyond it parkable. Modelling them as "parking starts after this" pushed the
-    entire parking lane off a 130 ft leg because of a hydrant on the next block.
+    An interval, not a start station. (e) bounds the near end of the leg, but (h) and (i) are
+    RADII around a point - a hydrant mid-block forbids parking for 10 ft either side of itself.
 
-    `reason` is carried so the proposal can say why. "Parking starts at 61 ft" is
-    unreviewable; "50 ft from the stop sign per 39:4-138(h)" can be checked against the
-    statute by someone who is not reading this code.
+    `reason` is carried so the proposal can say why - "50 ft from the stop sign per 39:4-138(h)"
+    can be checked against the statute.
     """
     start_ft: float
     end_ft: float
@@ -96,20 +80,12 @@ class NoParkingZone:
 def sideline_station_ft(leg_name: str, side: str, legs: dict, corner_fillets: dict) -> float:
     """Where the intersecting street's side line crosses this leg, as a station.
 
-    The side line of the intersecting highway is that street's curb line. At a rounded
-    corner there is no single crossing point, so this takes the corner fillet's tangent
-    point - where this leg's own curb stops running straight and begins turning into the
-    corner. That point lies at or beyond the true side line (the fillet bulges outward from
-    the corner the two straight curb lines would otherwise form), so measuring from it is
-    conservative: it never places the legal setback closer to the junction than the statute
-    does.
+    The side line is the curb line; at a rounded corner this takes the corner fillet's tangent
+    point - where this leg's own curb stops running straight and begins turning. That point lies
+    at or beyond the true side line, so measuring from it is conservative.
 
-    THE POINT ITSELF IS GEOMETRY AND LIVES WITH THE GEOMETRY - see
-    src/geometry/model/corners.py:corner_tangent_station_ft. What is statutory is the READING of
-    it, which is this docstring: R.S. 39:4-138(e) measures from the side line, and the fillet's
-    tangent point is the conservative stand-in for one. src/geometry/kerbs.py reads the same
-    point for an entirely different rule (where the junction's own mouth ends), and the two
-    finding it separately is how a corner ends up in two places at once.
+    THE POINT ITSELF IS GEOMETRY and lives with src/geometry/model/corners.py:corner_tangent_station_ft.
+    What is statutory is the READING of it: R.S. 39:4-138(e) measures from the side line.
     """
     return corner_tangent_station_ft(leg_name, side, legs, corner_fillets)
 
@@ -117,12 +93,8 @@ def sideline_station_ft(leg_name: str, side: str, legs: dict, corner_fillets: di
 def _prop_station_ft(leg, side: str, position_ft, setback_ft: float) -> float | None:
     """A prop's station along this leg side, if it governs parking there at all.
 
-    Three ways it does not. Wrong side: a hydrant on the north kerb says nothing about the
-    south one. Too far laterally: a sign more than a footway's reach beyond the kerb belongs
-    to the cross street or to a property, not to this kerb. Too far along: the check that
-    was missing, and the one that mattered - a hydrant 209 ft past the end of a 130 ft leg
-    was taken as governing it, which pushed every stall off the leg. Its zone has to
-    actually reach the leg, hence the setback in the bound.
+    Three ways it does not: wrong side, too far laterally (past FOOTWAY_REACH_FT beyond the
+    kerb), or too far along (its zone does not reach the leg).
     """
     stations, offsets = station_offset_many(leg.centerline, np.asarray([position_ft], dtype=float))
     station, offset = float(stations[0]), float(offsets[0])
@@ -150,8 +122,7 @@ def no_parking_zones_ft(state, leg_name: str, side: str, crosswalk_offsets: dict
     sideline_setback = SIDELINE_SETBACK_WITH_BULBOUT_FT if bulbout else SIDELINE_SETBACK_FT
     zones = []
 
-    # (e) - the junction end of the leg. Both arms are measured, and the further one wins:
-    # the crosswalk governs where one is marked, the side line governs where none is.
+    # (e) - the junction end of the leg. Both arms are measured, and the further one wins.
     # Indexed rather than read as .offset_ft (src/render/crosswalks.py:CrosswalkOffset) so a
     # caller may hand this a plain (station, source) pair - the statutory rules below need the
     # station only, and this module deliberately depends on nothing in src/render.
@@ -170,42 +141,20 @@ def no_parking_zones_ft(state, leg_name: str, side: str, crosswalk_offsets: dict
     zones.append(NoParkingZone(0.0, end_ft, reason))
 
     # What OSM says about this kerb, per stretch of it. A mapped prohibition is a no-parking
-    # zone exactly like a statutory one - same shape of fact, same consequence for what may be
-    # marked - so it joins the list here rather than being handled separately, and everything
-    # downstream (the hatching, the stall runs, check_parking_is_legal) picks it up unchanged.
+    # zone exactly like a statutory one - same shape of fact, same consequence.
     #
-    # This is where a restriction covering only part of a leg finally lands. It has to be a span
-    # and not a flag on the side: at Broad & Greenwood, East Broad's first 79.5 ft are tagged
-    # no_parking and the rest is not, and a per-side flag can only be one or the other.
+    # This is where a restriction covering only part of a leg finally lands - it has to be a span
+    # and not a flag on the side.
     for restriction in getattr(state, "parking_restrictions", {}).get((leg_name, side), []):
         if not restriction.prohibits:
             continue
         zones.append(NoParkingZone(restriction.start_ft, restriction.end_ft,
                                     restriction.citation))
 
-    # (e) again, at EVERY OTHER intersection this leg runs across - and BOTH ARMS of it, which is
-    # the correction that took longest to land. The statute is about an intersection, not about
-    # the one the drawing is centred on, and a leg carried out with the frame crosses several:
-    # Broad St at 374 ft passes Blackwell and Model Avenue. Before any of this the markings ran
-    # straight through them, with stalls marked across the mouth of a side street; then the SIDE
-    # LINE arm arrived and the CROSSWALK arm did not, which is the same half-a-rule this module's
-    # docstring records at the junction end - "only the crosswalk arm of (e) was applied" - run
-    # backwards. A cross street with a marked zebra across our own street got the setback owed to
-    # one with nothing.
-    #
-    # THE SIDE LINE ARM is measured from the edge of the cross street's own carriageway rather
-    # than from its centreline, which is what "the side line of the intersecting street" means
-    # and what sideline_station_ft does at the junction end.
-    #
+    # (e) again, at EVERY OTHER intersection this leg runs across - and BOTH ARMS of it.
+    # THE SIDE LINE ARM is measured from the edge of the cross street's own carriageway.
     # THE CROSSWALK ARM is measured from a crosswalk that exists whether or not it is painted:
-    # N.J.S.A. 39:1-1 defines a crosswalk as one "either marked or unmarked existing at each
-    # approach of every roadway intersection". So every cross street contributes two of them,
-    # resolved on the CrossStreet itself (src/geometry/cross_streets.py) from the surveyed way
-    # where one is traced and from the measured 8.3 ft offset where none is. Since a crosswalk
-    # sits BEYOND the side line by that offset, this arm binds at essentially every intersection
-    # - which is not a surprise to be tuned away, it is what the statute says, and it is already
-    # how the junction end behaves.
-    #
+    # N.J.S.A. 39:1-1 defines one as "either marked or unmarked existing at each approach".
     # Both only on the side the street actually leaves on - a T-junction does not daylight the
     # kerb opposite it.
     for cross in getattr(state, "cross_streets", {}).get(leg_name, []):
@@ -241,11 +190,8 @@ def no_parking_zones_ft(state, leg_name: str, side: str, crosswalk_offsets: dict
 def merged_no_parking_spans_ft(zones: list[NoParkingZone]) -> list[tuple[float, float]]:
     """The zones as disjoint spans, for PAINTING.
 
-    A zone list is allowed to overlap - each entry is a separate statutory fact, and the
-    reporting and the invariant both want them individually. Paint is not: at broad_st_west
-    the hydrant's zone (18.9-38.9 ft) sits entirely inside the junction's (0-45.7 ft), and
-    hatching both painted 98 sq ft of the kerb twice. Two coincident sets of strokes is a
-    collision - z-fighting in the render, double ink on the plan.
+    A zone list is allowed to overlap - each entry is a separate statutory fact. Paint is not:
+    coincident sets of strokes cause z-fighting in the render.
     """
     spans = []
     for zone in sorted(zones, key=lambda z: z.start_ft):

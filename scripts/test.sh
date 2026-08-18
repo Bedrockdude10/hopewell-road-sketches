@@ -21,4 +21,8 @@ fi
 
 # cd so pytest.ini / rootdir resolve the same way no matter where this was invoked from.
 cd "$REPO_ROOT"
-exec "$VENV_PYTHON" -m pytest "$@"
+
+# -n auto: the suite is real geometry and matplotlib work, not startup - 128 s serially, 31 s
+# across 8 workers with identical results. It goes before "$@" so a caller can override it
+# (`./scripts/test.sh -n 0` to debug with a single process, which -x and pdb need).
+exec "$VENV_PYTHON" -m pytest -n auto "$@"

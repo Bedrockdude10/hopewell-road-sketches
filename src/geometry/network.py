@@ -40,9 +40,10 @@ from dataclasses import dataclass
 
 import numpy as np
 from shapely.geometry import LineString, Point
+from shapely.ops import substring
 
-from src.geometry.model import (Alignment, STRIP_SAMPLE_FT, curb_offsets_at_stations,
-                                curb_station_span,
+from src.geometry.model import (Alignment, STRIP_SAMPLE_FT, curb_edge_by_station,
+                                curb_offsets_at_stations, curb_station_span,
                                 frame_at, is_through_street, leg_bearing_deg, line_direction,
                                 place_in_measured_frame, station_offset_many, vertex_tangents)
 
@@ -118,6 +119,16 @@ def _joined_centerline(near, far) -> LineString:
     Both legs start AT the node and run outward, so the near one is reversed to run inward. The
     shared node appears once: _join_through_legs has already given both legs the same first point,
     so the duplicate is dropped rather than left as a zero-length segment for `project` to trip on.
+
+    EXCEPT WHERE IT HAS NOT. That function only half joins them: _blend_onto applies the shared
+    junction point as a LATERAL offset profile, taking station_offset_many's offset and discarding
+    its station, so it can slide a leg's end sideways onto the joint but never along the street. At
+    W Broad & Louellen - CR 518 turning west, CR 654 carrying on, the two NJDOT alignments ending
+    3.1 ft apart - 2.74 ft of that gap is longitudinal and survives, under a NOTE announcing that
+    the halves were joined at a shared point. So the road bridges a hole the leg model does not
+    know it has, and the far approach's stations sit that whole gap out from its leg's. Closing it
+    here would be a second opinion about where the street is; one road built once has no joint to
+    disagree about, which is the actual fix (task: retire _join_through_legs).
     """
     back = list(near.centerline.coords)[::-1]
     ahead = list(far.centerline.coords)
@@ -173,6 +184,12 @@ def roads_from_model(model) -> list[Road]:
         roads.append(Road(
             name=street,
             centerline=_joined_centerline(near, far),
+            # The NEAR leg's own station 0, which is exact for it and out by the whole unclosed
+            # gap for the far one - see _joined_centerline. No single station can be both where
+            # the two halves do not meet, and splitting the difference only moves the error onto
+            # the leg that had none: tried, and it cost 0.75 ft of width at w_broad_st_northeast
+            # station 5, where the kerb flares 0.68 ft per foot. The gap is what has to go, not
+            # the bookkeeping around it (task: retire _join_through_legs).
             node_ft=near.centerline.length,
             near_leg=near_name,
             far_leg=far_name,
@@ -185,17 +202,115 @@ def roads_from_model(model) -> list[Road]:
     return roads
 
 
+@dataclass(frozen=True)
+class Approach:
+    """One direction of one road, at one node. What a Leg NAMED, holding nothing a Leg HELD.
+
+    docs/network-model.md says "there is no Leg. Not 'a leg becomes a view' - the object goes
+    away". The word does not go away, because the thing is real: a signal head faces an approach,
+    a crosswalk crosses one, a scenario says "narrow broad_st_east". What goes away is a leg
+    OWNING geometry. This owns none. It is a name, a road, a node and a direction, and every
+    line, kerb, station and width it can be asked for is derived from the road on the spot.
+
+    THAT IS THE WHOLE POINT, and it is what kills the bug family in that document. Five bugs in
+    one session were all "config says X, the traced kerb says Y", and they were expressible only
+    because a leg held its own centreline, its own two kerb lines and its own declared width
+    beside the road's. With one geometry there is no second copy to disagree with - a question
+    asked of the approach and the same question asked of the road at that station are the same
+    arithmetic on the same line, not two answers that happen to be close.
+
+    `forward` is whether this approach runs the way the road's stations increase. A road is built
+    head-to-head from two legs, so exactly one of its two approaches runs against it, and that
+    one's left kerb is the road's right (see roads_from_model, which pairs the sides that way).
+    Getting that flip wrong reads one kerb as the other, which is a plausible-looking width that
+    is not the street's.
+    """
+    name: str
+    road: Road
+    node_ft: float
+    forward: bool
+
+    def station_of(self, approach_ft: float) -> float:
+        """Where a distance measured OUTWARD from the node falls on the road's own axis.
+
+        The translation the migration turns on: everything that says "42 ft along broad_st_east"
+        has to keep meaning the same place once the datum is the road.
+        """
+        return self.node_ft + (approach_ft if self.forward else -approach_ft)
+
+    def outward_ft(self, road_station_ft: float) -> float:
+        """The inverse: how far out from the node a road station is, along this approach.
+
+        Negative behind the node, which is a real place - the far side of the junction - and not
+        an error. A leg had no way to say it, and that is why the two-way bike lane's halves ended
+        1.28 ft apart at W Broad & Louellen until each was let to reach behind its own node.
+        """
+        return (road_station_ft - self.node_ft) * (1.0 if self.forward else -1.0)
+
+    def side_on_road(self, side: str) -> str:
+        """This approach's left/right, named as the ROAD's left/right."""
+        if self.forward:
+            return str(side)
+        return "right" if str(side) == "left" else "left"
+
+    @property
+    def span_ft(self) -> tuple[float, float]:
+        """The road stations this approach covers, low to high."""
+        return (self.node_ft, self.road.length_ft) if self.forward else (0.0, self.node_ft)
+
+    @property
+    def length_ft(self) -> float:
+        lo, hi = self.span_ft
+        return hi - lo
+
+    @property
+    def centerline(self) -> LineString:
+        """The road's own centreline over this approach's span, running OUTWARD from the node.
+
+        A view, cut on demand. Nothing caches it, and nothing may edit it: the moment an approach
+        keeps its own copy of the line, the copy can be fitted, centred or joined into
+        disagreeing with the road, which is the state this whole rework is undoing.
+        """
+        lo, hi = self.span_ft
+        cut = substring(self.road.centerline, lo, hi)
+        return cut if self.forward else LineString(list(cut.coords)[::-1])
+
+    def curb(self, side: str) -> LineString | None:
+        """This approach's kerb on one side - the ROAD's kerb, cut at the node.
+
+        Through curb_edge_by_station, so the kerb's own traced vertices are what comes back and
+        only the two ends are interpolated. Cutting it any other way would resample the
+        surveyor's line onto a grid and hand back this project's redrawing of it.
+        """
+        lo, hi = self.span_ft
+        edge = curb_edge_by_station(self.road, self.side_on_road(side), lo, hi)
+        if edge is None or len(edge) < 2:
+            return None
+        line = LineString(edge)
+        return line if self.forward else LineString(list(line.coords)[::-1])
+
+    @property
+    def alignment(self) -> Alignment:
+        """This approach as the frame reads it: a centreline and a kerb per side, outward."""
+        return Alignment(self.centerline, left_curb=self.curb("left"),
+                         right_curb=self.curb("right"))
+
+
+def approaches_of(road: Road) -> tuple[Approach, ...]:
+    """A road's two approaches at its node, named by the legs it was built from."""
+    return (Approach(road.far_leg, road, road.node_ft, forward=True),
+            Approach(road.near_leg, road, road.node_ft, forward=False))
+
+
 def road_station_of_leg_station(road: Road, leg_name: str, leg_station_ft: float) -> float:
     """Where a station measured along one LEG falls on the road's own axis.
 
-    The translation the migration turns on, and the reason it is one function: everything that
-    currently says "42 ft along broad_st_east" has to keep meaning the same place once the datum
-    is the road.
+    Kept as the name 20 call sites will reach for during the migration; the arithmetic lives on
+    Approach, so there is one translation and not two.
     """
-    if leg_name == road.far_leg:
-        return road.node_ft + leg_station_ft
-    if leg_name == road.near_leg:
-        return road.node_ft - leg_station_ft
+    for approach in approaches_of(road):
+        if approach.name == leg_name:
+            return approach.station_of(leg_station_ft)
     raise KeyError(f"{leg_name} is not one of {road.name}'s two legs "
                    f"({road.near_leg}, {road.far_leg})")
 
@@ -985,8 +1100,6 @@ def _junction_kerb_runs(pieces: list[dict], stations: np.ndarray) -> list[KerbRu
     that has two vertices and needs both. curb_edge_by_station is the existing function for
     exactly this clip.
     """
-    from src.geometry.model import curb_edge_by_station
-
     runs = []
     for piece in pieces:
         base = float(stations[piece["index"][0]])

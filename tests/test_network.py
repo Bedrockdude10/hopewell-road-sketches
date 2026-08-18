@@ -13,7 +13,8 @@ import pytest
 
 from src.geometry.model import (curb_offsets_at_stations, curb_station_span,
                                 narrowest_half_width_ft)
-from src.geometry.network import Road, road_station_of_leg_station, roads_from_model
+from src.geometry.network import (Road, approaches_of, road_station_of_leg_station,
+                                  roads_from_model)
 from tests.conftest import SITES, needs_source_data
 
 # Feet. The road resamples the same traced kerbs the leg does, so the two should agree to well
@@ -188,3 +189,86 @@ def test_a_road_goes_through_the_frame_functions_unmodified(site, site_models):
             # Signed by side, the same convention a leg's kerb reads in: left is +offset.
             assert (offsets[0] > 0) == (side == "left")
             assert narrowest_half_width_ft(road, side, span[0], span[1]) > 0
+
+
+@needs_source_data
+@pytest.mark.parametrize("site", SITES)
+def test_an_approach_reproduces_the_leg_it_replaces(site, site_models):
+    """An Approach, holding no geometry of its own, gives back the leg's.
+
+    THE CHECKPOINT FOR STEP 4, one level up from the width comparison above. An Approach is a
+    name, a road, a node and a direction; every line it can be asked for is cut out of the road
+    on demand. If those cuts reproduce the legs the junction was built from, then the loader can
+    be inverted - roads built first, approaches derived - without any consumer noticing, and the
+    legs' independent copies of the centreline and the kerbs can be deleted rather than kept in
+    sync.
+
+    Compared END TO END and by area rather than vertex by vertex: the road's centreline is the
+    two legs joined and re-cut, so the interior vertices are the same points reached by different
+    arithmetic, and a vertex-identity test would fail on float noise while missing a leg cut in
+    the wrong direction - which is the error that actually matters here.
+    """
+    model = site_models[site]
+    for road in roads_from_model(model):
+        # THE UNCLOSED GAP is the one allowance, it is a measurement rather than slack, and it
+        # falls on ONE of the two approaches. The road's node station is the near leg's own
+        # station 0 (see _joined_centerline), so the near approach must reproduce its leg exactly
+        # and the far one reaches the whole gap further back - 2.74 ft at W Broad & Louellen,
+        # where the two halves of the street do not meet, and under 0.02 ft at the other three.
+        # Asserting that asymmetry rather than splitting it is what keeps three sites tight.
+        ends = [np.asarray(model.legs[n].centerline.coords[0], dtype=float)
+                for n in (road.near_leg, road.far_leg)]
+        gap_ft = float(np.hypot(*(ends[0] - ends[1])))
+        for approach in approaches_of(road):
+            tol_ft = AGREEMENT_TOL_FT + (gap_ft if approach.name == road.far_leg else 0.0)
+            leg = model.legs[approach.name]
+            derived = approach.centerline
+            assert derived.length == pytest.approx(leg.centerline.length, abs=tol_ft)
+            for got, want in ((derived.coords[0], leg.centerline.coords[0]),
+                              (derived.coords[-1], leg.centerline.coords[-1])):
+                assert np.allclose(got, want, atol=tol_ft), (
+                    f"{road.name}/{approach.name}: the approach runs the other way from the leg - "
+                    f"station 0 has to be AT THE NODE, which is what every measurement in this "
+                    f"project is taken from")
+            derived_frame = approach.alignment
+            for side in ("left", "right"):
+                # BY OFFSET AT A STATION, not by comparing the two lines. They are the same
+                # physical kerb with different EXTENTS - a leg's curb line stops where the
+                # tracing stopped (108.9 ft on columbia_ave_west's left) or runs on behind the
+                # node into the junction (151.2 ft on a 130 ft princeton_ave_south) - so any
+                # whole-line metric measures the extents and never looks at the position. The
+                # offset at a station is also the only thing consumers ever ask for.
+                spans = [curb_station_span(frame, side)
+                         for frame in (derived_frame, leg)]
+                if any(span is None for span in spans):
+                    continue
+                lo = max(span[0] for span in spans)
+                hi = min(span[1] for span in spans)
+                if hi - lo < 1.0:
+                    continue
+                stations = np.linspace(lo, hi, 12)
+                got = curb_offsets_at_stations(derived_frame, side, stations)
+                want = curb_offsets_at_stations(leg, side, stations)
+                worst = float(np.abs(np.asarray(got) - np.asarray(want)).max())
+                assert worst < tol_ft, (
+                    f"{road.name}/{approach.name} {side}: the approach's kerb sits {worst:.2f} ft "
+                    f"off the leg's over stations {lo:.0f}-{hi:.0f} - the likeliest cause is the "
+                    f"side flip on the approach that runs backwards")
+
+
+@needs_source_data
+@pytest.mark.parametrize("site", SITES)
+def test_an_approach_can_name_a_place_behind_its_own_node(site, site_models):
+    """A negative outward distance is the far side of the junction, not an error.
+
+    A leg could not say it: its station 0 was a hard end, so a marking that had to continue past
+    the node - the two-way bike lane at W Broad & Louellen - was worked around by letting each
+    half reach behind its own leg, and the halves still finished 1.28 ft apart. On a road that
+    place has an ordinary station, and the approach can name it.
+    """
+    for road in roads_from_model(site_models[site]):
+        for approach in approaches_of(road):
+            behind = approach.station_of(-10.0)
+            assert 0 <= behind <= road.length_ft
+            assert approach.outward_ft(behind) == pytest.approx(-10.0)
+            assert approach.outward_ft(approach.station_of(25.0)) == pytest.approx(25.0)

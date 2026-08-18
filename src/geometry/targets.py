@@ -1,15 +1,10 @@
 """What a treatment is applied TO: a leg, one kerb of a leg, or a corner between two legs.
 
-These were bare strings and bare tuples - `"east"`, `("east", "left")`, `("broad_st_east",
-"greenwood_ave_north")` - keyed into twenty-three dicts on DesignState, and nothing distinguished
-them. `state.bike_lanes[("east", "north")]` was a perfectly good expression that simply never
-matched anything, and a treatment aimed at a leg the junction does not have wrote a key nobody
-read: no error, no paint, no marking in either view.
-
-So a target is a value with a type, it knows how to check that it exists in a design, and
-DesignState.apply asks it to before applying anything. The three shapes are genuinely different -
-a bike lane belongs to one kerb, a lane narrowing to a whole leg, an apron to the corner between
-two legs - which is why this is three classes rather than one with optional fields.
+These were bare strings and bare tuples keyed into twenty-three dicts on DesignState, and
+nothing distinguished them. A target is a value with a type: it knows how to check that it
+exists in a design, and DesignState.apply asks it to before applying anything. The three shapes
+are genuinely different (a bike lane belongs to one kerb, a lane narrowing to a whole leg, an
+apron to the corner between two legs), which is why this is three classes.
 """
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
@@ -19,11 +14,9 @@ from enum import StrEnum
 class Side(StrEnum):
     """Which kerb of a leg, in the leg's own frame: LEFT is the +offset side.
 
-    A StrEnum, so `Side.LEFT == "left"` and it hashes like the string - the state dicts, the
-    OSM tag keys (`parking:left`) and the traced kerb attributes (`leg.left_curb`) all keep
-    working unchanged. What it adds is that `Side("north")` raises, and that the sign
-    convention has one home: `1 if side == "left" else -1` was written out in ten places, and
-    an invariant that forgot the sign passed anything on the right-hand side of a leg.
+    A StrEnum, so `Side.LEFT == "left"` and it hashes like the string - state dicts, OSM tag
+    keys and traced kerb attributes all work unchanged. What it adds is that `Side("north")`
+    raises, and the sign convention has one home.
     """
     LEFT = "left"
     RIGHT = "right"
@@ -49,10 +42,8 @@ BOTH_SIDES: tuple[Side, Side] = (Side.LEFT, Side.RIGHT)
 class Target(ABC):
     """Somewhere in a design a treatment can be applied.
 
-    `missing_from` returns why this target does not exist in a state, or None if it does. A
-    reason rather than a bool so DesignState.apply can say what is wrong - "no leg
-    'broad_st_norht'" with the available names beside it is one round trip; a silent no-op is
-    several.
+    `missing_from` returns why this target does not exist in a state, or None if it does.
+    A reason rather than a bool so DesignState.apply can say what is wrong.
     """
 
     @abstractmethod
@@ -68,26 +59,19 @@ class Target(ABC):
 class Everywhere(Target):
     """THE WHOLE DRAWN FRAME, including the junctions this site does not model.
 
-    The other three targets name something in `state.legs`, which is this junction's own four
-    approaches - and for a treatment that moves a kerb or paints one, that is the right scope,
-    because it is the only ground the design has measurements for.
-
-    A MARKING POLICY IS NOT LIKE THAT. "Repaint every crosswalk continental" is a statement
-    about the picture, and the picture contains Blackwell Avenue, Model Avenue and Seminary
-    Avenue with six surveyed crossings between them. Applied per leg it reached four crossings
-    out of ten, so a proposal captioned "all crosswalks continental" rendered two of them as the
-    two parallel lines they are today - in the same frame, 260 ft apart, with nothing to say why.
-    That is the same "the statute is about AN intersection, not THIS one" mistake
-    src/geometry/cross_streets.py exists for, in the marking layer.
+    A MARKING POLICY IS NOT like a kerbside treatment. "Repaint every crosswalk continental" is
+    a statement about the picture, and the picture contains cross streets with surveyed crossings.
+    Applied per leg it reached four crossings out of ten, rendering two of them as the parallel
+    lines they are today - the same "the statute is about AN intersection, not THIS one" mistake
+    src/geometry/cross_streets.py exists for.
 
     Vacuously present: a frame always exists, so `missing_from` is always None. It is still a
-    Target rather than a bare flag on DesignState so a frame-wide decision is recorded as a
-    treatment like any other, and `state.treatments` stays a complete account of what was applied.
+    Target so a frame-wide decision is recorded as a treatment, and `state.treatments` stays a
+    complete account.
 
-    WHAT IT DOES NOT DO is invent paint. A crossing nobody has marked stays unmarked whatever a
-    policy says - see src/geometry/surveyed.py:crossing_style_in, which only ever RESTYLES a
-    crossing that already carries markings. Painting a crosswalk where there is none is a new
-    crossing, which MUTCD 3C.02(04) wants an engineering study for (STANDARDS.md section 2).
+    WHAT IT DOES NOT DO is invent paint. A crossing nobody has marked stays unmarked - see
+    src/geometry/surveyed.py:crossing_style_in, which only ever RESTYLES a crossing that already
+    carries markings.
     """
 
     def missing_from(self, state) -> str | None:
@@ -118,9 +102,8 @@ class LegSide(Target):
     side: Side
 
     def __post_init__(self):
-        # Coerces as well as validates: a scenario written with "left" gets the enum, and
-        # anything that is not a side of a leg is refused here rather than becoming a dict key
-        # that never matches.
+        # Coerces as well as validates: "left" gets the enum, and anything that is not a side
+        # is refused here rather than becoming a dict key that never matches.
         object.__setattr__(self, "side", Side(self.side))
 
     def missing_from(self, state) -> str | None:
@@ -144,8 +127,7 @@ class Corner(Target):
     """The corner between two legs, as build_corner_fillets keys it.
 
     Order is load-bearing and not symmetric: a corner is always (leg_a's LEFT kerb, leg_b's
-    RIGHT kerb), so Corner("a", "b") and Corner("b", "a") are different corners of the
-    junction. See src/geometry/model/corners.py:fillet_curb_corner.
+    RIGHT kerb), so Corner("a", "b") and Corner("b", "a") are different corners.
     """
     leg_a: str
     leg_b: str
@@ -169,19 +151,13 @@ class Corner(Target):
 class AcrossTheJunction(Target):
     """The GAP between one facility's two kerbs, on either side of the junction box.
 
-    Every other target names ground inside one leg's frame, and that is right for a marking
-    measured from a kerb: the leg is the only frame the offsets mean anything in. A LANE
-    EXTENSION IS NOT LIKE THAT. It is the piece of a continuous facility that lies where neither
-    leg reaches - across the mouth of the street between them - so it belongs to the pair or to
-    nothing, and a treatment aimed at either leg alone would be drawing half of it in a frame
-    that does not contain it.
+    Every other target names ground inside one leg's frame. A LANE EXTENSION is the piece of
+    a continuous facility that lies where neither leg reaches - across the mouth of the street
+    between them - so it belongs to the pair or to nothing.
 
-    BOTH SIDES ARE SPELT OUT rather than implied. Corner takes (leg_a's LEFT, leg_b's RIGHT)
-    from build_corner_fillets' pairing and that convention is load-bearing there; here the two
-    kerbs are the SAME physical kerb seen from two approaches, and which of left/right that is
-    on each comes out of model.side_facing per leg. Writing the convention down again would be
-    a second record of a fact side_facing already answers - so the sides are carried, not
-    reconstructed.
+    BOTH SIDES ARE SPELT OUT rather than implied. The two kerbs are the SAME physical kerb
+    seen from two approaches; which of left/right that is on each comes out of model.side_facing
+    per leg.
     """
     leg_a: str
     side_a: Side

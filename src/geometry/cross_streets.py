@@ -1,45 +1,28 @@
 """Where a leg crosses ANOTHER street, and what that costs the kerb.
 
-Legs are drawn as far as the frame asks now, which on Broad St is 374 ft - past Blackwell
-Avenue, past Model Avenue, past every side street on the block. The markings did not know:
-stalls were marked straight across the mouth of a cross street, and the statutory setback was
-applied only at the junction this drawing is about. Both are wrong on the ground, and R.S.
-39:4-138(e) does not say "the intersection you happen to be drawing".
+The fact needed was already fetched: `fetch_roads` pulls every `highway=*` way in range and has
+been read only for `overtaking=no`; the geometry was thrown away. This finds the crossings and
+hands them to two existing mechanisms:
 
-The fact needed to fix it was already fetched. `fetch_roads` pulls every `highway=*` way in
-range and has been read only for `overtaking=no`; the geometry - where those ways actually
-cross ours - was thrown away. So this finds the crossings and hands them to the two mechanisms
-that already exist for exactly this shape of thing:
-
-  * a NO-PARKING ZONE either side of the cross street (src/geometry/daylighting.py), which is
-    the same statutory rule the junction end already gets, applied where the statute applies;
-  * a KERB OPENING across its mouth (src/geometry/kerbs.py), which is what a driveway already
-    gets - the paint has to break over its width for the same reason. NOT because a cross street
-    IS a driveway: it is emphatically not (MUTCD 11th ed. 1C.02(113)(b), N.J.S.A. 39:1-1, and
-    kerbs.OpeningSource.is_an_intersection), and reading the two as one thing is what carried a
-    parking edge line straight across Blackwell Avenue. The MECHANISM is shared; the RULE is not.
+  * a NO-PARKING ZONE either side of the cross street (src/geometry/daylighting.py), the same
+    statutory rule the junction end already gets;
+  * a KERB OPENING across its mouth (src/geometry/kerbs.py), the same mechanism a driveway
+    already gets. NOT because a cross street IS a driveway (MUTCD 11th ed. 1C.02(113)(b),
+    N.J.S.A. 39:1-1): the MECHANISM is shared; the RULE is not.
 
 AND ITS CROSSWALKS COME WITH IT. R.S. 39:4-138(e) has two arms - 25 ft from the nearest
-crosswalk, and 25 ft from the side line - and only the side line one was applied here, so a
-junction with a marked zebra across our own street got the setback owed to a junction with
-nothing. Both arms are resolved on the CrossStreet now, because the statute measures from the
-crosswalk and finding it is a question about this street, not about parking.
+crosswalk, and 25 ft from the side line - and only the side line one was applied here.
 
-N.J.S.A. 39:1-1 is what makes that a rule rather than a per-site data question: a crosswalk is
-"that part of a highway at an intersection, EITHER MARKED OR UNMARKED EXISTING AT EACH APPROACH
-OF EVERY ROADWAY INTERSECTION". So every cross street has two of them across our leg whether or
-not a surveyor traced any paint, and CrossStreetCrosswalk carries whether this one was traced or
-placed - the setback is the same either way, and the citation is not.
+N.J.S.A. 39:1-1 defines a crosswalk as "either MARKED OR UNMARKED existing at each approach
+of every roadway intersection", so every cross street has two across our leg whether or not a
+surveyor traced any paint.
 
-WHICH SIDE. A side street joins on one side and the kerb opposite is untouched, so an opening
-on both sides would break paint that is really there. The side is read off the way's own
-geometry: which side of our centerline its vertices fall on, near the meeting. A way with
-vertices both sides is a crossroads and opens both.
+WHICH SIDE. The side is read off the way's own geometry: which side of our centerline its
+vertices fall on, near the meeting. A way with vertices both sides is a crossroads and opens both.
 
 WHAT IS NOT A CROSS STREET. A driveway and a parking aisle are already PavedSurfaces and
-already open the kerb (is_carriageway rejects them). And the junction this drawing is about is
-excluded by distance: its own arms meet at the centre, its setback is already applied from the
-side line, and reporting it twice would credit one corner with two citations.
+already open the kerb. The junction this drawing is about is excluded by distance: its arms
+meet at the centre and its setback is already applied from the side line.
 """
 from dataclasses import dataclass, replace
 
@@ -50,23 +33,11 @@ from shapely.ops import nearest_points
 from src.geometry.context_roads import assumed_width_ft, is_carriageway
 
 # THIS JUNCTION'S OWN ARMS, and the test is about the WAY rather than about distance along a leg.
-# Its arms all meet at the centre and the (e) setback is already measured from the side line there
-# (src/geometry/daylighting.py), so admitting them would double-cite one corner.
+# Its arms all meet at the centre and the (e) setback is already measured from the side line there.
 #
-# THE OLD TEST MEASURED THE WRONG THING, and it cost the school its entrance. It asked how far
-# ALONG THE LEG the meeting point was and excluded anything within 50 ft. That is true of an own
-# arm - and also of any real entrance that meets the street near the corner. Hopewell Elementary's
-# service road (way 845227293) meets Princeton Ave 45.9 ft out and was dropped by it, so no kerb
-# opened and the lane-narrowing hatching was painted straight across the drive children are
-# dropped off in. The dropped kerbs at its mouth could not rescue it either: they carry no
-# `wheelchair` tag, which kerbs.py:opens_the_kerb reads as "unspecified, does not open".
-#
-# An own arm is not merely NEAR the centre, it PASSES THROUGH it. Measured at princeton_eprospect,
-# both arm ways lie 0.0 ft from the centre while the service road lies 45.9 ft from it and the
-# nearest real side street 314 ft - so the discriminator is the WAY's own distance to the centre,
-# and the tolerance only has to cover NJDOT's alignment disagreeing with OSM's centreline. That is
-# the same disagreement JOIN_TOLERANCE_FT exists for, and it is well under the 29 ft widest corner
-# return the old constant had to clear for a reason it no longer has.
+# An own arm is not merely NEAR the centre, it PASSES THROUGH it. The discriminator is the WAY's
+# own distance to the centre, and the tolerance only has to cover NJDOT's alignment disagreeing
+# with OSM's centreline - well under the 29 ft widest corner return.
 JUNCTION_OWN_ARM_TOLERANCE_FT = 20.0
 
 # How far along the cross street to look when deciding which side of us it leaves on. Far
@@ -88,18 +59,12 @@ JOIN_TOLERANCE_FT = 20.0
 MIN_CROSS_ANGLE_DEG = 25.0
 
 # How far outside a cross street's mouth a traced crossing may sit and still be that junction's.
-# Measured: src/geometry/model/context.py:CROSSWALK_OFFSET_FROM_KERB_FT fits the 11 surveyed
-# crossings at this project's four sites to a mean 8.3 ft beyond the kerb line, sigma 2.4, worst
-# case 13.9. This is comfortably past that worst case and nowhere near the next junction down the
-# block - the closest pair of cross streets in the set (Blackwell and Model Avenue) is 130 ft
-# apart, so a crossing cannot be credited to the wrong one.
+# Measured: the surveyed crossings fit a mean 8.3 ft beyond the kerb line, sigma 2.4, worst case
+# 13.9. Comfortably past that worst case and nowhere near the next junction (130 ft apart).
 MAX_CROSSWALK_FROM_MOUTH_FT = 25.0
 
 # How far off square a traced way has to run to be a crossing OF OUR LEG rather than a crossing of
-# the cross street. The same threshold src/render/crosswalks.py:MIN_CROSSING_ANGLE_DEG picks out of
-# the same bimodal spread (true matches 82.3-89.8 deg, false ones 0.6-5.9), and it has real work to
-# do here: at Blackwell three crossings are traced, and the one running along our own kerb at
-# offset 26.5-28.2 ft is the crossing of BLACKWELL, which puts no setback on Broad St's kerb.
+# the cross street. The same threshold src/render/crosswalks.py:MIN_CROSSING_ANGLE_DEG picks.
 MIN_CROSSWALK_SQUARENESS_DEG = 30.0
 
 
@@ -121,18 +86,13 @@ def _crossing_angle_deg(leg_line: LineString, way_line: LineString, at: Point) -
 class CrossStreetCrosswalk:
     """One crosswalk across OUR leg at a cross street, as a station along our centerline.
 
-    A crosswalk and not a marked crosswalk, which is the whole reason this type exists rather
-    than the crossings simply being looked up where they are drawn. N.J.S.A. 39:1-1 defines one
-    as "either MARKED OR UNMARKED existing at each approach of every roadway intersection", so
-    the thing R.S. 39:4-138(e) measures 25 ft from is there whether or not there is paint on it,
-    and a setback that appeared only where somebody had traced a zebra would be reporting the
-    survey's coverage as if it were the law's reach.
+    N.J.S.A. 39:1-1 defines a crosswalk as "either MARKED OR UNMARKED existing at each approach
+    of every roadway intersection", so the thing R.S. 39:4-138(e) measures 25 ft from is there
+    whether or not there is paint on it.
 
-    `is_surveyed` says which of the two this is, and it changes the citation and nothing else.
-    Surveyed: the traced way's own position. Unsurveyed: CROSSWALK_OFFSET_FROM_KERB_FT beyond the
-    mouth - the same measured 8.3 ft that src/geometry/model/context.py:crosswalk_estimate_ft
-    places THIS junction's own crossings with, reused rather than re-guessed so a crosswalk at
-    Blackwell and a crosswalk at Greenwood are placed by one rule.
+    `is_surveyed` says which of the two this is. Unsurveyed: CROSSWALK_OFFSET_FROM_KERB_FT
+    beyond the mouth - the same measured 8.3 ft that places THIS junction's own crossings,
+    reused so a crosswalk at Blackwell and one at Greenwood are placed by one rule.
     """
     station_ft: float
     is_surveyed: bool
@@ -198,14 +158,8 @@ def _sides_of(leg_line: LineString, way_line: LineString, at: Point) -> frozense
 def cross_streets_from_model(model) -> dict:
     """{leg name: [CrossStreet]} for this model, RESOLVED ONCE at load.
 
-    Reads what `load_intersection_model` already worked out (IntersectionModel.cross_streets)
-    rather than deriving it again. It was derived twice - once for the kerb openings and once
-    seeding the DesignState - which is the shape src/geometry/intersection/junction.py:PavedSurface's
-    docstring is about: two consumers assembling the same geometry, free to diverge the moment
-    one of their tolerances is touched.
-
-    Falls back to computing it for a stand-in model that carries legs and no resolved field,
-    which is what the centerline-precedence tests build.
+    Reads `model.cross_streets` rather than deriving it again. Falls back to computing it for
+    a stand-in model that carries legs and no resolved field (the centerline-precedence tests).
     """
     resolved = getattr(model, "cross_streets", None)
     if resolved is not None:
@@ -219,20 +173,15 @@ def _traced_crosswalks_on(leg_line: LineString, half_width_ft: float, crossing_l
                            ) -> list[tuple[float, tuple]]:
     """(station, node ids) for every traced crossing that runs ACROSS this leg.
 
-    Resolved once for the whole leg and then handed to each cross street, rather than searched
-    per cross street: a leg carried out with the frame passes several, and re-projecting every
-    crossing way per street is the same work done n times.
+    Resolved once for the whole leg and handed to each cross street.
 
-    Two guards, and they are the two _matched_crossings uses at the modelled junction, for the
-    same reasons - stated here rather than shared because that function answers a different
-    question (which of THIS junction's four legs owns this crossing) and its 80 ft junction bound
-    would throw away every crossing this one exists to find:
+    Two guards, the same two _matched_crossings uses at the modelled junction - stated here
+    rather than shared because its 80 ft junction bound would throw away every crossing this
+    one exists to find:
 
-      * LATERALLY inside our own carriageway, plus slack for a traced kerb that flares through
-        a corner return, which is exactly where a crossing sits.
-      * SQUARE-ISH to us. Blackwell has a crossing traced along Broad St's own kerb at offset
-        26.5-28.2 ft - the crossing OF Blackwell - and it passes the lateral test comfortably.
-        It is not a crossing of Broad St and puts no setback on Broad St's kerb.
+      * LATERALLY inside our own carriageway, plus slack for a corner return.
+      * SQUARE-ISH to us - the direction test that catches a crossing of the cross street
+        running along our own kerb.
     """
     found = []
     for line, node_ids in crossing_lines:
@@ -251,14 +200,8 @@ def _traced_crosswalks_on(leg_line: LineString, half_width_ft: float, crossing_l
 def _crosswalks_of(cross: "CrossStreet", traced: list[tuple[float, tuple]]) -> tuple:
     """The crosswalks across our leg at one cross street - surveyed where traced, else placed.
 
-    ONE PER END, and the ends are decided separately. A junction routinely has a zebra on one
-    approach and nothing on the other (Blackwell has both of its traced; Model Avenue has
-    neither), and taking the estimate for both because one end was missing would throw away the
-    end somebody surveyed, which is the same mistake kerbs._mouth_from_the_tracing declines to
-    make about the mouth itself.
-
-    Nearest to the mouth wins where several qualify - the crossing governing this approach is the
-    one at it, not one further down the block that happens to be inside the window.
+    ONE PER END, decided separately: a junction routinely has a zebra on one approach and
+    nothing on the other. Nearest to the mouth wins where several qualify.
     """
     from src.geometry.model import CROSSWALK_OFFSET_FROM_KERB_FT
 
@@ -282,14 +225,8 @@ def _crosswalks_of(cross: "CrossStreet", traced: list[tuple[float, tuple]]) -> t
 def _crossing_lines_ft(center_wgs84) -> list:
     """Every traced OSM crossing near this junction, in state-plane feet. [] if none reachable.
 
-    Fetched at the same radius the crossings are DRAWN at (src/geometry/surveyed.py takes
-    CROSSING_CONTEXT_RADIUS_M through context_radius_m for exactly this reason), so a crossing
-    that is in the picture is a crossing the statute is measured from. A narrower radius here
-    would put a setback on the kerbs near the junction and none on the ones further out, which
-    reads as a drawing error rather than as a fetch bound.
-
-    Guarded like the rest of this module: no OSM reachable answers "none traced", which falls
-    every crosswalk back to the unmarked position the statute gives it anyway.
+    Fetched at the radius the crossings are DRAWN at, so a crossing in the picture is a crossing
+    the statute is measured from.
     """
     from src.geometry.intersection import to_state_plane
     from src.geometry.treatments.crossings import CROSSING_CONTEXT_RADIUS_M
@@ -313,9 +250,8 @@ def _crossing_lines_ft(center_wgs84) -> list:
 def cross_streets_ft(center_wgs84, center_ft, legs: dict) -> dict:
     """{leg name: [CrossStreet]} for every other street these legs run across.
 
-    Takes the pieces rather than a model, so `load_intersection_model` can call it while the
-    model is still being assembled - the same shape _paved_surfaces_ft has, and for the same
-    reason. Guarded: no OSM reachable answers "none" rather than raising.
+    Takes the pieces rather than a model so `load_intersection_model` can call it while the
+    model is still being assembled. Guarded: no OSM reachable answers "none" rather than raising.
     """
     from src.geometry.intersection import ROAD_CONTEXT_RADIUS_M, to_state_plane
     from src.render.frame import context_radius_m
@@ -338,11 +274,8 @@ def cross_streets_ft(center_wgs84, center_ft, legs: dict) -> dict:
                 continue
             way_line = LineString(to_state_plane(coords))
             # NOT a geometric intersection. A side street's OSM way stops on OSM's centreline for
-            # the main road, and our leg is the NJDOT alignment - the two are a few feet apart, so
-            # `intersects` is False for every real side street on the block. Measured at Broad &
-            # Greenwood, requiring a true crossing found 2 ways and both were Broad Street itself.
-            # So the test is APPROACH: a street that comes within our own carriageway is meeting
-            # us, whoever drew which centreline where.
+            # the main road, and our leg is the NJDOT alignment - the two are a few feet apart.
+            # So the test is APPROACH: a street that comes within our own carriageway is meeting us.
             reach_ft = leg.curb_to_curb_ft / 2 + JOIN_TOLERANCE_FT
             if leg.centerline.distance(way_line) > reach_ft:
                 continue

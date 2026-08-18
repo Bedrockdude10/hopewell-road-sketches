@@ -353,9 +353,21 @@ CORRIDOR_KERB_RADIUS_M = 400
 
 # How far past the outermost modelled leg the road is carried along NJDOT's alignment, and how
 # far it is allowed to be carried. The reach is TRIMMED to where the tracing stops, so the road
-# ends where the evidence does; the cap is here because a mapper traces whole blocks and an
-# uncapped reach would run the road to the borough line on the strength of one kerb way.
-CORRIDOR_EXTENSION_FT = 500.0
+# ends where the evidence does; the cap is a second bound on top of that.
+#
+# IT IS THE FETCH RADIUS, not a round number. At a flat 500 ft the cap - not the evidence - was
+# what ended Broad St, and it ended it in the wrong place: 21 of 22 kerb ways traced along the
+# street northeast of Princeton Ave on 2026-08-18 fell outside the corridor and were silently
+# not drawn, while the drawing reported the road as ending there. The original argument for a
+# round cap was that "a mapper traces whole blocks and an uncapped reach would run the road to
+# the borough line on the strength of one kerb way" - but that is what the TRIM already prevents,
+# and a mapper deliberately tracing whole blocks is now the case this has to serve rather than
+# guard against.
+#
+# CORRIDOR_KERB_RADIUS_M is the honest bound, because past it no kerb was fetched at all, so a
+# road carried further could only be running on absent evidence - which is the one thing the trim
+# cannot catch, since "no kerb fetched" and "no kerb traced" arrive here identically.
+CORRIDOR_EXTENSION_FT = CORRIDOR_KERB_RADIUS_M * 3.28084
 
 # Two traced kerb ways whose station ranges come this close are one unbroken kerb. OSM splits a
 # kerb wherever a tag changes - at every dropped kerb across a driveway - so adjacent ways share

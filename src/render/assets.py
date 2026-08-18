@@ -28,10 +28,9 @@ def _get_json(url: str) -> dict | None:
         return None
 
 
-# One manifest per slug, per process. Poly Haven's /files/<slug> response covers every
-# resolution of an asset, but this module asks for one resolution at a time - so the same
-# manifest was being fetched once per resolution (3 of every 7 requests were exact
-# duplicates within a single build_default_theme call).
+# One manifest per slug, per process: /files/<slug> covers every resolution of an asset, but
+# this module asks for one resolution at a time, so without this the same manifest is refetched
+# per resolution.
 _manifests: dict[str, dict | None] = {}
 
 
@@ -66,9 +65,8 @@ def fetch_polyhaven_texture(slug: str, resolution: str = "2k",
     texture at the given resolution. Returns {"Diffuse": path, "Rough": path,
     "nor_gl": path} or None if the asset/network is unavailable.
 
-    Checks the disk BEFORE the network. The manifest fetch used to come first, so a fully
-    cached theme still made 7 HTTPS round trips per call - asking the API to describe files
-    already sitting in output/.textures - and 3D rendering couldn't work offline at all.
+    Checks the disk BEFORE the network, so a warm cache makes no HTTPS request at all and 3D
+    rendering works offline.
     """
     dests = {map_name: _texture_dest(slug, resolution, map_name) for map_name in maps}
     if all(dest.exists() for dest in dests.values()):
@@ -98,8 +96,7 @@ def fetch_polyhaven_model(slug: str, resolution: str = "1k") -> Path | None:
     gltf_path = model_dir / f"{slug}_{resolution}.gltf"
     manifest_path = model_dir / "_manifest.json"  # marks a fully-downloaded bundle
 
-    # The completed-bundle marker is checked first now. This test already existed but sat
-    # BELOW the manifest fetch, so it saved the file downloads and nothing else.
+    # Checked before the manifest fetch, so a complete bundle costs no network at all.
     if manifest_path.exists():
         return gltf_path
 

@@ -15,6 +15,7 @@ import pytest
 
 from src.geometry.treatments import (TARGET_LANE_WIDTH_FT, BikeLane, TwoWayBikeLane,
                                       far_kerb_surplus_ft, travel_lane_divider_shift_ft)
+from tests.conftest import needs_source_data
 
 # Broad & Greenwood's east leg, measured: 21.59 ft to the north kerb, 21.67 to the south.
 NORTH_HALF_FT, SOUTH_HALF_FT = 21.59, 21.67
@@ -85,6 +86,7 @@ def test_a_section_that_leaves_no_room_for_two_travel_lanes_is_refused():
         TwoWayBikeLane(width_ft=12.0, buffer_ft=3.0, near_half_ft=17.26, far_half_ft=14.84)
 
 
+@needs_source_data
 def test_the_divider_shift_reaches_both_views(site_models):
     """The contraflow stripe and the shifted double yellow are the SAME decision reaching two
     renderers, which is the seam every marking in this project has shipped a bug at.
@@ -119,6 +121,7 @@ def test_a_lane_under_the_two_way_floor_is_refused():
                        near_half_ft=SOUTH_HALF_FT, far_half_ft=NORTH_HALF_FT)
 
 
+@needs_source_data
 def test_the_south_side_is_resolved_per_leg(site_models):
     """A corridor decision ("the south kerb") is not a leg decision ("left"). The same real kerb
     is left on one approach and right on the other, and translating it by hand is how a corridor
@@ -179,6 +182,7 @@ def _two_way_scene(site_models, site="broad_st_greenwood"):
         return model, state, scene.build_paint()
 
 
+@needs_source_data
 def test_no_flex_post_stands_in_the_bike_lane(site_models):
     """The invariant Danny asked for, asserted on the real scenario.
 
@@ -203,6 +207,7 @@ def test_no_flex_post_stands_in_the_bike_lane(site_models):
         f"in the buffer beside it")
 
 
+@needs_source_data
 def test_the_far_kerb_keeps_its_parking(site_models):
     """Hopewell Borough is car-dependent, so a corridor plan that returns no parking is not
     viable here however good it is for riders. This pins that the plan returns some.
@@ -221,6 +226,7 @@ def test_the_far_kerb_keeps_its_parking(site_models):
         "on the far kerb is the whole reason the pair of treatments belongs in one proposal")
 
 
+@needs_source_data
 def test_the_drawn_centreline_sits_on_the_divider(site_models):
     """The painted centreline must be WHERE THE DIVIDER IS, and this is checked against the
     drawn geometry rather than against the arithmetic that was supposed to produce it.
@@ -263,6 +269,7 @@ def test_the_drawn_centreline_sits_on_the_divider(site_models):
             f"away from it, so the two travel lanes are not the widths the design says")
 
 
+@needs_source_data
 def test_every_restriped_lane_holds_the_target_everywhere(site_models):
     """An 11 ft lane is the easy win, so it has to be the rule and not a per-scenario habit.
 
@@ -326,6 +333,7 @@ def test_every_restriped_lane_holds_the_target_everywhere(site_models):
                      "\n  ".join(over)
 
 
+@needs_source_data
 def test_a_two_way_design_carries_the_njdot_objection(site_models):
     """NJDOT's own guidance calls this facility unacceptable, so every design that uses it says so
     in its provenance.

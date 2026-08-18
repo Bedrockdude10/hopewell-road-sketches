@@ -704,7 +704,8 @@ def test_sampled_polylines_are_rendered_as_polylines_not_chords():
     from src.geometry.markings import CHANNELS
 
     drawn = sampled | two_point | {
-        "bike_lane_contraflow_lines", "bike_lane_surface_polygons", "corner_apron_polygons"}
+        "bike_lane_contraflow_lines", "bike_lane_surface_polygons",
+        "bike_lane_symbol_polygons", "corner_apron_polygons"}
     missing = [c.key for c in CHANNELS if c.key not in drawn]
     assert not missing, f"declared marking channel(s) never drawn in 3D: {missing}"
 

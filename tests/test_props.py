@@ -13,6 +13,7 @@ from shapely.geometry import LineString
 
 from src.geometry.model import Leg
 from src.render.props import _leg_sign_position_ft
+from tests.conftest import needs_source_data
 
 
 def a_leg(length_ft=30.0):
@@ -42,6 +43,7 @@ def test_a_sign_past_the_end_faces_the_same_way_as_one_just_inside():
     assert h_inside == pytest.approx(h_end, abs=1e-6)
 
 
+@needs_source_data
 def test_the_school_service_road_opens_the_kerb_it_meets():
     """A vehicle entrance 46 ft from the junction centre is an opening, not part of the junction.
 

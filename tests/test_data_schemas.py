@@ -21,6 +21,7 @@ import geopandas as gpd
 import pandas as pd
 import pytest
 from shapely.geometry import LineString, Point
+from tests.conftest import needs_source_data
 
 from src.sources.schemas import (DataLayerError, ParcelsSchema, RoadNetworkSchema, TaxListSchema,
                                  validate_layer)
@@ -183,6 +184,7 @@ def test_pandera_and_pydantic_cover_different_things():
     assert pandera_schemas.TaxListSchema is TaxListSchema      # module exports what it declares
 
 
+@needs_source_data
 def test_a_compound_crs_with_the_right_horizontal_datum_is_accepted():
     """MercerCountyParcels.shp is NAD83 / New Jersey (ftUS) PLUS an NAVD88 vertical axis, so its
     string form is a 20-line WKT matching no EPSG code while its horizontal projection is exactly

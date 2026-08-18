@@ -1,26 +1,11 @@
 """One resolved answer to "where is this scenario's paint", shared by every consumer.
 
-There are three consumers of that answer - the 2D plan view, the 3D export, and the scene
-invariants - and the whole premise of the plan view is that it shows what the render will
-show. So all three have to be looking at the SAME geometry. They were not:
-
-  * The plan view resolved the crosswalk offsets, skews and stop bars three times per
-    figure (once to draw, once via stop_bar_offsets_for, once in _mark_violations) and built
-    the crosswalk bands TWICE with different arguments - with the two-pass mutual-exclusion
-    reaches for the paint it drew, without them for the invariants it checked. At W Broad &
-    Louellen those two bands differ by 15 sq ft, so the 2D check validated a crossing the 2D
-    view did not draw and the 3D export did not build.
-  * The plan view's stop bar was built without the skew stretch factor that
-    stop_bar_bands_ft applies, putting the drawn bar 3.8 ft from the checked one on
-    Louellen's -44 deg crossing.
-  * tests/test_sites.py's scene_violations said in its docstring that it checked "exactly
-    what src/render/export.py and the plan view check" while making the same
-    bands-without-reaches substitution.
-
-None of those was reachable by reading any one of the four call sites, because each looked
-locally reasonable; they were only visible side by side. Resolving once and handing the
-result around is what makes the claim structurally true instead of a convention four places
-have to keep remembering.
+Three consumers read that answer - the 2D plan view, the 3D export, and the scene invariants -
+and the premise of the plan view is that it shows what the render will show. So all three must
+look at the SAME geometry. Resolving once here and handing the result around is what makes that
+claim structurally true instead of a convention four call sites have to keep remembering; each
+site looked locally reasonable while they disagreed, and the disagreements were only visible
+side by side.
 
 Nothing here decides anything new - every value still comes from the same function in
 src/render/crosswalks.py it always did. The only thing this module adds is that there is one
@@ -36,9 +21,8 @@ from src.render.crosswalks import (CROSSWALK_DEPTH_FT, crosswalk_bands_ft, cross
                                    resolve_stop_bar_offsets, stop_bar_bands_ft)
 from src.sources.osm_context import fetch_stop_lines
 
-# A bar governing this junction sits 33-67 ft out; this is generous. One constant, because
-# the export, the plan view and the tests were each naming their own and a stop bar resolved
-# at a different radius is a differently-placed stop bar.
+# A bar governing this junction sits 33-67 ft out; this is generous. ONE constant, because a
+# stop bar resolved at a different radius is a differently-placed stop bar.
 STOP_LINE_RADIUS_M = 130
 
 
@@ -46,8 +30,8 @@ STOP_LINE_RADIUS_M = 130
 class SceneGeometry:
     """Every marking position one DesignState implies, resolved once and shared.
 
-    Frozen on purpose: this is the agreed description of a scenario, and a consumer that
-    could adjust one field in passing is exactly how the three views drifted apart before.
+    Frozen on purpose: a consumer that could adjust one field in passing is how the three
+    views drift apart.
 
     `stop_bar_offsets` and `stop_bar_bands` are empty for an unsignalized junction - a stop
     bar is only drawn where the site config declares a `signals` block, the same gate
@@ -67,15 +51,9 @@ class SceneGeometry:
     stop_bar_offsets: dict           # leg -> station, signalized junctions only
     stop_bar_bands: dict             # leg -> the painted footprint
     # EVERY SURVEYED CROSSING IN THE FRAME, drawn from its own traced way - including the ones at
-    # junctions this site does not model, which the per-leg fields above cannot reach at all. Six of
-    # the ten in Broad & Greenwood's 2.5x frame, three of them a zebra.
-    #
-    # Resolved HERE rather than in each renderer, which is the whole reason this class exists: the
-    # 2D view, the 3D export and the coverage check all have to draw and audit the same crossings,
-    # and the first version of this change computed them separately in export.py and plan_view.py.
-    # That is the "two consumers assembling the same markings independently" failure this module's
-    # docstring is about, and it showed immediately - the coverage check could not see what the
-    # export drew, so it reported crossings as dropped that were on the page.
+    # junctions this site does not model, which the per-leg fields above cannot reach at all (six
+    # of the ten in Broad & Greenwood's 2.5x frame). Resolved here rather than per renderer so the
+    # coverage check audits the crossings the export actually drew.
     surveyed_crossings: tuple = ()
     # The traced kerbs the crossings above are trimmed against, kept so a consumer that wants to
     # draw them does not fetch a second, possibly different set.
@@ -142,12 +120,10 @@ class SceneGeometry:
         One list, so the 2D view, the 3D export and the coverage check draw and audit exactly the
         same geometry rather than three near-copies of it.
 
-        IN THE STYLE THE DESIGN CALLS FOR, which is what makes a proposal's crosswalk policy reach
-        these at all. They were drawn from their own OSM tag whatever the design said, so a
-        scenario that restyles every crossing to continental left the two tagged
-        `crossing:markings=lines` - Blackwell Avenue's among them - drawn as two parallel lines in
-        a frame where four others had been repainted. crossing_style_in is the rule, and it is
-        also what stops a policy painting a crossing nobody marked.
+        IN THE STYLE THE DESIGN CALLS FOR: crossing_style_in decides, not the crossing's own OSM
+        tag, or a scenario that restyles everything to continental leaves the ways tagged
+        `crossing:markings=lines` drawn as two parallel lines. It is also what stops a policy
+        painting a crossing nobody marked.
         """
         return [piece for _crossing, bars, lines in self.surveyed_crossing_markings()
                 for piece in (*bars, *lines)]
@@ -155,13 +131,9 @@ class SceneGeometry:
     def surveyed_crossing_markings(self) -> list:
         """[(crossing, bars, lines)] for every unmodelled crossing the design draws something on.
 
-        THE ONE RESOLUTION, and it had to become one before a marking policy could reach these at
-        all. Three consumers were each building this list themselves off the raw drawers -
-        plan_view._draw_unmodelled_crossings, export.export_scenario's `surveyed_crossings`, and
-        surveyed_crossing_paint here - which is the exact failure this module's docstring opens
-        with, one layer out. Adding the style to one of the three changed nothing in either
-        picture; every golden stayed green while the render still showed Blackwell Avenue striped
-        as two parallel lines.
+        THE ONE RESOLUTION, and it had to become one before a marking policy could reach these
+        at all: with three consumers each building the list off the raw drawers, styling one of
+        them changed neither picture.
 
         Per crossing rather than flattened, because the two renderers genuinely need them apart:
         the plan view strokes a line and fills a bar differently, and the export writes them to
@@ -199,10 +171,9 @@ class SceneGeometry:
     def build_paint(self, props: list[dict] | None = None) -> list:
         """Every painted marking this scenario puts down (src/geometry/paint.py).
 
-        Here rather than at each call site so the paint is always cut around the same bands
-        the crossings are drawn from, and always told which crossings are actually marked -
-        including the ones at junctions this site does not model, which are drawn from the
-        surveyed way and until now had nothing getting out of their way.
+        Here rather than at each call site so the paint is always cut around the same bands the
+        crossings are drawn from, and always told which crossings are marked - including those at
+        junctions this site does not model.
         """
         from src.geometry.paint import curbside_paint_ft
 
@@ -269,16 +240,12 @@ class SceneGeometry:
     def report_coverage(self, props: list[dict], paint: list) -> list:
         """Print, and return, the surveyed features inside the frame that the drawing does not draw.
 
-        A NOTE RATHER THAN A FAILURE, deliberately, and the distinction is the point of putting it
-        here. Two of the four layers are genuinely still dropped - kerb ramps and traffic control are
-        PROPS placed per leg, so a neighbouring junction's have nowhere to come from, the same
-        structural problem crossings had. Raising on that would make every wide render fail for a
-        reason no scenario can fix, and a check that cannot go green is a check people learn to
-        ignore. Printed, it is in front of whoever reads the build.
-
-        The crossings layer IS clean now, at all four sites and both frame scales, which is what
-        makes the rest worth printing: this is not a permanent grumble, it is three layers of which
-        one has been closed and two are named. See src/geometry/coverage.py.
+        A NOTE RATHER THAN A FAILURE, deliberately. Kerb ramps and traffic control are PROPS
+        placed per leg, so a neighbouring junction's have nowhere to come from; raising on that
+        would fail every wide render for a reason no scenario can fix, and a check that cannot go
+        green is one people learn to ignore. The crossings layer is clean at all four sites and
+        both frame scales, which is what makes the remaining two worth printing rather than a
+        permanent grumble. See src/geometry/coverage.py.
         """
         from src.geometry.coverage import coverage_gaps, describe_coverage
 

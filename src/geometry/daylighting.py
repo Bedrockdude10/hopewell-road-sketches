@@ -36,7 +36,7 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from src.geometry.model import station_offset_many
+from src.geometry.model import corner_tangent_station_ft, station_offset_many
 
 # R.S. 39:4-138(e). The headline daylighting distance.
 CROSSWALK_SETBACK_FT = 25.0
@@ -103,25 +103,15 @@ def sideline_station_ft(leg_name: str, side: str, legs: dict, corner_fillets: di
     the corner the two straight curb lines would otherwise form), so measuring from it is
     conservative: it never places the legal setback closer to the junction than the statute
     does.
+
+    THE POINT ITSELF IS GEOMETRY AND LIVES WITH THE GEOMETRY - see
+    src/geometry/model/corners.py:corner_tangent_station_ft. What is statutory is the READING of
+    it, which is this docstring: R.S. 39:4-138(e) measures from the side line, and the fillet's
+    tangent point is the conservative stand-in for one. src/geometry/kerbs.py reads the same
+    point for an entirely different rule (where the junction's own mouth ends), and the two
+    finding it separately is how a corner ends up in two places at once.
     """
-    leg = legs.get(leg_name)
-    if leg is None:
-        return 0.0
-    station = 0.0
-    for (leg_a, leg_b), pieces in corner_fillets.items():
-        if "error" in pieces:
-            continue
-        # build_corner_fillets pairs leg_a's LEFT curb with leg_b's RIGHT curb.
-        if leg_a == leg_name and side == "left":
-            tangent = pieces["trimmed_a"].coords[0]
-        elif leg_b == leg_name and side == "right":
-            tangent = pieces["trimmed_b"].coords[0]
-        else:
-            continue
-        stations, _offsets = station_offset_many(leg.centerline,
-                                                  np.asarray([tangent], dtype=float))
-        station = max(station, float(stations[0]))
-    return station
+    return corner_tangent_station_ft(leg_name, side, legs, corner_fillets)
 
 
 def _prop_station_ft(leg, side: str, position_ft, setback_ft: float) -> float | None:

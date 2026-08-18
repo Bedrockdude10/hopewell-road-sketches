@@ -61,7 +61,9 @@ from enum import StrEnum
 
 import numpy as np
 
-from src.geometry.model import curb_offsets_at_stations, station_offset_many
+from src.geometry.intersection.junction import PavedKind
+from src.geometry.model import (curb_offsets_at_stations, junction_mouth_ft,
+                                station_offset_many)
 
 
 class KerbType(StrEnum):
@@ -128,8 +130,11 @@ class OpeningSource(StrEnum):
     written.
     """
     DROPPED_KERB = "dropped_kerb"
-    DRIVEWAY = "driveway"
+    DRIVEWAY = "driveway"                # highway=service + service=driveway
+    PARKING_AISLE = "parking_aisle"      # highway=service + service=parking_aisle
+    ALLEY = "alley"                      # highway=service + service=alley
     CROSS_STREET = "cross_street"
+    JUNCTION = "junction"                # THIS junction's own mouth - see junction_mouth_ft
 
     @property
     def is_an_intersection(self) -> bool:
@@ -145,26 +150,44 @@ class OpeningSource(StrEnum):
           * N.J.S.A. 39:1-1 - an "intersection" joins "two or more highways"; a "private road or
             driveway" is one "not open to the use of the public for vehicular travel".
 
+        THE VALUES ABOVE ARE OSM'S, AND THAT IS NOT A COINCIDENCE. 1C.02(113)(b)'s own list -
+        "an alley, driveway, or site roadway" - is the same taxonomy as OSM's `service=*`, so the
+        negative arm of the rule is read straight off the tag: `service=alley`, `service=driveway`
+        and `service=parking_aisle` (a site roadway) are the three, and each is its own value here
+        rather than one collapsed DRIVEWAY, because the citation should say which one the mapper
+        recorded. Same discipline as intersection.PavedKind and KerbType, and for the same reason:
+        a reader of the exported geometry sees the tag, not a name this project made up.
+
         Everything downstream that treats a gap in the kerb differently reads THIS rather than
-        testing the source itself, so a new source (a rail crossing, a bus pad, an alley) answers
-        the question once, here, and every marking rule follows. That is not hypothetical
-        tidiness: when CROSS_STREET was added as a source it inherited every driveway rule in the
-        project silently, and the one that was wrong - a parking edge line carried across
-        Blackwell Avenue - was wrong for a year with nothing able to notice.
+        testing the source itself, so a new source answers the question once, here, and every
+        marking rule follows. That is not hypothetical tidiness: when CROSS_STREET was added as a
+        source it inherited every driveway rule in the project silently, and the one that was
+        wrong - a parking edge line carried across Blackwell Avenue - was wrong for a year with
+        nothing able to notice.
 
-        CROSS_STREET is the only affirmative case today and the other two are deliberate:
+        The two affirmative cases are the two kinds of "junction of two highways":
 
-          * DRIVEWAY is a `service=driveway` way. Not a highway; not an intersection.
-          * DROPPED_KERB is a kerb the surveyor tagged `wheelchair=no` with no tactile paving,
-            which is this borough's convention for a driveway mouth and nothing else - see the
-            module docstring's tag census. A dropped kerb tagged across a STREET's mouth would be
-            a driveway by this rule and an intersection in fact, so kerb_openings_from_model
-            resolves that overlap in favour of the cross street rather than leaving it here.
+          * CROSS_STREET is another street our leg runs across - Blackwell Avenue, Model Avenue.
+          * JUNCTION is the one the drawing is CENTRED on, and it had no rule at all until now.
+            Its mouth was handled by hand in three Treatment.paint methods instead, which is how
+            164 sq ft of daylight hatching came to be drawn inside the intersection at W Broad &
+            Louellen with every check passing (checks.NoPaintInsideTheJunction). It is not a
+            special case; it is the case the special cases were standing in for.
+
+        DROPPED_KERB is a kerb the surveyor tagged `wheelchair=no` with no tactile paving, which
+        is this borough's convention for a driveway mouth and nothing else - see the module
+        docstring's tag census. A dropped kerb tagged across a STREET's mouth would be a driveway
+        by this rule and an intersection in fact, so kerb_openings_from_model resolves that
+        overlap in favour of the cross street rather than leaving it here.
 
         The "unless … controlled by a traffic control device" arm of 1C.02(113)(b) is NOT
         implemented, and STANDARDS.md says so rather than this pretending to be the whole rule.
+        OSM could answer it - src/render/props.py:fetch_traffic_control already pulls every
+        `highway=traffic_signals` node in the frame - and the only reason it does not is that no
+        driveway at any of these five sites is signalised, so the branch would never run. A rule
+        that has never fired pins nothing; write it when there is a junction to fire it on.
         """
-        return self is OpeningSource.CROSS_STREET
+        return self in (OpeningSource.CROSS_STREET, OpeningSource.JUNCTION)
 
 
 @dataclass(frozen=True)
@@ -191,7 +214,8 @@ class KerbOpening:
     @property
     def is_surveyed_width(self) -> bool:
         """Whether the SPAN is surveyed or assumed. A dropped kerb's own extent is the width of
-        the opening; a driveway centreline has none, so DRIVEWAY_WIDTH_FT stands in for it."""
+        the opening; a service way's centreline has none, so DRIVEWAY_WIDTH_FT stands in for it,
+        and this junction's mouth is measured off the modelled corner rather than surveyed."""
         return self.source is OpeningSource.DROPPED_KERB
 
     @property
@@ -208,13 +232,28 @@ class KerbOpening:
     @property
     def citation(self) -> str:
         where = f" on way {self.way_id}" if self.way_id is not None else ""
-        if self.source is OpeningSource.DRIVEWAY:
-            return (f"OSM service=driveway{where} (mouth assumed {DRIVEWAY_WIDTH_FT:.0f} ft - a "
-                    f"centreline carries no width)")
+        if self.source in SERVICE_WAY_SOURCES:
+            return (f"OSM service={self.source.value}{where} (mouth assumed "
+                    f"{DRIVEWAY_WIDTH_FT:.0f} ft - a centreline carries no width)")
         if self.source is OpeningSource.CROSS_STREET:
             return (f"OSM intersecting street{where} (mouth is its own carriageway width, "
                     f"assumed from its highway class unless OSM records one)")
+        if self.source is OpeningSource.JUNCTION:
+            # NO OSM OBJECT, and the citation says so plainly rather than reaching for the nearest
+            # tag. OSM maps no intersection AREA - there is no way or relation whose extent is the
+            # ground inside a junction - so the one opening in this project that cannot come from
+            # a survey is this one. It comes from the corner return instead, which is the same
+            # point R.S. 39:4-138(e) is read from (src/geometry/daylighting.py:sideline_station_ft).
+            return "this junction's own corner return (src/geometry/model/corners.py)"
         return f"OSM kerb={self.kerb.value if self.kerb else 'lowered'}{where}"
+
+
+# The three OSM `service=*` values that open a kerb without being an intersection - MUTCD
+# 1C.02(113)(b)'s "an alley, driveway, or site roadway", read off the tag. Declared as a set so
+# the citation and the collection loop cannot disagree about which values are in it.
+SERVICE_WAY_SOURCES: frozenset = frozenset({
+    OpeningSource.DRIVEWAY, OpeningSource.PARKING_AISLE, OpeningSource.ALLEY,
+})
 
 
 # How far from the junction centre openings are collected. Matches the kerb radius the 3D export
@@ -296,18 +335,19 @@ def kerb_openings_from_model(model) -> dict:
         openings.setdefault((leg_name, side), []).append(
             KerbOpening(start_ft=start_ft, end_ft=end_ft, source=OpeningSource.DROPPED_KERB,
                         kerb=KerbType.from_tags(tags), way_id=way_id))
-    for leg_name, side, station_ft, way_id in _driveway_meetings(model):
+    for leg_name, side, station_ft, way_id, source in _service_way_meetings(model):
         # THE SURVEYED WIDTH WINS. Where a dropped kerb is already tagged across this mouth, its
-        # own extent is the width of the opening - measured, where a driveway centreline carries
-        # none and has to be assumed. Adding a second assumed-width opening inside a surveyed one
-        # would put a narrower guess on top of a measurement and double-count it in the report.
+        # own extent is the width of the opening - measured, where a service way's centreline
+        # carries none and has to be assumed. Adding a second assumed-width opening inside a
+        # surveyed one would put a narrower guess on top of a measurement and double-count it in
+        # the report.
         if any(o.source is OpeningSource.DROPPED_KERB and o.start_ft <= station_ft <= o.end_ft
                for o in openings.get((leg_name, side), ())):
             continue
         openings.setdefault((leg_name, side), []).append(
             KerbOpening(start_ft=max(station_ft - DRIVEWAY_WIDTH_FT / 2, 0.0),
                         end_ft=station_ft + DRIVEWAY_WIDTH_FT / 2,
-                        source=OpeningSource.DRIVEWAY, way_id=way_id))
+                        source=source, way_id=way_id))
     # A CROSS STREET opens the kerb the same way a driveway does, over its own width - it is a
     # driveway that a whole street drives out of. Legs are drawn as far as the frame asks now, so
     # Broad St runs across Blackwell and Model Avenue, and the markings were being painted
@@ -353,29 +393,62 @@ def kerb_openings_from_model(model) -> dict:
                 openings.setdefault((leg_name, side), []).append(
                     KerbOpening(start_ft=start_ft, end_ft=end_ft,
                                 source=OpeningSource.CROSS_STREET, way_id=cross.way_id))
+    # ...AND THIS JUNCTION, which is an intersecting approach like every one above and was the
+    # only one with no opening. Every other street a leg crosses got a KerbOpening and one table
+    # decided what each marking did at it; the junction the drawing is CENTRED on was handled by
+    # hand in three Treatment.paint methods instead, and what kept paint out of its corners was a
+    # mean-station test that a skewed crossing defeats - 164 sq ft of daylight hatching drawn
+    # inside the intersection at W Broad & Louellen, with every check passing. See
+    # checks.NoPaintInsideTheJunction, and src/geometry/model/corners.py:junction_mouth_ft for why
+    # a kerb that runs straight through has no mouth and so needs no exception written for it.
+    #
+    # LAST, so the cross-street rule above has already run: a driveway inside a street's mouth is
+    # swallowed by it, and the same must not then happen to the street on account of the junction
+    # - which it cannot, because a cross street is 130 ft or more out and a junction mouth ends at
+    # the corner return, 50 ft in at the widest of these sites.
+    for leg_name in model.legs:
+        for side in ("left", "right"):
+            mouth = junction_mouth_ft(leg_name, side, model.legs, model.corner_fillets)
+            if mouth is None:
+                continue
+            openings.setdefault((leg_name, side), []).append(
+                KerbOpening(start_ft=mouth[0], end_ft=mouth[1], source=OpeningSource.JUNCTION))
     for key in openings:
         openings[key].sort(key=lambda o: o.start_ft)
     return openings
 
 
-def _driveway_meetings(model) -> list[tuple[str, str, float, int | None]]:
-    """(leg, side, station, way id) wherever a mapped driveway reaches a modelled kerb.
+def _service_way_meetings(model) -> list[tuple[str, str, float, int | None, OpeningSource]]:
+    """(leg, side, station, way id, source) wherever a mapped SERVICE WAY reaches a modelled kerb.
 
     The SECOND signal, read for the reason the module docstring gives: a driveway drawn without
     its kerb tagged is still a driveway, and reading only the kerb left the markings running
     straight across it.
 
-    Which kerb it meets is decided by distance to the kerb LINE rather than by the driveway's own
-    direction, because a driveway is drawn from the property to the road and its last segment is
-    not reliably square to anything. The station is where it lands on the leg's centreline, taken
-    from the point on the KERB nearest the driveway - not the driveway's own endpoint, which a
-    mapper may have stopped short of or run past the kerb.
+    ALL THREE OF MUTCD 1C.02(113)(b)'s NON-INTERSECTIONS, not just the driveways. A parking
+    aisle meeting the street is a site roadway and opens the kerb exactly as a driveway does;
+    IntersectionModel.driveways filtered it out on the grounds that "an aisle inside [a mapped
+    lot] reaches the street through a driveway that is mapped separately", which is true of the
+    aisles inside a lot and says nothing about one that meets the street itself. So the markings
+    ran unbroken across those. Which value it was is carried through rather than flattened to
+    DRIVEWAY, because the citation should name the tag the mapper actually wrote.
+
+    Which kerb it meets is decided by distance to the kerb LINE rather than by the way's own
+    direction, because a service way is drawn from the property to the road and its last segment
+    is not reliably square to anything. The station is where it lands on the leg's centreline,
+    taken from the point on the KERB nearest the way - not the way's own endpoint, which a mapper
+    may have stopped short of or run past the kerb.
     """
     from shapely.ops import nearest_points
 
     meetings = []
-    for drive in getattr(model, "driveways", ()):
+    for drive in getattr(model, "site_roadways", ()):
         line = drive.line
+        if line is None or line.is_empty:
+            continue
+        source = _SERVICE_SOURCE_BY_KIND.get(drive.kind)
+        if source is None:
+            continue
         best = None
         for leg_name, leg in model.legs.items():
             for side in ("left", "right"):
@@ -393,8 +466,19 @@ def _driveway_meetings(model) -> list[tuple[str, str, float, int | None]]:
                     best = (gap_ft, leg_name, side, station_ft)
         if best is not None:
             _gap, leg_name, side, station_ft = best
-            meetings.append((leg_name, side, station_ft, drive.way_id))
+            meetings.append((leg_name, side, station_ft, drive.way_id, source))
     return meetings
+
+
+# OSM's `service=*` value, kept as the PavedKind it was fetched as - see
+# src/geometry/intersection/junction.py:PavedKind, which is the same StrEnum discipline one layer
+# up. A PARKING_LOT is an area behind a building and crosses no kerb of ours; a ROADWAY is a
+# street, and a street that meets a leg is a CROSS_STREET resolved by cross_streets.py, not a
+# service way.
+_SERVICE_SOURCE_BY_KIND = {
+    PavedKind.DRIVEWAY: OpeningSource.DRIVEWAY,
+    PavedKind.PARKING_AISLE: OpeningSource.PARKING_AISLE,
+}
 
 
 def _kerb_coverage_outside_openings(model) -> dict:

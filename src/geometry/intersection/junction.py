@@ -62,11 +62,23 @@ class IntersectionModel:
     cross_streets: dict = field(default_factory=dict)
 
     @property
-    def driveways(self) -> tuple:
-        """Just the driveways - what opens a kerb. A parking lot behind a building crosses none of
-        ours, and an aisle inside one reaches the street through a driveway that is mapped
-        separately, so neither may put a gap in a marking."""
-        return tuple(s for s in self.paved_surfaces if s.kind == PavedKind.DRIVEWAY)
+    def site_roadways(self) -> tuple:
+        """The LINEAR minor carriageways - what opens a kerb where one of them meets it.
+
+        MUTCD 11th ed. 1C.02(113)(b)'s own list is "an alley, driveway, or site roadway", which is
+        the same taxonomy OSM writes as `service=*`, so this is that list read off the tag: a
+        driveway and a parking aisle both open a kerb and neither is an intersection
+        (src/geometry/kerbs.py:OpeningSource.is_an_intersection). A PARKING_LOT is an area behind
+        a building and crosses no kerb of ours; a ROADWAY is a street, and a street meeting a leg
+        is resolved as a CrossStreet, which is the affirmative arm of the same clause.
+
+        This was `driveways`, aisles excluded, on the grounds that "an aisle inside [a mapped lot]
+        reaches the street through a driveway that is mapped separately". True of the aisles
+        inside a lot - 6 of the borough's 20 - and it says nothing about one that meets the street
+        itself, whose mouth had no opening and whose markings ran straight across it.
+        """
+        return tuple(s for s in self.paved_surfaces
+                     if s.kind in (PavedKind.DRIVEWAY, PavedKind.PARKING_AISLE))
 
     def parking_restriction_spans(self, leg_name: str) -> list[tuple]:
         """[(start_ft, end_ft, {"left": value, "right": value}, way_id)] in the LEG's frame.

@@ -223,48 +223,188 @@ BOLLARD = _kind("bollard", Role.OBJECT)
 
 KINDS: dict[str, PaintKind] = dict(_REGISTRY)
 
-# THE LINES THAT BOUND A HATCHED ZONE, as opposed to the ones that mark a lane or a parking stall.
-# The distinction decides how each ends at a driveway, and it is not derivable from the role - both
-# groups are LINEs. A zone's edge line is part of the zone: when the hatching sweeps away from a
-# driveway mouth on its fillet (see paint.py:kerb_opening_bands) this line has to sweep with it, or
-# it runs straight on to the mouth with no zone behind it and the fillet's own rim cuts diagonally
-# across it - which in the render came out as a hook and a Y where the two disagreed.
+# --------------------------------------------------------------------------------------
+# WHAT EVERY MARKING DOES WHERE A VEHICLE CROSSES THE KERB.
 #
-# A bike lane's edge line is the opposite case and stays out of this set: the lane crosses the
-# entrance, so its line stops at the mouth and continues across as a dotted extension. A stall
-# divider likewise belongs to the parking lane, which simply ends.
-ZONE_BOUNDARY_LINES: frozenset = frozenset({
-    LANE_EDGE_LINE, TAPER_LINE, BUFFER_EDGE_LINE, DAYLIGHT_EDGE_LINE, ZONE_END_LINE,
-})
+# One table, because it is one question. A driveway, a parking aisle, a side street and the
+# junction this drawing is centred on are all the same event - src/geometry/kerbs.py:KerbOpening -
+# and every marking has exactly one answer for each of the two KINDS of event that MUTCD
+# distinguishes. Which kind a given gap is, is kerbs.OpeningSource.is_an_intersection's answer and
+# nothing else's; what the marking then does is this table's and nothing else's.
+#
+# IT WAS FOUR PLACES. Membership of ZONE_BOUNDARY_LINES decided whether a line followed its zone's
+# fillet; membership of LINES_UNBROKEN_BY_A_DRIVEWAY decided whether it was cut at a driveway at
+# all; whether a marking carried a dotted extension was decided by whether its treatment
+# remembered to call PaintContext.emit_across_opening, which only the bikeways did; and what
+# happened at the junction's own mouth was a `marked` / `straight_through` / else branch copied
+# into LaneNarrowing.paint, MarkedParking.paint and AddBikeLane.paint. Three of those four are not
+# declarations at all - they are the absence of one - and the fourth was two sets that had to be
+# read together to predict anything. A marking added today had to be remembered in four places to
+# behave, and the failure mode of forgetting was silence.
+# --------------------------------------------------------------------------------------
 
-# Markings that are the EDGE OF THE TRAVELLED WAY: they run unbroken past a DRIVEWAY, and are
-# discontinued across an INTERSECTING APPROACH. Two rules, one definition between them, and the
-# name says only the half that is about this set's membership - which of the two a given gap gets
-# is kerbs.OpeningSource.is_an_intersection's answer, applied in paint.KerbOpenings.against.
-#
-# MUTCD 11th ed. Section 3B.11, "Application of Pavement Markings through Intersections or
-# Interchanges" (STANDARDS.md section 2 quotes both in full):
-#
-#   (08) Guidance  edge line markings SHOULD BE DISCONTINUED across intersecting approaches
-#   (09) Guidance  driveways that DO NOT meet the definition of an intersection (Section 1C.02)
-#                  SHOULD HAVE edge line markings MAINTAINED across the intersecting approach
-#
-# The reason for (09) is what the line MEANS - it marks where the running lane ends, and that
-# does not stop being true because someone can turn in. The reason for (08) is the same sentence
-# read the other way: at an intersection the running lane genuinely does end, because the ground
-# beyond it is another street's.
-#
-# (Cited as Section 3B.07 here until 2026-08-17, from the 2009 numbering. In the 11th edition
-# 3B.07 is "White Lane Line Markings for Non-Continuing Lanes" and says nothing about any of
-# this; the counterpart to 3B.11 is 3B.09(07).)
-#
-# Only the PARKING edge line is here, and the omissions are deliberate. LANE_EDGE_LINE and
-# BUFFER_EDGE_LINE bound a hatched zone as well as the lane, and a zone that sweeps away on
-# its run-out while its own boundary line carries straight on is the hook-and-Y that
-# KerbOpenings.against describes - those follow their zone. Behind a parking edge line there
-# are only stalls, which stop at a driveway because a stall there is a space you cannot park
-# in; the line in front of them is a different statement and carries on.
-LINES_UNBROKEN_BY_A_DRIVEWAY: frozenset = frozenset({PARKING_EDGE_LINE})
+class AtAnOpening(Enum):
+    """What one marking does where a vehicle crosses the kerb it runs beside.
+
+    CARRIED   straight past, unbroken. The marking's meaning does not stop being true because
+              somebody can turn across it - MUTCD 11th ed. 3B.11(09) for an edge line at a
+              driveway.
+    DOTTED    stops at the mouth and continues across it as a dotted extension. The lane still
+              runs here, and here is where it is crossed - MUTCD 3B.11(05) and 9C.04 for a
+              bicycle lane. `dotted_as` names the kind the dashes are laid in, because a broken
+              line is a different instruction from the solid one it continues.
+    FILLETED  the marking is part of a hatched zone, and the zone sweeps away from the mouth on
+              its run-out rather than stopping square. Only ever produces a fillet at a DRIVEWAY,
+              because the fillet models an apron's flare and a street mouth's flare is its corner
+              return - see paint.kerb_opening_bands. At an intersection it is STOPPED by
+              construction, which is why the two are one value and not two.
+    STOPPED   ends square at the mouth, with nothing carried across.
+    """
+    CARRIED = "carried"
+    DOTTED = "dotted"
+    FILLETED = "filleted"
+    STOPPED = "stopped"
+
+
+@dataclass(frozen=True)
+class OpeningRule:
+    """One row: what a marking does at a driveway, and what it does at an intersecting approach.
+
+    Two columns and not one, because MUTCD states them a paragraph apart, in opposite directions,
+    off the same definition (STANDARDS.md section 2). Section 3B.11, "Application of Pavement
+    Markings through Intersections or Interchanges":
+
+        (08) Guidance   edge line markings SHOULD BE DISCONTINUED across intersecting approaches
+                        at intersections or interchanges
+        (09) Guidance   driveways that DO NOT meet the definition of an intersection (see
+                        Section 1C.02) SHOULD HAVE edge line markings MAINTAINED across the
+                        intersecting approach of the driveway
+
+    The reason for (09) is what the line MEANS - it marks where the running lane ends, and that
+    does not stop being true because someone can turn in. The reason for (08) is the same
+    sentence read the other way: at an intersection the running lane genuinely does end, because
+    the ground beyond it is another street's.
+
+    (Cited as Section 3B.07 here until 2026-08-17, from the 2009 numbering. In the 11th edition
+    3B.07 is "White Lane Line Markings for Non-Continuing Lanes" and says nothing about any of
+    this; the counterpart to 3B.11 is 3B.09(07).)
+
+    `why` is the clause, per row, because a table of enum values is unreviewable. Somebody
+    checking this against the manual needs to see which sentence each cell came from without
+    reading the code that applies it.
+    """
+    at_a_driveway: AtAnOpening
+    at_an_intersection: AtAnOpening
+    dotted_as: "PaintKind | None" = None
+    why: str = ""
+
+    def __post_init__(self):
+        wants_dashes = AtAnOpening.DOTTED in (self.at_a_driveway, self.at_an_intersection)
+        if wants_dashes and self.dotted_as is None:
+            raise ValueError("A DOTTED rule has to name the kind its dashes are laid in - a "
+                             "broken line is a different instruction from the solid one it "
+                             "continues, and the two must not share a kind (see "
+                             "BIKE_LANE_DOTTED_EXTENSION).")
+        if not wants_dashes and self.dotted_as is not None:
+            raise ValueError(f"dotted_as={self.dotted_as} on a rule that never goes dotted.")
+        if not self.why:
+            raise ValueError("Every row cites the clause it came from.")
+
+    def at(self, is_an_intersection: bool) -> AtAnOpening:
+        return self.at_an_intersection if is_an_intersection else self.at_a_driveway
+
+
+_CARRIES = (AtAnOpening.CARRIED, AtAnOpening.DOTTED)
+
+_ZONE = OpeningRule(
+    AtAnOpening.FILLETED, AtAnOpening.STOPPED,
+    why="A hatched zone and the lines that bound it are one marking. MUTCD 3B.11(09) keeps an "
+        "edge line across a driveway, but these lines are not only the edge of the travelled "
+        "way - they are the outline of the zone behind them, and a zone that sweeps away on its "
+        "run-out while its own boundary line carries straight on is the hook and the Y that "
+        "paint.KerbOpenings.against describes. The line follows its zone.")
+
+AT_AN_OPENING: dict[PaintKind, OpeningRule] = {
+    LANE_EDGE_LINE: _ZONE,
+    TAPER_LINE: _ZONE,
+    LANE_NARROWING_FILL: _ZONE,
+    TAPER_FILL: _ZONE,
+    CORNER_HATCH_FILL: _ZONE,
+    BUFFER_FILL: _ZONE,
+    BUFFER_EDGE_LINE: _ZONE,
+    DAYLIGHT_FILL: _ZONE,
+    DAYLIGHT_EDGE_LINE: _ZONE,
+    ZONE_END_LINE: _ZONE,
+    BIKE_BUFFER_FILL: _ZONE,
+    PARKING_EDGE_LINE: OpeningRule(
+        AtAnOpening.CARRIED, AtAnOpening.STOPPED,
+        why="MUTCD 3B.11(09) then (08), the pair this table exists for. Behind a parking edge "
+            "line there are only stalls, which stop at a driveway because a stall there is a "
+            "space you cannot park in; the line in front of them is a different statement and "
+            "carries on. Across a STREET it is discontinued - it ran unbroken over the 49.7 ft "
+            "mouth of Blackwell Avenue until (08) was read."),
+    STALL_DIVIDER: OpeningRule(
+        AtAnOpening.STOPPED, AtAnOpening.STOPPED,
+        why="A stall tick belongs to the parking lane, which simply ends: there is no stall "
+            "across an entrance of either kind, so there is nothing for a tick to divide."),
+    BIKE_LANE_EDGE_LINE: OpeningRule(
+        AtAnOpening.DOTTED, AtAnOpening.DOTTED, dotted_as=BIKE_LANE_DOTTED_EXTENSION,
+        why="MUTCD 3B.11(05) and 9C.04: a bicycle lane's markings are dotted where the lane is "
+            "crossed. Unlike an edge line the answer is the SAME either side of 1C.02, because "
+            "the lane does not end at either - it is crossed at both, and a rider needs to see "
+            "that it still runs here."),
+    BIKE_LANE_SURFACE: OpeningRule(
+        AtAnOpening.DOTTED, AtAnOpening.DOTTED, dotted_as=BIKE_LANE_SURFACE,
+        why="The green is the lane, so it breaks where the lane's lines break and resumes as "
+            "the same dashes - one marking seen three ways, which is why the phase is taken "
+            "once off this surface and handed to the other two (PaintContext.dash_phase)."),
+    BIKE_CONTRAFLOW_DIVIDER: OpeningRule(
+        AtAnOpening.CARRIED, AtAnOpening.CARRIED,
+        why="MUTCD 11th ed. 9E.04(02) and 9E.06(15), and NACTO's Urban Bikeway Design Guide for "
+            "this facility: a bidirectional lane's yellow centreline continues through "
+            "driveways and intersections. CARRIED and not DOTTED because it is ALREADY a "
+            "broken line - its own cadence is the dotted pattern the standard asks for, and "
+            "re-dashing it at an entrance would put a second, finer rhythm inside the first. "
+            "It used to be cut and the inside re-laid as an exact complement, which is this "
+            "row written out as two calls."),
+    BIKE_LANE_DOTTED_EXTENSION: OpeningRule(
+        AtAnOpening.CARRIED, AtAnOpening.CARRIED,
+        why="This IS the extension - the marking laid inside an opening by the rules above. It "
+            "is never cut against the opening it exists to cross."),
+    APRON: OpeningRule(
+        AtAnOpening.CARRIED, AtAnOpening.CARRIED,
+        why="Built ground, not paint. A mountable apron is a surface every marking stops at "
+            "(PaintContext.add_surface); it is not itself a marking to be stopped."),
+    BOLLARD: OpeningRule(
+        AtAnOpening.STOPPED, AtAnOpening.STOPPED,
+        why="A post cannot be trimmed the way a stripe can - it is either standing in the way "
+            "or it is not - so one in an entrance is dropped rather than shortened. See "
+            "PaintContext.emit: paint broken over a driveway with the posts marching across it "
+            "reads as a protected lane you are expected to drive through."),
+}
+
+def opening_rule(kind: PaintKind) -> OpeningRule:
+    """What `kind` does at a kerb opening. Every declared marking has a row; see AT_AN_OPENING."""
+    try:
+        return AT_AN_OPENING[kind]
+    except KeyError:
+        raise KeyError(
+            f"{kind} has no rule for what it does where a vehicle crosses the kerb. Add a row to "
+            f"markings.AT_AN_OPENING - a driveway, a parking aisle, a side street and this "
+            f"junction's own mouth are all the same event, and a marking with no answer for it "
+            f"is one that will be drawn across an entrance and across an intersection with "
+            f"nothing able to notice.") from None
+
+
+def carries_across_an_intersection(kind: PaintKind) -> bool:
+    """Whether `kind` may legitimately be drawn inside an intersecting approach's mouth.
+
+    True for the markings the table carries or dots across one - a bicycle lane's dotted
+    extension through a junction is IN the junction on purpose. Read by
+    checks.NoPaintInsideTheJunction so the invariant tests the drawn geometry against the
+    declaration rather than against a second list of exceptions.
+    """
+    return opening_rule(kind).at_an_intersection in _CARRIES
 
 
 def kinds_in(channel: Channel) -> tuple[PaintKind, ...]:
@@ -290,3 +430,10 @@ def require_every_kind(table: dict, what: str, skip: tuple = (Role.OBJECT,)) -> 
         raise ValueError(f"{what} styles {unknown}, which src/geometry/markings.py does not "
                          f"declare - a renamed marking leaves the old entry behind.")
     return table
+
+
+# EVERY DECLARED MARKING HAS A ROW, checked when this module is imported rather than by a test
+# that has to remember to look - the same rule, for the same reason, as the channel/role check in
+# _kind above. A marking with no row is one that will be drawn across an entrance and across an
+# intersection with nothing able to notice, which is the failure this whole table replaces.
+require_every_kind(AT_AN_OPENING, "markings.AT_AN_OPENING", skip=())

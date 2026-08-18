@@ -931,6 +931,85 @@ class CrossingsAreNotPaintedOver(SceneCheck):
         return violations
 
 
+class NoPaintInsideTheJunction(SceneCheck):
+    """No kerbside marking may be drawn entirely inside the junction's own mouth.
+
+    THE ONE INTERSECTION THAT HAD NO RULE. Every other street these legs cross becomes a
+    src/geometry/kerbs.py:KerbOpening, and one table decides what each marking does at it. The
+    junction the drawing is CENTRED on was handled by hand instead - a `marked` /
+    `straight_through` / else branch copied into three Treatment.paint methods, with a
+    `beyond_ft` mean-station test as the only thing keeping paint out of the corner. A mean
+    station is not a side: at W Broad & Louellen the crossing is surveyed 43.7 deg off square, so
+    the offcut behind it runs diagonally from station 26 to 47 and its MEAN lands at 34.4, past
+    the crossing's own 32.0. The test passed and 163.8 sq ft of daylight hatching was drawn
+    inside the intersection, 34 ft short of the corner return's tangent point at 68.0. It is
+    visible in phase4_render_proposal_two_way_bike_lane.png as two hatch strokes standing alone
+    in the middle of the junction, and nothing in this module looked at it: CrossingsAreNotPaintedOver
+    scopes itself to junctions this site does not model, on the stated grounds that this one's
+    crossings "are cut out of everything by curbside_paint_ft". They are. The OFFCUT is not.
+
+    THE MOUTH, NOT THE CROSSING, is what this measures against - see
+    src/geometry/model/corners.py:junction_mouth_ft. The corner return's tangent point is where
+    this kerb starts existing, so a marking drawn beside it before that point is drawn beside a
+    corner. And it is ZERO on a kerb that runs straight through, which is why this check does not
+    have to carve out MUTCD 11th ed. 3B.11(07)'s T-intersection exception: a through-running kerb
+    has no mouth, so nothing on it can be inside one.
+
+    ENTIRELY INSIDE, deliberately, so this has no false positives to argue about. A zone cut by a
+    skewed crossing has a diagonal end whose stations reach back into the mouth while the zone
+    itself sits outside; reporting the overlap would fire on every one of those. A piece whose
+    every vertex is inside the mouth is not a zone with a long end - it is a marking in the
+    intersection. That is the claim the picture makes, and it is the one worth failing on.
+
+    RIMS ARE NOT MARKINGS IN THE INTERSECTION, they are the line that closes one AT its edge, so
+    they are skipped rather than reported. A rim runs ACROSS the kerbside strip at the mouth's
+    far end, and the mouth's far end is a station - so every vertex of it is inside by
+    construction, always, however correct it is. What must not be inside the junction is the zone
+    the rim closes, and that is what the loop below tests. This exemption is the reason the
+    junction's square end can be one mechanism (PaintContext.rim) rather than a second
+    ZONE_END_LINE emitted beside it.
+    """
+
+    def run(self, scene: SceneContext) -> list[Violation]:
+        from src.geometry.markings import carries_across_an_intersection
+        from src.geometry.model import junction_mouth_ft
+
+        legs, fillets = scene.legs, scene.corner_fillets
+        violations = []
+        for piece in scene.paint:
+            if not piece.leg or not piece.side or piece.rim is not None:
+                continue
+            if carries_across_an_intersection(piece.kind):
+                continue
+            leg = legs.get(piece.leg)
+            if leg is None:
+                continue
+            mouth = junction_mouth_ft(piece.leg, str(piece.side), legs, fillets)
+            if mouth is None:
+                continue
+            geometry = piece.geometry
+            coords = (geometry.exterior.coords if geometry.geom_type == "Polygon"
+                       else getattr(geometry, "coords", None))
+            if coords is None:
+                continue
+            stations, _offsets = station_offset_many(leg.centerline,
+                                                      np.asarray(coords, dtype=float))
+            if float(stations.max()) > mouth[1]:
+                continue
+            how_much = (f"{geometry.area:.0f} sq ft of" if piece.kind.covers_area
+                         else f"{geometry.length:.1f} ft of")
+            violations.append(Violation(
+                "paint_inside_the_junction",
+                f"{how_much} {piece.kind} is drawn inside the junction's own mouth on "
+                f"{piece.leg} {piece.side} - every vertex of it lies between the junction node "
+                f"and the corner return's tangent point at {mouth[1]:.1f} ft, where there is no "
+                f"kerb for it to run beside. This junction opens the kerb exactly the way a "
+                f"cross street does (src/geometry/kerbs.py:OpeningSource.is_an_intersection); "
+                f"a marking that survives it was never cut against it",
+                (geometry.centroid.x, geometry.centroid.y)))
+        return violations
+
+
 class StopBarsOnEnteringHalf(SceneCheck):
     """A driver stops in their own lanes, never across the opposing ones.
 

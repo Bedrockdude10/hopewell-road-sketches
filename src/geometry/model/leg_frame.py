@@ -495,7 +495,8 @@ def inset_line_ft(leg: "Leg", side: str, offset_ft: float,
 
 def offset_band_polygon(leg: "Leg", side: str, inner_offset_ft: float, outer_offset_ft: float,
                          start_ft: float, end_ft: float | None = None,
-                         keep_inside_ft: float = 0.0) -> Polygon | None:
+                         keep_inside_ft: float = 0.0,
+                         beyond_the_tracing: bool = False) -> Polygon | None:
     """The strip of roadway between TWO lateral offsets from the centerline, on one side.
 
     For a marking whose own two boundaries are what define it - a bike lane's green surface
@@ -511,9 +512,17 @@ def offset_band_polygon(leg: "Leg", side: str, inner_offset_ft: float, outer_off
     the lane. Nothing reported it, because the ground it spilled onto has no other paint on it
     to collide with and no traced kerb to be outside of.
 
+    `beyond_the_tracing` lifts the bound at the tracing, exactly as it does for inset_line_ft and
+    for the same short list of callers - a band that states a FACT about the street rather than
+    proposing a marking on it. A kerb opening is one: where a vehicle crosses the kerb does not
+    stop being true where nobody traced the kerb, and an opening built only over the traced
+    stretch is a cut narrower than the marking it has to cut. On W Broad & Louellen's south kerb,
+    traced only from station 60.3, the junction's own 0-68 ft mouth came out 7.7 ft long and left
+    the daylight hatching it was supposed to remove in fragments inside the intersection.
+
     Returns None where there is no room or no span to draw over, like its siblings.
     """
-    stations = paint_stations(leg, side, start_ft, end_ft)
+    stations = paint_stations(leg, side, start_ft, end_ft, beyond_the_tracing=beyond_the_tracing)
     if stations is None:
         return None
     curb_offsets = curb_offsets_at_stations(leg, side, stations)

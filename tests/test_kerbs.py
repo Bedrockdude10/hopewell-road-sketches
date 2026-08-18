@@ -134,8 +134,16 @@ def test_every_opening_names_the_osm_object_that_caused_it(site_models):
     kerb's extent is surveyed, a driveway's mouth is assumed. An opening that cited neither, or
     that cited a driveway as though its width were measured, would be the sort of quiet
     over-claiming this project's provenance strings exist to prevent.
+
+    THE JUNCTION'S OWN MOUTH IS THE ONE OPENING WITH NO OSM OBJECT BEHIND IT, and it says so
+    rather than reaching for the nearest tag. OSM maps no intersection AREA - no way or relation
+    whose extent is the ground inside a junction - so this one comes from the modelled corner
+    return instead, which is the same point R.S. 39:4-138(e) is read from. Asserted here so the
+    exception stays a stated one: a second source that quietly cites nothing would look exactly
+    like this.
     """
-    from src.geometry.kerbs import OpeningSource, describe_kerb_openings
+    from src.geometry.kerbs import (SERVICE_WAY_SOURCES, OpeningSource,
+                                    describe_kerb_openings)
 
     found = 0
     for site, model in site_models.items():
@@ -147,14 +155,19 @@ def test_every_opening_names_the_osm_object_that_caused_it(site_models):
             for opening in openings:
                 found += 1
                 assert opening.end_ft > opening.start_ft
+                if opening.source is OpeningSource.JUNCTION:
+                    assert opening.way_id is None
+                    assert "corner return" in opening.citation
+                    assert not opening.is_surveyed_width
+                    continue
                 assert str(opening.way_id) in opening.citation
                 if opening.source is OpeningSource.DROPPED_KERB:
                     assert "kerb=" in opening.citation
                     assert opening.is_surveyed_width
-                elif opening.source is OpeningSource.DRIVEWAY:
-                    assert "service=driveway" in opening.citation
+                elif opening.source in SERVICE_WAY_SOURCES:
+                    assert f"service={opening.source.value}" in opening.citation
                     assert not opening.is_surveyed_width, (
-                        "a driveway centreline carries no width, so its mouth must not be "
+                        "a service way's centreline carries no width, so its mouth must not be "
                         "reported as surveyed")
                 else:
                     # A cross street opens the kerb over its own carriageway, which OSM records
@@ -164,7 +177,11 @@ def test_every_opening_names_the_osm_object_that_caused_it(site_models):
                     assert "intersecting street" in opening.citation
                     assert not opening.is_surveyed_width
         for line in describe_kerb_openings(state):
-            assert "OSM " in line, f"{site}: an opening reported without its source"
+            # "OSM …" for every opening a surveyor recorded, and the corner return for the one
+            # nobody could have - see the docstring. Either way the line names what put the gap
+            # there, which is the property; a line naming neither is an unaccountable gap.
+            assert "OSM " in line or "corner return" in line, (
+                f"{site}: an opening reported without its source")
     assert found, "no openings found at any site - neither signal is being read"
 
 
@@ -403,7 +420,7 @@ def test_a_hatched_zone_tapers_off_at_an_opening_where_a_lane_line_stops_dead(si
 # A DRIVEWAY IS NOT AN INTERSECTION - MUTCD 11th ed. 1C.02(113)(b), N.J.S.A. 39:1-1
 # --------------------------------------------------------------------------
 
-def test_only_a_cross_street_is_an_intersection():
+def test_a_street_is_an_intersection_and_a_service_way_is_not():
     """The definition every marking rule downstream reads, pinned at its source.
 
     MUTCD 1C.02(113)(b): "The junction of an alley, driveway, or site roadway with a public
@@ -412,16 +429,27 @@ def test_only_a_cross_street_is_an_intersection():
     public". A dropped kerb is this borough's tagging convention for a driveway mouth and nothing
     else (see the module docstring's tag census), so it is a driveway too.
 
-    Asserted over the whole enum rather than the three members named, so a source added later
-    has to decide which it is instead of defaulting to "driveway" the way CROSS_STREET silently
-    did - which is the bug this property exists to have prevented.
+    THE NEGATIVE ARM IS OSM'S `service=*` VALUE LIST, which is the same three things the clause
+    names, so each is its own source rather than one collapsed DRIVEWAY. A parking aisle IS a
+    site roadway and opens a kerb; it used to be filtered out before it could.
+
+    THE AFFIRMATIVE ARM IS BOTH KINDS OF STREET JUNCTION - another street our leg crosses, and
+    the junction the drawing is centred on. The second was not an OpeningSource at all until the
+    marking rules were unified; its mouth was handled by hand in three treatments instead.
+
+    Asserted over the whole enum rather than the members named, so a source added later has to
+    decide which it is instead of defaulting to "driveway" the way CROSS_STREET silently did -
+    which is the bug this property exists to have prevented.
     """
-    from src.geometry.kerbs import OpeningSource
+    from src.geometry.kerbs import SERVICE_WAY_SOURCES, OpeningSource
 
     assert OpeningSource.CROSS_STREET.is_an_intersection
-    assert not OpeningSource.DRIVEWAY.is_an_intersection
+    assert OpeningSource.JUNCTION.is_an_intersection
     assert not OpeningSource.DROPPED_KERB.is_an_intersection
-    assert [s for s in OpeningSource if s.is_an_intersection] == [OpeningSource.CROSS_STREET], (
+    for source in SERVICE_WAY_SOURCES:
+        assert not source.is_an_intersection, f"{source} is one of 1C.02(113)(b)'s exclusions"
+    assert {s for s in OpeningSource if s.is_an_intersection} == {
+        OpeningSource.CROSS_STREET, OpeningSource.JUNCTION}, (
         "a new OpeningSource has appeared - decide whether it is an intersection under MUTCD "
         "1C.02 and say so here, because every marking rule reads this property")
 
@@ -436,9 +464,15 @@ def test_an_intersecting_approach_gets_no_driveway_apron(wide_site_models):
     stops - i.e. from the tangent point of that return. Adding an apron on top counts the same
     flare twice and draws a driveway apron across the mouth of Blackwell Avenue.
 
-    Checked on a kerb whose ONLY opening is a cross street, so the two bands can be compared
-    whole: `tapered` is `driven` plus every fillet, so equal areas means no fillet was swept, and
-    a mouth no wider than the opening means no trim was added.
+    Checked on ONE cross street's opening at a time, isolated onto its own state, so the two
+    bands can be compared whole: `tapered` is `driven` plus every fillet, so equal areas means no
+    fillet was swept, and a mouth no wider than the opening means no trim was added.
+
+    ISOLATED TO THE ONE OPENING and not merely to the one kerb, because every kerb now carries
+    this junction's own mouth as well (OpeningSource.JUNCTION) - which is an intersecting approach
+    too and would be in both unions. Filtering on "a kerb with exactly one opening" silently
+    matched nothing once that landed, and a test that asserts nothing is why the count below is
+    asserted.
     """
     from src.geometry.kerbs import OpeningSource
     from src.geometry.paint import OPENING_TRIM_FT, kerb_opening_bands
@@ -451,16 +485,18 @@ def test_an_intersecting_approach_gets_no_driveway_apron(wide_site_models):
         with contextlib.redirect_stdout(io.StringIO()):
             state = DesignState.from_model(model)
         for (leg_name, side), openings in state.kerb_openings.items():
-            if len(openings) != 1 or openings[0].source is not OpeningSource.CROSS_STREET:
+            streets = [o for o in openings if o.source is OpeningSource.CROSS_STREET]
+            if len(streets) != 1:
                 continue
             seen += 1
-            opening = openings[0]
-            # One kerb at a time, so the unions below contain this opening and nothing else.
-            one_kerb = _only_this_kerb(state, leg_name, side)
-            bands = kerb_opening_bands(one_kerb)
-            assert bands.intersections is not None and not bands.intersections.is_empty, (
+            opening = streets[0]
+            # One OPENING at a time, so the unions below contain this one and nothing else.
+            one_kerb = _only_this_kerb(state, leg_name, side, streets)
+            bands = kerb_opening_bands(one_kerb).on(leg_name, side)
+            assert (bands.intersection_mouths is not None
+                    and not bands.intersection_mouths.is_empty), (
                 f"{site}: {leg_name}/{side}'s cross street reached `driven` but not "
-                f"`intersections`, so KerbOpenings.against cannot break an edge line at it")
+                f"`intersection_mouths`, so KerbOpenings.against cannot break an edge line at it")
             assert bands.tapered.area == pytest.approx(bands.driven.area, rel=1e-6), (
                 f"{site}: {leg_name}/{side} is a street mouth and grew a run-out fillet - "
                 f"{bands.tapered.area:.1f} sq ft tapered against {bands.driven.area:.1f} driven")
@@ -479,10 +515,11 @@ def test_an_intersecting_approach_gets_no_driveway_apron(wide_site_models):
     assert OPENING_TRIM_FT > 0, "the trim this test says is NOT applied here has to exist"
 
 
-def _only_this_kerb(state, leg_name, side):
-    """`state` with every kerb opening but this one dropped, so a union is about one mouth."""
+def _only_this_kerb(state, leg_name, side, openings=None):
+    """`state` with every kerb opening but these dropped, so a union is about one mouth."""
     import copy
 
     trimmed = copy.copy(state)
-    trimmed.kerb_openings = {(leg_name, side): state.kerb_openings[(leg_name, side)]}
+    trimmed.kerb_openings = {(leg_name, side): list(
+        state.kerb_openings[(leg_name, side)] if openings is None else openings)}
     return trimmed

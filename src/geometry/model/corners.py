@@ -9,7 +9,8 @@ import numpy as np
 from shapely.geometry import LineString, Point, Polygon
 from shapely.ops import substring
 from shapely.validation import explain_validity
-from src.geometry.model.leg_frame import _leg_bearing, line_direction, unit_vector
+from src.geometry.model.leg_frame import (_leg_bearing, line_direction, station_offset_many,
+                                          unit_vector)
 from src.geometry.model.traced_kerbs import traced_corner_arc, traced_corner_join
 
 
@@ -362,3 +363,61 @@ def through_street_sides(legs: dict) -> set:
             sides.add((name_a, "left"))
             sides.add((name_b, "right"))
     return sides
+
+
+def corner_tangent_station_ft(leg_name: str, side: str, legs: dict, corner_fillets: dict) -> float:
+    """Where this kerb stops running straight and begins turning into the corner, as a station.
+
+    ONE geometric fact with two readers, which is why it lives here rather than with either of
+    them. src/geometry/daylighting.py calls it the SIDE LINE of the intersecting street, because
+    that is what R.S. 39:4-138(e) measures its 25 ft from; src/geometry/kerbs.py calls it the far
+    end of the JUNCTION'S OWN MOUTH, because that is where the kerb a marking runs beside starts
+    existing. Both are the same point - the corner fillet's tangent point - and the statute and
+    the marking rule have no business each finding it for themselves.
+
+    ZERO WHERE THE KERB RUNS STRAIGHT THROUGH, which is not a special case bolted on: a pair of
+    legs more than THROUGH_STREET_ANGLE_DEG apart is one street, their outer kerbs are one
+    unbroken kerb, and the fillet between them has no tangent point out along either leg. Reading
+    that off the fillet alone would leave it to a clamp; through_street_sides is asked directly so
+    the answer is stated rather than inferred. It is what makes MUTCD 11th ed. 3B.11(07) - a solid
+    edge line MAY continue "through that part of an intersection with no intersecting approach
+    (such as at the far side of a T-intersection)" - fall out of the geometry instead of needing a
+    rule of its own.
+    """
+    leg = legs.get(leg_name)
+    if leg is None:
+        return 0.0
+    if (leg_name, side) in through_street_sides(legs):
+        return 0.0
+    station = 0.0
+    for (leg_a, leg_b), pieces in corner_fillets.items():
+        if "error" in pieces:
+            continue
+        # build_corner_fillets pairs leg_a's LEFT curb with leg_b's RIGHT curb.
+        if leg_a == leg_name and side == "left":
+            tangent = pieces["trimmed_a"].coords[0]
+        elif leg_b == leg_name and side == "right":
+            tangent = pieces["trimmed_b"].coords[0]
+        else:
+            continue
+        stations, _offsets = station_offset_many(leg.centerline,
+                                                  np.asarray([tangent], dtype=float))
+        station = max(station, float(stations[0]))
+    return station
+
+
+def junction_mouth_ft(leg_name: str, side: str, legs: dict,
+                      corner_fillets: dict) -> tuple[float, float] | None:
+    """The stations over which THIS junction opens this kerb, or None where it does not.
+
+    The modelled junction is an intersecting approach like any other, and this is its mouth in
+    the same (start, end) form src/geometry/cross_streets.py gives Blackwell Avenue's. It runs
+    from the leg's origin - the junction centre - out to the corner return's tangent point, and
+    over that stretch there is no kerb for a marking to run beside: there is the corner.
+
+    None, not (0, 0), where the kerb runs straight through. An opening of zero length is a fact
+    that has to be filtered downstream by everyone who reads it; the absence of one is the same
+    fact stated once, here.
+    """
+    end_ft = corner_tangent_station_ft(leg_name, side, legs, corner_fillets)
+    return (0.0, end_ft) if end_ft > 0.0 else None

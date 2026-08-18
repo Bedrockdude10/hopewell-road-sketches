@@ -15,24 +15,29 @@ from tests.conftest import SITES, needs_source_data
 
 @needs_source_data
 @pytest.mark.parametrize("site", SITES)
-def test_the_parking_is_drawn_and_only_the_driveways_open_a_kerb(site, site_models):
-    """A lot and an aisle are paving; a driveway is paving AND a hole in the markings.
+def test_the_parking_is_drawn_and_only_the_site_roadways_open_a_kerb(site, site_models):
+    """A lot is paving; a driveway and an aisle are paving AND a hole in the markings.
 
-    The distinction is the reason all three share a type rather than a code path. A parking lot
-    behind a building crosses no kerb this project models, and an aisle inside one reaches the
-    street through a driveway that OSM maps separately - so letting either put a gap in a bike
-    lane would be inventing an entrance. `model.driveways` is what the opening logic reads, and it
-    has to keep returning driveways only.
+    The distinction is the reason all three share a type rather than a code path, and where it
+    falls is MUTCD 11th ed. 1C.02(113)(b)'s: "an alley, driveway, or site roadway" - which is OSM's
+    `service=*` list, so a driveway and a parking aisle are both LINEAR ways that meet a street and
+    open the kerb where they do. A parking LOT is an area behind a building, crosses no kerb this
+    project models, and letting it put a gap in a bike lane would be inventing an entrance.
+
+    The aisles used to be excluded too, on the reasoning that one inside a lot reaches the street
+    through a separately-mapped driveway. True of the 6 aisles that are inside a lot and silent
+    about one that meets the street itself, whose mouth then had no opening at all.
     """
     model = site_models[site]
     kinds = {p.kind for p in model.paved_surfaces}
     assert PavedKind.PARKING_LOT in kinds or PavedKind.PARKING_AISLE in kinds, (
         f"{site} has no parking in range at all - either the fetch is broken or the borough "
         f"snapshot has lost its amenity=parking areas")
-    assert all(d.kind == PavedKind.DRIVEWAY for d in model.driveways), (
-        "model.driveways is handing parking to the kerb-opening logic")
-    assert len(model.driveways) == sum(1 for p in model.paved_surfaces
-                                       if p.kind == PavedKind.DRIVEWAY)
+    linear = (PavedKind.DRIVEWAY, PavedKind.PARKING_AISLE)
+    assert all(d.kind in linear for d in model.site_roadways), (
+        "model.site_roadways is handing a parking LOT to the kerb-opening logic")
+    assert len(model.site_roadways) == sum(1 for p in model.paved_surfaces
+                                            if p.kind in linear)
     for paved in model.paved_surfaces:
         assert paved.surface is not None and not paved.surface.is_empty
         assert paved.surface.area > 0

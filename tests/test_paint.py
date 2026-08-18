@@ -968,13 +968,12 @@ def test_the_edge_of_the_travelled_way_is_cut_by_a_street_and_not_by_a_driveway(
     exercising, which makes it exactly the kind that rots unwatched.
     """
     from src.geometry.markings import LANE_EDGE_LINE, PARKING_EDGE_LINE
-    from src.geometry.paint import KerbOpenings
+    from src.geometry.paint import KerbSideOpenings
 
     driveway = Polygon([(0, 0), (10, 0), (10, 5), (0, 5)])
     street = Polygon([(50, 0), (80, 0), (80, 5), (50, 5)])
-    openings = KerbOpenings(driven=unary_union([driveway, street]),
-                             tapered=unary_union([driveway, street]),
-                             intersections=street)
+    openings = KerbSideOpenings(driveway_mouths=driveway, driveway_tapered=driveway,
+                                 intersection_mouths=street)
 
     cut_against = openings.against(PARKING_EDGE_LINE)
     assert cut_against is not None, (
@@ -993,16 +992,21 @@ def test_the_edge_of_the_travelled_way_is_cut_by_a_street_and_not_by_a_driveway(
 def test_a_kerb_with_no_intersecting_approach_still_carries_its_edge_line_through():
     """The (09)-only case, and the one every site is actually in.
 
-    A kerb whose openings are all driveways has `intersections` empty, and `against` has to
+    A kerb whose openings are all driveways has `intersection_mouths` empty, and `against` has to
     answer "cut by nothing" rather than raising or returning an empty geometry that some caller
-    reads as "cut by everything". This is the state 20 of the 22 openings across the four sites
-    are in.
+    reads as "cut by everything".
+
+    Rarer than it was on the real sites, and deliberately still pinned here: every kerb now
+    carries this junction's own mouth as an intersecting approach, so the only kerbs in this state
+    are the ones that run straight through the junction. The rule is about the SHAPE of the
+    answer, not about how many kerbs are currently in it.
     """
     from src.geometry.markings import PARKING_EDGE_LINE
-    from src.geometry.paint import KerbOpenings
+    from src.geometry.paint import KerbSideOpenings
 
     driveway = Polygon([(0, 0), (10, 0), (10, 5), (0, 5)])
-    openings = KerbOpenings(driven=driveway, tapered=driveway, intersections=None)
+    openings = KerbSideOpenings(driveway_mouths=driveway, driveway_tapered=driveway,
+                                 intersection_mouths=None)
     assert openings.against(PARKING_EDGE_LINE) is None
 
 

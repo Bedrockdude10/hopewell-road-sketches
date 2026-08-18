@@ -21,7 +21,7 @@ channels:
       min:
       - -37.048
       - -17.969
-    points: 403
+    points: 418
   bike_lane_hatch_lines:
     count: 14
     extent:
@@ -41,7 +41,7 @@ channels:
       min:
       - -36.792
       - -17.851
-    points: 221
+    points: 231
   corner_apron_polygons:
     count: 0
     extent: null
@@ -79,9 +79,9 @@ channels:
       min:
       - -39.345
       - -38.139
-    points: 521
+    points: 520
   lane_narrowing_hatch_lines:
-    count: 18
+    count: 17
     extent:
       max:
       - 18.767
@@ -89,7 +89,7 @@ channels:
       min:
       - -32.664
       - -36.35
-    points: 36
+    points: 34
   lane_narrowing_taper_lines:
     count: 0
     extent: null

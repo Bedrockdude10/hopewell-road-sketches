@@ -590,9 +590,9 @@ class AddBikeLane(Treatment):
         """An edge line each side of the lane, so it reads as a lane rather than as the spare
         asphalt a lane-narrowing buffer marks; the buffer beside it, and the parking outside it,
         hatched and ticked with the machinery already here."""
-        from src.geometry.markings import (BIKE_BUFFER_FILL, BIKE_LANE_DOTTED_EXTENSION,
-                                           BIKE_LANE_EDGE_LINE, BIKE_LANE_SURFACE,
-                                           BUFFER_EDGE_LINE, BUFFER_FILL, STALL_DIVIDER)
+        from src.geometry.markings import (BIKE_BUFFER_FILL, BIKE_LANE_EDGE_LINE,
+                                           BIKE_LANE_SURFACE, BUFFER_EDGE_LINE, BUFFER_FILL,
+                                           STALL_DIVIDER)
         from src.geometry.model import (band_from_offsets, curbside_strip_polygon, inset_line_ft,
                                         kerb_inset_offsets, kerb_parallel_line_ft,
                                         kerb_referenced_band_polygon, lane_narrowing_polygons_ft,
@@ -656,6 +656,18 @@ class AddBikeLane(Treatment):
                                         from_ft, to_ft,
                                         keep_inside_ft=LANE_EDGE_LINE_WIDTH_FT / 2)
 
+        # THE LANE'S OWN FOOTPRINT, REGISTERED BEFORE ANYTHING ON THIS KERB IS PAINTED. Every
+        # marking that crosses an entrance breaks at the stations this shape gives, so the green
+        # marks land between the white ones instead of each being dashed along its own length and
+        # drifting out of phase. The surface is canonical because the lines are its edges.
+        #
+        # What then happens at each entrance is markings.AT_AN_OPENING's answer, not this
+        # treatment's: the lane's lines and its green go dotted across, the hatched buffer beside
+        # it sweeps away from the mouth instead. This method used to re-lay each of those marks
+        # itself, in a loop that only the bikeways had - which is why a lane's markings were
+        # carried across a driveway and nothing else's ever could be.
+        surface = lane_surface(start_ft)
+        ctx.dash_phase(leg_name, side, surface)
         ctx.add(BIKE_LANE_EDGE_LINE,
                  inset_line_ft(leg, side, bounds["inner_line_ft"], start_ft,
                                 keep_inside_ft=LANE_EDGE_LINE_WIDTH_FT / 2),
@@ -675,32 +687,7 @@ class AddBikeLane(Treatment):
         # Through ctx.add like every other marking, NOT ctx.add_surface: a surface is built
         # ground that everything else is cut around (seal_surfaces), and colouring the lane must
         # not cut the lane's own edge lines - or the buffer hatching beside it - back out.
-        surface = lane_surface(start_ft)
         ctx.add(BIKE_LANE_SURFACE, surface, leg_name, side, beyond_ft, shares_a_kerb=through)
-        # AND ACROSS EACH DRIVEWAY IT MEETS, DOTTED - the green and both lines together. A lane is
-        # not interrupted by an entrance, it is crossed there, and the dotted extension is what
-        # says so; a rider looking down the lane sees it continue. The spans come from the lane's
-        # own footprint and are shared, so the green marks land between the white ones rather than
-        # each being dashed along its own length and drifting out of phase.
-        #
-        # Only the lane's own markings get this. A parking stall divider lies ACROSS the kerbside
-        # strip rather than along it, so it has nothing to continue into, and the hatching beside
-        # the lane is a no-travel zone - it sweeps away from the mouth instead (see
-        # paint.kerb_opening_bands).
-        for dash_start_ft, dash_end_ft in ctx.opening_dash_spans(surface, leg_name):
-            # Split the same way the solid stripes above are, or the dotted continuation would
-            # sit somewhere the line it continues does not.
-            ctx.emit_across_opening(BIKE_LANE_DOTTED_EXTENSION,
-                                     inset_line_ft(leg, side, bounds["inner_line_ft"],
-                                                   dash_start_ft, dash_end_ft,
-                                                   keep_inside_ft=LANE_EDGE_LINE_WIDTH_FT / 2),
-                                     leg_name, side)
-            for key in ("buffer_outer_line_ft", "outer_line_ft"):
-                ctx.emit_across_opening(BIKE_LANE_DOTTED_EXTENSION,
-                                         lane_edge_line(key, dash_start_ft, dash_end_ft),
-                                         leg_name, side)
-            ctx.emit_across_opening(BIKE_LANE_SURFACE,
-                                     lane_surface(dash_start_ft, dash_end_ft), leg_name, side)
         if lane.buffer_ft:
             # The hatched buffer, between the two lines that bound it rather than under them.
             # lane_narrowing_polygons_ft measures its stripe inward from the kerb-to-kerb half,
@@ -923,18 +910,17 @@ class AddTwoWayBikeLane(AddBikeLane):
         # carried across. Three answers to one conflict point, and this was the one that belonged
         # to nobody: it was an omission, not a design.
         #
-        # `add` keeps the part of each dash OUTSIDE the openings and `emit_across_opening` the
-        # part inside, and the two are exact complements (see PaintContext.emit_across_opening),
-        # so the cadence never breaks phase across an entrance. Being already a broken line, it
+        # Its row in markings.AT_AN_OPENING says CARRIED, so `add` does not cut it at an entrance
+        # at all and the cadence cannot break phase across one. Being already a broken line, it
         # needs no separate dotted pattern - the standard's "dotted extension" is what it already
-        # looks like.
+        # looks like. It used to be cut and the part inside re-laid as an exact complement, which
+        # is the same statement made twice and in two places.
         period_ft = CONTRAFLOW_DASH_FT + CONTRAFLOW_GAP_FT
         at_ft = 0.0
         while at_ft + CONTRAFLOW_DASH_FT <= axis.length:
             dash = shapely.ops.substring(axis, at_ft, at_ft + CONTRAFLOW_DASH_FT)
             if dash.geom_type == "LineString" and dash.length > 0:
                 ctx.add(BIKE_CONTRAFLOW_DIVIDER, dash, leg_name, side, beyond_ft)
-                ctx.emit_across_opening(BIKE_CONTRAFLOW_DIVIDER, dash, leg_name, side)
             at_ft += period_ft
 
 

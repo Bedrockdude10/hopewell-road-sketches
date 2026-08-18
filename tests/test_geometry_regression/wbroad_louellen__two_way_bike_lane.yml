@@ -95,25 +95,25 @@ channels:
     extent: null
     points: 0
   parking_buffer_edge_lines:
-    count: 3
+    count: 4
     extent:
       max:
-      - -16.631
+      - -19.305
       - -0.673
       min:
       - -41.753
       - -10.735
-    points: 46
+    points: 75
   parking_buffer_hatch_lines:
-    count: 10
+    count: 5
     extent:
       max:
-      - -10.527
+      - -25.425
       - -0.94
       min:
       - -36.023
-      - -4.832
-    points: 20
+      - -3.877
+    points: 10
   parking_buffer_taper_lines:
     count: 0
     extent: null
@@ -733,8 +733,6 @@ props:
 - bollard@418023.50,565984.85
 - bollard@418028.60,565990.86
 - bollard@418033.67,565996.57
-- bollard@418039.03,566002.21
-- bollard@418044.38,566007.38
 - bollard@418048.56,566015.12
 - bollard@418054.55,566019.62
 - bollard@418061.00,566023.96

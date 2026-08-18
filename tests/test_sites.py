@@ -642,7 +642,14 @@ def test_the_edge_line_runs_unbroken_past_a_driveway(site, wide_site_models):
     The stalls still stop, which is right: a stall across a driveway is a space nobody can park
     in. It is the line in front of them that carries on.
     """
-    from src.geometry.markings import LINES_UNBROKEN_BY_A_DRIVEWAY
+    from src.geometry.markings import AtAnOpening, KINDS, opening_rule
+
+    # The markings this rule is ABOUT, read off the table rather than restated: whatever is
+    # carried straight past a driveway. One member today (the parking edge line) and the point of
+    # asking the table is that a second one is covered the day it is declared, not the day
+    # somebody remembers this test.
+    unbroken = {kind for kind in KINDS.values()
+                if opening_rule(kind).at_a_driveway is AtAnOpening.CARRIED}
 
     model = wide_site_models[site]
     with contextlib.redirect_stdout(io.StringIO()):
@@ -667,7 +674,7 @@ def test_the_edge_line_runs_unbroken_past_a_driveway(site, wide_site_models):
         for piece in paint:
             if (piece.leg, piece.side) != (leg_name, side):
                 continue
-            if piece.kind not in LINES_UNBROKEN_BY_A_DRIVEWAY:
+            if piece.kind not in unbroken:
                 continue
             stations, _offsets = station_offset_many(
                 leg.centerline, np.asarray(piece.geometry.coords, dtype=float))
@@ -679,10 +686,11 @@ def test_the_edge_line_runs_unbroken_past_a_driveway(site, wide_site_models):
         # an intersection". Blackwell Avenue's mouth (278-304 ft on broad_st_east's north kerb)
         # is the case, and the code already gets it right: the line stops. Demanding continuity
         # across it was the test being wrong about the standard, not the code.
-        mouths = [cross.mouth_ft for cross in getattr(model, "cross_streets", {}).get(leg_name, [])
-                  if side in cross.sides]
+        # ...and so is THIS junction's own mouth, which is an intersecting approach by the same
+        # clause and is now an opening like any other. Skipped here for the same reason a cross
+        # street is: the line is supposed to stop there.
         for opening in spans:
-            if any(near <= opening.end_ft and far >= opening.start_ft for near, far in mouths):
+            if opening.is_an_intersection:
                 continue
             # Only an opening the line reaches on both sides - past the end of the marked run
             # there is nothing to carry through.
@@ -1084,7 +1092,7 @@ def test_every_declared_marking_is_something_paint_can_build():
 
     from src.geometry import paint as paint_module
     from src.geometry import treatments as treatments_module
-    from src.geometry.markings import KINDS
+    from src.geometry.markings import AT_AN_OPENING, KINDS
 
     package_dir = Path(treatments_module.__file__).parent
     treatment_sources = sorted(package_dir.glob("*.py"))
@@ -1093,12 +1101,20 @@ def test_every_declared_marking_is_something_paint_can_build():
         f"{[p.name for p in treatment_sources]} - if it went back to being one module, read that "
         f"file instead, but do not let this silently check nothing")
     source = inspect.getsource(paint_module) + "".join(p.read_text() for p in treatment_sources)
-    for name, _kind in KINDS.items():
+    # ...OR IT IS NAMED AS ANOTHER MARKING'S DOTTED EXTENSION, which is how a marking gets built
+    # without any treatment mentioning it. BIKE_LANE_DOTTED_EXTENSION is laid by
+    # PaintContext._dashes_across_openings off `rule.dotted_as`, so the only place its name
+    # appears is the row that asks for it - and that row is a stronger statement than a call site,
+    # because markings.require_every_kind refuses to import if any marking lacks one.
+    built_as_an_extension = {rule.dotted_as for rule in AT_AN_OPENING.values()
+                             if rule.dotted_as is not None}
+    for name, kind in KINDS.items():
         constant = name.upper()
-        assert constant in source, (
+        assert constant in source or kind in built_as_an_extension, (
             f"src/geometry/markings.py declares {name!r} but nothing in src/geometry/paint.py or "
-            f"src/geometry/treatments/ emits {constant} - a marking nothing builds is a stale "
-            f"declaration")
+            f"src/geometry/treatments/ emits {constant}, and no marking's AT_AN_OPENING row names "
+            f"it as the kind its dotted extension is laid in - a marking nothing builds is a "
+            f"stale declaration")
 
 
 @needs_source_data
@@ -1127,6 +1143,17 @@ def test_curbside_paint_ends_against_its_crossing(site, site_models):
     An earlier version asserted the opposite: that the backstop clip must never have
     anything to do. That was right while a taper was supposed to resolve itself back to the
     kerb BEFORE the crossing, and wrong once the crossing became the thing to end against.
+
+    THERE ARE TWO THINGS THAT CAN END A KERBSIDE ZONE at the junction end, and this knew about
+    one. The other is the junction's own mouth (model.junction_mouth_ft): past the corner return's
+    tangent point there is no kerb to run beside, so a zone that reaches the mouth has run as far
+    in as any marking may go, whatever the crossing does. Where the two disagree the mouth is
+    further in and wins, and it is not always the crossing that is further out - at Broad &
+    Greenwood the SURVEYED crossing on greenwood_ave_north lies 32.2-40.7 ft out while the
+    modelled corner return's tangent point is at 43.8, so the crossing is drawn 3.1 ft INSIDE the
+    corner. That is the same source conflict the stop bars print a note about, and this test is
+    not the place to settle it: the drawing is right either way, because a zone stopping where
+    the kerb starts is not a zone giving up early.
     """
     from src.geometry.paint import PAINT_TO_CROSSWALK_GAP_FT
 
@@ -1154,9 +1181,29 @@ def test_curbside_paint_ends_against_its_crossing(site, site_models):
             gap_ft = min(p.geometry.distance(band) for p in near)
             assert gap_ft >= PAINT_TO_CROSSWALK_GAP_FT - 0.3, \
                 f"{site}/{name}/{leg_name}: paint {gap_ft:.2f} ft from the crossing"
-            assert gap_ft <= PAINT_TO_CROSSWALK_GAP_FT + 2.0, \
+            at_the_mouth = any(
+                _reaches_the_junction_mouth(state, p, leg_name) for p in near)
+            assert gap_ft <= PAINT_TO_CROSSWALK_GAP_FT + 2.0 or at_the_mouth, \
                 (f"{site}/{name}/{leg_name}: hatching stops {gap_ft:.1f} ft short of the "
-                 f"crossing instead of ending against it")
+                 f"crossing and does not reach this junction's own mouth either - so nothing "
+                 f"ends it and it has simply given up early")
+
+
+def _reaches_the_junction_mouth(state, piece, leg_name: str, slack_ft: float = 0.5) -> bool:
+    """Whether this zone runs all the way in to the far end of its kerb's junction mouth."""
+    from src.geometry.model import junction_mouth_ft, station_offset_many
+
+    mouth = junction_mouth_ft(leg_name, str(piece.side), state.legs, state.corner_fillets)
+    if mouth is None or piece.leg != leg_name:
+        return False
+    geometry = piece.geometry
+    coords = (geometry.exterior.coords if geometry.geom_type == "Polygon"
+              else getattr(geometry, "coords", None))
+    if coords is None:
+        return False
+    stations, _offsets = station_offset_many(state.legs[leg_name].centerline,
+                                              np.asarray(coords, dtype=float))
+    return float(stations.min()) <= mouth[1] + slack_ft
 
 
 

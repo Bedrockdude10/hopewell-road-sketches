@@ -126,11 +126,33 @@ authority. Encoded as `OpeningSource.is_an_intersection` in
 below, so a new source of kerb opening (a rail crossing, a bus pad) answers the question once
 rather than in each rule.
 
+**§1C.02(113)(b)'s list is OSM's `service=*` list** — *"an alley, driveway, or site roadway"*
+against `service=alley`, `service=driveway`, `service=parking_aisle`. So the negative arm is read
+straight off the tag rather than restated in our own words, and each value is its own
+`OpeningSource` so the citation names what the mapper actually wrote. A parking aisle is a site
+roadway and opens a kerb; until 2026-08-17 `IntersectionModel` filtered aisles out before they
+could, on reasoning that holds only for the 6 of the borough's 20 aisles that sit inside a mapped
+lot.
+
+**And the junction the drawing is centred on is an intersection under (a)** — two highways joining
+— which sounds too obvious to write down and was the one intersection with no rule at all. Its
+mouth is now `OpeningSource.JUNCTION`, running from the junction node to the corner return's
+tangent point (`src/geometry/model/corners.py:junction_mouth_ft`). It is the only opening in this
+project with **no OSM object behind it**, and that is a real gap in the data rather than a
+shortcut: OSM maps no intersection *area* — no way or relation whose extent is the ground inside a
+junction — so the corner return is the measurement, and it is the same point R.S. 39:4-138(e) is
+read from in §1. Before this, that mouth was handled by hand in three `Treatment.paint` methods,
+and 164 sq ft of daylight hatching was drawn inside the intersection at W Broad & Louellen with
+every check passing.
+
 > **The clause we do NOT implement, said out loud:** §1C.02(113)(b)'s *"unless … controlled by a
 > traffic control device"*. A driveway with a signal or a STOP/YIELD sign on the **public
-> roadway** at its mouth IS an intersection. Nothing in this borough's OSM data records one, and
-> inferring it from the nearest stop sign would be a guess. If a site ever has one, it is a tag
-> read in `kerb_openings_from_model`, not a new mechanism.
+> roadway** at its mouth IS an intersection. The data to answer it is already fetched —
+> `src/render/props.py:fetch_traffic_control` pulls every `highway=traffic_signals` node in the
+> frame — so this is a branch away, and the reason it is still unwritten is that **no driveway at
+> any of these five sites is signalised**, so the branch would never run. A rule that has never
+> fired pins nothing. Write it when there is a junction to fire it on; it is a tag read in
+> `kerb_openings_from_model`, not a new mechanism.
 
 ### Edge lines at driveways and intersections — **Verified 2026-08-17**
 
@@ -148,15 +170,25 @@ Interchanges"** ([source](https://mutcd.fhwa.dot.gov/pdfs/11th_Edition/part3.pdf
 through intersections, except for … dotted edge line extensions … or through that part of an
 intersection with no intersecting approach."*
 
-**Two rules, opposite directions, one definition between them.** Encoded as
-`LINES_UNBROKEN_BY_A_DRIVEWAY` in [`src/geometry/markings.py`](src/geometry/markings.py),
-consumed by `KerbOpenings.against()` in [`src/geometry/paint.py`](src/geometry/paint.py), which
-now cuts those lines against the **intersecting approaches** and carries them past the driveways.
+**Two rules, opposite directions, one definition between them.** Encoded as **one row per
+marking** in `markings.AT_AN_OPENING` ([`src/geometry/markings.py`](src/geometry/markings.py)) —
+what it does at a driveway, what it does at an intersecting approach, and the clause each cell
+came from — consumed by `KerbOpenings.against()` in
+[`src/geometry/paint.py`](src/geometry/paint.py).
+
+> **Why a table and not two sets.** Until 2026-08-17 this was `LINES_UNBROKEN_BY_A_DRIVEWAY` plus
+> `ZONE_BOUNDARY_LINES`, and a third rule — whether a marking carries a **dotted extension** —
+> was not declared anywhere at all: it was whether a treatment remembered to call
+> `emit_across_opening`, which only the bikeways did. Four places, three of them the absence of a
+> declaration. A marking now has a row or `markings.require_every_kind` refuses to import.
 
 The ¶07 exception — the far side of a T — needs no code of its own, and that is worth knowing
-because it looks like it should. `src/geometry/cross_streets.py` reads which side of our
-centreline the cross street's own vertices fall on and opens **only that kerb**; a T's far kerb
-is never opened, so the line across it was never broken. A genuine crossroads opens both.
+because it looks like it should. An opening is only ever made on the kerb the approach actually
+leaves on: `src/geometry/cross_streets.py` reads which side of our centreline the cross street's
+own vertices fall on, and `junction_mouth_ft` returns **None** where the two legs are one street
+running through (`through_street_sides`), because a kerb with no corner in it has no mouth. So a
+T's far kerb is never opened by either, and the ¶07 exception falls out of the geometry rather
+than being written as a rule.
 
 > **A citation error this file exists to catch.** Until 2026-08-17 the row above cited **MUTCD
 > §3B.07**, from a 2026-08-07 reading. In the 11th edition §3B.07 is *White Lane Line Markings
@@ -320,11 +352,17 @@ treat as *as cited* until someone opens the guide):
 
 What this repo now draws, and where each answer comes from:
 
-| marking | at a driveway | authority |
-|---|---|---|
-| edge lines | break, continue as a dotted extension | §9E.06(15) Guidance |
-| yellow contraflow centre stripe | **carries through as its own dashes** | NACTO dotted yellow centreline; §9E.06(15) |
-| green surface | continues across | our choice — **Modelled**; colour is not specified |
+| marking | at a driveway | at an intersecting approach | authority |
+|---|---|---|---|
+| edge lines | break, continue as a dotted extension | same | §9E.06(15) Guidance; §9E.04(02) Option |
+| yellow contraflow centre stripe | **carries through unbroken** | same | NACTO dotted yellow centreline; §9E.06(15) |
+| green surface | breaks and resumes as the same dashes | same | our choice — **Modelled**; colour is not specified |
+
+Every one of those cells is now a row in `markings.AT_AN_OPENING` rather than a paragraph here
+and a call site there — see §2. The contraflow stripe is the one whose cell changed on 2026-08-17:
+it reads **CARRIED**, not dotted, because it is *already* a broken line and its own cadence is the
+dotted pattern the standard asks for. It used to be cut at each entrance and the part inside
+re-laid as an exact complement, which is this row written out as two calls that had to agree.
 
 The centre stripe used to stop dead at each driveway - 22 dashes on a kerb with two of them
 against 30 on a kerb with none - while the edge lines continued and the green carried across.
@@ -334,6 +372,16 @@ Three answers to one conflict point, and that one belonged to nobody. Fixed 2026
 > §9E.04(03) permits. Nothing in this repo draws a pavement word or bike symbol at all, so it is
 > a new marking rather than a parameter - see the "new marking touches six places" checklist in
 > README.md.
+
+> **And still missing: the lane extension ACROSS an intersection**, which §9E.06(15) asks for in
+> the same sentence as the driveway case. The table above is honest about the driveway column and
+> silent about the other one for a geometric reason, not a standards one: a lane is built leg by
+> leg, so at a junction there is no single marking spanning the mouth for an extension to be the
+> continuation OF - each leg's lane simply ends at its own corner return. Drawing one means
+> building a new marking across the junction box (NACTO's crossbike), which is a new geometry
+> rather than a row in `AT_AN_OPENING`. Recorded here rather than left to be inferred from a
+> render, because the table naming the rule makes it look handled. Not a regression: the lane
+> stopped at the junction before this too, with one or two stub marks beside it.
 
 ### NJDOT says this facility is unacceptable — **Verified 2026-08-14**
 
@@ -627,6 +675,8 @@ Listed so nobody goes looking for a standard behind them.
 4. No **Mercer County standard sheet** has been found; §5 is one verbal figure.
 5. The **traffic-control-device arm** of MUTCD 1C.02(113)(b) is not implemented — a driveway
    whose public roadway carries a signal or a STOP/YIELD sign at the mouth IS an intersection,
-   and this project would draw it as a driveway. Nothing in this borough's data records one.
+   and this project would draw it as a driveway. The OSM data to answer it is already fetched
+   (`fetch_traffic_control`); what is missing is a signalised driveway at any of these five sites
+   to exercise the branch on, and an unexercised rule pins nothing. See §2.
 6. **New crosswalks at uncontrolled approaches are not proposed** — MUTCD 3C.02(04) wants an
    engineering study this repo has no counts for. Existing ones are drawn and deferred to; §2.

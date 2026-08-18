@@ -16,6 +16,7 @@ which is the thing no other drawing here shows.
 """
 import argparse
 import contextlib
+import dataclasses
 import io
 import sys
 from pathlib import Path
@@ -59,6 +60,23 @@ def _intersect(a, b):
             if hi > lo:
                 out.append((lo, hi))
     return tuple(sorted(out))
+
+
+def _stalls_kept(corridor, facts, paint, far_side: str) -> int:
+    """Width-tested stalls left on the FAR kerb once this facility is placed on the near one.
+
+    Legal room AND street room, because a length the statute permits and four feet wide holds no
+    car - the distinction that took the honest figure from 108 to 32 on the south-kerb option. The
+    far kerb is measured against the divider the section pushes toward it, per run, so a
+    constrained stretch and a standard one are not given the same allowance.
+    """
+    mouths = _merged_spans([(o.start_ft, o.end_ft)
+                            for side, o in facts.openings if side == far_side])
+    clear = _complement_spans(mouths, 0.0, corridor.length_ft)
+    room = stall_room_spans(corridor, far_side, far_kerb_lane_edge(paint))
+    count, _over_ft = marked_parking_capacity(corridor, facts, far_side,
+                                             within=_intersect(clear, room))
+    return count
 
 
 def straighten(corridor, geometry):
@@ -172,6 +190,9 @@ def main() -> int:
     parser.add_argument("--panels", type=int, default=4)
     parser.add_argument("--out", default="output/corridor")
     parser.add_argument("--dpi", type=int, default=200)
+    parser.add_argument("--side", choices=("north", "south"), default=None,
+                        help="which kerb carries the facility; default is the route's own "
+                             "CORRIDOR_SIDE. Both are always MEASURED and compared.")
     args = parser.parse_args()
 
     quiet = io.StringIO()
@@ -187,52 +208,57 @@ def main() -> int:
     corridor = centred_on_its_kerbs(matching[0])
     with contextlib.redirect_stdout(quiet):
         facts = corridor_facts(corridor, models)
-    paint = paint_facility(corridor, BROAD_ST_TWO_WAY_BIKEWAY, facts=facts)
+
+    # BOTH KERBS ARE MEASURED, WHICHEVER ONE IS DRAWN. "Which side" is a route decision that has
+    # to be made once for the whole borough, and bikeways.py:CORRIDOR_SIDE was settled on ONE
+    # count - side streets cutting the kerb, 10 north against 7 south - before this project could
+    # ask a corridor anything. It can now: the interruptions a rider actually meets include every
+    # driveway mouth on their own kerb, and the parking cost is what the street can hold after the
+    # travel lanes keep 11 ft. So the comparison is printed every run, and the drawn side is only
+    # a choice about the picture.
+    outcomes = {}
+    for compass in ("north", "south"):
+        facility = dataclasses.replace(BROAD_ST_TWO_WAY_BIKEWAY, side=compass)
+        paint = paint_facility(corridor, facility, facts=facts)
+        near = paint.side
+        far = "left" if near == "right" else "right"
+        far_compass = "south" if compass == "north" else "north"
+        # Interruptions the RIDER meets: a mouth on their own kerb, plus every crossing. Counted
+        # off paint.breaks so the number and the drawn gaps cannot disagree.
+        outcomes[compass] = {
+            "paint": paint, "far": far, "far_compass": far_compass,
+            "breaks": len(paint.breaks),
+            "openings_on_lane": sum(1 for side, opening in facts.openings if side == near),
+            "kept": _stalls_kept(corridor, facts, paint, far),
+        }
+
+    print(f"{corridor.name}: {corridor.length_ft:,.0f} ft, "
+          f"{len(facts.marked_crossings)} surveyed crossings\n")
+    print("  WHICH KERB SHOULD CARRY THE TWO-WAY LANE - both measured, on the same OSM pull:")
+    print(f"    {'kerb':6s} {'lane placed':>12s} {'interruptions':>14s} "
+          f"{'driveways on it':>16s} {'parking kept':>13s}")
+    for compass, out in outcomes.items():
+        paint = out["paint"]
+        print(f"    {compass:6s} {paint.placed_ft:9,.0f} ft {paint.placed_ft / corridor.length_ft:4.0%} "
+              f"{out['breaks']:14d} {out['openings_on_lane']:16d} {out['kept']:10d} stalls")
+    fewer = min(outcomes, key=lambda c: outcomes[c]["breaks"])
+    more_parking = max(outcomes, key=lambda c: outcomes[c]["kept"])
+    if fewer == more_parking:
+        print(f"\n    -> the {fewer} kerb wins on BOTH counts: fewer interruptions and more "
+              f"parking kept. CORRIDOR_SIDE is currently {BROAD_ST_TWO_WAY_BIKEWAY.side}.")
+    else:
+        print(f"\n    -> THEY DISAGREE: fewer interruptions on the {fewer} kerb, more parking "
+              f"kept on the {more_parking} kerb. This is a trade-off, not a calculation, and "
+              f"CORRIDOR_SIDE is currently {BROAD_ST_TWO_WAY_BIKEWAY.side}.")
+
+    drawn = args.side or BROAD_ST_TWO_WAY_BIKEWAY.side
+    chosen = outcomes[drawn]
+    paint = chosen["paint"]
+    far_side, far_compass = chosen["far"], chosen["far_compass"]
+    print(f"\n  DRAWN: the {drawn} kerb.")
     print(paint.summary(corridor.length_ft))
-    print(f"  the lane's markings break at {len(paint.breaks)} places - driveway mouths on its "
-          f"own kerb, and every surveyed crossing")
-    far_side = "left" if paint.side == "right" else "right"
-    far_compass = "north" if paint.compass_side == "south" else "south"
     parking = parking_bands(corridor, facts, far_side)
-    parkable_ft = sum(hi - lo for lo, hi, _band in parking)
-    print(f"  parking room on the {far_compass} kerb: {parkable_ft:,.0f} ft in {len(parking)} "
-          f"stretch(es), where R.S. 39:4-138 and OSM leave it legal")
-
-    from src.geometry.treatments.base import TARGET_LANE_WIDTH_FT
-
     openings = tuple((side, opening.start_ft, opening.end_ft) for side, opening in facts.openings)
-    stalls, tested = {}, {}
-    for side, compass in ((far_side, far_compass), (paint.side, paint.compass_side)):
-        mine = _merged_spans([(lo, hi) for s, lo, hi in openings if s == side])
-        # R.S. 39:4-138(f) forbids parking in front of a driveway, so a mouth is subtracted rather
-        # than counted. _no_parking_zones_on applies (e), (h) and (i); the openings are resolved
-        # separately, so this is where the two meet.
-        clear = _complement_spans(mine, 0.0, corridor.length_ft)
-        stalls[compass] = marked_parking_capacity(corridor, facts, side, within=clear)
-        # ...and the same count restricted to kerb the STREET leaves room on, once the travel
-        # lane holds 11 ft. Under the default treatment both kerbs are measured against a lane
-        # straddling the alignment; under the proposal the far kerb is measured against the
-        # divider the section pushes toward it.
-        room = stall_room_spans(corridor, side, lambda _s: TARGET_LANE_WIDTH_FT)
-        tested[(compass, "default")] = marked_parking_capacity(
-            corridor, facts, side, within=_intersect(clear, room))
-        if side == far_side:
-            shifted = stall_room_spans(corridor, side, far_kerb_lane_edge(paint))
-            tested[(compass, "bikeway")] = marked_parking_capacity(
-                corridor, facts, side, within=_intersect(clear, shifted))
-    print("\n  STALLS, counted over kerb that is legally parkable and clear of a driveway mouth:")
-    for compass, (count, over_ft) in stalls.items():
-        print(f"    {compass:5s} kerb  {count:4d} stalls over {over_ft:6,.0f} ft")
-    both = sum(count for count, _ft in stalls.values())
-    kept = stalls[far_compass][0]
-    both_tested = sum(tested[(c, "default")][0] for c in (far_compass, paint.compass_side))
-    kept_tested = tested[(far_compass, "bikeway")][0]
-    print(f"    default treatment (both kerbs marked)        {both:4d} legal room, "
-          f"{both_tested:4d} width-tested")
-    print(f"    two-way bikeway on the {paint.compass_side} kerb          "
-          f"{kept:4d} legal room, {kept_tested:4d} width-tested")
-    print(f"    the proposal costs {both_tested - kept_tested} of the {both_tested} stalls the "
-          f"street can actually hold today")
 
     half_ft = 38.0
     edges = np.linspace(0.0, corridor.length_ft, args.panels + 1)
@@ -246,14 +272,15 @@ def main() -> int:
         f"{paint.placed_ft:,.0f} ft placed of {corridor.length_ft:,.0f} ft "
         f"({paint.placed_ft / corridor.length_ft:.0%}); straightened into the corridor's own frame "
         f"- lengths and widths true, curvature removed\n"
-        f"parking, width-tested against an 11 ft travel lane: {both_tested} stalls today, "
-        f"{kept_tested} with the bikeway taking the {paint.compass_side} kerb", fontsize=8)
+        f"parking, width-tested against an 11 ft travel lane: "
+        f"{chosen['kept']} stalls kept on the {far_compass} kerb; "
+        f"{paint.breaks and len(paint.breaks)} interruptions along the lane", fontsize=8)
     axes[-1].set_xlabel("station along the corridor (ft)", fontsize=7)
     fig.tight_layout()
 
     out_dir = Path(args.out)
     out_dir.mkdir(parents=True, exist_ok=True)
-    path = out_dir / f"{args.road.lower().replace(' ', '_')}_strip.png"
+    path = out_dir / f"{args.road.lower().replace(' ', '_')}_strip_{drawn}.png"
     fig.savefig(path, dpi=args.dpi, bbox_inches="tight")
     print(f"\nwrote {path}")
     return 0

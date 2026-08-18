@@ -1,35 +1,22 @@
 """A ROAD: one street, with continuous stationing - through one junction, or through a borough.
 
 STEPS 1 AND 2 OF docs/network-model.md. This module builds Roads ALONGSIDE the existing legs and
-renders nothing from them. Its first job is to answer the checkpoint question that document asks
-before any of the migration is committed to:
+renders nothing from them. Its first job is the checkpoint question that document asks: does the
+traced kerb, read as one continuous road, reproduce the widths the per-leg model already produces?
 
-    does the traced kerb, read as one continuous road, reproduce the widths the per-leg model
-    already produces?
-
-If it does, the frame can be moved onto roads with confidence. If it does not, the difference is
-the finding, and it is much cheaper to learn here than after 14k lines have been rewritten.
-
-Its second job (`Corridor`, below) is the one step 2 of that document asks for: put the CORRIDOR
-questions on a road, because they are currently unanswerable inside the pipeline and were answered
-wrong three times in one session by scratch scripts on raw OSM.
+Its second job (Corridor, below) is the one step 2 of that document asks for: put the CORRIDOR
+questions on a road, because they are currently unanswerable inside the pipeline.
 
 WHY A ROAD AND NOT TWO LEGS. A leg starts at the junction and runs outward, so a street through a
 junction is two legs pointing away from each other, each with its own station 0 and its own frame.
-Every consequence of that has cost this project something:
-
-  * a marking measured from one leg cannot be continued onto the other. The two-way bike lane's
-    halves ended 1.28 ft apart at W Broad & Louellen for exactly this reason (fixed in f71a7a1, by
-    letting each half reach behind its own node - a workaround for the decomposition, not a fix).
-  * a corridor question has no object to ask. `narrowest_half_width_ft` takes a leg.
-  * A SURVEYED CROSSING AT A JUNCTION THIS SITE DOES NOT MODEL CANNOT BE DRAWN AT ALL, because a
-    crossing needs a station, an orientation and a reach to both kerbs, and all three come from a
-    leg. At Broad & Greenwood framed at 2.5x, 6 of the 10 OSM crossings inside the picture are
-    discarded, three of them tagged as zebra markings. That is the reason this is being done now.
+A marking measured from one leg cannot be continued onto the other. A corridor question has no
+object to ask. And a surveyed crossing at a junction this site does not model cannot be drawn at
+all, because a crossing needs a station, an orientation and a reach to both kerbs, and all three
+come from a leg.
 
 A Road here is the two through legs' centrelines joined head-to-head. They are ALREADY joined
 tangentially at the node by intersection/fitting.py:_join_through_legs, so this is a re-reading of
-geometry the model has, not a second construction of it - which is what makes the comparison below
+geometry the model has, not a second construction of it - which is what makes the comparison
 meaningful rather than circular.
 
 A `Corridor` is a chain of those Roads, bridged along the NJDOT alignment each end's leg was cut
@@ -52,14 +39,12 @@ from src.geometry.model import (Alignment, STRIP_SAMPLE_FT, curb_edge_by_station
 class Road:
     """One street through a junction: a continuous centreline and a kerb line per side.
 
-    `near`/`far` name the two legs it was built from - `near` is the one whose centreline runs
-    BACKWARDS along this road (station 0 is at its far end) and `far` the one that runs forwards.
-    `node_ft` is the station of the junction itself, which is where the two legs' own station 0s
-    both are.
+    `near`/`far` name the two legs it was built from - `near` runs backwards along this road
+    (station 0 is at its far end), `far` runs forwards. `node_ft` is the station of the junction.
 
     Sides are the ROAD's, not either leg's, and that is the point of the object: leg A's left kerb
-    and leg B's right kerb are one physical kerb (see model.through_street_sides, which pairs them
-    that way for corner fillets), so on the road they are one line with one name.
+    and leg B's right kerb are one physical kerb (see model.through_street_sides), so on the road
+    they are one line with one name.
     """
     name: str
     centerline: LineString
@@ -92,14 +77,9 @@ def _kerb_offset_at(centerline: LineString, kerb: LineString | None, side: str,
                      station_ft: float) -> float | None:
     """How far out one kerb sits at one station, unsigned, or None where it is not traced there.
 
-    The single place a kerb is read in a road's frame, so `Road` and `Corridor` cannot come to
-    different answers about the same kerb - the "two consumers assembling the same geometry"
-    failure src/geometry/intersection/junction.py:PavedSurface's docstring is about.
-
-    Refusing OUTSIDE THE TRACED SPAN is the load-bearing part. np.interp is happy to extend the
-    first and last offset flat forever, so without the span test a corridor with 1,126 ft of
-    untraced kerb between two junctions would report a width straight across it - inventing the
-    one thing this module must not invent.
+    The single place a kerb is read in a road's frame. Refusing OUTSIDE THE TRACED SPAN is the
+    load-bearing part: np.interp is happy to extend the first and last offset flat forever, so
+    without the span test a corridor with 1,126 ft of untraced kerb would report a width across it.
     """
     if kerb is None:
         return None
@@ -120,14 +100,11 @@ def _joined_centerline(near, far) -> LineString:
     shared node appears once: _join_through_legs has already given both legs the same first point,
     so the duplicate is dropped rather than left as a zero-length segment for `project` to trip on.
 
-    EXCEPT WHERE IT HAS NOT. That function only half joins them: _blend_onto applies the shared
-    junction point as a LATERAL offset profile, taking station_offset_many's offset and discarding
-    its station, so it can slide a leg's end sideways onto the joint but never along the street. At
-    W Broad & Louellen - CR 518 turning west, CR 654 carrying on, the two NJDOT alignments ending
-    3.1 ft apart - 2.74 ft of that gap is longitudinal and survives, under a NOTE announcing that
-    the halves were joined at a shared point. So the road bridges a hole the leg model does not
-    know it has, and the far approach's stations sit that whole gap out from its leg's. Closing it
-    here would be a second opinion about where the street is; one road built once has no joint to
+    EXCEPT WHERE IT HAS NOT. _blend_onto applies the shared junction point as a lateral offset
+    profile, taking station_offset_many's offset and discarding its station, so it can slide a
+    leg's end sideways onto the joint but never along the street. At W Broad & Louellen, 2.74 ft
+    of the gap between the two NJDOT alignments is longitudinal and survives. Closing it here
+    would be a second opinion about where the street is; one road built once has no joint to
     disagree about, which is the actual fix (task: retire _join_through_legs).
     """
     back = list(near.centerline.coords)[::-1]
@@ -160,10 +137,9 @@ def roads_from_model(model) -> list[Road]:
     """Every street that runs THROUGH this junction, as a Road.
 
     Only through pairs: a stem (Louellen at W Broad, Princeton at E Broad) is one leg and already
-    has a leg frame that covers it, so there is nothing a Road would add until step 3 gives it
-    station-ranged facts. Reuses the same pairing intersection/fitting.py:_through_leg_pairs found
-    when it joined the centrelines, rather than re-deriving it - two answers to "which legs are one
-    street" is the kind of second definition this whole document is about.
+    has a leg frame that covers it. Reuses the same pairing
+    intersection/fitting.py:_through_leg_pairs found when it joined the centrelines, rather than
+    re-deriving it.
     """
     from src.geometry.intersection.fitting import _through_leg_pairs
 
@@ -172,8 +148,8 @@ def roads_from_model(model) -> list[Road]:
         leg_a, leg_b = model.legs[name_a], model.legs[name_b]
         if not is_through_street(leg_a, leg_b):
             continue
-        # `near` is whichever runs backwards along the finished road. Chosen by bearing so the
-        # station axis is stable rather than depending on dict order.
+        # `near` is whichever runs backwards along the finished road, chosen by bearing so the
+        # station axis is stable.
         if leg_bearing_deg(leg_a) <= leg_bearing_deg(leg_b):
             near, near_name, far, far_name = leg_a, name_a, leg_b, name_b
         else:
@@ -185,17 +161,12 @@ def roads_from_model(model) -> list[Road]:
             name=street,
             centerline=_joined_centerline(near, far),
             # The NEAR leg's own station 0, which is exact for it and out by the whole unclosed
-            # gap for the far one - see _joined_centerline. No single station can be both where
-            # the two halves do not meet, and splitting the difference only moves the error onto
-            # the leg that had none: tried, and it cost 0.75 ft of width at w_broad_st_northeast
-            # station 5, where the kerb flares 0.68 ft per foot. The gap is what has to go, not
-            # the bookkeeping around it (task: retire _join_through_legs).
+            # gap for the far one - see _joined_centerline (task: retire _join_through_legs).
             node_ft=near.centerline.length,
             near_leg=near_name,
             far_leg=far_name,
-            # The road's LEFT is the near leg's RIGHT: reversing the near leg's direction of travel
-            # swaps its sides. Getting this backwards would compare one kerb against itself and
-            # report a plausible-looking width that is not the road's.
+            # The road's LEFT is the near leg's RIGHT: reversing the near leg's direction swaps
+            # its sides.
             left_curb=_joined_kerb(near, "right", far, "left"),
             right_curb=_joined_kerb(near, "left", far, "right"),
         ))
@@ -207,23 +178,13 @@ class Approach:
     """One direction of one road, at one node. What a Leg NAMED, holding nothing a Leg HELD.
 
     docs/network-model.md says "there is no Leg. Not 'a leg becomes a view' - the object goes
-    away". The word does not go away, because the thing is real: a signal head faces an approach,
-    a crosswalk crosses one, a scenario says "narrow broad_st_east". What goes away is a leg
-    OWNING geometry. This owns none. It is a name, a road, a node and a direction, and every
-    line, kerb, station and width it can be asked for is derived from the road on the spot.
-
-    THAT IS THE WHOLE POINT, and it is what kills the bug family in that document. Five bugs in
-    one session were all "config says X, the traced kerb says Y", and they were expressible only
-    because a leg held its own centreline, its own two kerb lines and its own declared width
-    beside the road's. With one geometry there is no second copy to disagree with - a question
-    asked of the approach and the same question asked of the road at that station are the same
-    arithmetic on the same line, not two answers that happen to be close.
+    away". What goes away is a leg OWNING geometry. This owns none: a name, a road, a node and a
+    direction, and every line, kerb, station and width it can be asked for is derived from the road
+    on the spot.
 
     `forward` is whether this approach runs the way the road's stations increase. A road is built
     head-to-head from two legs, so exactly one of its two approaches runs against it, and that
     one's left kerb is the road's right (see roads_from_model, which pairs the sides that way).
-    Getting that flip wrong reads one kerb as the other, which is a plausible-looking width that
-    is not the street's.
     """
     name: str
     road: Road
@@ -242,8 +203,7 @@ class Approach:
         """The inverse: how far out from the node a road station is, along this approach.
 
         Negative behind the node, which is a real place - the far side of the junction - and not
-        an error. A leg had no way to say it, and that is why the two-way bike lane's halves ended
-        1.28 ft apart at W Broad & Louellen until each was let to reach behind its own node.
+        an error.
         """
         return (road_station_ft - self.node_ft) * (1.0 if self.forward else -1.0)
 
@@ -268,8 +228,7 @@ class Approach:
         """The road's own centreline over this approach's span, running OUTWARD from the node.
 
         A view, cut on demand. Nothing caches it, and nothing may edit it: the moment an approach
-        keeps its own copy of the line, the copy can be fitted, centred or joined into
-        disagreeing with the road, which is the state this whole rework is undoing.
+        keeps its own copy of the line, the copy can disagree with the road.
         """
         lo, hi = self.span_ft
         cut = substring(self.road.centerline, lo, hi)
@@ -306,7 +265,7 @@ def road_station_of_leg_station(road: Road, leg_name: str, leg_station_ft: float
     """Where a station measured along one LEG falls on the road's own axis.
 
     Kept as the name 20 call sites will reach for during the migration; the arithmetic lives on
-    Approach, so there is one translation and not two.
+    Approach.
     """
     for approach in approaches_of(road):
         if approach.name == leg_name:
@@ -319,54 +278,31 @@ def road_station_of_leg_station(road: Road, leg_name: str, leg_station_ft: float
 # STEP 2 of docs/network-model.md: the CORRIDOR - one road across every junction on it.
 # ---------------------------------------------------------------------------
 #
-# A per-junction Road stops at its two legs' far ends, which is 260-300 ft. Every corridor
-# question - how much parking is there, how many driveways break it, where is the street
-# narrowest - is about the 2,400 ft between Louellen St and Princeton Ave, and none of it can be
-# asked of a 300 ft object. That is why the three wrong answers in network-model.md came from
-# scratch scripts on raw OSM instead of from the pipeline.
+# A per-junction Road stops at its two legs' far ends (260-300 ft). Every corridor question is
+# about the 2,400 ft between Louellen St and Princeton Ave, and none of it can be asked of a 300 ft
+# object.
 #
-# HOW THE ROAD IS EXTENDED, and why it is a chain rather than a fresh construction. Inside each
-# modelled junction the centreline is THE JUNCTION ROAD'S OWN, vertex for vertex. That is not
-# tidiness: the checkpoint above compares the road's width reading against the leg's, and the two
-# only agree if they share a frame. Measured on the alternative - reading the same traced kerbs
-# against NJDOT's raw alignment - the two agree to 0.03-0.36 ft out along the street and disagree
-# by up to 2.8 ft in the junction throat, because the kerb flares 0.68 ft per foot of station
-# there and the two alignments sit 4.6-10.9 ft apart. Beyond the legs there is no fitted
-# centreline to inherit, so the road follows NJDOT's SRI alignment, eased laterally onto each
-# modelled junction's centre at the seam over fitting.py's THROUGH_JOIN_BLEND_FT - the same blend
-# length, and the same Hermite, that joins the two halves of one street at a node.
+# HOW THE ROAD IS EXTENDED. Inside each modelled junction the centreline is THE JUNCTION ROAD'S
+# OWN, vertex for vertex: the checkpoint above compares the road's width reading against the leg's,
+# and the two only agree if they share a frame. Beyond the legs there is no fitted centreline to
+# inherit, so the road follows NJDOT's SRI alignment, eased laterally onto each modelled junction's
+# centre at the seam over fitting.py's THROUGH_JOIN_BLEND_FT.
 #
 # WHAT IS NOT INVENTED. The kerb is the traced kerb and nothing else: where the tracing stops,
-# `width_at_ft` returns None rather than interpolating across the gap (see _kerb_offset_at). On
-# Broad St that matters a great deal - in the committed snapshot 1,126 ft of W Broad between
-# Greenwood Ave and Louellen St has no `barrier=kerb` traced along either side, and a road that
-# answered "43 ft" there would be making it up.
+# `width_at_ft` returns None rather than interpolating across the gap (see _kerb_offset_at).
 
-# How far out traced kerb is collected for a corridor. NOT the junction fetch's 120 m, and the
-# difference is a measurement rather than a preference: Greenwood Ave to Louellen St is 413 m, so
-# 120 m circles at each end leave 173 m of the block never fetched, and "no kerb fetched" arrives
-# downstream indistinguishable from "no kerb traced". 400 m is the widest radius whose window
-# still fits inside every site's snapshot area (500 m already fails at W Broad & Louellen, whose
-# southern margin is 447 m - see src/sources/osm_context.py:_area_for), and at 1,312 ft a circle
+# How far out traced kerb is collected for a corridor. NOT the junction fetch's 120 m: Greenwood
+# Ave to Louellen St is 413 m, so 120 m circles leave 173 m never fetched. 400 m is the widest
+# radius whose window still fits every site's snapshot area (500 m fails at W Broad & Louellen).
 # at any member junction covers the whole block to the next one.
 CORRIDOR_KERB_RADIUS_M = 400
 
-# How far past the outermost modelled leg the road is carried along NJDOT's alignment, and how
-# far it is allowed to be carried. The reach is TRIMMED to where the tracing stops, so the road
-# ends where the evidence does; the cap is a second bound on top of that.
+# How far past the outermost modelled leg the road is carried along NJDOT's alignment. The reach
+# is TRIMMED to where the tracing stops; the cap is a second bound on top of that.
 #
-# IT IS THE FETCH RADIUS, not a round number. At a flat 500 ft the cap - not the evidence - was
-# what ended Broad St, and it ended it in the wrong place: 21 of 22 kerb ways traced along the
-# street northeast of Princeton Ave on 2026-08-18 fell outside the corridor and were silently
-# not drawn, while the drawing reported the road as ending there. The original argument for a
-# round cap was that "a mapper traces whole blocks and an uncapped reach would run the road to
-# the borough line on the strength of one kerb way" - but that is what the TRIM already prevents,
-# and a mapper deliberately tracing whole blocks is now the case this has to serve rather than
-# guard against.
-#
-# CORRIDOR_KERB_RADIUS_M is the honest bound, because past it no kerb was fetched at all, so a
-# road carried further could only be running on absent evidence - which is the one thing the trim
-# cannot catch, since "no kerb fetched" and "no kerb traced" arrive here identically.
+# IT IS THE FETCH RADIUS, not a round number. A flat 500 ft cap silently dropped 21 of 22 kerb
+# ways northeast of Princeton Ave. CORRIDOR_KERB_RADIUS_M is the honest bound: past it no kerb
+# was fetched, and the trim cannot catch "no kerb fetched" vs "no kerb traced".
 CORRIDOR_EXTENSION_FT = CORRIDOR_KERB_RADIUS_M * 3.28084
 
 # Two traced kerb ways whose station ranges come this close are one unbroken kerb. OSM splits a
@@ -391,10 +327,10 @@ KERB_FROM_TRACING = "OSM tracing"
 class KerbRun:
     """One unbroken stretch of ONE side's kerb, in corridor stations.
 
-    A LIST of these per side rather than one line per side, and that is the whole honesty
-    mechanism. One LineString per side has to bridge every hole - a side street's mouth, a block
-    nobody traced - and once bridged the hole is invisible: np.interp reads a straight chord
-    across 1,126 ft of unmapped street as a kerb. Runs make the hole a hole.
+    A LIST of these per side rather than one line per side. One LineString per side has to bridge
+    every hole - a side street's mouth, a block nobody traced - and once bridged the hole is
+    invisible: np.interp reads a straight chord across 1,126 ft of unmapped street as a kerb.
+    Runs make the hole a hole.
     """
     side: str
     line: LineString
@@ -544,13 +480,11 @@ class Corridor:
         """The holes in `both_traced_spans` - the stretches with no SURVEYED width.
 
         Named `gaps` and returned rather than papered over because the honest answer on Broad St
-        is that there is a 1,126 ft one, and a corridor figure that quietly spans it is the exact
-        failure this stream exists to stop.
+        is that there is a 1,126 ft one.
 
-        Not the same as `unmeasurable_gaps_ft`, and the difference is worth keeping: inside a
-        modelled junction the leg's own kerb line reaches its working length whether or not the
-        tracing does, so a width IS reported there. That is the per-leg model's answer, reported on
-        the per-leg model's terms; it is not a survey, so it is not counted as coverage.
+        Not the same as `unmeasurable_gaps_ft`: inside a modelled junction the leg's own kerb line
+        reaches its working length whether or not the tracing does, so a width IS reported there.
+        That is the per-leg model's answer; it is not a survey, so it is not counted as coverage.
         """
         return tuple((lo, hi) for lo, hi in _complement_spans(self.both_traced_spans(),
                                                               0.0, self.length_ft)
@@ -571,9 +505,8 @@ class Corridor:
     def narrowest_width_ft(self, sample_ft: float = STRIP_SAMPLE_FT) -> tuple[float, float] | None:
         """(width, station) at the tightest measurable cross-section, or None if there is none.
 
-        The corridor's `narrowest_half_width_ft`, sampled on the same grid and refusing on the
-        same terms: only where both kerbs are traced, because anywhere else the number would be
-        an extrapolation dressed as a measurement.
+        Only where both kerbs are traced, because anywhere else the number would be an
+        extrapolation dressed as a measurement.
         """
         best = None
         for lo, hi in self.both_traced_spans():
@@ -652,9 +585,8 @@ def _corridor_name(raw_names) -> str:
 def _junction_road_ends(models) -> list[dict]:
     """Every per-junction Road, listed once per end, with what an end needs to be linked up.
 
-    An "end" is a road plus one of its two legs: the direction the street leaves that junction in.
-    Two ends are the same street continuing if they are on the same SRI, point back at each other,
-    and each junction lies ahead of the other's leg.
+    An "end" is a road plus one of its two legs. Two ends are the same street continuing if they
+    are on the same SRI, point back at each other, and each junction lies ahead of the other's leg.
     """
     out = []
     for site, model in models.items():
@@ -673,11 +605,7 @@ def _junction_road_ends(models) -> list[dict]:
 def _linked_ends(ends: list[dict]) -> list[tuple[dict, dict]]:
     """Which junction-road ends face each other across a block, NEAREST FIRST.
 
-    Nearest first and one link per end, which is what stops a corridor skipping a junction: E
-    Broad & Princeton faces W Broad & Louellen at 2,417 ft on the same SRI with the same bearings
-    and passes every other test, but Broad & Greenwood sits between them at 1,079 and 1,356 ft and
-    takes both ends first. Without the greedy order the chain would jump the middle junction and
-    report a corridor with a 2,400 ft hole in it as continuous.
+    Nearest first and one link per end, which is what stops a corridor skipping a junction.
     """
     candidates = []
     for i, a in enumerate(ends):
@@ -754,10 +682,8 @@ def _chains(ends: list[dict], links: list[tuple[dict, dict]]) -> list[list[tuple
 def _oriented_chain(items: list[tuple], roads: dict) -> list[tuple]:
     """The chain reversed if it runs east to west, so every corridor is stationed west to east.
 
-    An arbitrary but FIXED choice, and it has to be fixed: the station axis is what every corridor
-    figure is reported against, and an axis whose direction depended on dict order would make two
-    runs of the report disagree about where station 0 is. West to east is also NJDOT's own
-    direction on these routes (SRI 00000518__ is digitised "West to East").
+    An arbitrary but FIXED choice: the station axis is what every corridor figure is reported
+    against. West to east is also NJDOT's own direction on these routes.
     """
     def easting(item, end):
         key, first, second = item
@@ -774,9 +700,7 @@ def _sri_alignment(models, sri: str):
     """NJDOT's own centreline for one SRI, in state-plane feet, or None if it is not in the layer.
 
     ONE LineString for the whole route: SRI 00000518__ comes back as a single 108,645 ft feature,
-    so the corridor between two junctions is a substring of a line that already exists rather than
-    something stitched together here. That is what makes "beyond the modelled legs, follow NJDOT"
-    a lookup instead of a construction.
+    so the corridor between two junctions is a substring of a line that already exists.
     """
     from src.geometry.intersection.junction import ROOT_DIR
     from src.geometry.model import buffer_point_wgs84, reproject_to_state_plane
@@ -837,15 +761,12 @@ def _eased_alignment(align: LineString, lo: float, hi: float, off_lo: float, off
     """A stretch of NJDOT alignment, moved sideways at its ends to meet what it joins.
 
     THE ONE PLACE THIS MODULE MOVES SURVEYED GEOMETRY, and it moves NJDOT's alignment rather than
-    anybody's tracing. The reason it has to move at all: an SRI line is a linear-referencing
-    reference, not a carriageway centre (see intersection/osm_roads.py:_snap_to_center), and the
-    modelled junctions' fitted centres sit 4.6-10.9 ft off it here. Butt-jointed, the road would
-    jog sideways by that much at every leg end.
+    anybody's tracing. An SRI line is a linear-referencing reference, not a carriageway centre, and
+    the modelled junctions' fitted centres sit 4.6-10.9 ft off it here. Butt-jointed, the road
+    would jog sideways at every leg end.
 
-    So the correction is the MEASURED seam gap at the seam, eased to zero over blend_ft, and the
-    middle of a bridge is NJDOT's line untouched. Same mechanism, same blend length and the same
-    Hermite as fitting.py:_join_through_legs, which does this between two halves of one street;
-    the gaps are reported on Corridor.seams rather than being absorbed silently.
+    The correction is the MEASURED seam gap, eased to zero over blend_ft. Same mechanism as
+    fitting.py:_join_through_legs; the gaps are reported on Corridor.seams rather than absorbed.
     """
     stations = _alignment_stations(align, lo, hi)
     blend = min(blend_ft, (hi - lo) / 2)
@@ -866,10 +787,9 @@ def _tracing_reach_ft(align: LineString, seam_ft: float, forward: bool, kerb_way
                       max_ft: float) -> float:
     """How far past a seam the traced kerb continues along the alignment, capped at max_ft.
 
-    Measured against NJDOT's alignment rather than against the finished corridor, because the
-    corridor cannot be built until its length is known. The two frames sit under 11 ft apart here
-    and the plausible-kerb band is 8-45 ft wide, so this is comfortably good enough to decide a
-    REACH - and the reach only ever shortens the road, so an error here cannot invent street.
+    Measured against NJDOT's alignment rather than the finished corridor, because the corridor
+    cannot be built until its length is known. The reach only ever shortens the road, so an error
+    here cannot invent street.
     """
     from src.geometry.intersection import KERB_PLAUSIBLE_HALF_WIDTH_FT
 
@@ -890,9 +810,8 @@ def _tracing_reach_ft(align: LineString, seam_ft: float, forward: bool, kerb_way
 def _dense_kerb_points(line: LineString) -> np.ndarray:
     """A traced kerb resampled ALONG itself - see context_roads.py:kerb_points for why.
 
-    A straight run of kerb is mapped with two vertices, so reading vertices alone found kerb at 28
-    of 82 stations along West Broad and concluded the street was untraced. Same spacing constant,
-    imported rather than repeated.
+    A straight run of kerb is mapped with two vertices, so reading vertices alone would miss kerb
+    at most stations. Same spacing constant, imported rather than repeated.
     """
     from src.geometry.context_roads import kerb_points
 
@@ -902,8 +821,8 @@ def _dense_kerb_points(line: LineString) -> np.ndarray:
 def _oriented_piece(road: Road, first_leg: str) -> dict:
     """One junction Road turned to run the corridor's way, with its sides renamed to match.
 
-    Reversing a road swaps its left and right, and getting that wrong would compare one kerb
-    against itself - the same trap roads_from_model's own side pairing warns about.
+    Reversing a road swaps its left and right - the same trap roads_from_model's own side pairing
+    warns about.
     """
     if road.near_leg == first_leg:
         return {"centerline": road.centerline, "left": road.left_curb, "right": road.right_curb,
@@ -1026,19 +945,14 @@ def _build_corridor(models, chain: list[tuple], roads_by_key: dict) -> Corridor 
 
     # TWICE, DELIBERATELY, and the second pass is the whole point of the first.
     #
-    # _kerb_samples_on throws away a kerb sample running more than CURB_POINT_MAX_SKEW_DEG off the
-    # road, and suspends that test near a node, because a corner return sweeps through 90 degrees
-    # by definition and is still kerb. It was suspended only near a MODELLED junction - and a
-    # corridor crosses far more streets than this project models. Broad St meets 11 and models 3,
-    # so at the other 8 the surveyor's traced corner returns were collected, recognised as too
-    # skewed, and discarded: 8 untraced "gaps" of 34-48 ft, every one of them 0-27 ft from a cross
-    # street, reported to the reader as ground nobody had surveyed. Ground truth reaching the
-    # pipeline and not the drawing is the single failure this project is built to prevent, and it
-    # was happening one layer below where coverage.py can see it.
+    # _kerb_samples_on suspends the heading test near a node (corner returns sweep 90 degrees) but
+    # only near a MODELLED junction - and a corridor crosses far more streets than this project
+    # models. At the other 8 on Broad St, traced corner returns were discarded as "too skewed",
+    # producing 34-48 ft untraced gaps 0-27 ft from a cross street.
     #
     # Cross streets are resolved FROM a corridor, so the first pass builds one good enough to
-    # locate the mouths - their positions come off the centreline, which is already final - and the
-    # second rebuilds the traced runs with every junction on the road counted as a node.
+    # locate the mouths, and the second rebuilds the traced runs with every junction on the road
+    # counted as a node.
     provisional = corridor_with(junction_runs + _traced_kerb_runs(centerline, kerb_ways,
                                                                   junction_ft))
     crossing_ft = tuple(sorted({round(cross.station_ft, 1)
@@ -1082,9 +996,8 @@ def _extension(models, kerb_ways, seam_point, away, sri: str,
 def _sri_spans(junctions, sris, length_ft: float) -> tuple[tuple[float, float, str], ...]:
     """Which NJDOT route carries which stretch, split at every node where the SRI changes.
 
-    Broad Street is the case this exists for: CR 518 arrives from the northeast and TURNS WEST onto
-    Louellen St, so W Broad southwest of Louellen is CR 654. A corridor report that called the
-    whole thing SRI 00000518__ would be wrong about its western third.
+    Broad Street is the case this exists for: CR 518 turns west onto Louellen St, so W Broad
+    southwest of Louellen is CR 654.
     """
     spans, cursor = [], 0.0
     for junction, (sri_in, _sri_out) in zip(junctions, sris):
@@ -1104,11 +1017,8 @@ def _corridor_kerb_ways(models) -> dict:
     """{OSM way id: (LineString in feet, tags)} for every traced kerb near any member junction.
 
     Keyed by way id and unioned across the members, so a kerb traced as one way down a whole block
-    is read once whichever junction's fetch returned it.
-
-    Fetched at CORRIDOR_KERB_RADIUS_M rather than through kerb_lines_with_tags_ft, which is fixed
-    at the junction radius - see the constant. The snapshot is one download of the whole borough
-    (src/sources/osm_context.py), so the wider radius costs nothing but a filter.
+    is read once. Fetched at CORRIDOR_KERB_RADIUS_M rather than the junction radius - see the
+    constant.
     """
     from src.geometry.intersection import to_state_plane
     from src.sources.osm_context import fetch_kerbs
@@ -1126,22 +1036,14 @@ def _corridor_kerb_ways(models) -> dict:
 def _junction_kerb_runs(pieces: list[dict], stations: np.ndarray) -> list[KerbRun]:
     """Each modelled junction's own kerb, clipped to its own stretch of the corridor.
 
-    MEASURED IN THE JUNCTION ROAD'S FRAME, then read back in the corridor's. That looks like an
-    indirection and it is the difference between passing the checkpoint and failing it. A traced
-    kerb runs PAST the leg it belongs to - e_broad_st_east's last vertex is 141 ft out on a 130 ft
-    leg - and a point beyond the end of a centreline is stationed by extrapolating that
-    centreline's last segment (see model/leg_frame.py:station_offset_many). The leg extrapolates
-    its own end; the corridor has real geometry there. So the same surveyed vertex reads as station
-    141.3 offset 17.97 to the leg and 143.7 offset 17.07 to the corridor, and interpolating the
-    stretch between it and the previous vertex then puts the corridor 0.74 ft off the leg's width
-    at station 125 - a disagreement about extrapolation, not about the kerb.
-    Clipping in the road's own frame removes it: 0.74 ft becomes 0.02.
+    MEASURED IN THE JUNCTION ROAD'S FRAME, then read back in the corridor's. A traced kerb runs
+    PAST the leg it belongs to - e_broad_st_east's last vertex is 141 ft out on a 130 ft leg -
+    and a point beyond the end of a centreline is stationed by extrapolating that centreline's last
+    segment. So the same surveyed vertex reads as station 141.3 offset 17.97 to the leg and 143.7
+    offset 17.07 to the corridor. Clipping in the road's own frame removes it.
 
-    CLIPPED WITH INTERPOLATED ENDS, not filtered by vertex, for the mirror-image reason. Dropping
-    the vertex beyond the stretch takes away the anchor for everything between the last vertex
-    inside it and the boundary, and the side then reports as untraced over 96 ft of straight kerb
-    that has two vertices and needs both. curb_edge_by_station is the existing function for
-    exactly this clip.
+    CLIPPED WITH INTERPOLATED ENDS, not filtered by vertex: dropping the vertex beyond the stretch
+    takes away the anchor for everything between the last vertex inside it and the boundary.
     """
     runs = []
     for piece in pieces:
@@ -1165,21 +1067,13 @@ def _junction_kerb_runs(pieces: list[dict], stations: np.ndarray) -> list[KerbRu
 def _kerb_samples_on(centerline: LineString, node_stations, line: LineString) -> tuple:
     """(stations, offsets, points, keep) for one traced way read as THIS road's kerb.
 
-    THREE tests decide whether a sample belongs to this road, and each is the one the per-leg fit
-    already uses rather than a new rule. One function, because the kerb LINE and the OPENINGS on it
-    have to agree about which kerb is whose - two answers to that is the second definition
-    docs/network-renderer-plan.md forbids, and measured against the nominal half-width instead of
-    the traced one it is what turned 9 of Broad St's driveways into 1 opening.
+    THREE tests decide whether a sample belongs to this road, each the one the per-leg fit already
+    uses:
 
-      * IN THE ROAD - station inside [0, length]. A kerb off either end belongs to whatever comes
-        next, not to this road.
-      * BESIDE IT - |offset| inside KERB_PLAUSIBLE_HALF_WIDTH_FT (8-45 ft). Closer than 8 ft is a
-        median or a driveway apron; further than 45 ft is the street one lot back.
-      * ALONG IT - the kerb's own heading within CURB_POINT_MAX_SKEW_DEG of the road's. This is
-        what keeps a cross street's kerb, and the back edge of a parking lot, off this road. It is
-        SUSPENDED within CURB_POINT_CORNER_ZONE_FT of a modelled node, exactly as
-        assign_curb_points_to_legs suspends it, because a corner return sweeps through 90 degrees
-        by definition and is still kerb.
+      * IN THE ROAD - station inside [0, length].
+      * BESIDE IT - |offset| inside KERB_PLAUSIBLE_HALF_WIDTH_FT (8-45 ft).
+      * ALONG IT - the kerb's own heading within CURB_POINT_MAX_SKEW_DEG of the road's, SUSPENDED
+        within CURB_POINT_CORNER_ZONE_FT of a modelled node (corner returns sweep 90 degrees).
     """
     from src.geometry.intersection import KERB_PLAUSIBLE_HALF_WIDTH_FT
     from src.geometry.model import CURB_POINT_CORNER_ZONE_FT, CURB_POINT_MAX_SKEW_DEG
@@ -1241,10 +1135,9 @@ def _traced_kerb_runs(centerline: LineString, kerb_ways: dict,
 def _grouped_stretches(found: list[dict]) -> list[list[dict]]:
     """Traced stretches gathered into unbroken runs, by whether their station ranges meet.
 
-    Grouped by WAY SPAN and not by the distance between successive samples, because a way's own
-    samples are contiguous by construction while the gap between two of them says nothing: a
-    straight kerb is two vertices a hundred feet apart. What separates two runs is that no way
-    covers the ground between them - a side street's mouth, or a block nobody traced.
+    Grouped by WAY SPAN rather than by the distance between successive samples: a way's own
+    samples are contiguous by construction, but the gap between two of them says nothing - a
+    straight kerb is two vertices a hundred feet apart.
     """
     groups: list[list[dict]] = []
     for stretch in sorted(found, key=lambda s: float(s["stations"].min())):
@@ -1257,14 +1150,11 @@ def _grouped_stretches(found: list[dict]) -> list[list[dict]]:
 
 
 # ---------------------------------------------------------------------------
-# The corridor QUESTIONS. Step 2 of docs/network-model.md is explicit that these move onto the
-# road first, because they have no goldens and are currently wrong in scratch scripts - so the
-# new model is strictly better than the status quo and gets exercised on real questions.
+# The corridor QUESTIONS. Step 2 of docs/network-model.md: these move onto the road first,
+# because they have no goldens and are currently wrong in scratch scripts.
 #
 # Every rule below is the rule the per-leg code already applies, with its constants IMPORTED
-# rather than retyped, asked of a road instead of a leg. That is the whole substance of the
-# change: `opens_the_kerb`, the R.S. 39:4-138 setbacks and the cross-street test were only
-# reachable through a leg, and a corridor has no legs.
+# rather than retyped, asked of a road instead of a leg.
 # ---------------------------------------------------------------------------
 
 
@@ -1272,10 +1162,8 @@ def _grouped_stretches(found: list[dict]) -> list[list[dict]]:
 class CorridorFacts:
     """What is positioned along one corridor: openings, crossings, and where parking is legal.
 
-    Resolved ONCE against one road and handed round, for the reason
-    intersection/junction.py:PavedSurface's docstring gives: two consumers each assembling the
-    same geometry are free to diverge the moment one of their tolerances is touched, and the
-    corridor answers in network-model.md went wrong three times in one session that way.
+    Resolved ONCE against one road and handed round: two consumers each assembling the same
+    geometry are free to diverge the moment one of their tolerances is touched.
     """
     #: (side, KerbOpening) - every place a vehicle crosses one of the two kerbs.
     openings: tuple = ()
@@ -1310,11 +1198,10 @@ def corridor_facts(corridor: Corridor, models) -> CorridorFacts:
 def _placed_on_corridor(corridor: Corridor, line: LineString) -> tuple | None:
     """(side, first station, last station) for a traced line lying along one of the road's kerbs.
 
-    THE WAY IS PLACED AS A WHOLE and then its whole extent measured, which is the distinction
-    src/geometry/kerbs.py:_place_on_a_leg_side had to make: a dropped kerb across a driveway mouth
-    is often two or three vertices drawn ACROSS the opening rather than along the street, so taking
-    only the samples that individually sit near the kerb collapsed four of six real openings to
-    zero length. Which side it is, is a question about the way; how long it is, about all of it.
+    THE WAY IS PLACED AS A WHOLE and then its whole extent measured: a dropped kerb across a
+    driveway mouth is often drawn ACROSS the opening rather than along the street, so taking only
+    the samples that individually sit near the kerb collapsed four of six real openings to zero
+    length.
     """
     stations, offsets, _points, keep = _kerb_samples_on(
         corridor.centerline, [junction.node_ft for junction in corridor.junctions], line)
@@ -1327,10 +1214,9 @@ def _placed_on_corridor(corridor: Corridor, line: LineString) -> tuple | None:
 def _openings_on(corridor: Corridor, models, kerb_ways: dict) -> tuple:
     """((side, KerbOpening), ...) for every place a vehicle crosses one of this road's kerbs.
 
-    BOTH SIGNALS, for the reason src/geometry/kerbs.py's module docstring gives at length: a
-    dropped kerb carries a surveyed extent, a mapped driveway carries none but is tagged in places
-    no dropped kerb is, and reading either alone loses real openings. The surveyed extent wins
-    where the two overlap, so a 10 ft assumption is never laid on top of a measurement.
+    BOTH SIGNALS, for the reason src/geometry/kerbs.py's module docstring gives: a dropped kerb
+    carries a surveyed extent, a mapped driveway carries none but is tagged in places no dropped
+    kerb is. The surveyed extent wins where the two overlap.
     """
     from src.geometry.kerbs import (DRIVEWAY_WIDTH_FT, MIN_OPENING_LENGTH_FT, KerbOpening,
                                     KerbType, OpeningSource, opens_the_kerb)
@@ -1372,11 +1258,8 @@ def _openings_on(corridor: Corridor, models, kerb_ways: dict) -> tuple:
 def _driveway_meeting(corridor: Corridor, drive: dict) -> tuple | None:
     """(side, station) where a mapped driveway reaches one of this road's kerb runs, or None.
 
-    Which kerb it meets is decided by distance to the kerb LINE rather than by the driveway's own
-    direction, and the station is taken from the point on the KERB nearest it - both for the
-    reasons kerbs.py:_driveway_meetings gives: a driveway is drawn from the property to the road
-    and its last segment is not reliably square to anything, and a mapper may stop it short of the
-    kerb or run it past.
+    Which kerb it meets is decided by distance to the kerb LINE, and the station is taken from the
+    point on the KERB nearest it - both for the reasons kerbs.py:_driveway_meetings gives.
     """
     from shapely.ops import nearest_points
 
@@ -1416,8 +1299,7 @@ def _half_width_at(corridor: Corridor, station_ft: float) -> float:
     """Half the traced width at a station, falling back to the corridor's typical half-width.
 
     Needed wherever a test is "does this reach the carriageway" at a station that may sit in an
-    untraced stretch. The fallback is this road's OWN median, not a class assumption: a corridor
-    that is 43% traced still knows how wide it is.
+    untraced stretch. The fallback is this road's OWN median, not a class assumption.
     """
     width = corridor.width_at_ft(station_ft)
     if width is not None:
@@ -1434,11 +1316,9 @@ def _half_width_at(corridor: Corridor, station_ft: float) -> float:
 def _cross_streets_on(corridor: Corridor, models) -> tuple:
     """Every other street that meets this one, anywhere along it.
 
-    The corridor form of src/geometry/cross_streets.py, with its constants and its side probe
-    imported rather than repeated. R.S. 39:4-138(e) applies at EVERY intersection, not at the one
-    a drawing happens to be centred on, and this is the object that can finally say where they all
-    are: JUNCTION_OWN_REACH_FT - the per-leg version's exclusion of its own junction - has no
-    meaning here, because on a corridor every junction is somebody's own.
+    The corridor form of src/geometry/cross_streets.py. R.S. 39:4-138(e) applies at EVERY
+    intersection, and this is the object that can finally say where they all are: on a corridor
+    every junction is somebody's own.
     """
     from shapely.ops import nearest_points
 
@@ -1473,8 +1353,7 @@ def _marked_crossings_on(corridor: Corridor, models) -> tuple:
 
     Counted, not drawn - drawing them as traced is stream A of docs/network-renderer-plan.md. What
     this is for is the corridor figure: how many crossings a walk down this street actually has,
-    and how many of those the surveyor recorded MARKINGS for, which are different numbers. Keyed by
-    the way's first node so the three members' overlapping fetches count each crossing once.
+    and how many of those the surveyor recorded MARKINGS for.
     """
     from src.geometry.cross_streets import MIN_CROSS_ANGLE_DEG, _crossing_angle_deg
     from src.geometry.intersection import to_state_plane
@@ -1502,21 +1381,15 @@ def _no_parking_zones_on(corridor: Corridor, side: str, models, crossings: tuple
     """Every stretch of one kerb where parking is forbidden, with the clause that forbids it.
 
     THE SAME FOUR RULES src/geometry/daylighting.py applies to a leg, with its statutory distances
-    and its citation wording imported rather than retyped - if the Borough adopts something
-    stricter, one file changes. What is different is only that they are applied along a ROAD:
+    imported rather than retyped. What is different is only that they are applied along a ROAD:
 
-      * (e) 25 ft from the side line of EVERY intersecting street, which is what the statute says
-        and what a leg could not express - src/geometry/daylighting.py's own comment notes the
-        markings used to run straight through Blackwell and Model Avenue.
-      * (h) 50 ft from a stop sign and (i) 10 ft from a hydrant, as radii round a point, anywhere
-        along the road. Modelled as intervals for the reason NoParkingZone's docstring gives: as
-        "parking starts after this" a hydrant on the next block pushed the whole lane off a leg.
-      * what OSM RECORDS about this kerb, per stretch of it, which is a prohibition of the same
-        standing as a statutory one.
+      * (e) 25 ft from the side line of EVERY intersecting street, which is what the statute says.
+      * (h) 50 ft from a stop sign and (i) 10 ft from a hydrant, as radii round a point.
+      * what OSM RECORDS about this kerb, per stretch of it.
 
     The junction end of a leg needed a corner fillet's tangent point to find the side line
     (daylighting.sideline_station_ft); on a corridor the member junctions arrive through the same
-    cross-street list as every other side street, so no fillet is needed and none is available.
+    cross-street list as every other side street.
     """
     from src.geometry.daylighting import (FIRE_HYDRANT_SETBACK_FT, FOOTWAY_REACH_FT,
                                           SIDELINE_SETBACK_FT, STOP_SIGN_SETBACK_FT, NoParkingZone)
@@ -1579,14 +1452,11 @@ def _road_spans_on(corridor: Corridor, models) -> list[tuple]:
     """(way id, (start_ft, end_ft), tags, aligned) for every OSM way lying ALONG this road.
 
     A LIST and not one way, because what a way says varies along a street and OSM says so by
-    SPLITTING THE WAY - see intersection/junction.py:RoadSpan, where reading only the longest way
-    dropped a no_parking restriction over East Broad's first 79.5 ft and the render then marked
-    parking exactly where the mapper had said there is none.
+    SPLITTING THE WAY.
 
     Matched on lying along the road over a real stretch of it, with the same two thresholds
     _match_legs_to_osm_roads uses, and restricted to CARRIAGEWAY classes for the reason recorded
-    there: a `service=parking_aisle` way ran 0.5 ft from East Broad's centreline at 0.2 degrees to
-    it and won the nearest-way tie, so the street's operational tags were read off a parking aisle.
+    there.
     """
     from src.geometry.intersection import (MIN_ROAD_SPAN_FT, ROAD_MATCH_HIGHWAY_CLASSES,
                                            ROAD_MATCH_MAX_ANGLE_DEG, ROAD_MATCH_MAX_OFFSET_FT)
@@ -1623,12 +1493,12 @@ def marked_parking_capacity(corridor: Corridor, facts: CorridorFacts, side: str,
     """(stalls, ft of kerb they were counted over) where parking is legal on one side.
 
     `within` narrows the count to a set of spans - which is how the report prints a figure and its
-    own coverage from ONE function rather than from two that could drift apart. The whole reason
-    this returns the length as well as the count: "486 stalls" over a corridor that is 43% traced
-    is not a corridor figure, and every wrong answer in docs/network-model.md was that mistake.
+    own coverage from ONE function rather than from two that could drift apart. Returns the length
+    as well as the count because "486 stalls" over a corridor that is 43% traced is not a corridor
+    figure.
 
     Stall length is PARKING_STALL_LENGTH_DEFAULT_FT, imported - the same figure the per-leg
-    marking uses, so a corridor total and a drawn leg cannot disagree about how long a car is.
+    marking uses.
     """
     from src.geometry.model import parking_stall_count_ft
     from src.geometry.treatments import PARKING_STALL_LENGTH_DEFAULT_FT
@@ -1655,11 +1525,9 @@ def osm_window_spans(corridor: Corridor, models) -> tuple[tuple[float, float], .
     """The stretches of a road that fall inside the OSM fetch window round its member junctions.
 
     THE DENOMINATOR FOR ANYTHING COUNTED OUT OF OSM, and it exists because "nothing fetched" and
-    "nothing mapped" arrive identically. Measured, not assumed: at the junction radius of 120 m the
-    three circles on Broad St leave 173 m of the Greenwood-to-Louellen block outside every window,
-    and a driveway count over that road would have been a count over 80% of it presented as a whole.
-    At CORRIDOR_KERB_RADIUS_M the same road comes out fully covered, which is the point of the
-    wider radius - but it is reported rather than believed.
+    "nothing mapped" arrive identically. At the junction radius of 120 m the three circles on Broad
+    St leave 173 m outside every window; at CORRIDOR_KERB_RADIUS_M the same road is fully covered.
+    Reported rather than believed.
     """
     reach_ft = CORRIDOR_KERB_RADIUS_M / 0.3048
     centres = [model.center_ft for model in models.values()]

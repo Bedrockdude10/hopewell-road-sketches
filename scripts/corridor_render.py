@@ -29,10 +29,10 @@ import numpy as np
 from matplotlib.patches import Rectangle
 
 from src.geometry.corridor_paint import (CORRIDOR_SAMPLE_FT, JUNCTION_MOUTH,
-                                         centred_on_its_kerbs, kerb_offset_ft, paint_facility)
+                                         centred_on_its_kerbs, kerb_offset_ft, paint_facility, parking_bands)
 from src.geometry.intersection import load_intersection_model
 from src.geometry.model import station_offset_many
-from src.geometry.network import corridors_from_models
+from src.geometry.network import corridor_facts, corridors_from_models
 from src.geometry.treatments import BROAD_ST_TWO_WAY_BIKEWAY
 from src.site import list_sites
 
@@ -42,6 +42,7 @@ LANE_GREEN = "#57a773"
 BUFFER_GREY = "#9a9a9a"
 PAINT_WHITE = "#ffffff"
 POST = "#e8663c"
+PARKING_BLUE = "#4b7fb5"
 GAP_RED = "#c1272d"
 MOUTH_BLUE = "#3b6ea5"
 
@@ -56,7 +57,7 @@ def straighten(corridor, geometry):
     return np.column_stack([stations, offsets])
 
 
-def draw_panel(ax, corridor, paint, lo_ft, hi_ft, half_ft):
+def draw_panel(ax, corridor, paint, parking, lo_ft, hi_ft, half_ft):
     grid = np.arange(lo_ft, hi_ft, CORRIDOR_SAMPLE_FT)
     left = np.array([kerb_offset_ft(corridor, "left", float(s)) or np.nan for s in grid])
     right = np.array([-(kerb_offset_ft(corridor, "right", float(s)) or np.nan) for s in grid])
@@ -67,6 +68,16 @@ def draw_panel(ax, corridor, paint, lo_ft, hi_ft, half_ft):
     ax.fill_between(grid, right, left, where=both, color=ASPHALT, linewidth=0, zorder=1)
     ax.plot(grid, np.where(np.isfinite(left), left, np.nan), color=KERB, lw=1.4, zorder=6)
     ax.plot(grid, np.where(np.isfinite(right), right, np.nan), color=KERB, lw=1.4, zorder=6)
+
+    # Where the law leaves room for a stall on the far kerb. Drawn as ROOM, not as a marked lane:
+    # every one of these is a length R.S. 39:4-138 does not forbid, which is a different claim
+    # from a design deciding to paint it.
+    for lo, hi, band in parking:
+        if hi < lo_ft or lo > hi_ft:
+            continue
+        xy = straighten(corridor, band)
+        if xy is not None:
+            ax.fill(xy[:, 0], xy[:, 1], color=PARKING_BLUE, alpha=0.45, linewidth=0, zorder=2)
 
     for run in paint.runs:
         if run.end_ft < lo_ft or run.start_ft > hi_ft:
@@ -142,14 +153,24 @@ def main() -> int:
     paint = paint_facility(corridor, BROAD_ST_TWO_WAY_BIKEWAY)
     print(paint.summary(corridor.length_ft))
 
+    with contextlib.redirect_stdout(quiet):
+        facts = corridor_facts(corridor, models)
+    far_side = "left" if paint.side == "right" else "right"
+    far_compass = "north" if paint.compass_side == "south" else "south"
+    parking = parking_bands(corridor, facts, far_side)
+    parkable_ft = sum(hi - lo for lo, hi, _band in parking)
+    print(f"  parking room on the {far_compass} kerb: {parkable_ft:,.0f} ft in {len(parking)} "
+          f"stretch(es), where R.S. 39:4-138 and OSM leave it legal")
+
     half_ft = 38.0
     edges = np.linspace(0.0, corridor.length_ft, args.panels + 1)
     fig, axes = plt.subplots(args.panels, 1, figsize=(13, 2.0 * args.panels))
     for ax, lo, hi in zip(np.atleast_1d(axes), edges[:-1], edges[1:]):
-        draw_panel(ax, corridor, paint, float(lo), float(hi), half_ft)
+        draw_panel(ax, corridor, paint, parking, float(lo), float(hi), half_ft)
     axes[0].set_title(
         f"{corridor.name} - existing kerbs (surveyed) and the proposed two-way protected bikeway "
-        f"on the {paint.compass_side} kerb\n"
+        f"on the {paint.compass_side} kerb; blue = where the law leaves parking room on the "
+        f"{far_compass} kerb\n"
         f"{paint.placed_ft:,.0f} ft placed of {corridor.length_ft:,.0f} ft "
         f"({paint.placed_ft / corridor.length_ft:.0%}); straightened into the corridor's own frame "
         f"- lengths and widths true, curvature removed", fontsize=8)

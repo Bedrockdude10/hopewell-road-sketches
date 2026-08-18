@@ -204,7 +204,6 @@ def paint_facility(corridor, facility) -> CorridorFacilityPaint:
                               and section_at(facility, n, f)[0] is not None)
                          for n, f in zip(near, far)])
         _collect(paint, corridor, facility, side, stations, near, far, fits)
-    paint.runs = [run for run in paint.runs if run.length_ft >= MIN_FACILITY_RUN_FT]
     return paint
 
 
@@ -239,8 +238,17 @@ def _collect(paint, corridor, facility, side, stations, near, far, fits):
                 lo, hi, refusal or "one or both kerbs untraced here", narrowest))
             continue
         paint.section_ft = section.section_ft
-        run = _build_run(corridor, side, section, stations[lo_i:hi_i + 1], block_near)
-        if run is not None:
+        run, why = _build_run(corridor, side, section, stations[lo_i:hi_i + 1], block_near)
+        if run is None:
+            paint.refusals.append(FacilityRefusal(lo, hi, why, narrowest))
+        elif run.length_ft < MIN_FACILITY_RUN_FT:
+            # A stretch too short to be a facility is still a stretch the reader can see bare
+            # asphalt on. Dropped silently it is an unexplained hole in the drawing, which is the
+            # same failure as calling a junction mouth unsurveyed.
+            paint.refusals.append(FacilityRefusal(
+                lo, hi, f"only {run.length_ft:.0f} ft of continuous room here, under the "
+                        f"{MIN_FACILITY_RUN_FT:.0f} ft a usable facility needs", narrowest))
+        else:
             paint.runs.append(run)
 
 
@@ -254,7 +262,7 @@ def _blocks(flags: np.ndarray):
             for i in range(len(bounds) - 1)]
 
 
-def _build_run(corridor, side: str, section, stations, offs) -> FacilityRun | None:
+def _build_run(corridor, side: str, section, stations, offs):
     """The paint itself, from the SAME section accounting the per-leg treatment uses.
 
     The lane hugs the kerb (TwoWayBikeLane.hugs_kerb), so its three boundaries are insets from the
@@ -265,12 +273,19 @@ def _build_run(corridor, side: str, section, stations, offs) -> FacilityRun | No
     kerb = section.offsets_from_kerb_ft()
     on = Alignment(corridor.centerline)
     if not np.isfinite(offs).all():
-        return None
+        return None, "the kerb is not readable at every station of this stretch"
     lane_outer = offs - kerb["bike_outer_ft"]
     lane_inner = offs - kerb["bike_inner_ft"]
     travel_edge = lane_inner - section.buffer_ft
     if (travel_edge <= 0).any():
-        return None
+        # The section is wider than the distance from the alignment to its own kerb, so the travel
+        # lane's edge lands on the far side of the line it is measured from. That is a real
+        # finding - the carriageway is not centred on the alignment here, or the kerb swings in -
+        # and it must be reported rather than dropped, which is what it was.
+        worst = float(np.min(travel_edge))
+        return None, (f"the section reaches {abs(worst):.1f} ft PAST the alignment - the kerb "
+                      f"comes within {float(np.min(offs)):.1f} ft of it here, less than the "
+                      f"{section.section_ft:.1f} ft the section needs on this side")
 
     lane = band_from_offsets(on, side, stations, lane_inner, lane_outer)
     buffer_zone = band_from_offsets(on, side, stations, travel_edge, lane_inner)
@@ -279,7 +294,7 @@ def _build_run(corridor, side: str, section, stations, offs) -> FacilityRun | No
     return FacilityRun(start_ft=float(stations[0]), end_ft=float(stations[-1]),
                        lane_surface=lane, buffer_zone=buffer_zone,
                        edge_lines=tuple(e for e in edges if e is not None),
-                       bollards=_bollards(on, side, stations, (travel_edge + lane_inner) / 2))
+                       bollards=_bollards(on, side, stations, (travel_edge + lane_inner) / 2)), None
 
 
 def _bollards(on: Alignment, side: str, stations, offsets) -> tuple:
@@ -342,4 +357,59 @@ def centred_on_its_kerbs(corridor, sample_ft: float = 10.0, smooth_ft: float = 6
                         MIN_CENTRE_VERTEX_GAP_FT)
     moved = LineString(place_in_measured_frame(corridor.centerline, stations,
                                                np.interp(stations, grid, corrections)))
-    return dataclasses.replace(corridor, centerline=moved)
+    return dataclasses.replace(corridor, centerline=moved,
+                               kerb_runs=tuple(_restationed(run, moved) for run in corridor.kerb_runs))
+
+
+def _restationed(run, centerline: LineString):
+    """One kerb run's station span, re-measured against a centreline that has moved.
+
+    MOVING THE CENTRELINE MOVES EVERY STATION ON IT, and a KerbRun carries its own start_ft and
+    end_ft. Left alone they describe where the run sat on the OLD line, while `kerb_run_at` picks
+    a run by those numbers and `_kerb_offset_at` then reads the run's line against the NEW one. The
+    two disagree by however far the centreline shifted, so a station inside a run's declared span
+    can fall outside the same kerb's real one and the kerb reads as unreadable - 545 ft of Broad
+    St east of Princeton Ave, where the correction is largest, drawn as bare asphalt.
+
+    Re-measured rather than shifted by a constant: the correction varies along the road, so there
+    is no one number to add.
+    """
+    import dataclasses
+
+    from src.geometry.model import curb_station_span
+
+    span = curb_station_span(Alignment.one_sided(centerline, run.side, run.line), run.side)
+    if span is None:
+        return run
+    return dataclasses.replace(run, start_ft=float(span[0]), end_ft=float(span[1]))
+
+
+def parking_bands(corridor, facts, side: str, depth_ft: float | None = None):
+    """[(lo_ft, hi_ft, polygon)] where a stall may legally be marked along one kerb.
+
+    The spans are `CorridorFacts.parkable`, which is R.S. 39:4-138 applied along the whole road -
+    25 ft from the side line of EVERY intersecting street, 50 ft from a stop sign, 10 ft from a
+    hydrant, plus whatever OSM records - rather than the four rules applied to one junction's legs.
+    This only gives them a footprint: a band `depth_ft` deep against the traced kerb, so the
+    drawing shows where the law leaves room rather than asserting a stall is painted there.
+
+    Drawn against the KERB and not the alignment, for the reason the bike lane is: a parked car
+    sits against the kerb wherever the kerb happens to be, and a band measured from the centreline
+    wanders off it exactly where the street widens.
+    """
+    from src.geometry.treatments.parking import PARKING_STALL_DEPTH_DEFAULT_FT
+
+    depth_ft = PARKING_STALL_DEPTH_DEFAULT_FT if depth_ft is None else depth_ft
+    on = Alignment(corridor.centerline)
+    out = []
+    for lo, hi in facts.by_side("parkable", side):
+        if hi - lo < CORRIDOR_SAMPLE_FT:
+            continue
+        stations = np.append(np.arange(lo, hi, CORRIDOR_SAMPLE_FT), hi)
+        offs = np.array([kerb_offset_ft(corridor, side, float(s)) or np.nan for s in stations])
+        if not np.isfinite(offs).all():
+            continue
+        band = band_from_offsets(on, side, stations, offs - depth_ft, offs)
+        if band is not None and not band.is_empty:
+            out.append((float(lo), float(hi), band))
+    return out

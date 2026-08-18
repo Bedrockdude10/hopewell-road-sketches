@@ -57,6 +57,10 @@ class FacilityRun:
     buffer_zone: Polygon | None = None
     edge_lines: tuple = ()
     bollards: tuple = ()
+    #: The rung this run landed on. Kept because the divider shift - and therefore how much room
+    #: is left on the FAR kerb for parking - is a property of the section, and it differs between
+    #: a standard run and a constrained one.
+    section: object = None
 
     @property
     def length_ft(self) -> float:
@@ -294,7 +298,8 @@ def _build_run(corridor, side: str, section, stations, offs):
     return FacilityRun(start_ft=float(stations[0]), end_ft=float(stations[-1]),
                        lane_surface=lane, buffer_zone=buffer_zone,
                        edge_lines=tuple(e for e in edges if e is not None),
-                       bollards=_bollards(on, side, stations, (travel_edge + lane_inner) / 2)), None
+                       bollards=_bollards(on, side, stations, (travel_edge + lane_inner) / 2),
+                       section=section), None
 
 
 def _bollards(on: Alignment, side: str, stations, offsets) -> tuple:
@@ -413,3 +418,55 @@ def parking_bands(corridor, facts, side: str, depth_ft: float | None = None):
         if band is not None and not band.is_empty:
             out.append((float(lo), float(hi), band))
     return out
+
+
+def stall_room_spans(corridor, side: str, lane_edge_at, sample_ft: float = CORRIDOR_SAMPLE_FT):
+    """Where this kerb has room for a usable stall once the travel lane holds its target.
+
+    THE OTHER HALF OF A STALL COUNT, and the reason a legal figure and a drawn figure differ.
+    `CorridorFacts.parkable` says where the LAW leaves room; this says where the STREET does. A
+    length that is legal and 4 ft wide holds no car, and counting it inflates the very number a
+    parking argument turns on.
+
+    Exactly parking.py:hold_travel_lane_at_target's arithmetic, per station instead of per leg:
+    the travel lane's edge is `lane_edge_at(station)` from the alignment, the surplus is whatever
+    the traced kerb leaves beyond it, and MIN_USABLE_STALL_FT is the floor below which the
+    surplus is hatched rather than marked. Both figures are imported, so a corridor total and a
+    drawn stall cannot disagree about what fits.
+    """
+    from src.geometry.treatments.parking import MIN_USABLE_STALL_FT
+
+    grid = np.append(np.arange(0.0, corridor.length_ft, sample_ft), corridor.length_ft)
+    offs = np.array([kerb_offset_ft(corridor, side, float(s)) or np.nan for s in grid])
+    edges = np.array([lane_edge_at(float(s)) for s in grid])
+    fits = np.isfinite(offs) & ((offs - edges) >= MIN_USABLE_STALL_FT)
+    out = []
+    for lo_i, hi_i, ok in _blocks(fits):
+        if ok and grid[hi_i] - grid[lo_i] >= sample_ft:
+            out.append((float(grid[lo_i]), float(grid[hi_i])))
+    return tuple(out)
+
+
+def far_kerb_lane_edge(paint: CorridorFacilityPaint, default_ft: float | None = None):
+    """station -> where the FAR kerb's travel lane edge sits, given what the facility placed.
+
+    Taking width out of one kerbside pushes the divider toward the other, so the far kerb's lane
+    edge is `travel_lane_divider_shift_ft` plus the target width wherever the section is actually
+    down - and the plain target width everywhere it is not. Per run rather than per corridor,
+    because a constrained rung shifts the divider by a different amount from a standard one.
+    """
+    from src.geometry.treatments.base import TARGET_LANE_WIDTH_FT
+    from src.geometry.treatments.bikeways import travel_lane_divider_shift_ft
+
+    default_ft = TARGET_LANE_WIDTH_FT if default_ft is None else default_ft
+    placed = [(run.start_ft, run.end_ft,
+               travel_lane_divider_shift_ft(run.section) + TARGET_LANE_WIDTH_FT)
+              for run in paint.runs if run.section is not None]
+
+    def at(station_ft: float) -> float:
+        for lo, hi, edge_ft in placed:
+            if lo <= station_ft <= hi:
+                return edge_ft
+        return default_ft
+
+    return at

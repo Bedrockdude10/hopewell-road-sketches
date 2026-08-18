@@ -1,30 +1,25 @@
 """How well-sourced a number is, and which source wins when two disagree.
 
-The project's core principle (README) is never to trust a generic guess when real
-sourced data exists. That was originally expressed as a single boolean per leg -
-`confirmed: true|false` - which conflated two very different things: a value nobody
-measured, and a value derived from real third-party survey data like OpenStreetMap.
-Those deserve different treatment and different rendering, so there are three tiers:
+The project's core principle (README) is never to trust a generic guess when real sourced
+data exists. A single boolean cannot say that, because it conflates a value nobody measured
+with one derived from real third-party survey data, so there are three tiers:
 
-    FIELD_MEASURED  Someone put a tape measure (or a survey instrument) on the actual
-                    roadway. This is reality. It supersedes everything else, including
-                    OSM, and is never overridden automatically by anything in this
-                    repo - if OSM disagrees with a field measurement, OSM is wrong.
+    FIELD_MEASURED  A tape measure or survey instrument on the actual roadway. This is
+                    reality. It supersedes everything else, including OSM, and is never
+                    overridden automatically - if OSM disagrees, OSM is wrong.
 
     OSM_DERIVED     Computed from real third-party surveyed geometry (crossing ways,
-                    sidewalk centerlines). Better than a guess, because someone
-                    actually went and mapped it - but it is not a measurement of the
-                    thing we want, so it carries its own error (a sidewalk centerline
-                    is not a curb line).
+                    sidewalk centerlines). Better than a guess, but not a measurement of
+                    the thing we want, so it carries its own error: a sidewalk centerline
+                    is not a curb line.
 
-    ESTIMATED       Inferred from something that only correlates with the answer -
-                    platted ROW minus an assumed verge, a typical corner radius for
-                    this kind of street. Fine as a placeholder, not fine to cost work
-                    off, and must say so.
+    ESTIMATED       Inferred from something that only correlates with the answer - platted
+                    ROW minus an assumed verge, a typical corner radius for this kind of
+                    street. Fine as a placeholder, not fine to cost work off, and must
+                    say so.
 
-`confirmed: true|false` in an existing config.yaml still works and maps onto
-FIELD_MEASURED / ESTIMATED, so nothing has to be rewritten at once. A leg can state
-its tier explicitly with `width_provenance:` instead.
+The older `confirmed: true|false` still works and maps onto FIELD_MEASURED / ESTIMATED;
+`width_provenance:` states a tier explicitly.
 """
 
 FIELD_MEASURED = "field_measured"
@@ -36,9 +31,8 @@ VALID_PROVENANCE = (FIELD_MEASURED, OSM_DERIVED, ESTIMATED)
 # Higher wins. Used to decide whether a newly-available source may replace a value.
 _RANK = {FIELD_MEASURED: 3, OSM_DERIVED: 2, ESTIMATED: 1}
 
-# How each tier is described in phase output, and drawn in the plan view. Kept here so
-# the CLI summary, the 2D plot and its legend can't drift into describing the same leg
-# three different ways.
+# How each tier is described in phase output and drawn in the plan view. The single home, so
+# the CLI summary, the 2D plot and its legend cannot describe one leg three different ways.
 LABEL = {
     FIELD_MEASURED: "FIELD-MEASURED",
     OSM_DERIVED: "OSM-DERIVED",
@@ -70,11 +64,10 @@ def leg_width_provenance(leg_cfg: dict) -> str:
 def built_width_provenance(leg, leg_cfg: dict) -> str:
     """The tier of the width a Leg was actually BUILT with, not the one its config declares.
 
-    They differ wherever the traced kerbs governed. Every leg at these four junctions is
-    now measured between two kerbs somebody mapped, which is osm_derived - so reporting the
-    config's own "ESTIMATE / PLACEHOLDER" alongside a curb line drawn from that trace, and
-    styling the line crimson for it, describes the wrong number. The better of the two
-    always wins, so a config that upgrades to a field measurement still shows through.
+    They differ wherever the traced kerbs governed: a width measured between two mapped kerbs
+    is osm_derived, so reporting the config's own "ESTIMATE / PLACEHOLDER" beside a curb line
+    drawn from that trace describes the wrong number. The better of the two always wins, so a
+    config that upgrades to a field measurement still shows through.
     """
     declared = leg_width_provenance(leg_cfg)
     built = getattr(leg, "width_provenance", None)

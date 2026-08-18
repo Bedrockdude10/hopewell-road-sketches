@@ -34,14 +34,11 @@ def site_dir(site: str) -> Path:
 def load_site_config(site: str) -> dict:
     """The site's config.yaml as a plain dict, after it has been validated.
 
-    Validation happens on the raw YAML, before `_site` is stashed, and raises rather than
-    warns: everything downstream treats this file as ground truth about a real street, so a
-    config that doesn't say what it appears to say produces a confident, wrong drawing rather
-    than a crash. See src/site_schema.py for what is checked and why.
-
-    Still a dict, not the model. The schema is a gate at the boundary; the ~15k lines that
-    read `config["intersection"][...]` are unaffected. load_site_schema() below returns the
-    typed view of the same file for code that wants it.
+    Validation runs on the raw YAML, before `_site` is stashed, and raises rather than warns:
+    downstream treats this file as ground truth about a real street, so a config that doesn't
+    say what it appears to say produces a confident wrong drawing, not a crash. What is
+    checked and why: src/site_schema.py. Returns a dict, not the model - load_site_schema()
+    below is the typed view of the same file.
     """
     path = site_dir(site) / "config.yaml"
     config = load_config(path)
@@ -108,11 +105,8 @@ def load_site_scenarios(site: str) -> ModuleType:
 def run_scenario(builder, baseline, model):
     """Call a site's scenario builder, passing the model only if it wants one.
 
-    Scenarios were originally `build_x(baseline) -> DesignState`. Some now need the model
-    too, because the facts they act on (OSM parking restrictions, road tags) live there
-    rather than in the DesignState. Rather than churn every site's signature - and silently
-    turn a scenario into a no-op wherever a call site forgets the second argument, which is
-    exactly what happened here - the call sites go through this and it adapts.
+    Some scenarios need the model (its OSM facts live there, not on the DesignState).
+    Adapting here rather than churning every signature.
     """
     import inspect
 

@@ -107,6 +107,25 @@ def test_lint_clean():
         + _format(findings))
 
 
+def test_no_readme_section_shadows_a_module():
+    """A README section titled with a src/ path duplicates the module's own docstring.
+
+    The module docstring is the home — it lives beside the code someone is editing.
+    A README section retelling the same story drifts from it and costs tokens on every
+    file read.  This is the exact regression the prose cut was meant to prevent.
+    """
+    readme = (REPO_ROOT / "README.md").read_text()
+    shadowed = [
+        line.strip()
+        for line in readme.splitlines()
+        if line.startswith("#") and "src/" in line
+    ]
+    assert not shadowed, (
+        "README section title(s) contain a src/ path — the module docstring is the home:\n  "
+        + "\n  ".join(shadowed)
+    )
+
+
 def test_import_contracts_hold():
     """The architectural rules in .importlinter - which one file's imports cannot show you.
 

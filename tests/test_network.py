@@ -11,6 +11,8 @@ it re-runs on every change to either model rather than being taken on faith from
 import numpy as np
 import pytest
 
+from src.geometry.model import (curb_offsets_at_stations, curb_station_span,
+                                narrowest_half_width_ft)
 from src.geometry.network import Road, road_station_of_leg_station, roads_from_model
 from tests.conftest import SITES, needs_source_data
 
@@ -157,3 +159,32 @@ def test_a_width_is_refused_outside_the_traced_span_rather_than_extrapolated(sit
             assert road.width_at_ft(station) is None, (
                 f"{road.name} reports a width at station {station:.0f} on a "
                 f"{road.length_ft:.0f} ft road, which is outside anything anybody traced")
+
+
+@needs_source_data
+@pytest.mark.parametrize("site", SITES)
+def test_a_road_goes_through_the_frame_functions_unmodified(site, site_models):
+    """The frame takes a Road with no shim, no adapter and no second code path.
+
+    STEP 4 of docs/network-model.md turns on this: `curb_offsets_at_stations` and friends read
+    `.centerline` and one of `.left_curb`/`.right_curb` and nothing else, so they were never about
+    legs. If a Road has to be wrapped to get through them, then moving the datum means rewriting
+    the frame; if it does not, it means changing the callers, which is a far smaller and far more
+    reversible thing.
+
+    Called positionally and through the package's own public names, exactly as every leg caller
+    does - the point is that these are THE SAME functions, not road-shaped copies of them.
+    """
+    for road in roads_from_model(site_models[site]):
+        for side in ("left", "right"):
+            if getattr(road, f"{side}_curb") is None:
+                continue
+            span = curb_station_span(road, side)
+            assert span is not None, f"{road.name} {side}: a traced kerb with no station span"
+            mid = (span[0] + span[1]) / 2
+            offsets = curb_offsets_at_stations(road, side, np.array([mid]))
+            assert offsets is not None and np.isfinite(offsets[0]), (
+                f"{road.name} {side}: the frame could not read the kerb it just gave a span for")
+            # Signed by side, the same convention a leg's kerb reads in: left is +offset.
+            assert (offsets[0] > 0) == (side == "left")
+            assert narrowest_half_width_ft(road, side, span[0], span[1]) > 0

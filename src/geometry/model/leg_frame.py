@@ -17,6 +17,32 @@ from shapely.geometry import LineString, Point, Polygon
 
 
 
+@dataclass(frozen=True)
+class Alignment:
+    """A centreline with a traced kerb on one or both sides - ALL this module reads.
+
+    Every function below is annotated `leg: "Leg"` and not one of them touches a leg: they read
+    `.centerline` and one of `.left_curb` / `.right_curb`, and nothing else. So the frame was
+    never about legs, and saying so in a type is the first step of docs/network-model.md's step 4.
+    A `Road` (src/geometry/network.py) carries the same three attributes and now goes through
+    these functions unchanged, which is what makes moving the datum a change of caller rather
+    than a rewrite of the frame.
+
+    It also gives the one-sided case a name. Reading a single traced kerb against some
+    centreline - a corridor's KerbRun, one piece of a chained road - was done by a private shim
+    in network.py that duck-typed those attributes into existence. That shim was right about the
+    contract and wrong about where it belongs: the contract is this module's, so the type is too.
+    """
+    centerline: LineString
+    left_curb: LineString | None = None
+    right_curb: LineString | None = None
+
+    @classmethod
+    def one_sided(cls, centerline: LineString, side: str, curb: LineString) -> "Alignment":
+        """One kerb read against one centreline, on the named side."""
+        return cls(centerline, **{f"{side}_curb": curb})
+
+
 @dataclass
 class Leg:
     """One approach to an intersection: a centerline plus (if known) a curb-to-curb
@@ -255,17 +281,34 @@ def narrowest_half_width_ft(leg: "Leg", side: str, from_ft: float = 0.0,
     Falls back to the nominal half-width where the side has no traced kerb, since then there is
     no measurement to prefer.
     """
-    half_ft = leg.curb_to_curb_ft / 2 if leg.curb_to_curb_ft is not None else 0.0
     span = curb_station_span(leg, side)
-    if span is None:
-        return half_ft
-    lo = max(span[0], from_ft)
-    hi = min(span[1], leg.centerline.length if to_ft is None else to_ft)
-    if hi - lo < STRIP_SAMPLE_FT:
-        return half_ft
-    n = max(int(np.ceil((hi - lo) / STRIP_SAMPLE_FT)) + 1, 2)
-    offsets = curb_offsets_at_stations(leg, side, np.linspace(lo, hi, n))
-    return float(np.abs(offsets).min())
+    if span is not None:
+        lo = max(span[0], from_ft)
+        hi = min(span[1], leg.centerline.length if to_ft is None else to_ft)
+        if hi - lo >= STRIP_SAMPLE_FT:
+            offsets = curb_offsets_at_stations(
+                leg, side, np.linspace(lo, hi, max(int(np.ceil((hi - lo) / STRIP_SAMPLE_FT)) + 1, 2)))
+            return float(np.abs(offsets).min())
+    return _nominal_half_ft(leg)
+
+
+def _nominal_half_ft(alignment) -> float:
+    """The DECLARED half-width, consulted ONLY where nothing is traced to measure instead.
+
+    Reached by getattr because it is the one thing an Alignment deliberately does not carry. A
+    declared width and a traced kerb that disagree is this project's most productive source of
+    bugs - five in one session, all of the form "config says 68 ft, the kerb says 44" - and
+    docs/network-model.md step 5 deletes the declared figure outright, replacing it with a
+    measurement that holds over the station range it was actually taken at. Until then a Leg
+    still carries one and a Road never does, so this reads whichever is in front of it and
+    answers 0 ft - no promised room - where there is no evidence either way.
+
+    It is also consulted LAST now rather than computed first. Evaluating the nominal on every
+    call, including the ones about to measure a real kerb and throw it away, is how a figure
+    nothing should depend on stays wired into every code path that touches the frame.
+    """
+    nominal = getattr(alignment, "curb_to_curb_ft", None)
+    return nominal / 2 if nominal is not None else 0.0
 
 
 def paint_stations(leg: "Leg", side: str, start_ft: float,

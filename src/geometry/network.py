@@ -41,7 +41,8 @@ from dataclasses import dataclass
 import numpy as np
 from shapely.geometry import LineString, Point
 
-from src.geometry.model import (STRIP_SAMPLE_FT, curb_offsets_at_stations, curb_station_span,
+from src.geometry.model import (Alignment, STRIP_SAMPLE_FT, curb_offsets_at_stations,
+                                curb_station_span,
                                 frame_at, is_through_street, leg_bearing_deg, line_direction,
                                 place_in_measured_frame, station_offset_many, vertex_tangents)
 
@@ -64,8 +65,12 @@ class Road:
     node_ft: float
     near_leg: str
     far_leg: str
-    left_kerb: LineString | None = None
-    right_kerb: LineString | None = None
+    #: The frame's own attribute names (src/geometry/model/leg_frame.py:Alignment), not
+    #: `left_kerb`/`right_kerb`. A Road IS an alignment - one centreline, one traced kerb per
+    #: side - so under these names every frame function takes a Road unmodified, and moving the
+    #: datum off the leg becomes a change of caller rather than a rewrite of the frame.
+    left_curb: LineString | None = None
+    right_curb: LineString | None = None
 
     @property
     def length_ft(self) -> float:
@@ -77,8 +82,8 @@ class Road:
         The road's own answer to the question `Leg.curb_to_curb_ft` answers per leg - and the
         comparison between the two is what tests/test_network.py checks.
         """
-        offsets = [_kerb_offset_at(self.centerline, self.left_kerb, "left", station_ft),
-                   _kerb_offset_at(self.centerline, self.right_kerb, "right", station_ft)]
+        offsets = [_kerb_offset_at(self.centerline, self.left_curb, "left", station_ft),
+                   _kerb_offset_at(self.centerline, self.right_curb, "right", station_ft)]
         return None if any(o is None for o in offsets) else sum(offsets)
 
 
@@ -97,36 +102,14 @@ def _kerb_offset_at(centerline: LineString, kerb: LineString | None, side: str,
     """
     if kerb is None:
         return None
-    shim = _AsLeg(centerline, kerb, side)
-    span = curb_station_span(shim, side)
+    one = Alignment.one_sided(centerline, side, kerb)
+    span = curb_station_span(one, side)
     if span is None or not (span[0] <= station_ft <= span[1]):
         return None
-    at = curb_offsets_at_stations(shim, side, np.array([station_ft]))
+    at = curb_offsets_at_stations(one, side, np.array([station_ft]))
     if at is None or at[0] is None or not np.isfinite(at[0]):
         return None
     return abs(float(at[0]))
-
-
-@dataclass
-class _AsLeg:
-    """The two attributes curb_offsets_at_stations reads, so a Road can borrow the leg frame.
-
-    A shim rather than a refactor, on purpose: step 1 must not touch the frame (that is step 4),
-    and the frame functions only ever look at `centerline` and one of the two curb attributes.
-    Written down as a class so what is being borrowed is explicit instead of duck-typed by
-    accident.
-    """
-    centerline: LineString
-    kerb: LineString
-    side: str
-
-    @property
-    def left_curb(self):
-        return self.kerb if self.side == "left" else None
-
-    @property
-    def right_curb(self):
-        return self.kerb if self.side == "right" else None
 
 
 def _joined_centerline(near, far) -> LineString:
@@ -196,8 +179,8 @@ def roads_from_model(model) -> list[Road]:
             # The road's LEFT is the near leg's RIGHT: reversing the near leg's direction of travel
             # swaps its sides. Getting this backwards would compare one kerb against itself and
             # report a plausible-looking width that is not the road's.
-            left_kerb=_joined_kerb(near, "right", far, "left"),
-            right_kerb=_joined_kerb(near, "left", far, "right"),
+            left_curb=_joined_kerb(near, "right", far, "left"),
+            right_curb=_joined_kerb(near, "left", far, "right"),
         ))
     return roads
 
@@ -791,14 +774,14 @@ def _oriented_piece(road: Road, first_leg: str) -> dict:
     against itself - the same trap roads_from_model's own side pairing warns about.
     """
     if road.near_leg == first_leg:
-        return {"centerline": road.centerline, "left": road.left_kerb, "right": road.right_kerb,
+        return {"centerline": road.centerline, "left": road.left_curb, "right": road.right_curb,
                 "node_from_start_ft": road.node_ft,
                 "legs": ((road.near_leg, -1.0), (road.far_leg, 1.0))}
     def flip(line):
         return None if line is None else LineString(list(line.coords)[::-1])
 
-    return {"centerline": flip(road.centerline), "left": flip(road.right_kerb),
-            "right": flip(road.left_kerb),
+    return {"centerline": flip(road.centerline), "left": flip(road.right_curb),
+            "right": flip(road.left_curb),
             "node_from_start_ft": road.length_ft - road.node_ft,
             "legs": ((road.far_leg, -1.0), (road.near_leg, 1.0))}
 
@@ -1011,11 +994,11 @@ def _junction_kerb_runs(pieces: list[dict], stations: np.ndarray) -> list[KerbRu
             kerb = piece[side]
             if kerb is None:
                 continue
-            shim = _AsLeg(piece["centerline"], kerb, side)
-            span = curb_station_span(shim, side)
+            one = Alignment.one_sided(piece["centerline"], side, kerb)
+            span = curb_station_span(one, side)
             if span is None or span[1] - span[0] < STRIP_SAMPLE_FT:
                 continue
-            edge = curb_edge_by_station(shim, side, span[0], span[1])
+            edge = curb_edge_by_station(one, side, span[0], span[1])
             if edge is None or len(edge) < 2:
                 continue
             runs.append(KerbRun(side=side, line=LineString(edge), start_ft=base + span[0],

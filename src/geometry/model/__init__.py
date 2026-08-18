@@ -24,7 +24,8 @@ from src.geometry.model.crs import (NJ_STATE_PLANE_FT, WGS84, buffer_point_wgs84
                                     nearest_per_quadrant,
                                     reproject_to_state_plane,
                                     split_leg_centerlines)
-from src.geometry.model.leg_frame import (Leg, NORTH_SOUTH_LEG_TOLERANCE, STRIP_SAMPLE_FT,
+from src.geometry.model.leg_frame import (Alignment, Leg, NORTH_SOUTH_LEG_TOLERANCE,
+                                          STRIP_SAMPLE_FT,
                                           band_from_offsets,
                                           curb_edge_by_station,
                                           curb_offsets_at_stations,
@@ -129,6 +130,7 @@ __all__ = [
                                     "STRIP_SAMPLE_FT",
                                     "THROUGH_STREET_ANGLE_DEG",
                                     "WGS84",
+                                    "Alignment",
                                     "Leg",
                                     "assign_curb_points_to_legs",
                                     "assign_kerbs_to_corners",

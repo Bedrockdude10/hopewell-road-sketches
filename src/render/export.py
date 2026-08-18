@@ -54,21 +54,13 @@ HATCH_ANGLE_DEG = 45.0  # for a corner treatment, which belongs to no single leg
 # changed in passing - raising it is a visible change to every render and its own decision.
 KERB_HEIGHT_M = {KerbType.RAISED: 0.20, KerbType.LOWERED: 0.07,
                  KerbType.FLUSH: 0.055, KerbType.UNKNOWN: 0.07}
-PAINT_HATCH_SPACING_FT = 8.0  # spacing between rendered diagonal hatch lines - a rendering choice, not MUTCD-specified.
-                               # At the original 2.5ft spacing, each stroke (which runs the buffer's full diagonal
-                               # width, edge-to-edge, per hatch_lines_ft) touched the inner lane-edge line so
-                               # frequently that the buffer read as one solid painted mass reaching the double
-                               # yellow, drowning out the solid edge line and making the 11ft lane unreadable in
-                               # the render even though the underlying geometry was already correct (verified via
-                               # plan_view.py's top-down plot and by projecting each hatch line's real endpoints).
-# Which paint kinds go into which JSON list blender_scene.py reads is no longer written here.
-# It was, in a table beside the one every marking is declared in, and keeping the two in step
-# was manual: renaming a kind in paint.py and forgetting this table dropped a whole treatment
-# from the 3D render with nothing to say so, which happened when the parking buffer's taper
-# became the daylight zone's and again when daylighting was added.
-#
-# Now each marking names its own channel (src/geometry/markings.py) and this is derived from
-# that one declaration, so the two cannot disagree. Kept as a name because tests read it.
+PAINT_HATCH_SPACING_FT = 8.0  # spacing between rendered diagonal hatch lines - a rendering choice, not
+                               # MUTCD-specified. Wide because each stroke runs the buffer's full diagonal
+                               # width (hatch_lines_ft), so tight spacing reads as one solid painted mass
+                               # reaching the double yellow and hides the lane edge line.
+# Which paint kinds go into which JSON list blender_scene.py reads. DERIVED, not written out:
+# each marking names its own channel (src/geometry/markings.py), so a second table here could
+# fall out of step and silently drop a treatment from the 3D render. Kept as a name for tests.
 PAINT_KIND_LISTS = {channel.key: tuple(kind.name for kind in kinds_in(channel))
                     for channel in CHANNELS}
 # Markings that reach the render some other way. An OBJECT is built from a prop - the render
@@ -80,13 +72,12 @@ PAINT_KINDS_NOT_IN_LISTS = frozenset(kind.name for kind in KINDS.values() if kin
 def _marking_frame_m(prefix: str, leg, station_ft, center_ft) -> dict:
     """{prefix}_centre_m and {prefix}_axis for a marking at `station_ft` along `leg`.
 
-    The crossing frame is defined once, in src/render/crosswalks.py:crosswalk_axes, and
-    Blender cannot import it - so like crosswalk_reach_*_m and crosswalk_bar_count it has to
-    travel as numbers. blender_scene.py was rebuilding it instead, from near_m and far_m,
-    which is the leg's CHORD: identical on a straight centerline, and 4.54 deg out on
-    broad_st_east, whose centerline kinks 4.5 deg where NJDOT rounds the corner 43.1 ft from
-    the junction. That put the 3D bars somewhere the 2D bands were not, and the plan view
-    then cleared paint from a footprint the render did not use.
+    THE CHORD IS NOT THE FRAME. The crossing frame is defined once, in
+    src/render/crosswalks.py:crosswalk_axes, and Blender cannot import it - so like
+    crosswalk_reach_*_m and crosswalk_bar_count it travels as numbers rather than being rebuilt
+    from near_m and far_m, which is the leg's CHORD. The two agree only on a straight
+    centerline: broad_st_east kinks 4.5 deg where NJDOT rounds the corner 43.1 ft out, which is
+    4.54 deg of rotation between the 3D bars and the 2D bands.
 
     The axis is a unit vector and the export frame is a translate-and-scale of state-plane
     feet, so it needs no conversion - only the centre does. Returns {} for a marking this leg
@@ -153,12 +144,9 @@ def export_scenario(model: IntersectionModel, state: DesignState, name: str, out
     if theme is None:
         from src.render.theme import build_default_theme
         theme = build_default_theme()
-    # THROUGH context_radius_m, like the kerbs, roads and cross streets already are. These two were
-    # the last surveyed layers on a flat radius, and at 2.5x the frame reaches 431.2 ft = 131.4 m
-    # against a 130 m fetch - the picture is already 4.7 ft wider than the data it is drawn from, and
-    # every step past 2.5x widens the band. Nothing falls in it at these four sites today, so this is
-    # a latent defect being closed rather than a visible one being fixed. At 1x the call is
-    # unchanged, so no existing render moves.
+    # Scaled with the frame, like the kerbs, roads and cross streets: at 2.5x the frame reaches
+    # 431.2 ft = 131.4 m against a flat 130 m fetch, so the picture would be drawn wider than the
+    # data it is drawn from. At 1x this is the unscaled radius, so no existing render moves.
     context_m = frame_covering_radius_m(model, BUILDING_CONTEXT_RADIUS_M)
     if buildings is None:
         buildings = fetch_buildings(model.center_wgs84, radius_m=context_m)
@@ -198,11 +186,9 @@ def export_scenario(model: IntersectionModel, state: DesignState, name: str, out
     # Resolved once and read twice - written into the JSON for the camera, and used to decide
     # which traced kerbs are in the picture at all. Two calls would be two chances to disagree.
     frame = junction_frame(model)
-    # THE TRACED KERBS, resolved once for the same reason - written out as `kerbs` below. The bare
-    # geometry that used to sit beside this (`drawn_kerbs = list(scene.drawn_kerbs)`) was here to
-    # trim each surveyed crossing to the carriageway; that trim moved into
-    # SceneGeometry.surveyed_crossing_markings, which is where the crossing's STYLE is resolved
-    # too, so the two cannot be done against different kerbs.
+    # THE TRACED KERBS, resolved once for the same reason - written out as `kerbs` below. The
+    # surveyed-crossing trim against these kerbs lives in SceneGeometry.surveyed_crossing_markings,
+    # beside where the crossing's STYLE is resolved, so the two cannot use different kerbs.
     drawn_kerbs_with_tags = list(kerb_lines_with_tags_ft(model.center_wgs84, center_ft,
                                                          radius_ft=drawn_kerb_radius_ft()))
 
@@ -210,9 +196,8 @@ def export_scenario(model: IntersectionModel, state: DesignState, name: str, out
     pavement_near, pavement_far = _split_near_far([pavement], center_ft, near_radius_ft)
     sidewalks_near, sidewalks_far = _split_near_far(sidewalk_pieces, center_ft, near_radius_ft)
 
-    # Street trees come only from real OSM natural=tree nodes. They were previously
-    # generated by walking each sidewalk piece at TREE_SPACING_FT, which invented 6-24
-    # trees per site; nothing recorded says a tree is there, so nothing is drawn.
+    # Street trees come only from real OSM natural=tree nodes - never spaced along a sidewalk,
+    # which would be inventing a tree nothing recorded.
     tree_points_ft = osm_tree_points_ft(control_nodes_ft(street_furniture))
 
     props = build_props(model, state, crosswalk_offsets, center_ft, traffic_control, street_furniture,
@@ -251,17 +236,14 @@ def export_scenario(model: IntersectionModel, state: DesignState, name: str, out
         strokes stepped sideways at every seam and read as sheared.
 
         THE HATCHING KEEPS HALF A SPACING OFF A RIM, so the line that closes the zone reads as its
-        edge and not as one more stroke. It has to, because the driveway fillet's chord is at the
-        hatch angle by construction - its radius is the strip's depth, so the chord is at 45
-        degrees, and the strokes are at 45 degrees. On Broad St's east kerb that put a 19 ft stroke
-        2 ft from the sweep at the lane edge and 5 ft from it at the kerb: in the render, a fork.
-        The tapered tip is then bounded by paint and left unhatched, which is what a striper does
-        with a point too narrow to hatch. Same idea as PAINT_TO_CROSSWALK_GAP_FT one layer up.
+        edge and not as one more stroke. It has to, because a driveway fillet's chord is at the
+        hatch angle by construction - the radius is the strip's depth, so both are 45 degrees - and
+        a stroke running nearly along the sweep renders as a fork. Same idea as
+        PAINT_TO_CROSSWALK_GAP_FT one layer up.
 
-        WHOLE STROKES ONLY. Taking the gap out of the polygon before hatching instead truncated the
-        offending stroke rather than dropping it, and its far half survived as a 3 ft mark floating
-        alone against the kerb - a stray, which is worse than the fork it replaced. A stroke either
-        clears the sweep or it is not painted.
+        WHOLE STROKES ONLY: a stroke either clears the sweep or is not painted. Cutting the gap out
+        of the polygon before hatching instead truncates the stroke, leaving its far half as a
+        stray mark against the kerb - worse than the fork.
         """
         angle_deg = (_leg_heading_deg(state.legs[piece.leg]) + 45 if piece.leg
                       else HATCH_ANGLE_DEG)
@@ -278,9 +260,8 @@ def export_scenario(model: IntersectionModel, state: DesignState, name: str, out
         return ring_to_local_m(piece.geometry.exterior.coords, center_ft)
 
     # One serializer per role, so a new marking is drawn correctly in 3D the moment it is
-    # declared. This used to be eleven hand-written assignments naming eleven JSON keys, and
-    # picking the wrong helper for a key was silent: a sampled polyline routed through the
-    # straight-chord builder deviated 0.7 ft on Broad St's daylight zone.
+    # declared, and no call site can route a sampled polyline through the straight-chord builder
+    # (0.7 ft of deviation on Broad St's daylight zone) by naming the wrong helper.
     BY_ROLE = {Role.LINE: lambda piece: [_line(piece)],
                Role.FILL: _hatch,
                Role.SURFACE: lambda piece: [_surface(piece)],
@@ -295,11 +276,10 @@ def export_scenario(model: IntersectionModel, state: DesignState, name: str, out
 
     paint_channels = {channel.key: channel_data(channel) for channel in CHANNELS}
 
-    # HOW TALL EACH BUILDING IS, from whoever recorded it. OSM gives this project real outlines
-    # and, here, no heights at all: 0 of 1150 building ways carry `height` and 7 carry
-    # `building:levels`, so every building was extruded to one default and a borough of
-    # storey-and-a-half houses rendered as identical boxes. The assessor counted the storeys -
-    # see src/sources/assessor.py for the join and for what happens where nobody counted.
+    # HOW TALL EACH BUILDING IS, from whoever recorded it. OSM has outlines here but effectively
+    # no heights (0 of 1150 ways carry `height`, 7 carry `building:levels`), so the assessor's
+    # storey counts are the datum - see src/sources/assessor.py for the join and for what happens
+    # where nobody counted.
     parcels_for_heights = parcels_near_buildings(model)
     storeys = storeys_by_pin(assessor_path(model))
     building_entries = []
@@ -340,9 +320,8 @@ def export_scenario(model: IntersectionModel, state: DesignState, name: str, out
         "stop_bar_curb_clearance_m": STOP_BAR_CURB_CLEARANCE_M,
         "existing_marked_crosswalks": model.config["intersection"].get("existing_marked_crosswalks", []),
         # Where the camera points and how much it takes in, resolved by src/render/frame.py so
-        # this render and the plan view frame the same ground. Blender used to compute an extent
-        # of its own from the pavement below, which is how the two views came to disagree by up
-        # to 1.57x on the same junction.
+        # this render and the plan view frame the same ground. Blender must not compute an extent
+        # of its own from the pavement below.
         "frame": frame.as_local_m(center_ft),
         "pavement_near": [ring_to_local_m(p.exterior.coords, center_ft) for p in pavement_near],
         "pavement_far": [ring_to_local_m(p.exterior.coords, center_ft) for p in pavement_far],
@@ -391,13 +370,8 @@ def export_scenario(model: IntersectionModel, state: DesignState, name: str, out
                 "crosswalk_reach_right_m": crosswalk_reaches.get(leg_name, (None, None))[1] * FT_TO_M
                     if leg_name in crosswalk_reaches else None,
                 # WHERE the crossing sits and WHICH WAY it faces, resolved here rather than
-                # re-derived in Blender. blender_scene.py was taking the leg's axis as the
-                # near->far CHORD and stepping the offset along it, which is a different
-                # answer from crosswalk_axes' on any leg whose centerline bends: on
-                # broad_st_east (3 vertices, 4.5 deg kink 43.1 ft out) it rotated the bars
-                # 4.54 deg away from where the plan view puts them, and swung them into
-                # 12.6 ft of paint the plan view had correctly cleared. Unskewed - the
-                # renderer still applies crosswalk_skew_deg itself, because the span factor
+                # re-derived in Blender from the leg's chord - see _marking_frame_m. Unskewed:
+                # the renderer still applies crosswalk_skew_deg itself, because the span factor
                 # that keeps a rotated crossing reaching both kerbs lives with it.
                 **_marking_frame_m("crosswalk", leg, crosswalk_offsets[leg_name].offset_ft, center_ft),
                 # Same for the stop bar, which is a second marking at a second station and
@@ -420,11 +394,10 @@ def export_scenario(model: IntersectionModel, state: DesignState, name: str, out
                 # i.e. unchanged behavior for any leg that hasn't been narrowed on its entering side.
                 "stop_bar_width_m": stop_bar_width_ft(state, leg_name) * FT_TO_M,
                 # ...and the resolved span and lateral offset that width produces, so
-                # blender_crosswalks.add_stop_bar draws the bar this module measured rather
-                # than repeating its arithmetic. The two copies had already diverged twice
-                # over: on where the bar starts across the road, and on whether the skew's
-                # span factor applies to the lateral offset as well as the span (Blender
-                # applied it to both, the plan view to the span only). See
+                # blender_crosswalks.add_stop_bar draws the bar this module measured rather than
+                # repeating its arithmetic - two copies diverged twice over, on where the bar
+                # starts across the road and on whether the skew's span factor applies to the
+                # lateral offset as well as the span (it does not). See
                 # src/render/crosswalks.py:stop_bar_band_geometry_ft.
                 **_stop_bar_span_m(state, leg_name, leg_name in stop_bar_offsets),
                 # A SetCenterlineStyle treatment if the design has one, else the real per-leg
@@ -438,13 +411,11 @@ def export_scenario(model: IntersectionModel, state: DesignState, name: str, out
                     crosswalk_offsets[leg_name].offset_ft,
                     stop_bar_offsets.get(leg_name),
                     leg_name in marked_crosswalks) * FT_TO_M,
-                # THE STRIPES THEMSELVES, following the leg's own centerline. Blender used to be
-                # handed near_m and far_m and draw a straight stripe between them, which is the
-                # CHORD - up to 3.98 ft off the real centerline on broad_st_east and 7.58 ft on
-                # louellen_st_west, putting the double yellow where the stop bar it meets is not
-                # and making the lanes either side of it read as different widths. The plan view
-                # was drawing it correctly from the same DesignState the whole time; see
-                # src/render/crosswalks.py:centerline_paint_ft, which both now call.
+                # THE STRIPES THEMSELVES, following the leg's own centerline rather than the
+                # near_m -> far_m CHORD, which is up to 3.98 ft off it on broad_st_east and
+                # 7.58 ft on louellen_st_west - enough to make the lanes either side read as
+                # different widths. See src/render/crosswalks.py:centerline_paint_ft, which the
+                # plan view calls too.
                 "centerline_paint_m": [
                     ring_to_local_m(line.coords, center_ft)
                     for line in centerline_paint_ft(
@@ -480,18 +451,14 @@ def export_scenario(model: IntersectionModel, state: DesignState, name: str, out
              "height_m": 0.10}
             for raised in state.treatments_of(RaiseCrossing)
         ],
-        # THE TRACED KERBS, with what OSM says each one is. There was no kerb in this render at
-        # all: the pavement is one slab and the "kerb" was the material boundary where the
-        # concrete band started, so a dropped kerb and a 6 in stood-up kerb looked identical and
-        # the raised/lowered tagging on all 95 mapped ways reached nothing.
+        # THE TRACED KERBS, with what OSM says each one is - built geometry, not a material
+        # boundary, so a dropped kerb and a 6 in stood-up kerb do not render identically and the
+        # raised/lowered tagging on all 95 mapped ways reaches something.
         #
-        # The SAME set the plan view draws - kerb_lines_with_tags_ft at the FRAME radius, because
-        # the two views disagreeing about which kerbs exist is the failure this project is built
-        # around, and because what a drawing contains is a question about the drawing.
-        #
-        # This took the near set (within 80 ft of the centre) until it was noticed that the near
-        # set is the corner-radius fit's test, not a renderer's: at Broad & Greenwood both kerbs
-        # are traced the length of the corridor and all but the four returns were being dropped.
+        # The SAME set the plan view draws: kerb_lines_with_tags_ft at the FRAME radius, not the
+        # near set (within 80 ft), which is the corner-radius fit's test rather than a renderer's
+        # - at Broad & Greenwood both kerbs are traced the length of the corridor, so the near set
+        # keeps only the four returns.
         "kerbs": [
             {"coords": ring_to_local_m(line.coords, center_ft),
              "kerb": str(KerbType.from_tags(tags)),
@@ -516,18 +483,15 @@ def export_scenario(model: IntersectionModel, state: DesignState, name: str, out
         # surveyed context and not a treatment this project proposes: it is already in the ground's
         # coordinates, belongs to no leg, and nothing should be cut around it.
         #
-        # The per-leg crosswalk fields above still draw the four crossings this junction models, so
-        # only the ones belonging to NO modelled leg travel here - `leg is None`. Without that split
-        # the four matched ones would be drawn twice, once from the leg's rebuilt band and once from
-        # their own way, and the two disagree by 1.44-2.73 ft.
+        # Only the crossings belonging to NO modelled leg travel here - `leg is None`. The per-leg
+        # fields above already draw this junction's four, and drawing them twice puts two crossings
+        # 1.44-2.73 ft apart on one piece of ground.
         #
         # Trimmed to the carriageway at the traced kerbs (surveyed.carriageway_geometry_ft): the
         # traced way runs sidewalk to sidewalk, 6-22 ft longer than the road it spans here, so
-        # untrimmed bars are painted across the footway.
-        # Styled by the SCENE, not by each way's own tag: a proposal that repaints every crossing
-        # continental has to reach the ones at junctions this site does not model, and building
-        # the bars here from `crossing.markings` is why it did not - see
-        # SceneGeometry.surveyed_crossing_markings, which the plan view now reads too.
+        # untrimmed bars are painted across the footway. Styled by the SCENE, not by each way's own
+        # tag, so a proposal that repaints every crossing continental reaches these too - see
+        # SceneGeometry.surveyed_crossing_markings, which the plan view reads too.
         "surveyed_crossings": [
             {"markings": crossing.markings,
              "distance_m": crossing.distance_ft * FT_TO_M,

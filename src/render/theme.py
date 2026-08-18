@@ -8,15 +8,13 @@ from functools import lru_cache
 
 from src.render.assets import fetch_polyhaven_model, fetch_polyhaven_texture
 
-# Poly Haven slugs chosen by browsing api.polyhaven.com/assets?t=textures - see
-# README.md "Phase 4 fidelity" for why these specific ones and why no CC0 source
-# was used for signage/trees (built procedurally instead - flagged, not hidden).
+# Poly Haven slugs. See README.md "Phase 4 fidelity" for why these specific ones, and why
+# signage/trees are procedural instead (no CC0 source - flagged, not hidden).
 ASPHALT_SLUG = "asphalt_01"
 CONCRETE_SLUG = "pavement_02"
 STREETLIGHT_SLUG = "street_lamp_01"
-# Mountable-apron surface (Proposal B: "stamped/colored concrete, distinct texture
-# from travel lane") - verified via api.polyhaven.com/assets?type=textures to have
-# real Diffuse/Rough/nor_gl maps at 2k/4k, same as the other two textures here.
+# Mountable-apron surface (Proposal B: "stamped/colored concrete, distinct texture from
+# travel lane"). Has real Diffuse/Rough/nor_gl maps at 2k/4k, like the other two.
 APRON_SLUG = "patterned_concrete_pavers"
 
 NEAR_RESOLUTION = "4k"
@@ -32,15 +30,11 @@ def _texture_paths(slug: str, resolution: str) -> dict[str, str] | None:
 
 @lru_cache(maxsize=1)
 def build_default_theme() -> dict:
-    """{"asphalt_near": {...} | None, "asphalt_far": ..., "concrete_near": ...,
-    "concrete_far": ..., "apron_near": ..., "apron_far": ...,
-    "streetlight_gltf": str | None}. Fetched once and shared across every
-    scenario export for a render (the assets don't vary per-scenario) - see
-    scripts/phase4_render_3d.py.
+    """{"asphalt_near": {...} | None, "asphalt_far", "concrete_near", "concrete_far",
+    "apron_near", "apron_far", "streetlight_gltf": str | None}.
 
-    Cached for the life of the process. The assets are the same for every site and every
-    scenario, but this was called once per site, so a four-site 3D build repeated the whole
-    resolution twice over. The returned dict is treated as read-only by every caller (it is
+    Cached for the life of the process: the assets vary by neither site nor scenario, so one
+    resolution serves a whole multi-site build. Callers treat the dict as read-only (it is
     serialized into the geometry JSON, never mutated).
     """
     return {

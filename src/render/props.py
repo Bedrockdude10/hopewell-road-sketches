@@ -177,12 +177,8 @@ def pad_polygon(x: float, y: float, heading_deg: float,
                   width_ft: float = TACTILE_PAD_WIDTH_FT) -> Polygon:
     """The rectangle a tactile pad occupies - depth along the crossing, width across it.
 
-    Genuinely shared now: this function's docstring already claimed to be what
-    src/render/plan_view.py draws, but that module had its own copy of the arithmetic, with
-    3x5 ft fallbacks against the 2x3 ft this uses. So a pad whose prop dict was missing its
-    dimensions would have been CHECKED at one size (src/checks.py calls this) and DRAWN at
-    another - the 2D/3D-style divergence this project exists to avoid, in a pair of functions
-    one of which said it was preventing it.
+    Shared by plan_view.py (2D) and checks.py, so a pad that is CHECKED at one size is
+    DRAWN at the same one.
     """
     angle = np.radians(heading_deg)
     ux, uy = np.cos(angle), np.sin(angle)
@@ -204,15 +200,13 @@ def _kerb_tactile_pad_props(kerb_ways: list, crossings: list[dict], pavement, ce
     distinction into the topology:
 
       * One lowered kerb serving two crosswalks -> BOTH crossings attach at the SAME
-        node -> the dedupe collapses them to ONE shared pad. (Three of the four corners
-        at Broad & Greenwood.)
+        node -> the dedupe collapses them to ONE shared pad.
       * Two separate ramps on one lowered kerb -> the crossings attach at TWO DIFFERENT
-        nodes on that kerb way -> TWO pads. (Every corner at Columbia & Princeton.)
+        nodes on that kerb way -> TWO pads.
 
     The kerb WAY is not the unit and must not be: at Columbia every corner is a single
     kerb way carrying two distinct pads, and at Broad & Greenwood a single kerb way
-    carries one. Keying on the way collapsed Columbia's eight pads to four. The attach
-    node is the ramp; the way is just the kerb it sits on.
+    carries one. The attach node is the ramp; the way is just the kerb it sits on.
 
     Returns (props, covered_crossing_ids) so the caller can skip crossing-inferred pads
     for crossings already served by a traced ramp.
@@ -266,10 +260,9 @@ def _pad_orientation(x: float, y: float, kerb_line, pavement):
     """(heading_deg, position) or None - where a pad goes at a ramp node on `kerb_line`.
 
     The pad's depth runs PERPENDICULAR TO THE KERB, into the footway, which is both
-    physically right and the only direction that reliably leaves the roadway. An earlier
-    version stepped outward from the crossing way's centroid instead; at nodes where that
-    direction points along or into the junction it never escaped, leaving pads 100% inside
-    the carriageway at 5 of 21 ramps.
+    physically right and the only direction that reliably leaves the roadway. Stepping
+    outward from the crossing way's centroid instead pointed along the junction at some
+    nodes, never escaping the carriageway.
 
     Returns None if the pad can't be cleared of the pavement within a sane distance. That
     means the modelled roadway has covered the real footway, and drawing the pad anyway
@@ -302,20 +295,10 @@ def _tactile_pad_props(line, pavement, leg_name: str, heading: float) -> list[di
 
     Finding the roadway edge: take the parts of the crossing way that lie OUTSIDE the
     pavement polygon (line.difference(pavement)) - those are the footway approaches at
-    either end - and put a pad at the inner end of each. Two earlier attempts got this
-    wrong and are worth not repeating:
-
-      * Intersecting with the leg's straight CURB LINE. Near a corner the curb return
-        (fillet arc) bulges past where the straight curb runs, so those points were still
-        inside the paved area: all eight pads at Broad/Greenwood landed 61-100% in the road.
-      * Intersecting with the pavement boundary and stepping out a fixed half-depth. Better,
-        but a fixed step doesn't clear a CURVED boundary, and it silently produced one pad
-        per crossing instead of two wherever the boundary intersection wasn't a clean pair
-        of points.
-
-    So the pad is nudged outward until it genuinely clears the pavement, rather than by an
-    amount assumed to be enough. If it can't be cleared within a sane distance the pad is
-    dropped - better absent than drawn in the roadway.
+    either end - and put a pad at the inner end of each. The pad is nudged outward until
+    it genuinely clears the pavement, rather than by an amount assumed to be enough. If it
+    can't be cleared within a sane distance the pad is dropped - better absent than drawn
+    in the roadway.
     """
     if pavement is None:
         return []
@@ -360,9 +343,8 @@ def _tactile_pad_props(line, pavement, leg_name: str, heading: float) -> list[di
     if len(props) < 2:
         # A crossing runs sidewalk to sidewalk, so it should leave the paved area at BOTH
         # ends. Fewer means our modelled pavement has swallowed one or both ends - the
-        # junction throat we build is wider than the real crossing is long. Same root
-        # cause as the over-wide leg widths phase 2 checks against OSM's sidewalks, and
-        # worth saying out loud rather than quietly drawing fewer ramps than exist.
+        # junction throat we build is wider than the real crossing is long. Worth saying
+        # out loud rather than quietly drawing fewer ramps than exist.
         print(f"  NOTE: only {len(props)} tactile pad(s) placed on {leg_name} - its {line.length:.0f} ft "
               f"surveyed crossing does not clear the modelled pavement at both ends, so the modelled "
               f"junction is wider there than reality. Check this leg's curb_to_curb_ft and the corner radius.")
@@ -390,10 +372,7 @@ def _osm_crossing_hardware_props(state: DesignState, crossings: list[dict], node
 
     # Which crossings already have their ramps placed from traced kerb geometry. Suppression
     # is PER CROSSING, not global: a junction can have some corners traced and some not, and
-    # blanket-suppressing meant Columbia & Princeton showed 4 pads where all four crossings
-    # are tagged tactile_paving=yes. Traced kerbs still win wherever they exist - they're
-    # the more specific statement - but an untraced corner falls back to inference rather
-    # than silently losing its ramp.
+    # an untraced corner falls back to inference rather than silently losing its ramp.
     # Centroids for the whole crossing layer once, rather than re-projecting every crossing
     # way for every matched leg.
     centroids = _crossing_centroids_ft(crossings)
@@ -429,12 +408,8 @@ def _crossing_is_covered(centroids: list[tuple], covered_ways: set, line) -> boo
 
 
 def osm_tree_points_ft(nodes_ft: list[dict]) -> list[tuple[float, float]]:
-    """Positions of real OSM natural=tree nodes.
-
-    Street trees used to be generated by walking each sidewalk piece at a fixed 25 ft
-    spacing, which invented 6-24 trees per site - none of them recorded anywhere. They
-    now come only from OSM, so a junction with no mapped trees renders with none.
-    """
+    """Positions of real OSM natural=tree nodes. A junction with no mapped trees renders
+    with none - no fallback generates them."""
     return [(n["point_ft"].x, n["point_ft"].y) for n in nodes_ft
             if n["tags"].get("natural") == "tree"]
 
@@ -483,10 +458,9 @@ def _leg_sign_position_ft(leg, offset_ft: float, side: str,
 
     Half the NOMINAL width is only a first guess at where the curb is, and since the curb
     lines became the surveyor's traced kerbs it is frequently an underestimate - the real
-    kerb flares wider than curb_to_curb_ft/2 approaching a corner, which is exactly where
-    signs go. Trusting the nominal figure put NO TURN ON RED signs inside the carriageway
-    at Broad & Greenwood. So the nominal offset is a starting point and the sign then steps
-    outward until it is genuinely clear of the modelled roadway.
+    kerb flares wider approaching a corner, which is exactly where signs go. The nominal
+    offset is a starting point and the sign then steps outward until it is genuinely clear
+    of the modelled roadway.
     """
     centerline = leg.centerline
     p = centerline.interpolate(min(offset_ft, centerline.length))
@@ -494,10 +468,7 @@ def _leg_sign_position_ft(leg, offset_ft: float, side: str,
     # end, so at or beyond centerline.length both samples were the same point, u was the zero
     # vector, and normalising it gave a NaN heading - a sign emitted at a real position with an
     # unrenderable rotation, which no scene invariant catches because they all check position.
-    # That is reachable whenever a leg is drawn shorter than the station a sign is asked for,
-    # which is routine: a leg stops where its kerb is traced (sites/README.md working_length_ft)
-    # while an OSM stop node sits where the stop line really is. First hit at princeton_eprospect,
-    # whose East Prospect legs are 30 and 35 ft against stop nodes 31 and 33 ft out.
+    # That is reachable whenever a leg is drawn shorter than the station a sign is asked for.
     # A leg does not turn in its last foot, so backing the pair up to the end is the same
     # heading the sign would have had, and identical to the old result anywhere inside.
     tail = min(offset_ft, max(centerline.length - 1, 0))
@@ -510,10 +481,8 @@ def _leg_sign_position_ft(leg, offset_ft: float, side: str,
     n = np.array([-u[1], u[0]]) if side == "left" else np.array([u[1], -u[0]])
     heading = float(np.degrees(np.arctan2(-n[1], -n[0])))  # face back toward the road
 
-    # Measure from the CURB on this side, not from half the nominal width. Those are the
-    # same number only where the curb is a centerline offset; where it is the surveyor's
-    # traced kerb - which is everywhere now - the kerb flares past half-width approaching a
-    # corner, and half-width put signs in the carriageway.
+    # Measure from the CURB on this side, not from half the nominal width - the traced kerb
+    # flares past half-width approaching a corner, and half-width put signs in the carriageway.
     base = np.array([p.x, p.y])
     curb = getattr(leg, f"{side}_curb", None)
     to_curb = curb.distance(p) if curb is not None and not curb.is_empty else leg.curb_to_curb_ft / 2
@@ -550,13 +519,11 @@ def _step_outward_clear(base, direction, lateral_ft: float, pavement, extra_ft: 
 # An approaching driver travels INWARD along a leg, i.e. opposite the centerline's own
 # outward direction, so their right-hand side (where a US stop sign belongs) is the leg's
 # own "left" in _leg_sign_position_ft's convention. This is the same swap
-# blender_crosswalks.add_stop_bar documents for the stop bar. The original code placed
-# stop signs on side="right" - the far side of the road from the driver they govern.
+# blender_crosswalks.add_stop_bar documents for the stop bar.
 APPROACHING_DRIVER_RIGHT = "left"
 
 # How far from the junction an OSM stop/give_way node may sit and still be governing THIS
-# junction rather than a neighbouring one. Real nodes here sit 29.6-34.9 ft out; the next
-# nearest belong to junctions 158 ft and 268 ft away.
+# junction rather than a neighbouring one.
 STOP_NODE_MAX_ALONG_FT = 100.0
 STOP_NODE_MAX_PERP_FT = 25.0
 
@@ -568,9 +535,9 @@ def _osm_control_props(state: DesignState, nodes_ft: list[dict], pavement=None) 
 
     A stop node sits ON the road way at the approach it governs, so matching it to a leg
     by perpendicular distance gives both WHICH approach has the sign and how far out it
-    is - real surveyed facts, replacing the previous one-per-approach guess. The lateral
-    side is still derived (a node on the centerline can't say which kerb the sign stands
-    on), but it's derived correctly now, onto the approaching driver's right.
+    is - real surveyed facts. The lateral side is still derived (a node on the centerline
+    can't say which kerb the sign stands on), but it's derived correctly now, onto the
+    approaching driver's right.
 
     Returns [] when OSM maps no control nodes at this junction, which is a genuine
     "no data" - the caller decides whether to fall back to a guess.
@@ -617,8 +584,7 @@ def _bollard_props(state: DesignState) -> list[dict]:
 
     On the sides the buffer is actually painted on, which is not always both: a leg can be
     narrowed on one kerb only (LaneNarrowing's `sides`), and taking bollard_points_ft's
-    default here stood a row of posts down a buffer that does not exist on the other kerb -
-    visible in the 3D render, absent from the plan view, which draws them from the paint.
+    default here stood a row of posts down a buffer that does not exist on the other kerb.
 
     The buffer's width and sides come from the LaneNarrowing this treatment requires, which is
     the same reason LaneNarrowingBollards.paint reads them from it: a post placed off a
@@ -657,25 +623,17 @@ def _traffic_signal_props(model: IntersectionModel, state: DesignState, center_f
     Traffic signal pole + pedestrian signal head at each corner listed in the
     site config's `signals.corners` (see sites/README.md) - confirmed via
     direct street-view photo review, NOT a field survey, but real/observed
-    rather than a geometric placeholder. Pole position reuses the same real
-    corner-fillet-arc-midpoint geometry the streetlights used to be placed on.
+    rather than a geometric placeholder.
 
     The mast arm extends at a RIGHT ANGLE to leg_a - the one leg of this
     corner's pair whose LEFT curb feeds it (see build_corner_fillets /
     fillet_curb_corner: a corner is always (leg_a.left_curb, leg_b.right_curb),
     so the pole sits on leg_a's left side) - parallel to leg_a's own crosswalk
     and perpendicular to leg_a's direction of travel, reaching from the pole
-    across to roughly mid-roadway. Confirmed against a real example: at the
-    broad_st_west/greenwood_ave_north (NW) corner, leg_a is broad_st_west, and
-    the arm reaches out over West Broad St's lanes, near-directly above its
-    crosswalk - visible to a driver heading west on Broad St looking across
-    the intersection - NOT diagonally toward the intersection center (an
-    earlier version of this function had it reaching for the bisector of both
-    adjacent legs, which is a ~45 degree angle relative to either road, not a
-    real mast-arm layout). The vehicle head at the arm's end faces back down
-    leg_a (toward oncoming leg_a-direction traffic) so it's actually visible
-    to approaching drivers; exactly which approach's signal phase it
-    represents isn't modeled, only the physical mast/head geometry.
+    across to roughly mid-roadway. The vehicle head at the arm's end faces back
+    down leg_a (toward oncoming leg_a-direction traffic); exactly which
+    approach's signal phase it represents isn't modeled, only the physical
+    mast/head geometry.
     """
     signals_cfg = model.config.get("signals")
     if not signals_cfg:
@@ -793,11 +751,9 @@ def _extra_prop(state: DesignState, entry: dict, offsets_ft: dict, source: str,
                  pavement=None) -> dict | None:
     """One `props.extra`-shaped sign placed on its leg, or None if it can't be placed.
 
-    Shared by the site-config and the scenario-level extras: the two differed only in where
-    the entry came from and what its `source` string says, but had separate copies of the
-    offset fallback and the placement retry. `offset_ft` may legitimately be absent OR
-    explicitly None (see treatments.add_extra_prop - None means "at this leg's real crossing"),
-    so both fall through to the resolved crosswalk offset rather than to a literal.
+    Shared by the site-config and the scenario-level extras. `offset_ft` may legitimately be
+    absent OR explicitly None (see treatments.add_extra_prop - None means "at this leg's real
+    crossing"), so both fall through to the resolved crosswalk offset rather than to a literal.
     """
     leg = state.legs.get(entry["leg"])
     if leg is None:
@@ -849,11 +805,9 @@ def _extra_props_from_state(state: DesignState, offsets_ft: dict, pavement=None)
 
 # Bollards the TREATMENT layer already draws for itself. The plan view builds its markings
 # from src/geometry/paint.py, which emits a bollard piece for every LaneNarrowingBollards a
-# design records, so drawing these props on top would just thicken the same markers.
-# Tagged rather than inferred: the plan view used to skip EVERY bollard prop on that
-# reasoning, which silently dropped the daylight-zone bollards - they come only from props,
-# so the 2D view of the bollard proposals showed no bollards at all while the 3D render
-# showed thirteen. Exactly the 2D/3D disagreement this project cannot ship.
+# design records, so drawing these props on top would just thicken the same markers. Tagged
+# rather than inferred: daylight-zone bollards come only from props, so a blanket skip would
+# drop them from the 2D view while the 3D render showed them.
 DRAWN_BY_PAINT = "drawn_by_paint"
 
 
@@ -893,17 +847,13 @@ def bollard_props_from_paint(state: DesignState, paint: list) -> list[dict]:
 
     A bollard is a physical object, so the 3D render can only build it from a prop - it draws
     props and paint from two different lists and never turns one into the other. The plan
-    view, which builds its markings from src/geometry/paint.py, was therefore showing 61
-    posts protecting Broad St's bike lanes while the export shipped none of them and Blender
-    drew a bare painted buffer. No error anywhere: paint and props are both valid on their
-    own, and nothing compared them. check_bollards_are_props does now.
+    view builds its markings from src/geometry/paint.py; check_bollards_are_props ensures
+    every paint post has a matching prop.
 
     Derived rather than recomputed, unlike the two builders above, because where a bike
     lane's row of posts STARTS depends on how far that leg's crossing actually reaches on
     that side - which is resolved from the crosswalk bands inside the paint builder and is
-    not available here. Recomputing it here would mean two implementations of one station,
-    and the last time this module recomputed something paint.py also knew, the 2D and the 3D
-    disagreed about where thirteen posts stood.
+    not available here. Recomputing it here would mean two implementations of one station.
     """
     from src.geometry.targets import LegSide
     from src.geometry.treatments import AddBikeLane, AddBikeLaneBollards
@@ -1001,11 +951,11 @@ def build_props(model: IntersectionModel, state: DesignState, offsets_ft: dict, 
 
     NOTHING IS DRAWN THAT ISN'T ATTESTED. A prop appears only if its EXISTENCE is
     recorded either in OSM or in the site config's own observations. There is no
-    "plausible default" tier any more: a junction with no mapped street lamps renders
-    with no street lamps, and a junction with no mapped stop nodes and no configured
-    signals renders with no traffic control at all. An empty corner is an honest
-    statement that nobody has recorded what is there; a fabricated lamp is not, and it
-    is indistinguishable in the render from a surveyed one.
+    "plausible default" tier: a junction with no mapped street lamps renders with no
+    street lamps, and a junction with no mapped stop nodes and no configured signals
+    renders with no traffic control at all. An empty corner is an honest statement that
+    nobody has recorded what is there; a fabricated lamp is not, and it is
+    indistinguishable in the render from a surveyed one.
 
     Two sources, in precedence order:
 
@@ -1019,21 +969,15 @@ def build_props(model: IntersectionModel, state: DesignState, offsets_ft: dict, 
     Positions may still be DERIVED where the source records existence but not placement
     (a stop node sits on the road centerline and can't say which kerb its sign is on).
     That is different from inventing the thing itself, and every such case says so in its
-    `source` string. What was removed: a streetlight conjured at every corner, and an
-    all-way stop assumed whenever no signals were configured.
+    `source` string.
 
     Everything else OSM knows about the junction is used too, all from surveyed positions:
     pedestrian pushbuttons and RRFB beacons at the ends of the crossing ways that carry
     button_operated / flashing_lights, tactile paving pads where a tactile_paving crossing
     meets each curb line, and fire hydrants. Nothing OSM records here is discarded.
 
-    Streetlights follow the same idea: real highway=street_lamp nodes when OSM has them,
-    otherwise one derived per corner. None of this project's four sites has any mapped,
-    so all four currently use the derived fallback - see data_gaps().
-
-    Signals and stop signs are not mutually exclusive any more: a signalized junction can
-    still have a stop sign on a minor approach, and OSM will say so if it does. What the
-    code no longer does is invent an all-way stop just because no signals were configured.
+    Signals and stop signs are not mutually exclusive: a signalized junction can still
+    have a stop sign on a minor approach, and OSM will say so if it does.
     """
     furniture_ft = control_nodes_ft(street_furniture)  # same lon/lat -> point_ft conversion
     control_ft = control_nodes_ft(traffic_control)
@@ -1058,14 +1002,6 @@ def build_props(model: IntersectionModel, state: DesignState, offsets_ft: dict, 
     # Last, and passed everything above: a daylight zone's length depends on the hydrants and
     # stop signs already placed, which carry setbacks of their own under 39:4-138(h),(i).
     return props + _daylight_device_props(state, offsets_ft, props)
-
-
-# The pad/furniture-in-the-roadway invariant lives in src/checks.py, where it runs alongside
-# every other scene invariant and reports all violations at once instead of stopping at the
-# first. There used to be a re-export of it here, plus an assert_pads_off_roadway shim wrapping
-# it - a module-level import at the BOTTOM of the file, for callers that no longer exist.
-# Nothing in the repo imported either; the one thing that still reaches back the other way is
-# checks.py asking this module for pad_polygon, which it does locally to avoid the cycle.
 
 
 def data_gaps(traffic_control: list[dict] | None, street_furniture: list[dict] | None,
@@ -1111,9 +1047,7 @@ def hydrant_position_conflicts(street_furniture: list[dict] | None, pavement) ->
     roadway is a real contradiction between two sources, and it has exactly two possible
     causes - both worth knowing:
 
-      * OSM's node is in the wrong place. That was the case at Broad & Greenwood, where the
-        hydrant was tagged fire_hydrant:position=green while its coordinates put it in the
-        street; it rendered in the carriageway because we place it where OSM says it is.
+      * OSM's node is in the wrong place.
       * Our modelled roadway is too wide and has swallowed the footway it stands on - the
         same failure the sidewalk width check and the tactile pad placement both surface.
 

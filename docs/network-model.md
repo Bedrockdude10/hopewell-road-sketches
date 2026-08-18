@@ -144,3 +144,45 @@ Step 4 touches ~14k lines with every golden regenerating at once, and the 3D exp
 automated check. If the work stalls midway the repo is worse than either endpoint. Steps 1–3 are
 independently valuable and revertible; **step 4 is the commitment**, and it should not start until
 1–3 have shown the road model reproduces the current geometry.
+
+## What the checkpoints measured, 2026-08-17
+
+Steps 1–3 have run. The road model reproduces the current geometry, so the gate above is passed —
+but two of the things measured on the way change what step 4 costs, and both were found by writing
+the checkpoint rather than by reading the code.
+
+**The frame was never leg-shaped, so step 4 is smaller than 14k lines suggests.** Every function in
+`model/leg_frame.py` is annotated `leg: "Leg"` and not one of them touches a leg: they read
+`.centerline` and one of `.left_curb`/`.right_curb`. Under those names a `Road` goes through
+`curb_station_span`, `curb_offsets_at_stations` and `narrowest_half_width_ft` unmodified. Moving
+the datum is a change of CALLER, not a rewrite of the frame — which is why `Alignment` and
+`Approach` landed without a single exported coordinate moving (0 of 13 exports differ, twice).
+
+**Steps 4 and 5 are one step, not two.** The plan has the config migration last, after the frame
+moves. It cannot be: the loader cannot fit one continuous centreline while each half carries a
+single `curb_to_curb_ft`. W Broad is 55.5 ft west of Greenwood and a different width east of it, so
+a Road needs the station-ranged width *on the first day of the inversion*. The config FORMAT can
+stay put — the ranges seed from today's two per-leg entries — but the internal model cannot. Plan
+step 4 and the width half of step 5 as one commit.
+
+**The through-join is broken in a way that only a road can fix, and it is worse than recorded.**
+`fitting.py:_join_through_legs` says it gives the two halves of a street a shared junction point.
+`_blend_onto` applies that point as a LATERAL offset profile — it takes `station_offset_many`'s
+offset and discards its station — so it can slide a leg's end sideways onto the joint but never
+along the street. At W Broad & Louellen 2.74 ft of the 3.1 ft gap is longitudinal and survives,
+under a NOTE announcing that the halves were joined. Splitting the difference makes it worse, not
+better: putting the road's node at the midpoint of the two ends moves the error onto the leg that
+had none, and cost 0.75 ft of width at `w_broad_st_northeast` station 5, where the kerb flares 0.68
+ft per foot. There is no node station that reproduces two datums 2.74 ft apart. Only building the
+line once removes the gap.
+
+And that is harder at Louellen than anywhere else, which is worth knowing before starting: the two
+halves come off DIFFERENT SRIs (CR 518 turns west onto Louellen, CR 654 carries on southwest), so
+there is no single source alignment to build the road from. The seam is real and has to be eased,
+the way `network.py:_eased_alignment` already eases a corridor across one.
+
+**`nj31_wdelaware` does not build at all** on current OSM — `build_all` reports 4 of 5 sites ok and
+that one as "Pavement ring is self-intersecting". It is the Pennington failure this document names,
+and it is invisible to the test suite, because the committed fixture cache carries no borough
+snapshot for Pennington and every test that would build it skips. Step 4 should be measured against
+it: a junction whose corner-fillet model fails on leg stubs is the case the road model exists for.

@@ -2208,3 +2208,171 @@ def test_no_rule_is_written_out_in_more_than_one_site():
     assert not shared, (
         "the same rule is written out in more than one site file - move it to src/ and have both "
         "call it:\n  " + "\n  ".join(" == ".join(w) for w in shared.values()))
+
+
+# --------------------------------------------------------------------------
+# The lane extension ACROSS the junction - NACTO's crossbike
+#
+# The one opening markings.AT_AN_OPENING could not reach. The green goes dotted over a driveway
+# and a side street because a marking's row says so and PaintContext clips the parent to the
+# mouth; at the junction the drawing is CENTRED on there is no parent - each leg's lane ends at
+# its own corner return - so the same rule produced nothing at all, and STANDARDS.md recorded
+# that as missing rather than leaving it to be inferred from a render that already looked
+# continuous. These pin the marking that closes it.
+# --------------------------------------------------------------------------
+
+# The longest run of bare asphalt a DOTTED lane may show and still read as one lane. A mark plus
+# a gap is the pattern (paint.DOTTED_MARK_FT + DOTTED_GAP_FT = 4 ft); the slack covers the marks
+# a crossing legitimately eats, since a crosswalk outranks the lane and cuts it like everything
+# else on the kerb. Far below the 49 ft and 81 ft of nothing that used to be drawn.
+MAX_BARE_RUN_FT = 22.0
+
+# How far off the extension's own axis a contraflow dash may sit. Float slack only: the stripe is
+# built ON that axis, so anything here is arithmetic. An edge-hugging stripe - the failure this
+# guards, and one MarkingsDoNotCollide has caught on a leg - sits half a lane width out, ~5 ft.
+CENTRE_STRIPE_TOLERANCE_FT = 0.5
+
+
+def _green_along(paint, a, b, step_ft=0.5):
+    """Which samples of the segment a->b lie under BIKE_LANE_SURFACE. The lane, as ridden."""
+    import numpy as np
+    from shapely.geometry import Point
+    from shapely.ops import unary_union
+
+    from src.geometry.markings import BIKE_LANE_SURFACE
+
+    green = unary_union([p.geometry for p in paint if p.kind is BIKE_LANE_SURFACE
+                          and p.geometry.geom_type == "Polygon"])
+    length = float(np.hypot(b[0] - a[0], b[1] - a[1]))
+    steps = max(int(length / step_ft), 2)
+    return [green.contains(Point(a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t))
+            for t in np.linspace(0.0, 1.0, steps)], length / steps
+
+
+@needs_source_data
+@pytest.mark.parametrize("site", ["broad_st_greenwood", "wbroad_louellen"])
+def test_the_two_way_lane_carries_across_the_junction(site_models, site):
+    """Ride the corridor kerb through the junction: the green must never simply stop.
+
+    THE TEST IS THE RIDE, not a count of marks, because a count passes on marks laid anywhere.
+    The check walks the line down the middle of the lane from one leg's green to the other's and
+    asserts the longest bare run is a dotted gap rather than a junction. Before the extension
+    existed that run was the whole box - 49 ft at Greenwood, 81 ft at Louellen, the two junctions
+    where the corridor kerb is actually opened.
+    """
+    from src.geometry.markings import BIKE_LANE_SURFACE
+    from src.geometry.model import point_at
+    from src.geometry.paint import curbside_paint_ft
+    from src.geometry.treatments import ExtendBikeLaneThroughJunction
+    from src.geometry.treatments.bikeways import lane_end_face
+
+    model = site_models[site]
+    with contextlib.redirect_stdout(io.StringIO()):
+        builder = load_site_scenarios(site).build_proposal_two_way_bike_lane
+        state = run_scenario(builder, DesignState.from_model(model), model)
+        scene = resolved_scene(model, state)
+        paint = curbside_paint_ft(state, scene.crosswalk_offsets, model.center_ft,
+                                   scene.crosswalk_bands, None, scene.marked_crosswalks)
+
+    extensions = state.treatments_of(ExtendBikeLaneThroughJunction)
+    assert len(extensions) == 1, f"{site}: expected one lane extension, got {len(extensions)}"
+    extension = extensions[0]
+
+    # The mid-lane point where each leg's green stops, read the same way the extension reads it.
+    class _Ctx:                       # lane_end_face wants only these two
+        pass
+    ctx = _Ctx()
+    ctx.state, ctx.pieces = state, paint
+    ends = []
+    for leg_name, side in extension.target.ends:
+        face = lane_end_face(ctx, leg_name, side)
+        assert face is not None, f"{site}/{leg_name} {side}: no green to extend from"
+        station_ft, inner_ft, outer_ft = face
+        ends.append(point_at(state.legs[leg_name].centerline, station_ft,
+                              (inner_ft + outer_ft) / 2))
+
+    hits, step_ft = _green_along(paint, ends[0], ends[1])
+    worst, run = 0, 0
+    for hit in hits:
+        run = 0 if hit else run + 1
+        worst = max(worst, run)
+    bare_ft = worst * step_ft
+    assert bare_ft <= MAX_BARE_RUN_FT, (
+        f"{site}: riding the corridor kerb through the junction crosses {bare_ft:.1f} ft with no "
+        f"bike lane under it. The facility is drawn as continuous either side and as nothing in "
+        f"between, which is the claim MUTCD 9E.06(15) and NACTO's crossbike both refuse")
+    assert any(p.kind is BIKE_LANE_SURFACE and p.leg is None for p in paint), (
+        f"{site}: the green reaching across the box must belong to no leg - a piece carrying one "
+        f"would be measured against that leg's mouth by NoPaintInsideTheJunction")
+
+    # AND THE YELLOW WITH IT. A crossbike drawn in green alone says a lane runs through the
+    # junction and says nothing about it having two directions in it - which is the fact a driver
+    # turning across it most needs, since the rider bearing down on them may be coming from the
+    # direction they did not check. NACTO asks for the dotted yellow centreline through the
+    # crossbike, and the stripe's AT_AN_OPENING row has read CARRIED all along; it simply had
+    # nothing here to be carried along.
+    from src.geometry.markings import BIKE_CONTRAFLOW_DIVIDER
+
+    yellow = [p for p in paint if p.kind is BIKE_CONTRAFLOW_DIVIDER and p.leg is None]
+    assert yellow, f"{site}: the extension carries no contraflow centre stripe"
+    # Down the MIDDLE of it, not along an edge - "a lane's centre stripe that is not down the
+    # lane's centre is not a centre stripe", which MarkingsDoNotCollide has already caught once on
+    # a leg (see AddTwoWayBikeLane.paint).
+    #
+    # AGAINST THE AXIS, which is the segment joining the two lane-end face midpoints - `ends`
+    # above, the same two points the extension is ruled between. Two earlier versions of this
+    # assertion measured the wrong thing and both failed on correct geometry, which is worth
+    # recording because each looked reasonable: containment in the GREEN fails because the green
+    # is dotted on its own cadence and the yellow on a longer one, so a dash landing in a green
+    # gap is the normal case; a margin from the HULL's boundary fails at the two ends, where the
+    # hull's end edges are legitimately close. The property wanted is neither - it is simply that
+    # the centre stripe lies on the centre.
+    from shapely.geometry import LineString
+
+    axis = LineString(ends)
+    off_centre = [d for d in yellow if axis.distance(d.geometry) > CENTRE_STRIPE_TOLERANCE_FT]
+    assert not off_centre, (
+        f"{site}: {len(off_centre)} of {len(yellow)} contraflow dashes in the junction sit more "
+        f"than {CENTRE_STRIPE_TOLERANCE_FT} ft off the extension's axis - a centre stripe that is "
+        f"not central tells a turning driver nothing about which way the rider is coming from")
+
+    # AND THE TWO EDGE LINES BREAK WITH THE GREEN. This is the property PaintContext.dash_phase
+    # exists to hold on a leg - "a lane's two edge lines and the green between them are one
+    # marking seen three ways, and dashing each along its own arc length puts them out of phase" -
+    # and it has to hold across the box for the same reason. Exactly two edge marks per green
+    # mark is what "cut on the same spans" looks like from outside; a count that drifts from 2:1
+    # means somebody re-dashed one of them on its own length.
+    from src.geometry.markings import BIKE_LANE_DOTTED_EXTENSION
+
+    edges = [p for p in paint if p.kind is BIKE_LANE_DOTTED_EXTENSION and p.leg is None]
+    green = [p for p in paint if p.kind is BIKE_LANE_SURFACE and p.leg is None]
+    assert len(edges) == 2 * len(green), (
+        f"{site}: {len(edges)} edge-line marks against {len(green)} green marks in the junction. "
+        f"The lane's two edges and its green are one marking seen three ways and are cut on one "
+        f"set of spans, so the only ratio that is in phase is 2:1")
+    for mark in edges:
+        assert axis.distance(mark.geometry) > CENTRE_STRIPE_TOLERANCE_FT, (
+            f"{site}: an edge-line mark lies on the extension's axis - the edges bound the lane, "
+            f"the contraflow stripe divides it, and a marking doing both is one of them misplaced")
+
+
+@needs_source_data
+def test_no_extension_where_the_corridor_kerb_is_never_opened(site_models):
+    """E Broad & Princeton: the stem is on the FAR side, so the lane's own kerb runs straight
+    through and is continuous already. An extension there would be a second lane laid on the
+    join, so the corridor must refuse one and say which rule refused it - MUTCD 3B.11(07)'s
+    T-intersection case, the same set that gives the through-kerb exception everywhere else."""
+    from src.geometry.treatments import ExtendBikeLaneThroughJunction
+
+    model = site_models["ebroad_princeton"]
+    printed = io.StringIO()
+    with contextlib.redirect_stdout(printed):
+        builder = load_site_scenarios("ebroad_princeton").build_proposal_two_way_bike_lane
+        state = run_scenario(builder, DesignState.from_model(model), model)
+
+    assert not state.treatments_of(ExtendBikeLaneThroughJunction), (
+        "an extension was recorded across a junction that has no gap in the lane - the note "
+        "would claim a crossbike the render does not contain")
+    assert "no lane extension" in printed.getvalue(), (
+        "the refusal has to be REPORTED. A corridor that silently draws nothing here is "
+        "indistinguishable from one that silently failed to draw something")

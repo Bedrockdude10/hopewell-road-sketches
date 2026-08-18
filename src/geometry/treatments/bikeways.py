@@ -10,7 +10,7 @@ from typing import ClassVar
 import numpy as np
 import shapely.ops
 
-from src.geometry.targets import Side
+from src.geometry.targets import AcrossTheJunction, LegSide, Side
 from src.geometry.model import narrowest_half_width_ft
 from src.geometry.treatments.base import (BOLLARD_DEFAULT_SPACING_FT, LANE_WIDTH_SLACK_FT,
                                           PARKING_STALL_LENGTH_DEFAULT_FT,
@@ -141,6 +141,20 @@ CORRIDOR_SIDE = "north"
 # The contraflow stripe's cadence. Shorter than the roadway's dashed centreline, because it is
 # read at bicycle speed over a 12 ft lane rather than at 25 mph over a 40 ft one, and a stripe
 # scaled to the road reads as two or three marks over a whole block.
+# WHERE THE BIKE LANE SYMBOL GOES. NACTO asks for it after every driveway and intersection AND at
+# least every 500 ft along the lane - both rules, not either, because on a corridor with 19
+# junctions the interval alone leaves long unmarked stretches while the mouths alone cluster them
+# where nobody needs reminding. MUTCD Fig 9E-1 is the marking. STANDARDS.md, verified 2026-08-18.
+SYMBOL_INTERVAL_FT = 500.0
+# How far past a mouth the reminder sits: clear of the opening itself, near enough to read as
+# belonging to it. It is what keeps the symbol out of any opening, which is why BIKE_LANE_SYMBOL's
+# AT_AN_OPENING row can be CARRIED - there is never one inside a mouth to cut.
+SYMBOL_CLEAR_OF_OPENING_FT = 15.0
+# The painted footprint. A schematic arrow rather than a drawn bicycle - see markings.py:
+# BIKE_LANE_SYMBOL_POLYGONS for why, and the legend says which marking it represents.
+SYMBOL_LENGTH_FT = 5.5
+SYMBOL_WIDTH_FT = 2.4
+
 CONTRAFLOW_DASH_FT = 3.0
 CONTRAFLOW_GAP_FT = 5.0
 # Below this the two travel lanes are no longer lanes. NACTO's urban minimum is 10 ft, and
@@ -607,9 +621,10 @@ class AddBikeLane(Treatment):
         asphalt a lane-narrowing buffer marks; the buffer beside it, and the parking outside it,
         hatched and ticked with the machinery already here."""
         from src.geometry.markings import (BIKE_BUFFER_FILL, BIKE_LANE_EDGE_LINE,
-                                           BIKE_LANE_SURFACE, BUFFER_EDGE_LINE, BUFFER_FILL,
-                                           STALL_DIVIDER)
-        from src.geometry.model import (band_from_offsets, curbside_strip_polygon, inset_line_ft,
+                                           BIKE_LANE_SURFACE, BIKE_LANE_SYMBOL, BUFFER_EDGE_LINE,
+                                           BUFFER_FILL, STALL_DIVIDER)
+        from src.geometry.model import (band_from_offsets, curb_offsets_at_stations,
+                                        curbside_strip_polygon, inset_line_ft,
                                         kerb_inset_offsets, kerb_parallel_line_ft,
                                         kerb_referenced_band_polygon, lane_narrowing_polygons_ft,
                                         offset_band_polygon, paint_stations, parking_stall_lines_ft)
@@ -704,6 +719,58 @@ class AddBikeLane(Treatment):
         # ground that everything else is cut around (seal_surfaces), and colouring the lane must
         # not cut the lane's own edge lines - or the buffer hatching beside it - back out.
         ctx.add(BIKE_LANE_SURFACE, surface, leg_name, side, beyond_ft, shares_a_kerb=through)
+        # THE BIKE LANE SYMBOL (MUTCD Fig 9E-1). NACTO asks for one after every driveway and
+        # intersection and at least every 500 ft; both halves of that rule live in
+        # bike_symbol_stations_ft, so this leg, the corridor strip and the 3D export all call for
+        # the same symbols. The stations come from state.kerb_openings, which is where a mouth's
+        # start and end actually are - the PaintContext knows openings as GROUND, which is the
+        # right shape for cutting paint and the wrong one for measuring 15 ft past a mouth.
+        mouths = tuple((o.start_ft, o.end_ft)
+                       for o in ctx.state.kerb_openings.get((leg_name, side), ()))
+        # THE SAME DATUM THE LANE ITSELF IS ON, and getting this wrong put symbols in the buffer.
+        # A two-way lane hugs the kerb (BikeLane.hugs_kerb), so its edges are insets FROM THE KERB
+        # and its position at a station is wherever the kerb is there. Measuring the symbol's
+        # centre off the alignment instead places it where the lane would be if it did not hug -
+        # which at Broad & Greenwood was 5 sq ft inside bike_buffer_fill, and the collision check
+        # said so. Centreline-referenced only for the sections that are.
+        def lane_centre_at(station_ft: float) -> float | None:
+            if not lane.hugs_kerb:
+                return (bounds["bike_inner_ft"] + bounds["bike_outer_ft"]) / 2
+            at = curb_offsets_at_stations(leg, side, np.array([station_ft]))
+            if at is None or not np.isfinite(at[0]):
+                return None
+            return abs(float(at[0])) - (kerb["bike_inner_ft"] + kerb["bike_outer_ft"]) / 2
+        # The leg's own drawn length, NOT beyond_ft. beyond_ft is a clipping THRESHOLD - the
+        # station past which a piece is discarded for lying behind a crossing - and reading it as
+        # the run's end gave 6 ft "runs" at Broad & Greenwood, inside which no symbol interval
+        # could ever land. Two different quantities that are both stations.
+        run_end_ft = leg.centerline.length
+        for station_ft in bike_symbol_stations_ft(max(start_ft, 0.0), run_end_ft, mouths):
+            centre_ft = lane_centre_at(station_ft)
+            if centre_ft is None:
+                continue
+            # A two-way lane's two halves face opposite ways, so each gets its own symbol: that is
+            # what tells a driver at a mouth which direction the rider bearing down on them is
+            # coming from, and it is the reason the symbol is worth drawing rather than decorative.
+            faces = (True, False) if isinstance(self, AddTwoWayBikeLane) else (True,)
+            for index, forward in enumerate(faces):
+                # Half a symbol plus clearance either side of centre. Bounded by the lane's own
+                # sixth so a narrow lane does not push them into the edge stripes, and floored at
+                # half a symbol plus a margin so a wide one does not let the pair touch - which is
+                # what a plain sixth did on a 10 ft lane, overlapping them by 2 sq ft.
+                spread_ft = max(SYMBOL_WIDTH_FT / 2 + 0.4, lane.width_ft / 6)
+                spread_ft = min(spread_ft, max(lane.width_ft / 2 - SYMBOL_WIDTH_FT / 2, 0.0))
+                across_ft = centre_ft + (0.0 if len(faces) == 1
+                                         else spread_ft * (1 if index else -1))
+                # NOT shares_a_kerb, unlike the lane it sits on. That flag subtracts ground the
+                # adjoining leg has already painted, which is right for a zone running through the
+                # node and fatal for a symbol: the lane's own green is registered first, so a
+                # symbol lying inside it was subtracted to nothing and 0 of them reached either
+                # renderer. A symbol is a discrete mark at a station, not a run that two legs
+                # could each paint half of.
+                ctx.add(BIKE_LANE_SYMBOL,
+                        bike_symbol_polygon(leg, side, station_ft, across_ft, forward),
+                        leg_name, side, beyond_ft)
         if lane.buffer_ft:
             # The hatched buffer, between the two lines that bound it rather than under them.
             # lane_narrowing_polygons_ft measures its stripe inward from the kerb-to-kerb half,
@@ -1062,3 +1129,301 @@ def travel_lane_width_ft(state: DesignState, leg_name: str, side: str, painted_f
     """
     half_ft = state.legs[leg_name].curb_to_curb_ft / 2
     return half_ft - painted_ft - divider_shift_toward_ft(state, leg_name, side)
+
+
+def bike_symbol_stations_ft(start_ft: float, end_ft: float, openings=()) -> list[float]:
+    """Stations along one run of lane where a BIKE LANE symbol belongs.
+
+    Both of NACTO's rules at once: one after every opening the lane crosses, and one at least
+    every SYMBOL_INTERVAL_FT regardless. `openings` are (lo, hi) station pairs on this kerb.
+
+    ONE PLACE, so the plan view, the 3D export and the corridor strip cannot disagree about how
+    many symbols a design calls for - the same reason the section's own offsets live on BikeLane.
+    """
+    at = [start_ft + SYMBOL_CLEAR_OF_OPENING_FT]
+    station = start_ft + SYMBOL_INTERVAL_FT
+    while station < end_ft:
+        at.append(station)
+        station += SYMBOL_INTERVAL_FT
+    for _lo, hi in openings:
+        if start_ft < hi < end_ft:
+            at.append(hi + SYMBOL_CLEAR_OF_OPENING_FT)
+    # THINNED, because the two rules can land on top of each other: a mouth 15 ft before an
+    # interval station puts two symbols in the same 5.5 ft of road, which the collision check
+    # reads - correctly - as ground painted twice. One symbol per place; whichever rule asked
+    # for it, the rider only needs telling once.
+    kept: list[float] = []
+    for station in sorted(s for s in at if start_ft <= s <= end_ft):
+        if not kept or station - kept[-1] >= SYMBOL_LENGTH_FT * 1.5:
+            kept.append(station)
+    return kept
+
+
+def bike_symbol_polygon(on, side: str, station_ft: float, centre_offset_ft: float,
+                        forward: bool = True):
+    """The symbol's painted footprint at one station, centred in the lane.
+
+    An arrowhead on a shaft, pointing the way that half of the lane runs. `forward` is what makes
+    a bidirectional lane's two halves face opposite ways, which is the whole reason a symbol earns
+    its place here rather than being decoration: it tells a driver at a mouth which direction the
+    rider bearing down on them is coming from.
+    """
+    import numpy as np
+    from shapely.geometry import Polygon
+
+    from src.geometry.model import place_in_measured_frame
+
+    sign = 1.0 if side == "left" else -1.0
+    nose = SYMBOL_LENGTH_FT / 2 * (1.0 if forward else -1.0)
+    tail = -nose
+    half = SYMBOL_WIDTH_FT / 2
+    shaft = SYMBOL_WIDTH_FT / 6
+    # (along, across) in the lane's own terms, then placed in the road frame once.
+    outline = [(nose, 0.0), (nose - nose / 2, half), (nose - nose / 2, shaft),
+               (tail, shaft), (tail, -shaft), (nose - nose / 2, -shaft),
+               (nose - nose / 2, -half)]
+    stations = np.array([station_ft + along for along, _across in outline])
+    offsets = np.array([sign * (centre_offset_ft + across) for _along, across in outline])
+    placed = place_in_measured_frame(on.centerline, stations, offsets)
+    return Polygon([tuple(point) for point in placed])
+
+
+# How far past the green's last station the cross-section is sampled to read the lane's WIDTH
+# there. The end face is not always square: a lane cut by a skewed crossing ends on that
+# crossing's diagonal, so a single station gives one vertex rather than a face. Two feet is
+# comfortably wider than any such diagonal is deep here and far shorter than the run over which
+# a kerb-hugging lane's width changes, so the min/max it takes are the lane's two real edges.
+LANE_END_FACE_SAMPLE_FT = 2.0
+
+# Below this there is no gap worth crossing. A junction whose two lane ends are already within a
+# mark's length of each other does not need an extension - it needs nothing, and drawing one
+# would put a stray dash in the join.
+MIN_EXTENSION_GAP_FT = 6.0
+
+# How much of a dotted mark has to survive the clips for it to still BE that mark. The same rule
+# PaintContext._dashes_across_openings applies to a LINE ("a part of a mark is not a mark", at half
+# a mark) written for an area, because the green is an area and nothing had ever stated it there.
+# A half is the line rule's own fraction, so the two do not disagree about what a partial dash is.
+MIN_MARK_FRACTION = 0.5
+
+
+def lane_end_face(ctx, leg_name: str, side: str):
+    """Where this kerb's green STOPS, as (station_ft, inner_offset_ft, outer_offset_ft).
+
+    READ OFF THE PAINT, NOT REBUILT FROM THE SECTION, and that is the whole reason this is a
+    function rather than four lines in the caller. The lane's edges are on one of two datums
+    depending on whether the section hugs the kerb (see AddBikeLane.paint's lane_edge_line), and
+    where the green actually ends depends on the crossing that cut it - so a second construction
+    of either would be a second chance to disagree with the first, which is the failure this
+    module has paid for repeatedly. The pieces are already in ctx by the time an extension is
+    painted (paint_group orders it after), so the lane's own answer is simply there to be asked.
+
+    Offsets come back SIGNED, in the leg's own frame - the convention model.point_at and
+    band_from_offsets share - so the caller places points with them directly instead of
+    recovering a side from their magnitude.
+
+    None where this kerb has no green at all: a leg the corridor could not fit a section on. A
+    facility that breaks at a junction must not have an extension drawn across it, because the
+    drawing would then assert a continuity the design does not have.
+    """
+    import numpy as np
+
+    from src.geometry.markings import BIKE_LANE_SURFACE
+    from src.geometry.model import station_offset_many
+
+    centerline = ctx.state.legs[leg_name].centerline
+    stations, offsets = [], []
+    for piece in ctx.pieces:
+        if piece.kind is not BIKE_LANE_SURFACE or piece.leg != leg_name:
+            continue
+        if str(piece.side) != side or piece.geometry.geom_type != "Polygon":
+            continue
+        station, offset = station_offset_many(
+            centerline, np.asarray(piece.geometry.exterior.coords, dtype=float))
+        stations.append(station)
+        offsets.append(offset)
+    if not stations:
+        return None
+    stations, offsets = np.concatenate(stations), np.concatenate(offsets)
+    end_ft = float(stations.min())
+    near = offsets[stations <= end_ft + LANE_END_FACE_SAMPLE_FT]
+    if near.size < 2:
+        return None
+    # By MAGNITUDE, then carrying the sign: "inner" is the edge nearer the alignment and "outer"
+    # the one against the kerb, and on a right-hand kerb both offsets are negative - so a plain
+    # min/max would name them the wrong way round on exactly half the legs.
+    inner_ft = float(near[np.argmin(np.abs(near))])
+    outer_ft = float(near[np.argmax(np.abs(near))])
+    return end_ft, inner_ft, outer_ft
+
+
+@dataclass(frozen=True)
+class ExtendBikeLaneThroughJunction(Treatment):
+    """The lane's dotted green extension ACROSS the junction box - NACTO's crossbike.
+
+    THE ONE OPENING THE TABLE COULD NOT REACH. markings.AT_AN_OPENING gives BIKE_LANE_SURFACE
+    `DOTTED / DOTTED`, and PaintContext._dashes_across_openings has always laid the green back
+    across a driveway and a side street. It could never lay it across THIS junction, for a
+    geometric reason rather than a standards one, and STANDARDS.md said so: a lane is built leg
+    by leg, so at the junction each leg's green simply ends at its own corner return and there is
+    no single marking spanning the mouth for an extension to be the continuation OF. The dash
+    machinery is explicit about refusing that case - see _dash_spans_along, "a lane that simply
+    ENDS at an opening has nothing to extend", which is the guard that stopped the stubs. That
+    guard is right and is untouched here. What was missing was the marking it should have been
+    extending: this builds it.
+
+    MEASURED, at the two junctions that need it. Broad & Greenwood's north kerb: the east leg's
+    green stops at station 26.83 and the west leg's at 22.21, so 49 ft of a continuous corridor
+    facility was drawn as nothing. W Broad & Louellen: 12.70 and 68.30, and 81 ft - the longer
+    because that junction is a Y whose crossing is surveyed 43.7 deg off square. At E Broad &
+    Princeton the corridor kerb has no mouth at all (Princeton Ave is a stem on the far side), so
+    the two legs' green already runs on through the node and this correctly draws nothing.
+
+    WHY STRAIGHT, over a span that long. The extension is RULED between the two end
+    cross-sections - each edge a straight line from one leg's lane edge to the other's - rather
+    than curved to follow the kerb between them. That is not a simplification: at a junction
+    there IS no kerb between them, which is what the mouth means, and a crossing is drawn
+    straight across the ground it crosses. The corridor legs at Louellen are 170.9 deg apart, so
+    the chord runs about 3 ft off where a curve through the node would, well inside the lane's
+    own 12 ft - and the alternative, a marking that curves through a junction because the street
+    either side of it does, is exactly the wobble a striper does not paint.
+
+    GREEN ONLY, for now. NACTO's crossbike also carries the lane's dotted edge lines and its
+    dotted yellow centreline through the box, and both are the same construction as this one
+    against a different pair of offsets. They are not drawn yet, and STANDARDS.md records that
+    rather than leaving it to be inferred from a render that already looks continuous.
+    """
+    paint_group: ClassVar[int] = 40
+    target: AcrossTheJunction
+
+    def describe(self) -> str:
+        return (f"ExtendBikeLaneThroughJunction({self.target}): the bike lane's green carried "
+                f"across the junction as a dotted lane extension")
+
+    def apply_to(self, state: "DesignState", model=None) -> str:
+        from src.geometry.model.corners import through_street_sides
+
+        through = through_street_sides(state.legs)
+        for leg_name, side in self.target.ends:
+            if state.treatment_for(AddBikeLane, LegSide(leg_name, side)) is None:
+                raise KeyError(
+                    f"{leg_name} {side} has no bike lane, so there is nothing to extend across "
+                    f"the junction from it. An extension is the CONTINUATION of a facility; "
+                    f"drawn without one at both ends it would assert a corridor that breaks "
+                    f"here (see CorridorFacility, which is where that refusal is reported).")
+            if (leg_name, side) in through:
+                # REFUSED RATHER THAN DRAWN EMPTY, and the difference is what state.notes claims.
+                # A kerb running straight through has no mouth (model.junction_mouth_ft returns
+                # None for exactly this set), so the two legs' green is already laid behind the
+                # node and overlapped - THROUGH_JUNCTION_OVERLAP_FT - and the lane is continuous
+                # without any extension. Applying one anyway painted nothing at E Broad &
+                # Princeton while recording in the provenance that a crossbike had been added.
+                # A note nobody can see contradicted is the failure mode this project keeps
+                # finding; the refusal is caught and reported by CorridorFacility.
+                raise ValueError(
+                    f"{leg_name} {side} runs STRAIGHT THROUGH this junction - MUTCD 11th ed. "
+                    f"3B.11(07)'s T-intersection case - so its kerb is never opened and the "
+                    f"lane already carries across unbroken. There is no gap here to extend over.")
+        return (" - MUTCD 11th ed. 9E.03(07) Standard (extensions through intersections shall be "
+                "dotted) and 9E.06(15) Guidance (extension markings should cross intersections "
+                "AND driveways for a buffer-separated lane); NACTO Urban Bikeway Design Guide, "
+                "bidirectional lanes continue through intersections as a crossbike.")
+
+    def paint(self, ctx) -> None:
+        """One quad per dotted mark, ruled between the two lane ends and cut at the crossings."""
+        from shapely.geometry import LineString, Polygon
+        from shapely.ops import unary_union
+
+        from src.geometry.markings import BIKE_LANE_DOTTED_EXTENSION, BIKE_LANE_SURFACE
+        from src.geometry.model import point_at
+        from src.geometry.paint import _dash_spans
+
+        ends = []
+        for leg_name, side in self.target.ends:
+            face = lane_end_face(ctx, leg_name, side)
+            if face is None:
+                return          # no lane on one end - see apply_to, and CorridorFacility's note
+            station_ft, inner_ft, outer_ft = face
+            centerline = ctx.state.legs[leg_name].centerline
+            ends.append((point_at(centerline, station_ft, inner_ft),
+                          point_at(centerline, station_ft, outer_ft)))
+        (a_inner, a_outer), (b_inner, b_outer) = ends
+        # INNER TO INNER. Both ends are the same physical kerb seen from two approaches, so the
+        # edge against the kerb on one leg is the edge against the kerb on the other; pairing
+        # inner to OUTER would draw the extension as a bow tie crossing itself in the middle.
+        length_ft = float(np.hypot(a_inner[0] - b_inner[0], a_inner[1] - b_inner[1]))
+        if length_ft < MIN_EXTENSION_GAP_FT:
+            return
+        def across(fraction: float):
+            def lerp(p, q):
+                return (p[0] + (q[0] - p[0]) * fraction, p[1] + (q[1] - p[1]) * fraction)
+            return lerp(a_inner, b_inner), lerp(a_outer, b_outer)
+        # The lane's own green, so a mark meeting the end face is trimmed to butt against it
+        # rather than lie over it. The face is where the paint stops, and where the paint stops is
+        # a diagonal wherever a skewed crossing cut it - so the two touch along a slanted edge
+        # that neither side can compute from the other's stations. Subtracting is the only join
+        # that cannot leave a sliver of green painted twice, which MarkingsDoNotCollide reads as
+        # the design asserting two things about one patch of ground.
+        painted = unary_union([p.geometry for p in ctx.pieces
+                                if p.kind is BIKE_LANE_SURFACE and p.geometry.geom_type == "Polygon"])
+        # ONE SET OF SPANS FOR ALL THREE, which is the whole point of PaintContext.dash_phase on a
+        # leg: "a lane's two edge lines and the green between them break at the same stations
+        # instead of each being dashed along its own length and drifting out of phase". Here the
+        # spans are simply shared directly - there is one parameter along the extension and every
+        # marking on it is cut at the same two fractions, so they cannot drift.
+        for start_ft, end_ft in _dash_spans(0.0, length_ft):
+            near_inner, near_outer = across(start_ft / length_ft)
+            far_inner, far_outer = across(end_ft / length_ft)
+            mark = Polygon([near_inner, near_outer, far_outer, far_inner])
+            if not mark.is_valid:
+                mark = mark.buffer(0)
+            # Half the mark it was meant to be, or it is not that mark. The two things that trim
+            # one here - the crosswalk it gives way to, and the lane's own end face it butts
+            # against - both cut on a diagonal, so what they leave is a wedge rather than a
+            # shorter dash. See PaintContext.add_across_the_junction.
+            ctx.add_across_the_junction(BIKE_LANE_SURFACE, mark.difference(painted),
+                                         min_area_sq_ft=mark.area * MIN_MARK_FRACTION)
+            # THE LANE'S TWO EDGES, on those same spans. Laid as BIKE_LANE_DOTTED_EXTENSION and
+            # not as BIKE_LANE_EDGE_LINE, because that is the kind the edge line's own row names
+            # for its dashes (AT_AN_OPENING: BIKE_LANE_EDGE_LINE is DOTTED, dotted_as=this) - "a
+            # broken line is a different instruction from the solid one it continues". So the
+            # marks here are the same kind the per-leg paint already lays across every driveway,
+            # and both renderers draw them without being told anything new.
+            for near, far in ((near_inner, far_inner), (near_outer, far_outer)):
+                ctx.add_across_the_junction(
+                    BIKE_LANE_DOTTED_EXTENSION, LineString([near, far]),
+                    min_length_ft=(end_ft - start_ft) * MIN_MARK_FRACTION)
+        self._carry_the_contraflow_stripe(ctx, a_inner, a_outer, b_inner, b_outer, length_ft)
+
+    def _carry_the_contraflow_stripe(self, ctx, a_inner, a_outer, b_inner, b_outer,
+                                      length_ft: float) -> None:
+        """The yellow centre stripe, down the middle of the extension.
+
+        NACTO asks for a dotted yellow centreline along a bidirectional lane AND through the
+        crossbikes (STANDARDS.md), and the stripe's row in AT_AN_OPENING already reads CARRIED at
+        an intersection - it just had nothing to be carried along here, for the same reason the
+        green did not. Without it the crossbike says a lane runs through the junction and says
+        nothing about it having two directions in it, which is the one fact a driver turning
+        across it most needs: the rider bearing down on them may be coming from the direction
+        they did not check.
+
+        AT THE LEG'S OWN CADENCE, not re-dashed. CONTRAFLOW_DASH_FT / CONTRAFLOW_GAP_FT is the
+        pattern either side, and the whole reason this stripe is CARRIED rather than DOTTED is
+        that its own cadence IS the broken line the standard asks for - laying a second, finer
+        rhythm inside the box would be the mistake that row was written to stop.
+        """
+        from shapely.geometry import LineString
+
+        from src.geometry.markings import BIKE_CONTRAFLOW_DIVIDER
+
+        def middle(inner, outer):
+            return ((inner[0] + outer[0]) / 2, (inner[1] + outer[1]) / 2)
+
+        axis = LineString([middle(a_inner, a_outer), middle(b_inner, b_outer)])
+        period_ft = CONTRAFLOW_DASH_FT + CONTRAFLOW_GAP_FT
+        at_ft = 0.0
+        while at_ft + CONTRAFLOW_DASH_FT <= axis.length:
+            dash = shapely.ops.substring(axis, at_ft, at_ft + CONTRAFLOW_DASH_FT)
+            ctx.add_across_the_junction(BIKE_CONTRAFLOW_DIVIDER, dash,
+                                         min_length_ft=CONTRAFLOW_DASH_FT * MIN_MARK_FRACTION)
+            at_ft += period_ft

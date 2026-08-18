@@ -389,6 +389,14 @@ def build_scene(data: dict):
         green.add_prism(ring, MARKING_CLEARANCE_M / 2, z_base=marking_z - MARKING_CLEARANCE_M)
     green.build()
 
+    # The BIKE LANE symbol, white on the green. AT the stripe layer rather than half a clearance
+    # below it like the green is, because the symbol is paint applied ON the coloured surface -
+    # same height as the edge lines, which is what stops it z-fighting with the green it sits on.
+    symbols = MeshBatch("bike_lane_symbol", marking_mat)
+    for ring in data.get("bike_lane_symbol_polygons", []):
+        symbols.add_prism(ring, MARKING_CLEARANCE_M / 2, z_base=marking_z)
+    symbols.build()
+
     # EVERY SURVEYED CROSSING IN THE PICTURE, drawn from its own traced way rather than rebuilt
     # from a leg. This is the network-renderer change (docs/network-renderer-plan.md): a crossing
     # used to reach the render only by matching one of the modelled junction's legs, so at Broad &

@@ -18,6 +18,10 @@ channels:
     count: 0
     extent: null
     points: 0
+  bike_lane_symbol_polygons:
+    count: 0
+    extent: null
+    points: 0
   corner_apron_polygons:
     count: 0
     extent: null

@@ -437,6 +437,10 @@ What this repo now draws, and where each answer comes from:
 | edge lines | break, continue as a dotted extension | same | §9E.06(15) Guidance; §9E.04(02) Option |
 | yellow contraflow centre stripe | **carries through unbroken** | same | NACTO dotted yellow centreline; §9E.06(15) |
 | green surface | breaks and resumes as the same dashes | same | our choice — **Modelled**; colour is not specified |
+| green surface, across the JUNCTION'S OWN box | n/a — a driveway has no box | dotted marks ruled between the two lane ends | §9E.03(07) Standard; §9E.06(15) Guidance; NACTO crossbike |
+
+The last row is the one added on 2026-08-18, and it is not a cell in `AT_AN_OPENING` like the
+others — see "The lane extension ACROSS the junction" below for why it could not be.
 
 Every one of those cells is now a row in `markings.AT_AN_OPENING` rather than a paragraph here
 and a call site there — see §2. The contraflow stripe is the one whose cell changed on 2026-08-17:
@@ -453,15 +457,47 @@ Three answers to one conflict point, and that one belonged to nobody. Fixed 2026
 > a new marking rather than a parameter - see the "new marking touches six places" checklist in
 > README.md.
 
-> **And still missing: the lane extension ACROSS an intersection**, which §9E.06(15) asks for in
-> the same sentence as the driveway case. The table above is honest about the driveway column and
-> silent about the other one for a geometric reason, not a standards one: a lane is built leg by
-> leg, so at a junction there is no single marking spanning the mouth for an extension to be the
-> continuation OF - each leg's lane simply ends at its own corner return. Drawing one means
-> building a new marking across the junction box (NACTO's crossbike), which is a new geometry
-> rather than a row in `AT_AN_OPENING`. Recorded here rather than left to be inferred from a
-> render, because the table naming the rule makes it look handled. Not a regression: the lane
-> stopped at the junction before this too, with one or two stub marks beside it.
+**The lane extension ACROSS the junction — added 2026-08-18.** §9E.06(15) asks for it in the same
+sentence as the driveway case, and until now this section was honest about the driveway column and
+silent about the other one — for a geometric reason, not a standards one. A lane is built leg by
+leg, so at the junction the drawing is centred on there is no single marking spanning the mouth for
+an extension to be the continuation OF; each leg's green ends at its own corner return. That is why
+it could not be a row in `AT_AN_OPENING`: the dash machinery clips a *parent* marking to the
+opening, and here there was no parent. `PaintContext._dash_spans_along` is explicit about refusing
+the case — "a lane that simply ENDS at an opening has nothing to extend" — and that guard is right
+and unchanged. What was missing was the marking it should have been extending.
+
+`treatments.ExtendBikeLaneThroughJunction` now builds it, applied by `CorridorFacility` because it
+belongs to the route rather than to either approach:
+
+| | before | after |
+|---|---|---|
+| Broad & Greenwood, north kerb | 49 ft of nothing | 10 marks, 186 sq ft; longest bare run **8.0 ft** |
+| W Broad & Louellen, north kerb | 81 ft of nothing | 21 marks, 386 sq ft; longest bare run **2.0 ft** |
+| E Broad & Princeton, north kerb | already continuous | **refused, and reported** — see below |
+
+The bare runs are what a rider meets, measured down the middle of the lane by
+`test_the_two_way_lane_carries_across_the_junction`. Louellen's 2.0 ft is one dotted gap: the
+pattern is unbroken. Greenwood's 8.0 ft is two crosswalks being crossed — a marked crossing
+outranks the lane and cuts it, exactly as it does everywhere else on the kerb.
+
+At **E Broad & Princeton** the stem is on the far side, so the corridor's own kerb is never opened
+(§3B.11(07)'s T-intersection case), the two legs' green already runs through the node overlapped,
+and an extension would be a second lane laid on the join. The treatment refuses, and
+`CorridorFacility` prints the refusal — a junction that silently draws nothing here is
+indistinguishable from one that silently failed to draw something.
+
+**The extension is drawn straight**, ruled between the two end cross-sections rather than curved to
+follow the kerb between them. At a junction there *is* no kerb between them — that is what the
+mouth means — and a crossing is drawn straight across the ground it crosses. Louellen's corridor
+legs are 170.9° apart, so the chord runs about 3 ft off where a curve through the node would, well
+inside the lane's own width.
+
+> **Still missing: the rest of the crossbike.** NACTO carries the lane's dotted edge lines and its
+> dotted yellow centreline through the box alongside the green; only the green is drawn. Both are
+> the same construction against a different pair of offsets — `ExtendBikeLaneThroughJunction.paint`
+> already has the two end cross-sections in hand. Recorded here rather than left to be inferred
+> from a render that now looks continuous.
 
 ### NJDOT says this facility is unacceptable — **Verified 2026-08-14**
 

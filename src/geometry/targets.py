@@ -163,3 +163,50 @@ class Corner(Target):
 
     def __str__(self) -> str:
         return f"{self.leg_a} x {self.leg_b}"
+
+
+@dataclass(frozen=True, order=True)
+class AcrossTheJunction(Target):
+    """The GAP between one facility's two kerbs, on either side of the junction box.
+
+    Every other target names ground inside one leg's frame, and that is right for a marking
+    measured from a kerb: the leg is the only frame the offsets mean anything in. A LANE
+    EXTENSION IS NOT LIKE THAT. It is the piece of a continuous facility that lies where neither
+    leg reaches - across the mouth of the street between them - so it belongs to the pair or to
+    nothing, and a treatment aimed at either leg alone would be drawing half of it in a frame
+    that does not contain it.
+
+    BOTH SIDES ARE SPELT OUT rather than implied. Corner takes (leg_a's LEFT, leg_b's RIGHT)
+    from build_corner_fillets' pairing and that convention is load-bearing there; here the two
+    kerbs are the SAME physical kerb seen from two approaches, and which of left/right that is
+    on each comes out of model.side_facing per leg. Writing the convention down again would be
+    a second record of a fact side_facing already answers - so the sides are carried, not
+    reconstructed.
+    """
+    leg_a: str
+    side_a: Side
+    leg_b: str
+    side_b: Side
+
+    def __post_init__(self):
+        object.__setattr__(self, "side_a", Side(self.side_a))
+        object.__setattr__(self, "side_b", Side(self.side_b))
+        if (self.leg_a, self.side_a) == (self.leg_b, self.side_b):
+            raise ValueError(
+                f"An extension spans the gap BETWEEN two kerbs, and {self.leg_a} "
+                f"{self.side_a} is one kerb given twice - there is no gap for it to cross.")
+
+    @property
+    def ends(self) -> tuple[tuple[str, str], tuple[str, str]]:
+        """The two (leg, side) keys, in the order the extension runs."""
+        return ((self.leg_a, str(self.side_a)), (self.leg_b, str(self.side_b)))
+
+    def missing_from(self, state) -> str | None:
+        for leg in (self.leg_a, self.leg_b):
+            missing = LegTarget(leg).missing_from(state)
+            if missing:
+                return missing
+        return None
+
+    def __str__(self) -> str:
+        return f"{self.leg_a} {self.side_a} -> {self.leg_b} {self.side_b}"

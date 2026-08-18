@@ -490,9 +490,23 @@ def _leg_sign_position_ft(leg, offset_ft: float, side: str,
     """
     centerline = leg.centerline
     p = centerline.interpolate(min(offset_ft, centerline.length))
-    p2 = centerline.interpolate(min(offset_ft + 1, centerline.length))
-    u = np.array([p2.x - p.x, p2.y - p.y])
-    u = u / np.linalg.norm(u)
+    # THE DIRECTION IS SAMPLED FROM A PAIR THAT CANNOT COLLAPSE. interpolate() clamps past the
+    # end, so at or beyond centerline.length both samples were the same point, u was the zero
+    # vector, and normalising it gave a NaN heading - a sign emitted at a real position with an
+    # unrenderable rotation, which no scene invariant catches because they all check position.
+    # That is reachable whenever a leg is drawn shorter than the station a sign is asked for,
+    # which is routine: a leg stops where its kerb is traced (sites/README.md working_length_ft)
+    # while an OSM stop node sits where the stop line really is. First hit at princeton_eprospect,
+    # whose East Prospect legs are 30 and 35 ft against stop nodes 31 and 33 ft out.
+    # A leg does not turn in its last foot, so backing the pair up to the end is the same
+    # heading the sign would have had, and identical to the old result anywhere inside.
+    tail = min(offset_ft, max(centerline.length - 1, 0))
+    p2 = centerline.interpolate(min(tail + 1, centerline.length))
+    u = np.array([p2.x - centerline.interpolate(tail).x, p2.y - centerline.interpolate(tail).y])
+    norm = np.linalg.norm(u)
+    if norm == 0:      # a degenerate centerline - a zero-length leg has no direction at all
+        return None, 0.0
+    u = u / norm
     n = np.array([-u[1], u[0]]) if side == "left" else np.array([u[1], -u[0]])
     heading = float(np.degrees(np.arctan2(-n[1], -n[0])))  # face back toward the road
 

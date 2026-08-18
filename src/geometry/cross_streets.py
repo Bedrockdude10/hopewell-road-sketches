@@ -49,11 +49,25 @@ from shapely.ops import nearest_points
 
 from src.geometry.context_roads import assumed_width_ft, is_carriageway
 
-# A meeting closer than this to the junction centre IS this junction, not a cross street. Its
-# arms all meet at the centre and the (e) setback is already measured from the side line there
-# (src/geometry/daylighting.py), so admitting them would double-cite one corner. Comfortably
-# past the widest corner return in the set (29 ft) and short of the nearest real side street.
-JUNCTION_OWN_REACH_FT = 50.0
+# THIS JUNCTION'S OWN ARMS, and the test is about the WAY rather than about distance along a leg.
+# Its arms all meet at the centre and the (e) setback is already measured from the side line there
+# (src/geometry/daylighting.py), so admitting them would double-cite one corner.
+#
+# THE OLD TEST MEASURED THE WRONG THING, and it cost the school its entrance. It asked how far
+# ALONG THE LEG the meeting point was and excluded anything within 50 ft. That is true of an own
+# arm - and also of any real entrance that meets the street near the corner. Hopewell Elementary's
+# service road (way 845227293) meets Princeton Ave 45.9 ft out and was dropped by it, so no kerb
+# opened and the lane-narrowing hatching was painted straight across the drive children are
+# dropped off in. The dropped kerbs at its mouth could not rescue it either: they carry no
+# `wheelchair` tag, which kerbs.py:opens_the_kerb reads as "unspecified, does not open".
+#
+# An own arm is not merely NEAR the centre, it PASSES THROUGH it. Measured at princeton_eprospect,
+# both arm ways lie 0.0 ft from the centre while the service road lies 45.9 ft from it and the
+# nearest real side street 314 ft - so the discriminator is the WAY's own distance to the centre,
+# and the tolerance only has to cover NJDOT's alignment disagreeing with OSM's centreline. That is
+# the same disagreement JOIN_TOLERANCE_FT exists for, and it is well under the 29 ft widest corner
+# return the old constant had to clear for a reason it no longer has.
+JUNCTION_OWN_ARM_TOLERANCE_FT = 20.0
 
 # How far along the cross street to look when deciding which side of us it leaves on. Far
 # enough to clear the meeting itself, short enough not to follow a curving street back round.
@@ -332,9 +346,9 @@ def cross_streets_ft(center_wgs84, center_ft, legs: dict) -> dict:
             reach_ft = leg.curb_to_curb_ft / 2 + JOIN_TOLERANCE_FT
             if leg.centerline.distance(way_line) > reach_ft:
                 continue
+            if way_line.distance(center_ft) <= JUNCTION_OWN_ARM_TOLERANCE_FT:
+                continue    # one of this junction's own arms - see the constant
             on_leg, _on_way = nearest_points(leg.centerline, way_line)
-            if on_leg.distance(center_ft) <= JUNCTION_OWN_REACH_FT:
-                continue
             station_ft = leg.centerline.project(on_leg)
             # A way ALONGSIDE us is not a way across us - and this leg's own OSM way runs
             # alongside it for its whole length, a few feet off. The same orientation test

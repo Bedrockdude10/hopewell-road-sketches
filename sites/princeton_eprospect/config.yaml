@@ -1,0 +1,214 @@
+# Princeton Ave (CR 569) & East Prospect St, Hopewell Borough, NJ 08525.
+#
+# THE ELEMENTARY SCHOOL SITE, and the reason this junction is modelled rather than the two
+# Princeton Ave junctions that already were. Hopewell Elementary School (OSM way 1177649847,
+# 5.22 acres) fronts Princeton Ave for 508 ft, from 334 ft to 842 ft south of Columbia Ave -
+# entirely outside the 130 ft legs at both ebroad_princeton and columbia_princeton. This
+# junction sits at the middle of that frontage, and it is where the school's crossing is.
+#
+# Every leg's geometry rests on the kerbs Danny traced in OSM on 2026-08-18 (33 kerb ways and
+# 10 driveways along Princeton Ave, extending the trace from station 588 ft to the borough
+# line at 1,577 ft). NOT field-measured - see `width_provenance` on each leg and
+# sites/README.md for what those tiers mean.
+#
+# WHAT MAKES THIS STREET HARD, and it is not the width. Princeton Ave is CR 569 and OSM tags
+# it `hgv=designated` / `hgv:state_network=yes` against NJDOT's chapter 32 truck access rules
+# - a designated state truck route past an elementary school. That is the same constraint
+# nj31_wdelaware carries and it is why the proposal here does not narrow lanes below the
+# project's 11 ft floor. The way also carries `parking:both:restriction=no_parking` for its
+# whole length, so unlike Broad St there is no parking lane to reclaim: any width for a
+# treatment has to come out of the corner returns or the shoulder.
+#
+# See sites/README.md for the schema.
+
+data_sources:
+  road_network: data/NJ_Roadway_Network.geojson
+  parcels: data/MercerCountyParcels.shp
+  # MOD-IV property tax records - the assessor's storey count per parcel, which is where
+  # building heights come from (src/sources/assessor.py). OSM has none here.
+  tax_list: data/MercerTaxList.dbf
+
+intersection:
+  name: "Princeton Ave (CR 569) & East Prospect St, Hopewell Borough, NJ 08525"
+  center_wgs84: [-74.7572458, 40.3882413]
+  street1: "Princeton Avenue"
+  street2: "East Prospect Street"
+  anchor_query: "East Prospect Street, Hopewell, NJ 08525"
+  resolution_method: >
+    OSM/Overpass shared-node match (src/sources/data_loader.py:geocode_intersection), run as
+    scripts/phase1_audit.py on 2026-08-18. Both streets run through as continuous OSM ways
+    (Princeton Ave 11643245, East Prospect St 11642514) so this is a shared-node match rather
+    than an endpoint match, the same as at columbia_princeton and ebroad_princeton.
+    Cross-checked against NJDOT's own layer: SRI 00000569__ (ROUTE 569) and SRI 11051002__
+    (E PROSPECT ST) are two of the four segments within 150 m, and they are the only two that
+    reach this point.
+  clip_radius_m: 150
+  leg_working_length_ft: 130
+  # THREE of the four legs are marked, and the unmarked one is the finding. OSM maps exactly
+  # three crossing ways here - 376498222 (west leg), 376498293 (east leg), 376498296 (south
+  # leg) - every one `crossing=zebra`, with matching highway=crossing nodes (3686417502,
+  # 3686417523, 4883975174). There is NO crossing on the Princeton Ave NORTH leg, the leg
+  # that faces the school frontage and Columbia Ave beyond it.
+  #
+  # THIS JUNCTION IS IN THE JULY 2026 HOPEWELL CROSSWALK INVENTORY - Danny confirms the
+  # survey covered every intersection on Princeton Ave (2026-08-18). So there IS a second,
+  # independent record to cross-check OSM against here, the same as at columbia_princeton
+  # and unlike nj31_wdelaware, which is outside the borough.
+  #
+  # THE INVENTORY'S RECORDS ARE NOT YET TRANSCRIBED INTO THIS FILE. The survey's own files
+  # (its map.geojson, LIMITATIONS.md and photos) are not in this repo, so the per-leg
+  # condition ratings, marking styles and photo IDs that columbia_princeton carries are
+  # simply missing here rather than absent from the source. Add them; the list below is
+  # OSM's account alone until they are.
+  #
+  # AND THE NORTH LEG IS THE ONE TO CHECK FIRST. OSM records no crossing there, but OSM's
+  # silence is exactly what the inventory exists to correct - LIMITATIONS.md section 4 found
+  # columbia_princeton under-counted at one crossing where the surveyor found four. Do not
+  # report a missing crossing on the school's leg until the inventory has been read.
+  existing_marked_crosswalks: ["princeton_ave_south", "e_prospect_st_east", "e_prospect_st_west"]
+
+corridor:
+  jurisdiction: "County (Princeton Ave, CR 569) x local (East Prospect St, borough)"
+  speed_limit_mph: 25          # OSM maxspeed=25 mph on Princeton Ave
+  lanes: 2                     # OSM lanes=2
+  functional_class: "Rural Major Collector"   # OSM HFCS on Princeton Ave
+  truck_route: >
+    NJDOT designated state truck network - Princeton Ave carries hgv=designated and
+    hgv:state_network=yes, sourced in OSM to NJDOT's chapter 32 truck access rules. The
+    binding constraint on any cross-section here; see the header note.
+  parking: >
+    Princeton Ave carries parking:both:restriction=no_parking for its whole length in the
+    borough, so there is no on-street parking to reclaim or to displace at this junction.
+  old_name: "Union Avenue"     # OSM old_name on Princeton Ave - useful for archive searches
+
+legs:
+  princeton_ave_north:
+    sri: "00000569__"
+    bearing_deg: 337.1
+    street_name: "Princeton Avenue (north of E Prospect St, toward Columbia Ave)"
+    working_length_ft: 110
+    # Shorter than the site default. The kerb trace is continuous north of here only to about
+    # this distance before the first gap; past a traced kerb the curb line is extrapolated
+    # from the bearing, which is exactly what this project refuses to draw. Raise it when the
+    # gap between stations 776 and 802 ft (measured from E Broad) is traced.
+    curb_to_curb_ft: 30.5
+    width_provenance: osm_derived
+    confirmed: false
+    centerline_style: double_yellow
+    # NOT confirmed by street view. ASSERTED FROM OSM, the same basis as nj31_wdelaware: this
+    # way is tagged `overtaking=no`, which src/geometry/intersection/ already reads as a double
+    # yellow. Recorded here as well as inferred there so the build stops reporting the config
+    # and the tag as a conflict.
+    # WORTH KNOWING: sites/columbia_princeton/config.yaml still carries single_yellow_dashed on
+    # this same street one junction north, as a retained repo default rather than an
+    # observation. The tag says both should be double yellow. Confirm the pair together.
+    source: >
+      OSM-DERIVED, not a field measurement. Measured between the two kerbs Danny traced on
+      2026-08-18, at eight stations 30-100 ft out from the junction: 30.5 ft mean, range
+      30.4-30.6 ft - a spread of 0.2 ft, the tightest of any leg in this project. The
+      pipeline re-measures this between the traced kerbs at load
+      (src/geometry/intersection/fitting.py:_resize_and_centre_from_traced_kerbs) and that
+      measurement governs; this value is what the same method settled on.
+      WORTH KNOWING: sites/columbia_princeton/config.yaml estimates this same street at 34 ft
+      by the parcel-gap method (50 ft platted ROW minus an assumed 8 ft/side). The trace says
+      30.5, i.e. the real allowance is 9.75 ft/side, and the 8 ft assumption over-estimates
+      the roadway by 3.5 ft. A trace off aerial imagery carries its own registration error,
+      call it +/- 1-2 ft, and measures the kerb face rather than the pavement edge.
+
+  princeton_ave_south:
+    sri: "00000569__"
+    bearing_deg: 157.8
+    street_name: "Princeton Avenue (south of E Prospect St, toward 2nd St)"
+    curb_to_curb_ft: 30.5
+    width_provenance: osm_derived
+    confirmed: false
+    centerline_style: double_yellow   # NOT confirmed - asserted from OSM, same basis as princeton_ave_north
+    source: >
+      OSM-DERIVED, same methodology and the same 2026-08-18 trace as princeton_ave_north:
+      eleven stations 30-130 ft out, 30.5 ft mean, range 30.5-30.6 ft. NOT a field
+      measurement.
+
+  e_prospect_st_east:
+    sri: "11051002__"
+    bearing_deg: 74.1
+    street_name: "East Prospect Street (east of Princeton Ave)"
+    working_length_ft: 30
+    # THE HONEST LIMIT, and much shorter than any other leg in this project. Danny's trace
+    # covers this junction's corner returns and ramps and stops there - no kerb is traced
+    # down either East Prospect approach. 30 ft is roughly where the returns end. Drawing
+    # this leg at the site default would extrapolate ~100 ft of kerb from a bearing.
+    # Trace East Prospect St and raise this.
+    curb_to_curb_ft: 25.6  # what the pipeline settles on - see source
+    width_provenance: estimated
+    confirmed: false
+    centerline_style: none
+    # NOT confirmed. `none` because this is a borough local street and the local streets in
+    # this project that HAVE been street-view confirmed (greenwood_ave_south, and by
+    # inference Columbia Ave) carry no centreline paint. An inference from a neighbouring
+    # street, not an observation here.
+    source: >
+      ESTIMATE, and the weakest number at this site. No kerb is traced along this leg, so it
+      cannot be measured the way the Princeton Ave legs are; the only stations with kerb on
+      both sides are inside the corner returns, where the roadway is flaring, and they read
+      29.5-40.3 ft - a range too wide to use.
+      TWO METHODS DISAGREE HERE, and the config records the one that governs. Calibrating the
+      parcel-gap method against the trace on the intersecting street gives 30.5 ft: East
+      Prospect St has the same stable 50.0 ft parcel-to-parcel ROW gap as Princeton Ave
+      (Mercer County parcels, sampled 50/70/90/110 ft out, zero spread east / 0.8 ft spread
+      west - the standard platted ROW), and on Princeton Ave that same 50 ft ROW is traced at
+      30.5 ft curb-to-curb, i.e. a measured 9.75 ft/side allowance rather than the 8 ft/side
+      ASSUMED at broad_st_greenwood and columbia_princeton.
+      But the pipeline re-measures between whatever kerb IS traced
+      (src/geometry/intersection/fitting.py:_resize_and_centre_from_traced_kerbs) and that
+      measurement governs: it settles on 25.6 ft here, which is the value recorded above so
+      that the config and the drawing agree. Treat the 5 ft spread as the honest uncertainty
+      on this leg - the only kerb it has to measure from is the corner returns, and a
+      measurement taken there is not a cross-section. TRACING EAST PROSPECT ST RESOLVES IT,
+      and is the single highest-value addition to this site.
+      No NJDOT SLD exists for this local/municipal road (ROUTE_SUBTYPE 7).
+
+  e_prospect_st_west:
+    sri: "11051002__"
+    bearing_deg: 254.0
+    street_name: "East Prospect Street (west of Princeton Ave, toward the school frontage)"
+    working_length_ft: 35
+    # Same limit and same reason as e_prospect_st_east - the trace stops at the returns.
+    curb_to_curb_ft: 24.5  # what the pipeline settles on - see source
+    width_provenance: estimated
+    confirmed: false
+    centerline_style: none   # NOT confirmed - same basis as e_prospect_st_east
+    source: >
+      ESTIMATE, same two disagreeing methods as e_prospect_st_east and the same 50 ft platted
+      ROW (50.0-50.8 ft across the four samples): the calibrated parcel gap says 30.5 ft, the
+      traced corner returns say 24.5 ft, and the traced figure governs and is recorded above.
+      NOT a field measurement.
+
+# NO `signals` block: this junction is NOT signalized, and unlike nj31_wdelaware that is a
+# statement rather than a gap. OSM maps no traffic_signals node here and instead two
+# highway=stop nodes on the East Prospect St approaches (13776477552 direction=backward,
+# 13776477553 direction=forward) - two-way stop control on East Prospect, with Princeton Ave
+# (CR 569) as the free-flowing through street. All three crossing ways are crossing=zebra,
+# i.e. uncontrolled, consistent with an unsignalized junction. Exactly the control pattern at
+# columbia_princeton one junction north. src/render/export.py places the per-approach stop
+# signs automatically from the leg geometry.
+#
+# NOTE the consequence, same as at every unsignalized site here: SceneGeometry.resolve only
+# fetches stop bars when a `signals` block is present, so this junction renders without them.
+
+treatments:
+  existing_corner_radius_ft: 20  # ESTIMATE
+  existing_corner_radius_source: >
+    No survey, aerial measurement or field visit. 20 ft placeholder, the same value and the
+    same reasoning as sites/broad_st_greenwood and sites/columbia_princeton: typical as-built
+    radius for an older small-borough corner predating truck-accommodating design standards.
+    UNLIKE those two, the corner returns HERE are traced (Danny's 2026-08-18 trace includes
+    all four), so src/geometry/intersection/fitting.py:_corner_radii_from_osm fits each
+    corner's radius from the tracing and reports what it used - this figure is only the
+    fallback for a corner whose arc is too short or too poor a fit to solve.
+    WHAT IT ACTUALLY FITTED, on the 2026-08-18 trace: e_prospect_st_west/princeton_ave_south
+    16.6 ft, e_prospect_st_east/princeton_ave_south 32.4 ft, e_prospect_st_east/
+    princeton_ave_north 14.8 ft, e_prospect_st_west/princeton_ave_north 8.8 ft. All four
+    corners take their geometry directly from the trace, so the 20 ft placeholder above is
+    not used for any of them. That spread is worth a look before it is designed against -
+    8.8 ft and 32.4 ft on diagonally opposite corners of the same junction is either a real
+    and very lopsided pair of returns or a fitting artefact of a short traced arc.

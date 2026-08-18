@@ -27,7 +27,8 @@ from typing import TYPE_CHECKING
 import numpy as np
 from shapely.geometry import Point
 
-from src.geometry.markings import PARKING_EDGE_LINE, STALL_DIVIDER
+from src.geometry.markings import (PARKING_EDGE_LINE, STALL_DIVIDER,
+                                   lies_legitimately_on)
 from src.geometry.targets import Side
 from src.geometry.model import curb_offsets_at_stations, station_offset_many
 
@@ -529,6 +530,8 @@ class MarkingsDoNotCollide(SceneCheck):
             for j in range(i + 1, len(fills)):
                 if _boxes_apart(fill_bounds[i], fill_bounds[j]):
                     continue
+                if lies_legitimately_on(a.kind, fills[j].kind):
+                    continue        # a layer, not a collision - see markings.MAY_LIE_ON
                 shared = a.geometry.intersection(fills[j].geometry)
                 if shared.area <= MARKING_OVERLAP_TOLERANCE_SQ_FT:
                     continue

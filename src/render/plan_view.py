@@ -208,10 +208,16 @@ PAINT_STYLE = require_every_kind({
     # surface it sits on (zorder 4, over the surface's 2) or the fill hides it.
     markings.BIKE_CONTRAFLOW_DIVIDER: dict(color="goldenrod", linewidth=1.3, linestyle="--",
                                             zorder=4),
+    # The BIKE LANE symbol, white on the green like the real marking, and above the surface it
+    # sits on for the same reason the contraflow stripe is.
+    markings.BIKE_LANE_SYMBOL:    dict(color="white", alpha=0.95, zorder=4),
 }, "plan_view.PAINT_STYLE")
 # Outline colour for each filled zone's own fill colour.
+# Outline colour for each filled zone's own fill colour. White outlines white: a symbol is a
+# SOLID glyph, not a hatched zone that needs a rim to read as bounded, so giving it a contrasting
+# edge would draw a border no striper paints.
 PAINT_FILL_EDGE = {"gold": "goldenrod", "peru": "saddlebrown", "orangered": "orangered",
-                   "mediumseagreen": "seagreen"}
+                   "mediumseagreen": "seagreen", "white": "white"}
 
 
 def _draw_props(ax, model: IntersectionModel, state: DesignState, crosswalk_offsets: dict,

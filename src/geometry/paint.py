@@ -559,6 +559,63 @@ class PaintContext:
                     added.append(piece)
         return added
 
+    def add_across_the_junction(self, kind, geometry, min_area_sq_ft: float | None = None,
+                                 min_length_ft: float | None = None) -> list:
+        """A marking laid in the junction BOX, belonging to no single leg.
+
+        `add` is the wrong door for this and the reason is its opening clip. A marking's row in
+        AT_AN_OPENING says what it does at an entrance, and BIKE_LANE_SURFACE's says DOTTED - so
+        `add` subtracts the intersection mouths, which is exactly the ground a lane extension
+        exists to occupy. Sent through there, every mark of a crossbike would be cut away by the
+        rule that calls for it.
+
+        That is not a special case so much as the other half of one already here:
+        BIKE_LANE_DOTTED_EXTENSION's row reads CARRIED/CARRIED because "this IS the extension -
+        the marking laid inside an opening by the rules above... never cut against the opening it
+        exists to cross". _dashes_across_openings appends its marks straight to `pieces` for the
+        same reason. This is that door, opened to a caller that builds the ground itself rather
+        than clipping a parent marking to it - which a lane extension has to, there being no
+        parent marking spanning the box to clip.
+
+        STILL CUT AGAINST THE TWO THINGS THAT ARE NOT OPENINGS. A crossing outranks this like it
+        outranks everything else on the kerb (`keep_clear`, every crossing in the frame, not just
+        this junction's), and an apron is built ground that paint stops at. So a crossbike gives
+        way to the zebras it runs beside and stops at a mountable corner, which is the layering
+        every other marking here already gets.
+
+        leg/side are None on the pieces, and truthfully: the geometry spans two frames and sits
+        in neither. Every invariant in src/checks.py already skips a piece without a leg - that
+        is how the corner treatments' paint is handled - so this inherits the right answer rather
+        than needing an exemption written for it.
+
+        `min_area_sq_ft` IS "A PART OF A MARK IS NOT A MARK", which _dashes_across_openings states
+        for a line and nothing has ever stated for an area. MIN_ZONE_AREA_SQ_FT is not that rule:
+        it is a hairline floor, sized to discard slivers left by differencing polygons that share
+        an edge, and at 1 sq ft it passes a wedge that is plainly a clipping artifact. A caller
+        laying discrete marks knows what a WHOLE one is and can say so - the crossbike at Broad &
+        Greenwood put down a 6.2 sq ft wedge against a 21.0 sq ft mark, three tenths of a dash,
+        which on the ground is a striping error rather than a marking. Left None for a caller
+        laying a continuous zone, where there is no whole mark to be a fraction of.
+        `min_length_ft` is that same rule for a LINE mark, which _dashes_across_openings states as
+        DOTTED_MARK_FT / 2; the two are separate arguments because a dash and a patch of colour
+        are not measured in the same units, not because they are different rules.
+        """
+        added = []
+        if geometry is None or geometry.is_empty:
+            return added
+        floor_sq_ft = MIN_ZONE_AREA_SQ_FT if min_area_sq_ft is None else min_area_sq_ft
+        floor_ft = MIN_LINE_LENGTH_FT if min_length_ft is None else min_length_ft
+        for whole in clip_paint_clear_of(geometry, self.surfaces):
+            for part in clip_paint_clear_of(whole, self.keep_clear):
+                if kind.covers_area and part.area < floor_sq_ft:
+                    continue
+                if kind.is_line and not kind.is_object and part.length < floor_ft:
+                    continue
+                piece = PaintPiece(kind, part)
+                self.pieces.append(piece)
+                added.append(piece)
+        return added
+
     def _dash_spans_along(self, phase, dotted, leg_name: str) -> list[tuple[float, float]]:
         """The station spans the marks fall in, one run of them per opening the phase CROSSES.
 

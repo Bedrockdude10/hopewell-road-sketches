@@ -138,6 +138,17 @@ BIKE_LANE_SURFACE_POLYGONS = Channel("bike_lane_surface_polygons", Role.COLOUR)
 # yellow line is not a white line that happens to be somewhere else. It is the same distinction
 # the road's own centreline gets, for the same reason - yellow means opposing directions.
 BIKE_LANE_CONTRAFLOW_LINES = Channel("bike_lane_contraflow_lines", Role.LINE)
+# The BIKE LANE symbol (MUTCD Fig 9E-1). A COLOUR channel and not a LINE one, because a symbol is
+# a painted AREA - it reaches the render as its footprint and is drawn as one, the same way the
+# green lane surface is. That also means it needs no new handling in scripts/blender/: the
+# coloured-polygon path already exists, which matters because that seam has no automated test.
+#
+# WHAT THE FOOTPRINT IS, stated because a drawing may not overclaim: a schematic arrow, not a
+# drawn bicycle. This pipeline positions paint; it does not draw glyph art, and a hand-traced
+# bicycle outline would be decoration carrying no more information than the arrow about WHERE the
+# marking goes and which way it faces. MUTCD Fig 9E-1 is the marking being represented and the
+# legend says so.
+BIKE_LANE_SYMBOL_POLYGONS = Channel("bike_lane_symbol_polygons", Role.COLOUR)
 CORNER_APRON_POLYGONS = Channel("corner_apron_polygons", Role.SURFACE)
 
 CHANNELS: tuple[Channel, ...] = (
@@ -145,7 +156,7 @@ CHANNELS: tuple[Channel, ...] = (
     CORNER_HATCHING_LINES, PARKING_EDGE_LINES, PARKING_STALL_DIVIDER_LINES,
     PARKING_BUFFER_HATCH_LINES, PARKING_BUFFER_EDGE_LINES, PARKING_BUFFER_TAPER_LINES,
     BIKE_LANE_EDGE_LINES, BIKE_LANE_HATCH_LINES, BIKE_LANE_SURFACE_POLYGONS,
-    BIKE_LANE_CONTRAFLOW_LINES, CORNER_APRON_POLYGONS,
+    BIKE_LANE_CONTRAFLOW_LINES, BIKE_LANE_SYMBOL_POLYGONS, CORNER_APRON_POLYGONS,
 )
 
 
@@ -216,6 +227,10 @@ BIKE_LANE_SURFACE = _kind("bike_lane_surface", Role.COLOUR, BIKE_LANE_SURFACE_PO
 # two-way bikeway: yellow because it divides opposing traffic (the same meaning it carries on
 # the roadway), broken because passing is permitted where sight distance allows.
 BIKE_CONTRAFLOW_DIVIDER = _kind("bike_contraflow_divider", Role.LINE, BIKE_LANE_CONTRAFLOW_LINES)
+#: The BIKE LANE symbol. NACTO asks for it after every driveway and intersection and at least
+#: every 500 ft along a bidirectional lane; MUTCD Fig 9E-1 is the marking. See
+#: src/geometry/treatments/bikeways.py:bike_symbol_stations_ft for the placement rule.
+BIKE_LANE_SYMBOL = _kind("bike_lane_symbol", Role.COLOUR, BIKE_LANE_SYMBOL_POLYGONS)
 # Built ground rather than paint: a flush, drivable corner surface.
 APRON = _kind("apron", Role.SURFACE, CORNER_APRON_POLYGONS)
 # A flex-post delineator. Paint draws the plan view's marker; the render needs a prop.
@@ -324,6 +339,22 @@ _ZONE = OpeningRule(
         "run-out while its own boundary line carries straight on is the hook and the Y that "
         "paint.KerbOpenings.against describes. The line follows its zone.")
 
+#: (upper, lower) pairs where the upper marking is LEGITIMATELY applied on top of the lower one.
+#:
+#: check_markings_do_not_collide is blanket over every pair of area-covering markings, and it is
+#: right to be: two hatch zones over one patch means the design asserts two things about it, and
+#: that is how a hydrant's no-parking zone was found sitting entirely inside the junction's. But
+#: LAYERING is a real thing on a real street and is not that failure. A BIKE LANE symbol is
+#: painted white ON the green lane it marks - that is what the marking IS - and the two are applied
+#: once each, in order, with the white covering the green. Both renderers already draw them that
+#: way: plan_view puts the symbol at zorder 4 over the surface's 2, and the 3D export sends them
+#: in separate channels.
+#:
+#: Declared here rather than in checks.py because it is a fact about what these markings ARE, and
+#: the check should ask the markings rather than carry a list of its own.
+MAY_LIE_ON: frozenset = frozenset()      # filled in below, once the kinds exist
+
+
 AT_AN_OPENING: dict[PaintKind, OpeningRule] = {
     LANE_EDGE_LINE: _ZONE,
     TAPER_LINE: _ZONE,
@@ -367,6 +398,12 @@ AT_AN_OPENING: dict[PaintKind, OpeningRule] = {
             "re-dashing it at an entrance would put a second, finer rhythm inside the first. "
             "It used to be cut and the inside re-laid as an exact complement, which is this "
             "row written out as two calls."),
+    BIKE_LANE_SYMBOL: OpeningRule(
+        AtAnOpening.CARRIED, AtAnOpening.CARRIED,
+        why="A symbol is a discrete mark at a station, not a run of paint that an entrance "
+            "crosses. It is never laid INSIDE a mouth - the placement rule puts it clear of one "
+            "(SYMBOL_CLEAR_OF_OPENING_FT) - so there is nothing here to cut, and cutting the "
+            "one that follows a driveway would delete the very reminder NACTO asks for it to be."),
     BIKE_LANE_DOTTED_EXTENSION: OpeningRule(
         AtAnOpening.CARRIED, AtAnOpening.CARRIED,
         why="This IS the extension - the marking laid inside an opening by the rules above. It "
@@ -436,4 +473,12 @@ def require_every_kind(table: dict, what: str, skip: tuple = (Role.OBJECT,)) -> 
 # that has to remember to look - the same rule, for the same reason, as the channel/role check in
 # _kind above. A marking with no row is one that will be drawn across an entrance and across an
 # intersection with nothing able to notice, which is the failure this whole table replaces.
+MAY_LIE_ON = frozenset({(BIKE_LANE_SYMBOL, BIKE_LANE_SURFACE)})
+
+
+def lies_legitimately_on(a: PaintKind, b: PaintKind) -> bool:
+    """Whether these two markings are a layer rather than a collision, in either order."""
+    return (a, b) in MAY_LIE_ON or (b, a) in MAY_LIE_ON
+
+
 require_every_kind(AT_AN_OPENING, "markings.AT_AN_OPENING", skip=())

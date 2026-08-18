@@ -30,12 +30,14 @@ from dataclasses import dataclass
 
 from src.geometry.model import side_facing
 from src.geometry.network import _street_name
-from src.geometry.targets import LegSide, Side
+from src.geometry.targets import AcrossTheJunction, LegSide, Side
 from src.geometry.treatments.bikeways import (BIKE_LANE_BOLLARD_SPACING_FT,
                                               CONSTRAINED_TWO_WAY_BIKE_LANE_FT,
                                               CORRIDOR_SIDE, MIN_TWO_WAY_BIKE_LANE_FT,
-                                              TWO_WAY_BIKE_LANE_BUFFER_FT, AddBikeLaneBollards,
-                                              AddTwoWayBikeLane)
+                                              TWO_WAY_BIKE_LANE_BUFFER_FT, AddBikeLane,
+                                              AddBikeLaneBollards,
+                                              AddTwoWayBikeLane,
+                                              ExtendBikeLaneThroughJunction)
 from src.geometry.treatments.parking import hold_travel_lane_at_target
 from src.geometry.treatments.state import DesignState
 
@@ -98,6 +100,7 @@ class CorridorFacility:
         the plan nobody costed - so every rung refused and every concession accepted is reported
         against the measurement that decided it.
         """
+        carrying = []
         for leg_name in self.legs_on(model):
             try:
                 side = side_facing(state.legs[leg_name], self.side)
@@ -106,7 +109,52 @@ class CorridorFacility:
                 # street by name and has no kerb on this side to carry the facility.
                 continue
             state = self._place_on(state, leg_name, side, quiet)
-        return state
+            # ASKED OF THE DESIGN, not inferred from the treatment count. _place_on applies
+            # several things on success (the lane, its posts, the far kerb's travel-lane hold)
+            # and none on failure, so a count would work today and would stop meaning "this
+            # approach carries the facility" the moment any of them moved. isinstance matching
+            # makes AddTwoWayBikeLane answer to AddBikeLane, which is the question being asked.
+            if state.treatment_for(AddBikeLane, LegSide(leg_name, side)) is not None:
+                carrying.append((leg_name, side))
+        return self._carry_through_the_junction(state, carrying, quiet)
+
+    def _carry_through_the_junction(self, state: DesignState, carrying: list, quiet: bool
+                                     ) -> DesignState:
+        """Join the approaches' lanes across the junction box - NACTO's crossbike.
+
+        HERE AND NOT IN _place_on, because this is the piece of the facility that belongs to no
+        approach. Everything above is aimed at one kerb of one leg, which is the right scope for
+        a cross-section: the leg is the frame its offsets are measured in. The extension lies
+        between two legs, in neither frame, and it exists only because the facility is one route
+        rather than a set of junction studies - which is this class's whole subject.
+
+        ONLY BETWEEN LANES THAT WERE ACTUALLY PLACED. `carrying` is the approaches that took a
+        section, not the ones the route passes through, and the difference is the junction where
+        the corridor breaks: drawing an extension from a leg that refused every rung would paint
+        a continuous facility across the one place the notes above say it stops. Below two, there
+        is nothing to join and no note to print - a single approach is an end of the route, not a
+        break in it.
+        """
+        if len(carrying) < 2:
+            return state
+        if len(carrying) > 2 and not quiet:
+            # A route crossing its own junction has two approaches. Three would mean a street
+            # meeting itself, and pairing them by hand is a guess about which two are opposite.
+            print(f"  NOTE: {self.road} has {len(carrying)} approaches carrying the facility at "
+                  f"this junction, and a lane extension joins a PAIR. Drawn between "
+                  f"{carrying[0][0]} and {carrying[1][0]}; check the others by eye.")
+        (leg_a, side_a), (leg_b, side_b) = carrying[0], carrying[1]
+        try:
+            return state.apply(ExtendBikeLaneThroughJunction(
+                AcrossTheJunction(leg_a, side_a, leg_b, side_b)))
+        except ValueError as no_gap:
+            # A junction where the facility's kerb is never opened - the stem is on the far side,
+            # so the lane runs through unbroken and there is nothing to extend. Reported like
+            # every other rung this class refuses, because "no crossbike here" is a fact about
+            # the junction worth reading in the notes rather than an absence to be noticed.
+            if not quiet:
+                print(f"  NOTE: no lane extension across this junction - {no_gap}")
+            return state
 
     def _place_on(self, state: DesignState, leg_name: str, side: str, quiet: bool) -> DesignState:
         for section in self.sections:

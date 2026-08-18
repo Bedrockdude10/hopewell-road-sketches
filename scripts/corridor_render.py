@@ -28,8 +28,8 @@ import matplotlib.pyplot as plt
 import numpy as np
 from matplotlib.patches import Rectangle
 
-from src.geometry.corridor_paint import (CORRIDOR_SAMPLE_FT, centred_on_its_kerbs, kerb_offset_ft,
-                                         paint_facility)
+from src.geometry.corridor_paint import (CORRIDOR_SAMPLE_FT, JUNCTION_MOUTH,
+                                         centred_on_its_kerbs, kerb_offset_ft, paint_facility)
 from src.geometry.intersection import load_intersection_model
 from src.geometry.model import station_offset_many
 from src.geometry.network import corridors_from_models
@@ -43,6 +43,7 @@ BUFFER_GREY = "#9a9a9a"
 PAINT_WHITE = "#ffffff"
 POST = "#e8663c"
 GAP_RED = "#c1272d"
+MOUTH_BLUE = "#3b6ea5"
 
 
 def straighten(corridor, geometry):
@@ -94,12 +95,14 @@ def draw_panel(ax, corridor, paint, lo_ft, hi_ft, half_ft):
     for start, end, why in ([(r.start_ft, r.end_ft,
                               "unsurveyed" if "untraced" in r.reason else "no room")
                              for r in paint.refusals]
-                            + [(a, b, "unsurveyed") for a, b in paint.untraced]):
+                            + [(a, b, "junction" if why is JUNCTION_MOUTH else "unsurveyed")
+                               for a, b, why in paint.untraced]):
         if end < lo_ft or start > hi_ft:
             continue
+        colour = MOUTH_BLUE if why == "junction" else GAP_RED
         ax.add_patch(Rectangle((max(start, lo_ft), -half_ft), min(end, hi_ft) - max(start, lo_ft),
-                               half_ft * 2, facecolor=GAP_RED, alpha=0.16, linewidth=0, zorder=7))
-        ax.text((max(start, lo_ft) + min(end, hi_ft)) / 2, half_ft * 0.78, why, color=GAP_RED,
+                               half_ft * 2, facecolor=colour, alpha=0.16, linewidth=0, zorder=7))
+        ax.text((max(start, lo_ft) + min(end, hi_ft)) / 2, half_ft * 0.78, why, color=colour,
                 fontsize=4.5, ha="center", va="top", rotation=-90, zorder=8)
 
     for junction in corridor.junctions:

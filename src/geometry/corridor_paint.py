@@ -104,10 +104,35 @@ class CorridorFacilityPaint:
             narrow = "" if refusal.narrowest_ft is None else f", narrowest {refusal.narrowest_ft:.1f} ft"
             lines.append(f"  REFUSED       {refusal.start_ft:6,.0f}-{refusal.end_ft:<6,.0f} "
                          f"({refusal.length_ft:5,.0f} ft) {refusal.reason}{narrow}")
-        for lo, hi in self.untraced:
-            lines.append(f"  NO SURVEY     {lo:6,.0f}-{hi:<6,.0f} ({hi - lo:5,.0f} ft) "
-                         f"one or both kerbs untraced - the section cannot be tested here")
+        for lo, hi, why in self.untraced:
+            label = "JUNCTION" if why == JUNCTION_MOUTH else "NO SURVEY"
+            lines.append(f"  {label:13s} {lo:6,.0f}-{hi:<6,.0f} ({hi - lo:5,.0f} ft) {why}")
         return "\n".join(lines)
+
+
+#: Why a stretch of corridor has no kerb line on one or both sides. The distinction is the whole
+#: point: one is a fact about the STREET and the other about the SURVEY, and a drawing that calls
+#: them both "unsurveyed" tells a reader to go and trace something that is already correct - and
+#: understates its own coverage while doing it.
+JUNCTION_MOUTH = "a cross street's mouth - there is no kerb across an intersection"
+NOT_TRACED = "one or both kerbs untraced - the section cannot be tested here"
+
+#: How near a cross street a gap has to start to be that street's mouth rather than missing
+#: tracing. The corner-return zone, for the same reason it is that: past the return the kerb is
+#: the road's own again, so a hole out there is a hole in the survey.
+MOUTH_REACH_FT = 45.0
+
+
+def _why_no_kerb(corridor, lo_ft: float, hi_ft: float) -> str:
+    """Whether this hole is an intersection or a stretch nobody has traced."""
+    mid = (lo_ft + hi_ft) / 2
+    for junction in corridor.junctions:
+        if abs(junction.node_ft - mid) <= MOUTH_REACH_FT:
+            return JUNCTION_MOUTH
+    for cross in corridor.cross_street_ft:
+        if abs(cross - mid) <= MOUTH_REACH_FT:
+            return JUNCTION_MOUTH
+    return NOT_TRACED
 
 
 def facility_side(corridor, compass: str) -> str:
@@ -166,7 +191,8 @@ def paint_facility(corridor, facility) -> CorridorFacilityPaint:
     # untraced across a side street's mouth is still a stretch the drawing cannot speak for, and
     # left unnamed it reads as a hole in the road. MIN_FACILITY_RUN_FT is about whether a RUN is
     # worth calling a facility; it has nothing to say about whether a GAP is worth admitting to.
-    paint.untraced = [(lo, hi) for lo, hi in corridor.untraced_gaps_ft(min_ft=0.0)]
+    paint.untraced = [(lo, hi, _why_no_kerb(corridor, lo, hi))
+                      for lo, hi in corridor.untraced_gaps_ft(min_ft=0.0)]
 
     for span_lo, span_hi in corridor.both_traced_spans():
         if span_hi - span_lo < MIN_FACILITY_RUN_FT:

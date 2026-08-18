@@ -440,6 +440,11 @@ class Corridor:
     #: turns west onto Louellen St, so Broad Street carries two SRIs and any report that says
     #: "SRI 00000518__" of the whole thing is wrong about the western third of it.
     sri_spans: tuple[tuple[float, float, str], ...] = ()
+    #: Every OTHER street's centre station along this road, modelled or not. Carried because a
+    #: hole in the kerb AT one of these is an intersection mouth - there is no kerb across a
+    #: street - and a hole anywhere else is tracing nobody has done. Reporting both as "untraced"
+    #: sends a surveyor to re-trace something already correct, and understates the road's coverage.
+    cross_street_ft: tuple[float, ...] = ()
     #: (station, lateral gap in ft) at each seam between a modelled junction and NJDOT's
     #: alignment. Reported rather than smoothed away silently - see _eased_alignment.
     seams: tuple[tuple[float, float], ...] = ()
@@ -995,14 +1000,40 @@ def _build_corridor(models, chain: list[tuple], roads_by_key: dict) -> Corridor 
         start_ft=float(stations[piece["index"][0]]),
         end_ft=float(stations[piece["index"][1]]),
         legs=piece["legs"]) for piece in pieces)
-    runs = (_junction_kerb_runs(pieces, stations)
-            + _traced_kerb_runs(centerline, kerb_ways, tuple(j.node_ft for j in junctions)))
-    return Corridor(
-        name=_corridor_name([models[piece["site"]].config["legs"][leg].get("street_name")
-                             for piece in pieces for leg, _sign in piece["legs"]]),
-        centerline=centerline, junctions=junctions, kerb_runs=tuple(runs),
-        sri_spans=_sri_spans(junctions, sris, centerline.length),
-        seams=tuple((float(stations[index]), gap) for index, gap in seam_marks))
+    junction_ft = tuple(j.node_ft for j in junctions)
+    junction_runs = _junction_kerb_runs(pieces, stations)
+
+    def corridor_with(runs, cross_street_ft=()) -> Corridor:
+        return Corridor(
+            name=_corridor_name([models[piece["site"]].config["legs"][leg].get("street_name")
+                                 for piece in pieces for leg, _sign in piece["legs"]]),
+            centerline=centerline, junctions=junctions, kerb_runs=tuple(runs),
+            sri_spans=_sri_spans(junctions, sris, centerline.length),
+            cross_street_ft=tuple(cross_street_ft),
+            seams=tuple((float(stations[index]), gap) for index, gap in seam_marks))
+
+    # TWICE, DELIBERATELY, and the second pass is the whole point of the first.
+    #
+    # _kerb_samples_on throws away a kerb sample running more than CURB_POINT_MAX_SKEW_DEG off the
+    # road, and suspends that test near a node, because a corner return sweeps through 90 degrees
+    # by definition and is still kerb. It was suspended only near a MODELLED junction - and a
+    # corridor crosses far more streets than this project models. Broad St meets 11 and models 3,
+    # so at the other 8 the surveyor's traced corner returns were collected, recognised as too
+    # skewed, and discarded: 8 untraced "gaps" of 34-48 ft, every one of them 0-27 ft from a cross
+    # street, reported to the reader as ground nobody had surveyed. Ground truth reaching the
+    # pipeline and not the drawing is the single failure this project is built to prevent, and it
+    # was happening one layer below where coverage.py can see it.
+    #
+    # Cross streets are resolved FROM a corridor, so the first pass builds one good enough to
+    # locate the mouths - their positions come off the centreline, which is already final - and the
+    # second rebuilds the traced runs with every junction on the road counted as a node.
+    provisional = corridor_with(junction_runs + _traced_kerb_runs(centerline, kerb_ways,
+                                                                  junction_ft))
+    crossing_ft = tuple(sorted({round(cross.station_ft, 1)
+                                for cross in _cross_streets_on(provisional, models)}))
+    return corridor_with(
+        junction_runs + _traced_kerb_runs(centerline, kerb_ways, junction_ft + crossing_ft),
+        cross_street_ft=crossing_ft)
 
 
 def _extension(models, kerb_ways, seam_point, away, sri: str,

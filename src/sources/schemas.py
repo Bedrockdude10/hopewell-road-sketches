@@ -25,26 +25,17 @@ TWO SEPARATE QUESTIONS, AND ONLY ONE OF THEM IS "FLOOR VS CONTRACT".
 
   1. WHICH COLUMNS MAY EXIST. `strict=False`: a column this repo does not read is allowed to
      appear. These are third-party files on somebody else's release schedule - NJDOT ships 16
-     attributes and we read 3 - so an additive upstream change is not a defect here, and failing
-     the build for one would be a false positive that blocks every site. That matters more than
-     it sounds: a validator that cries wolf on a benign change gets deleted, which is how you
-     end up with no validator at all. This module's own CRS check did exactly that on its first
-     version - it rejected the correct parcels file and produced 241 errors, and the obvious
-     response was to remove it.
+     attributes and we read 3 - so an additive upstream change is not a defect here.
 
-  2. WHAT THE COLUMNS WE READ MUST CONTAIN. Here it IS a contract, and the first version of this
-     file was far too weak - every field was `nullable=True` with no constraint, so a column of
-     ALL NULLS would have passed. That is not a lax contract, it is the absence of one: an
-     all-null SRI passes validation and then matches no road on any leg, which is precisely the
-     silent failure this module was written to stop. Measured against the real files, none of
-     these columns is ever null except BLDG_DESC (12.4%, genuinely - vacant land has no
-     building), so that is what they now declare.
+  2. WHAT THE COLUMNS WE READ MUST CONTAIN. Here it IS a contract. An all-null SRI passes
+     validation and then matches no road on any leg - which is precisely the silent failure
+     this module was written to stop. None of these columns is ever null except BLDG_DESC
+     (12.4%, genuinely - vacant land has no building), so that is what they now declare.
 
 The join keys carry a format check for the same reason. PAMS_PIN and GIS_PIN are the same
-municipality_block_lot identifier in two different files, and nothing else in the pipeline
-compares them: if one side's format changes the join simply matches nothing, every building
-falls back to one height, and the render is a field of identical boxes. A regex on both is the
-cheapest place to catch a break that is otherwise invisible.
+municipality_block_lot identifier in two files, and nothing else in the pipeline compares them:
+if one side's format changes the join simply matches nothing and every building falls back to
+one height. A regex on both is the cheapest place to catch a break that is otherwise invisible.
 """
 from pathlib import Path
 
@@ -128,12 +119,10 @@ class TaxListSchema(pa.DataFrameModel):
 def _horizontal(crs):
     """The 2D part of a CRS.
 
-    MercerCountyParcels.shp is a COMPOUND CRS - NAD83 / New Jersey (ftUS) plus an NAVD88 vertical
-    axis - so its string form is a 20-line WKT that equals no EPSG code, while its horizontal
-    projection is exactly the EPSG:3424 every offset in this project is measured in. Comparing
-    string forms rejected the correct file, which is a check failing on the thing it was meant to
-    accept. What matters here is only the horizontal datum, because that is what a bbox is built
-    in and what a reprojection would silently break.
+    MercerCountyParcels.shp is a COMPOUND CRS - NAD83 / New Jersey (ftUS) plus an NAVD88
+    vertical axis - so its string form is a 20-line WKT that equals no EPSG code, while
+    its horizontal projection is exactly EPSG:3424. Comparing string forms rejected the
+    correct file.
     """
     if getattr(crs, "is_compound", False) and getattr(crs, "sub_crs_list", None):
         return crs.sub_crs_list[0]
@@ -169,14 +158,9 @@ class DataLayerError(ValueError):
 def validate_layer(frame, schema, path: Path | str, expect_crs: str | None = None):
     """Check `frame` against `schema`, and its CRS, naming the file on failure.
 
-    Returns the frame so this can wrap a read in one line. Empty frames are checked too - a
-    schema violation on an empty result is still a violation, and the CRS check is precisely
-    what turns "zero rows" back into the error it is.
-
-    A geometry column is NOT declared in the schemas above: pandera's geopandas support varies
-    by version, and the CRS is the part that actually goes wrong here. So it is asserted
-    directly, which also keeps these schemas usable against a plain DataFrame (the tax list has
-    no geometry at all).
+    Returns the frame so this can wrap a read in one line. Empty frames are checked too. A
+    geometry column is NOT declared in the schemas: pandera's geopandas support varies by
+    version, and the CRS is the part that actually goes wrong here.
     """
     if expect_crs is not None:
         crs = getattr(frame, "crs", None)

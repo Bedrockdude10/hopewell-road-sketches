@@ -25,25 +25,17 @@ CACHE_DIR = Path(os.environ.get(
 
 REFRESH_ENV = "HOPEWELL_REFRESH_OSM"
 
-# Second-level cache, in memory: the raw borough snapshot and its parsed form. The disk cache
-# already avoids the network, but a batch build asks for the same junction's kerbs and
-# crossings once per scenario - 27 times over for the four sites - and re-reading and
-# re-parsing the same 2.9 MB of JSON each time is pure waste. Keyed by the same cache key the
-# disk layer uses, so it can never disagree with it. The per-layer VIEWS over the parsed
-# snapshot are cached separately - see _LAYER_VIEWS.
+# Second-level cache: the raw borough snapshot and its parsed form. A batch build asks for
+# the same junction's kerbs ~27 times over; re-parsing the same JSON each time is pure waste.
 _MEMO: dict[str, list] = {}
 
-# Cache files this process fetched and wrote itself, and which a refresh therefore has no
-# reason to pull again. A refresh means "one round trip per layer", not "one per call": a
-# single site build asks for the same junction's kerbs and crossings once per scenario, ~27
-# times over, and the public Overpass mirrors are shared, rate-limited infrastructure.
+# Cache files this process fetched and wrote itself, and which a refresh therefore does not
+# need to pull again.
 _REFRESHED: set[str] = set()
 
-# What this process actually got each OSM layer from: cache file -> mtime it had when read,
-# or None if it was pulled fresh from Overpass. Recorded at the point of use rather than
-# recomputed later so the staleness report (cache_summary) describes the files that really
-# fed this build - an independently derived key would drift the moment a query gains a "v3"
-# and would then reassure the user about a file nobody reads.
+# What this process actually got each OSM layer from: cache file -> mtime, or None if pulled
+# fresh. The staleness report (cache_summary) describes these files, not an independently
+# derived key that would drift the moment a query gains a "v3".
 _CACHE_READS: dict[Path, float | None] = {}
 
 _warned: set[str] = set()
@@ -52,15 +44,9 @@ _warned: set[str] = set()
 def refresh_requested() -> bool:
     """True when this process was told to ignore the cache and re-pull from Overpass.
 
-    Read from the environment instead of threaded through every fetch signature: the six
-    fetchers are called from a dozen places (src/render/export.py, src/render/plan_view.py,
-    src/geometry/intersection/, the phase scripts, tests), and a parameter that has to be
-    forwarded at each of them is a parameter someone eventually forgets - which lands you
-    right back at "I traced the kerb in OSM and the render didn't change".
-
-    Refusing to refresh while HOPEWELL_OFFLINE is set is not politeness: the test suite
-    runs against the committed fixture cache, and honouring a stray refresh there would
-    turn every fetch into an OfflineCacheMiss.
+    Refusing while HOPEWELL_OFFLINE is set is not politeness: the test suite runs against
+    the committed fixture cache, and honouring a stray refresh there would turn every fetch
+    into an OfflineCacheMiss.
     """
     if not os.environ.get(REFRESH_ENV):
         return False
@@ -77,11 +63,9 @@ def _warn_once(message: str) -> None:
         print(f"  {message}")
 
 
-# There is no longer a per-layer disk cache path to compute: every layer is a view over the
-# one borough snapshot (see below), so the only cached file is _snapshot_path(). The old
-# _cache_path() built a (kind, centre, radius) filename per layer and is gone with the 20-24
-# bbox queries it keyed. Existing per-layer files in output/.cache are simply unread; the
-# committed fixtures the test suite needs are the borough_*.json ones.
+# Every layer is a view over the one borough snapshot. The old per-layer disk cache
+# built a (kind, centre, radius) filename per layer; existing files in output/.cache
+# are simply unread; the committed fixtures the test suite needs are borough_*.json.
 
 
 def _cache_hit(cache_path: Path) -> bool:
@@ -102,9 +86,6 @@ def _write_cache(cache_path: Path, data: list) -> None:
     CACHE_DIR.mkdir(parents=True, exist_ok=True)
     with open(cache_path, "w") as f:
         json.dump(data, f)
-    # _MEMO is keyed by path and outlives the write, so a refresh that only rewrote the
-    # file would go on serving the stale parse to the rest of this process - the same
-    # silent-stale bug, one layer down.
     _MEMO[str(cache_path)] = data
     _REFRESHED.add(str(cache_path))
     _CACHE_READS[cache_path] = None
@@ -121,12 +102,8 @@ def _memoized(cache_path: Path, build):
 def cache_summary() -> str:
     """One line saying how old the OSM data this process just used is.
 
-    The failure this exists for: the user traces a kerb, a crossing or a tactile-paving pad
-    in OSM, re-runs the build, and sees no change - because the disk cache is keyed only by
-    (centre, radius) and never expires, so the edit is invisible until someone thinks to
-    delete output/.cache by hand. The ground truth was there; it just never reached the
-    render, which is the class of bug this project keeps hitting. An age printed on every
-    build turns a silent trap into a number you can look at.
+    An age printed on every build turns a silent trap (traced kerb, re-ran, no change
+    because the disk cache never expires) into a number you can look at.
     """
     if not _CACHE_READS:
         return "OSM cache: no OSM layers were read"
@@ -154,34 +131,15 @@ def _humanize_age(seconds: float) -> str:
 # The borough snapshot: one request, every layer.
 # ---------------------------------------------------------------------------
 #
-# All six layers below are now VIEWS over a single download of the whole borough, rather
-# than six bbox queries each. The measurements that decided it: the entire municipality is
-# 2.86 MB and 1.25 s from api.openstreetmap.org, against 20-24 Overpass requests for a
-# strict subset of the same data - any one of which can block for minutes when the
-# volunteer mirrors are unwell, as all three were on 2026-08-02.
-#
-# Three things fall out of it beyond uptime:
-#   * ONE CONSISTENT SNAPSHOT. Every layer and every site comes from the same read, so the
-#     replication skew that mirror-pinning exists to paper over cannot happen at all.
-#   * The main OSM API is the live database, not a replica - a kerb traced a minute ago is
-#     there, which is the whole point of --refresh-osm.
-#   * A new site inside the borough costs zero extra requests.
-#
-# Overpass stays as the fallback. It filters server-side, which is genuinely nicer when it
-# is healthy.
+# All six layers are VIEWS over a single download of the whole borough (2.86 MB, 1.25 s from
+# api.openstreetmap.org), not six bbox queries each. The main OSM API is the live database,
+# not a replica, so a kerb traced a minute ago is there. Overpass stays as fallback.
 OSM_API_MAP = "https://api.openstreetmap.org/api/0.6/map.json"
 
 # ONE AREA PER TOWN, not one bbox. Each is downloaded and cached separately, and a site is
-# served from whichever area fully contains its context window.
-#
-# It was a single bbox over Hopewell Borough, and the refusal message for a site outside it
-# said to widen that bbox. Taking that advice for a junction in the next town is the wrong
-# move three times over: the cache key is a hash of the bbox, so re-keying it re-downloads
-# every existing site and orphans the committed fixture the offline suite reads
-# (tests/fixtures/osm_cache/borough_33409013af7cbb1a.json - named for Hopewell's hash, which
-# is why tests/test_snapshot_areas.py pins it); a bbox spanning both boroughs pulls the three
-# miles of township farmland between them to reach one junction; and every future town would
-# enlarge it again. Adding an area costs one download and disturbs nothing already cached.
+# served from whichever area fully contains its context window. A new area costs one download
+# and disturbs nothing already cached (the cache key is a hash of the bbox, so re-keying
+# would re-download every existing site and orphan committed fixtures).
 #
 # Each bbox has margin for the context radii (up to 250 m) at the sites inside it, and each is
 # far under the API's 0.25 sq deg limit. Sites in NO area are refused loudly rather than
@@ -212,9 +170,9 @@ def _snapshot_path(bbox: tuple | None = None) -> Path:
 def _area_for(center_wgs84: Point, radius_m: float) -> tuple[float, float, float, float]:
     """The snapshot area whose bbox fully contains this site's context window.
 
-    FULLY contains, not "is nearest to" or "overlaps": a window half inside an area is served
-    the elements that fall inside it and nothing for the rest, which arrives downstream as
-    geometry rather than as an error. That is the exact failure this module exists to refuse.
+    FULLY contains, not "overlaps": a window half inside an area is served the elements
+    that fall inside it and nothing for the rest - which arrives as geometry rather than
+    as an error.
     """
     west, south, east, north = buffer_point_wgs84(center_wgs84, radius_m)
     for bbox in SNAPSHOT_AREAS.values():
@@ -232,9 +190,6 @@ def _area_for(center_wgs84: Point, radius_m: float) -> tuple[float, float, float
 def _download_snapshot(bbox: tuple | None = None) -> list[dict]:
     """One whole snapshot area from the OSM API, falling back to Overpass."""
     if os.environ.get("HOPEWELL_OFFLINE"):
-        # The Overpass path is guarded inside query_overpass, but this one calls requests
-        # directly - without this the test suite would reach the network for the snapshot
-        # and quietly depend on OSM's uptime and current contents.
         from src.sources.data_loader import OfflineCacheMiss
         raise OfflineCacheMiss(
             "HOPEWELL_OFFLINE is set and the snapshot for this area is not in the fixture "
@@ -261,12 +216,9 @@ def _download_snapshot(bbox: tuple | None = None) -> list[dict]:
 def fetch_borough_osm(use_cache: bool = True, bbox: tuple | None = None) -> dict:
     """{"nodes": {id: element}, "ways": [element]} for one whole snapshot area.
 
-    `bbox` selects the area; None means Hopewell Borough, which is what every caller
-    predating SNAPSHOT_AREAS meant. Callers that know a site pass `_area_for(...)`.
-
-    Raises if any way references a node that isn't present. The OSM API completes ways
-    whose nodes fall outside the bbox, so a gap means a truncated download - and half a
-    kerb is worse than no kerb, because it looks like geometry.
+    `bbox` selects the area; None means Hopewell Borough. Raises if any way references a
+    node that is not present - a gap means a truncated download, and half a kerb is worse
+    than no kerb.
     """
     cache_path = _snapshot_path(bbox)
     if use_cache and _cache_hit(cache_path):
@@ -301,18 +253,9 @@ def snapshot_for_site(center_wgs84: Point, radius_m: float) -> dict:
     return fetch_borough_osm(bbox=_area_for(center_wgs84, radius_m))
 
 
-# One resolved layer per (layer, centre, radius), for as long as the snapshot it came from is
-# still the one being read. Every _ways_near / _nodes_near call walks the WHOLE borough -
-# 2.9 MB, thousands of elements - and the fetchers below are called repeatedly per site: the
-# kerbs alone are asked for by the intersection model (twice), the plan view and the export,
-# and every scenario repeats the lot.
-#
-# Each entry stores the snapshot it was built from and is only served while that is still the
-# snapshot in hand. That, rather than remembering to clear the cache, is what makes a re-pull
-# reach the render - which is this project's worst failure mode, so it should not depend on an
-# invalidation call somebody could forget or a test could bypass. Holding the reference is also
-# what makes the identity test sound: the object cannot be freed and its id reused while the
-# entry that names it is alive.
+# One resolved layer per (layer, centre, radius). Each entry stores the snapshot it was built
+# from and is only served while that is still the snapshot in hand - the identity test is what
+# makes a re-pull reach the render without an invalidation call someone could forget.
 _LAYER_VIEWS: dict[tuple, tuple] = {}
 
 
@@ -368,9 +311,8 @@ def fetch_buildings(center_wgs84: Point, radius_m: float) -> list[dict]:
     """OSM building footprints near a point.
 
     Returns [{"coords_wgs84": [...], "tags": {...}, "height_m": float|None,
-              "height_source": str|None}, ...], where the height is None unless a mapper
-    recorded one - see height_from_tags, and src/sources/assessor.py for where the answer
-    comes from when they did not, which here is almost always.
+              "height_source": str|None}, ...]. Height is None unless a mapper recorded one;
+    see src/sources/assessor.py for where the answer comes from when they did not.
     """
     def build():
         out = []
@@ -403,10 +345,7 @@ def fetch_sidewalks(center_wgs84: Point, radius_m: float) -> list[dict]:
     """OSM-mapped sidewalk centerlines (footway=sidewalk ways).
 
     Real surveyed geometry, and what OSM's crossing ways actually connect to - a crossing
-    runs sidewalk-centerline to sidewalk-centerline, not curb to curb. That makes them an
-    independent bound on a leg's width (src/geometry/model/context.py:sidewalk_span_ft), though not
-    a measurement of it: the centerline-to-curb gap measured 11.8 ft/side on one
-    field-measured leg and 4.0 ft/side on another, on the same street 100 ft apart.
+    runs sidewalk-centerline to sidewalk-centerline, not curb to curb.
     """
     def build():
         return [{"coords_wgs84": coords, "tags": way.get("tags", {})}
@@ -419,16 +358,10 @@ def fetch_sidewalks(center_wgs84: Point, radius_m: float) -> list[dict]:
 def fetch_driveways(center_wgs84: Point, radius_m: float) -> list[dict]:
     """OSM-mapped driveways (highway=service + service=driveway).
 
-    The vehicle access these junctions' kerb openings exist FOR, drawn so the gap in the
-    markings has something visible on the other side of it - a break in a bike lane with nothing
-    leading away from it reads as a striping error rather than as an entrance.
-
-    NOT the signal for where the markings open: that is the dropped kerb itself, which is on the
-    kerb and therefore already in the leg frame, and which is tagged in places a driveway way is
-    not drawn (see src/geometry/kerbs.py). Only one of the 43 driveways mapped in this borough
-    reaches a kerb any of these four junctions models. So this layer is for DRAWING, and the two
-    are deliberately independent - a driveway drawn with no dropped kerb tagged at its mouth is a
-    survey gap worth seeing, not something to paper over by inferring one from the other.
+    Drawn so a gap in the kerbside markings has something visible on the other side of it.
+    NOT the signal for where markings open: that is the dropped kerb, which is tagged in
+    places a driveway way is not drawn (see src/geometry/kerbs.py). This layer is for
+    DRAWING, and the two are deliberately independent.
     """
     def build():
         return [{"coords_wgs84": coords, "tags": way.get("tags", {}), "id": way["id"]}
@@ -442,11 +375,9 @@ def fetch_driveways(center_wgs84: Point, radius_m: float) -> list[dict]:
 def fetch_parking_aisles(center_wgs84: Point, radius_m: float) -> list[dict]:
     """OSM-mapped parking aisles (highway=service + service=parking_aisle).
 
-    The lanes inside a parking lot. Mapped as centrelines like a driveway, and like a driveway
-    carrying no width - 0 of the borough's 20 carry a `width` tag - so the strip drawn for one is
-    as wide as this project assumes, not as wide as anybody measured. Where the aisle is inside a
-    mapped `amenity=parking` area, that area's own surveyed outline is drawn instead and the
-    aisle is dropped; only 6 of the 20 are, which is why both layers are read.
+    Centrelines like driveways, carrying no width tag. Where the aisle is inside a mapped
+    amenity=parking area, that area's own surveyed outline is drawn instead and the aisle is
+    dropped; both layers are read because only 6 of the 20 are inside a lot.
     """
     def build():
         return [{"coords_wgs84": coords, "tags": way.get("tags", {}), "id": way["id"]}
@@ -460,10 +391,9 @@ def fetch_parking_aisles(center_wgs84: Point, radius_m: float) -> list[dict]:
 def fetch_parking_lots(center_wgs84: Point, radius_m: float) -> list[dict]:
     """OSM-mapped parking areas (amenity=parking), as the AREAS they are mapped as.
 
-    Better evidence than anything else paved in this project: a surveyed outline, with no width to
-    assume. A driveway and an aisle are centrelines and have to be widened by a number this repo
-    picks; a lot is a polygon somebody traced off imagery, the same standing as a building
-    footprint or a traced kerb.
+    A polygon somebody traced off imagery - the same standing as a building footprint or a
+    traced kerb. A driveway and an aisle are centrelines that have to be widened; a lot
+    needs no assumption.
     """
     def build():
         return [{"coords_wgs84": coords, "tags": way.get("tags", {}), "id": way["id"]}
@@ -475,17 +405,10 @@ def fetch_parking_lots(center_wgs84: Point, radius_m: float) -> list[dict]:
 
 def fetch_traffic_control(center_wgs84: Point, radius_m: float) -> list[dict]:
     """OSM traffic control nodes: highway=traffic_signals / stop / give_way / crossing.
-    Returns [{"lon": float, "lat": float, "tags": {...}}, ...].
 
-    Real surveyed control instead of guessing. At Columbia & Princeton OSM maps exactly two
-    stop nodes, both on Columbia Ave, because Princeton Ave (CR 569) runs free - the old
-    one-sign-per-approach guess put stop signs on two approaches that don't have them.
-
-    highway=crossing nodes are included because that is where OSM records the
-    pedestrian-facing detail that lives on the node rather than the way: tactile_paving,
-    button_operated, crossing:island. Reading only the ways is what once made data_gaps()
-    report "no ADA data" at Broad/Greenwood, where all four crossings are tagged
-    tactile_paving=yes.
+    highway=crossing nodes are included because that is where OSM records the pedestrian-
+    facing detail that lives on the node rather than the way (tactile_paving,
+    button_operated, crossing:island).
     """
     wanted = ("traffic_signals", "stop", "give_way", "crossing")
 
@@ -497,11 +420,10 @@ def fetch_traffic_control(center_wgs84: Point, radius_m: float) -> list[dict]:
 
 def fetch_street_furniture(center_wgs84: Point, radius_m: float) -> list[dict]:
     """OSM street furniture: highway=street_lamp, emergency=fire_hydrant, natural=tree.
-    Returns [{"lon": float, "lat": float, "tags": {...}}, ...].
 
-    STREET LAMPS ARE NOT MAPPED AT ANY OF THIS PROJECT'S FOUR SITES. This exists so a site
+    STREET LAMPS ARE NOT MAPPED at any of this project's four sites. This exists so a site
     where they ARE mapped gets real pole positions rather than a derived one-per-corner
-    placement, and so the absence is reported (see data_gaps) rather than papered over.
+    placement, and so the absence is reported rather than papered over.
     """
     def wanted(t):
         return (t.get("highway") == "street_lamp" or t.get("emergency") == "fire_hydrant"
@@ -515,15 +437,10 @@ def fetch_street_furniture(center_wgs84: Point, radius_m: float) -> list[dict]:
 
 def fetch_kerbs(center_wgs84: Point, radius_m: float) -> list[dict]:
     """OSM-mapped kerb lines and kerb nodes (barrier=kerb).
-    Returns [{"coords_wgs84": [...] | None, "lon"/"lat" for nodes, "tags", "id", "node_ids"}].
 
-    The most direct geometry this project can get: a traced kerb IS the curb, so it gives
-    the curb line, the corner radius (nothing in OSM carries a radius tag) and the position
-    of tactile paving, none of which have to be inferred from our own estimated widths.
-
-    Two-vertex ways are kept. A straight run of kerb is two points, and dropping them (an
-    old circle-fitting precondition applied at the wrong layer) threw away 12 of the 23
-    traced ways at two of these sites.
+    The most direct geometry this project can get: a traced kerb IS the curb. Two-vertex
+    ways are kept - a straight run of kerb is two points, and dropping them threw away
+    12 of the 23 traced ways at two of these sites.
     """
     def build():
         kerbs = [{"coords_wgs84": coords, "tags": way.get("tags", {}), "id": way["id"],
@@ -542,11 +459,9 @@ def fetch_kerbs(center_wgs84: Point, radius_m: float) -> list[dict]:
 def height_from_tags(tags: dict) -> tuple[float, str] | None:
     """(height in metres, which tag said so) if a mapper recorded one, else None.
 
-    None rather than DEFAULT_BUILDING_HEIGHT_M, because "nobody said" is a different answer from
-    "7 m" and the caller has somewhere else to look: the assessor's storey count, in
-    src/sources/assessor.py. Returning the default here is what made every building in every
-    render the same height - 0 of the 1150 building ways in this borough carry `height` and 7
-    carry `building:levels`, so the default WAS the model.
+    None rather than DEFAULT_BUILDING_HEIGHT_M: "nobody said" is a different answer from
+    "7 m", and the caller looks elsewhere (src/sources/assessor.py). Returning the default
+    here made every building the same height.
     """
     if tags.get("height"):
         try:
@@ -564,11 +479,8 @@ def height_from_tags(tags: dict) -> tuple[float, str] | None:
 def fetch_roads(center_wgs84: Point, radius_m: float) -> list[dict]:
     """OSM highway ways near a point, with their tags and geometry.
 
-    The road ways themselves, not the furniture on them - this is where OSM records facts
-    about how the carriageway is operated rather than where things are. `overtaking=no` is
-    the one currently used: it is what a double-yellow centerline MEANS, and five ways in
-    Hopewell carry it (both Broad Streets, both Greenwood Avenues, Princeton Avenue).
-    Returns [{"coords_wgs84": [...], "tags": {...}, "id": int}, ...].
+    The road ways themselves, not the furniture on them. `overtaking=no` is the one tag
+    currently used: it is what a double-yellow centerline MEANS.
     """
     def build():
         return [{"coords_wgs84": coords, "tags": way.get("tags", {}), "id": way["id"]}
@@ -582,8 +494,6 @@ def fetch_stop_lines(center_wgs84: Point, radius_m: float) -> list[dict]:
 
     A surveyed stop bar gives all three things this project was previously deriving: how far
     back from the junction it sits, how wide it is, and which half of the roadway it covers.
-    The derived version could only ever place it a fixed setback behind the crosswalk.
-    Returns [{"coords_wgs84": [...], "tags": {...}, "id": int}, ...].
     """
     def build():
         return [{"coords_wgs84": coords, "tags": way.get("tags", {}), "id": way["id"]}

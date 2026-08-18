@@ -1,21 +1,10 @@
 """Every piece of curbside paint a DesignState calls for, built once.
 
-This exists because the 2D plan view and the 3D export were each assembling the same
-markings from the same primitives, independently - roughly sixty lines apiece of "work out
-the anchor stations, build the strip, build the taper, clip it". They drifted, exactly as
-you would expect: at the time this module was written the two disagreed about where a
-parking buffer's taper starts (the plan view used the corner clearance, the export used the
-point where the stalls begin) and about whether taper fill gets clipped around a crossing at
-all (only the export did it). Two pictures of the same junction that don't match is the one
-thing this project cannot ship, since the whole premise of the plan view is that it shows
-what the render will show.
+THE GEOMETRY IS DECIDED HERE AND BOTH RENDERERS DRAW WHAT THEY ARE HANDED. A second construction
+of the same locus is a second chance to disagree with the first; src/checks.py inspects this
+module rather than rebuilding the paint for the same reason.
 
-So the geometry is decided here and both renderers draw what they are handed. Nothing in
-this module knows about matplotlib, meters, or Blender - it returns shapely in state-plane
-feet, and each renderer converts.
-
-It is also what src/checks.py inspects. A check that rebuilds the paint itself would just be
-a third copy free to drift from the other two; checking THIS list is checking what is drawn.
+Returns shapely in state-plane feet; each renderer converts.
 """
 import math
 from dataclasses import dataclass, field
@@ -59,28 +48,25 @@ class PaintPiece:
 
     `kind` is a src/geometry/markings.py:PaintKind rather than a string, so a piece carries its
     own answer to "how is this drawn, and where does it travel to the 3D render" instead of
-    every consumer looking that up in a table of its own. It used to be a string.
+    every consumer looking that up in a table of its own.
     """
     kind: PaintKind
     geometry: LineString | Polygon
     leg: str | None = None
     side: str | None = None
     # What cut this piece, if it is the line along a zone's CUT END rather than along its length.
-    # A rim carries the same `kind` as the zone's edge line, deliberately (see PaintContext.rim), so
-    # this is the only thing that distinguishes the two - and the cause matters as well as the fact,
-    # because the two ends do not want the same treatment: the hatching keeps half a spacing off an
-    # OPENING's fillet, whose chord runs at the hatch angle and so reads as a stroke, and runs
-    # straight into a CROSSING's diagonal, which is what gives a zone its clean end there.
+    # A rim carries the same `kind` as the zone's edge line (see PaintContext.rim), so this is the
+    # only thing distinguishing the two. The cause matters because the two ends differ: hatching
+    # keeps half a spacing off an OPENING's fillet, whose chord runs at the hatch angle and so
+    # reads as a stroke, but runs straight into a CROSSING's diagonal.
     rim: "RimCause | None" = None
 
     @property
     def is_fill(self) -> bool:
         """Hatched paint - asked of the MARKING, not of its geometry.
 
-        These two answers differ, and the difference caused real bugs: a bollard is stored as a
-        degenerate polygon standing in for a point, so a geometry test called it a fill and
-        every invariant that asked about polygons had to carry `and p.kind != "bollard"`. See
-        markings.Role.
+        The two answers differ: a bollard is stored as a degenerate polygon standing in for a
+        point, so a geometry test would call it a fill. See markings.Role.
         """
         return self.kind.is_fill
 
@@ -98,13 +84,11 @@ class LegAnchors:
                 this paint gets: CROSSWALK_CLEARANCE_FT beyond where the crossing's paint
                 actually reaches on this side.
     anchor_ft - where a paint-only buffer's straight run begins. Past the corner return AND
-                past the crossing; taking the corner clearance alone let paint run to within
-                3.9 ft of Princeton Ave north's crossing.
+                past the crossing; the corner clearance alone is not enough.
 
     Per SIDE, not per leg, because a skewed crossing reaches further along one kerb than the
-    other - 9.4 ft further at broad_st_west. A single per-leg target either overlapped the
-    crossing on one side or left a gap on the other; it overlapped, and the overlap was
-    chopped off square by clip_paint_clear_of.
+    other - 9.4 ft further at broad_st_west, so a single per-leg target either overlaps the
+    crossing on one side or leaves a gap on the other.
 
     Where marked STALLS may begin is also not a property of the leg - the side line, the
     stop signs and the hydrants all differ by side. See src/geometry/daylighting.py.
@@ -118,18 +102,19 @@ class LegAnchors:
 def leg_anchors(state, leg_name: str, side: str, crosswalk_offsets: dict,
                  keep_clear=None, inner_offset_ft: float = 0.0,
                  crosswalk_is_marked: bool = True) -> LegAnchors:
-    """inner_offset_ft is how far from the centerline this treatment's paint starts - the
-    lane edge. Only the crossing inside that strip can get in its way.
+    """This leg-side's LegAnchors.
+
+    inner_offset_ft is how far from the centerline this treatment's paint starts - the lane
+    edge. Only the crossing inside that strip can get in its way.
 
     Clearance is asked PER SIDE. This paint belongs to one kerb, and a corner return belongs
     to one side of each leg it touches, so a per-leg maximum holds the paint back for a curve
     that may be on the opposite kerb. See leg_clearance_ft.
 
     With no painted crossing on this leg there is nothing to keep clear OF, so the only limit
-    is that same corner return. The nominal crossing station an unmarked leg still carries is
-    the geometric estimate - itself the per-leg corner clearance - and reserving room around
-    it held the north side of E Broad's kerbside paint 37 ft out for a crossing that is not
-    painted, on a kerb with no corner. Same mistake centerline_start_ft was making.
+    is that same corner return. The nominal crossing station an unmarked leg carries is only a
+    geometric estimate - itself the per-leg corner clearance - and reserving room around it
+    holds paint out for a crossing that is not painted.
     """
     clearance_ft = leg_clearance_ft(leg_name, state.legs, state.corner_fillets, side=side)
     reach_ft = crosswalk_reach_on_leg_side_ft(state.legs[leg_name], side, keep_clear,
@@ -151,13 +136,10 @@ def leg_anchors(state, leg_name: str, side: str, crosswalk_offsets: dict,
 # claiming a space that isn't there.
 MIN_PARKING_RUN_FT = 22.0
 
-# How steep a taper may be before it stops reading as a taper. A taper is a TRANSITION - it
-# guides a driver across a change in lane width - and only says that when it is gentle.
-# Measured at Broad & Greenwood: the lane-narrowing buffers on Greenwood run 1.5 ft of depth
-# across 8-11 ft of station (0.14-0.19), and read well. The parking buffers on Broad St have
-# to swing 13-17 ft of depth across 0-5.6 ft (2.97 and up, one of them infinite) - that is a
-# hairpin, and it is what looked wrong. 1.0 sits an order of magnitude clear of the good
-# cases and well below every bad one.
+# How steep a taper may be before it stops reading as a taper (depth per run, dimensionless).
+# A taper is a TRANSITION and only says that when it is gentle. Measured at Broad & Greenwood:
+# Greenwood's lane-narrowing buffers run 0.14-0.19 and read well; Broad St's parking buffers had
+# to swing 2.97 and up, which is a hairpin. 1.0 sits clear of both.
 MAX_TAPER_DEPTH_PER_RUN = 1.0
 
 # How far paint keeps off a painted crossing. Small on purpose: where a crossing exists, the
@@ -166,36 +148,26 @@ MAX_TAPER_DEPTH_PER_RUN = 1.0
 PAINT_TO_CROSSWALK_GAP_FT = 1.0
 
 # How far an opening's ends are trimmed back, with a rounded corner, past the dropped kerb's own
-# extent. A driveway apron flares at the kerb in reality and a car turning in cuts the corner, so
-# a square-ended gap the exact width of the kerb tag both looks punched-out and gives a turning
-# vehicle nothing. Kept to a foot and a half on purpose: pedestrians and cyclists have priority
-# here, and every foot of trim is a foot of bike lane or hatched buffer given up. Not a swept-path
-# figure - see kerb_opening_bands.
+# extent. A driveway apron flares at the kerb in reality and a car turning in cuts the corner.
+# Kept small on purpose: every foot of trim is a foot of bike lane or hatched buffer given up.
+# Not a swept-path figure - see kerb_opening_bands.
 OPENING_TRIM_FT = 1.5
 
 # A HATCHED zone ends at an opening on an arc that LEAVES ITS OWN EDGE LINE TANGENTIALLY and
 # curves out to the kerb - a fillet, not a chamfer and not a bulge. That tangency is the whole
-# difference between a line and a cut: on a real street the white line beside the travel lane
-# runs straight, peels away in one sweep around the driveway apron, and comes back - one
-# continuous stroke, no corner anywhere in it.
+# difference between a line and a cut: the white line beside the travel lane runs straight, peels
+# away in one sweep around the driveway apron, and comes back as one continuous stroke. Do not
+# make the arc tangent to the TRANSVERSE direction instead; that is flat where the eye follows the
+# edge line and is the blunt end this exists to fix.
 #
-# The first version had the arc the wrong way round. It was tangent to the TRANSVERSE direction at
-# the lane edge instead, i.e. flat where the eye follows the edge line and curved only in the last
-# foot or two at the kerb, which is precisely the blunt end it was meant to fix - 2.5 ft of sweep
-# across 14 ft of depth at Broad St, invisible at any drawing scale.
-#
-# The radius is the depth of the strip being closed, so the arc uses the whole cross-section and
-# arrives at the kerb exactly as the mouth's own trim: one arc, no straight portion, nothing to
-# tune per site. It is bounded by that depth rather than by a constant because the run and the
-# depth are the same measurement seen twice - a shallow strip needs a short sweep to look right and
-# a deep one needs a long one. It costs HATCHING and nothing else: the lane's lines carry a dotted
-# extension across (PaintContext.dashes_through_openings) and its green stops at the trim, so what
-# is given up is the paint that says "nothing belongs here", next to a mouth a car swings through.
+# The radius is the depth of the strip being closed, expressed per unit depth so a shallow strip
+# gets a short sweep and a deep one a long one - the run and the depth are the same measurement
+# seen twice, so there is nothing to tune per site. It costs HATCHING and nothing else.
 OPENING_FILLET_PER_DEPTH = 1.0
 
-# The dotted extension a lane line becomes where it crosses an opening. MUTCD's dotted lane
-# extension is a 2 ft segment with a 2-6 ft gap; the tight end of that range is used because a
-# driveway mouth is short - E Broad's openings run 4-37 ft, and a 2+6 pattern would put a single
+# The dotted extension a lane line becomes where it crosses an opening, in feet. MUTCD's dotted
+# lane extension is a 2 ft segment with a 2-6 ft gap; the TIGHT end of that range is used because
+# a driveway mouth is short - E Broad's openings run 4-37 ft, and a 2+6 pattern would put a single
 # dash in a 10 ft one, which reads as a stray mark rather than as a line continuing.
 DOTTED_MARK_FT = 2.0
 DOTTED_GAP_FT = 2.0
@@ -210,32 +182,22 @@ RIM_SNAP_FT = 0.05
 # Below this a rim is a clipping artifact at a corner, not a painted line.
 MIN_RIM_LENGTH_FT = 1.0
 
-# Below this a zone is a HAIRLINE LEFT BY A CLIP, not a marking. Differencing polygons that share
-# an edge leaves slivers along it, and one had been surviving all along: a lane-narrowing fill of
-# **0.0 sq ft with a 12.0 ft perimeter** on broad_st_east's left kerb, drawn in the plan view as an
-# outline with nothing inside it. Harmless until the openings were rimmed too, at which point that
-# sliver's own boundary produced two rim segments 1.7 ft of which lay on top of each other, which
-# MarkingsDoNotCollide reported. The check found a real defect one layer below the change - a zone
-# with no area is not paint, whatever it is drawn around. A hatched zone here is tens to hundreds
-# of square feet, so this cannot reach a real one.
+# Below this a zone is a HAIRLINE LEFT BY A CLIP, not a marking: differencing polygons that share
+# an edge leaves slivers along it, and a zone with no area is not paint. A real hatched zone here
+# is tens to hundreds of square feet, so this cannot reach one.
 MIN_ZONE_AREA_SQ_FT = 1.0
 
-# And the same thing for a LINE. A clip that lands on a vertex leaves a LineString of zero or
-# near-zero length: three of them survived at E Broad & Princeton, including one at exactly the
-# station of a cross street's mouth, each drawn as a stray tick of lane edge line with nothing
-# attached to it. MIN_RIM_LENGTH_FT already discards a rim this short - a rim is a sweep and a
-# 1 ft sweep is nothing - but an ordinary line went through unfiltered, so the guard existed for
-# fills and for rims and not for the case in between. Well under a stall divider (the shortest
-# real line here, a few feet), so it cannot reach a marking anyone meant to draw.
+# And the same thing for a LINE: a clip landing on a vertex leaves a LineString of near-zero
+# length, drawn as a stray tick with nothing attached to it. Well under a stall divider (the
+# shortest real line here, a few feet), so it cannot reach a marking anyone meant to draw.
 MIN_LINE_LENGTH_FT = 0.25
 
-# The painted width of a lane-edge line, matching scripts/blender/blender_scene.py's
-# add_paint_polyline(..., 0.25, ...). Paint has width, and where it goes decides whether the
-# lane behind it is really the width it claims: an edge line CENTRED on the 11 ft mark puts
-# half its own body inside the lane, leaving 10.59 ft. So the line is placed outside the mark
-# - its inner edge lands on 11 ft - and the hatching starts outside the line rather than
-# running under it. The width comes out of the treatment, which is where the spare asphalt
-# is, not out of the travel lane.
+# The painted width of a lane-edge line, in FEET (0.25 m, matching
+# scripts/blender/blender_scene.py's add_paint_polyline(..., 0.25, ...)). Paint has width, and
+# where it goes decides whether the lane behind it is really the width it claims: an edge line
+# CENTRED on the 11 ft mark puts half its own body inside the lane, leaving 10.59 ft. So the line
+# is placed OUTSIDE the mark - its inner edge lands on 11 ft - and the hatching starts outside the
+# line. The width comes out of the treatment, not out of the travel lane.
 LANE_EDGE_LINE_WIDTH_FT = 0.25 / FT_TO_M
 
 
@@ -252,10 +214,8 @@ def lane_edge_stripes(depth_ft: float) -> tuple[float, float]:
 def tapers_cleanly(depth_ft: float, at: LegAnchors) -> bool:
     """Whether a curved taper into the corner would read as one.
 
-    Only consulted where there is NO crossing for the paint to end against. Measured at
-    Broad & Greenwood: Greenwood's lane-narrowing buffers run 1.5 ft of depth across 8-11 ft
-    of station (0.14-0.19) and read well; Broad St's parking buffers had to swing 13-17 ft
-    across 0-5.6 ft (2.97 and up, one of them infinite), which is a hairpin.
+    Only consulted where there is NO crossing for the paint to end against. The threshold and
+    the measurements behind it are MAX_TAPER_DEPTH_PER_RUN's.
     """
     run_ft = at.anchor_ft - at.target_ft
     return run_ft > 0 and depth_ft / run_ft <= MAX_TAPER_DEPTH_PER_RUN
@@ -275,17 +235,11 @@ def end_against_crossing(at: LegAnchors, zone_start_ft: float = 0.0) -> tuple[fl
     Deliberately starting inside the crossing is what makes the trim do the work. It leaves
     an offcut on the junction side, hence the second return value.
 
-    TRIED AND REVERTED: reaching the paint back to this side's own corner clearance instead,
-    and discarding against that, so a side with no corner return keeps the offcut. The north
-    side of E Broad at Princeton is one unbroken kerb under one continuous no-stopping
-    restriction, and ~20 ft of it between the crossing and the junction node is bare. It did
-    not fix that - the shared kerb way covering that stretch has two vertices, one claimed by
-    each of the two collinear legs, so neither has the two points curb_line_from_points needs -
-    and it put paint over a kerb and through a crossing at W Broad & Louellen, whose acute Y
-    and partial tracing make the reach-back land outside the roadway. The real fix is to let
-    the two legs SHARE that endpoint vertex, which is what a shared OSM node is; that means
-    relaxing assign_curb_points_to_legs' one-vertex-one-leg rule, deliberately rather than in
-    passing.
+    TRIED AND REVERTED: reaching the paint back to this side's own corner clearance instead. It
+    puts paint over a kerb and through a crossing at W Broad & Louellen, whose acute Y and
+    partial tracing make the reach-back land outside the roadway. The bare ~20 ft it was meant to
+    fill on E Broad north needs the two collinear legs to SHARE their endpoint vertex, which means
+    relaxing assign_curb_points_to_legs' one-vertex-one-leg rule.
     """
     return max(zone_start_ft, at.crossing_ft - CROSSWALK_DEPTH_FT), at.crossing_ft
 
@@ -293,16 +247,11 @@ def end_against_crossing(at: LegAnchors, zone_start_ft: float = 0.0) -> tuple[fl
 def zone_end_line_ft(leg, side: str, start_ft: float, inner_offset_ft: float):
     """The transverse line closing off the junction end of a hatched zone, or None.
 
-    Three ways a zone can end, and until this existed only two of them were drawn. Into a
-    crossing: the crossing cuts it and `rim` outlines the cut. Resolving back to the kerb:
-    the taper carries the outline round. Square, against nothing: the outline simply stopped
-    and the hatch strokes ended in mid-air.
-
-    That third case is not rare, it is every leg with no painted crossing - e_broad_st_east
-    among them. Such a leg has nothing to end against, and it cannot taper either, because
-    leg_anchors puts anchor_ft AT target_ft where the crossing is only nominal, leaving a
-    taper no run to happen over. So the zone gets a square end whether that reads well or
-    not, and a square end wants a line across it.
+    Three ways a zone can end. Into a crossing: the crossing cuts it and `rim` outlines the cut.
+    Resolving back to the kerb: the taper carries the outline round. Square, against nothing -
+    which is every leg with no painted crossing, and such a leg cannot taper either, because
+    leg_anchors puts anchor_ft AT target_ft where the crossing is only nominal. A square end wants
+    a line across it, or the hatch strokes end in mid-air.
 
     Returns None where the kerb has come inside the zone's own lane edge, which leaves
     nothing to draw a line across.
@@ -320,16 +269,14 @@ def zone_end_line_ft(leg, side: str, start_ft: float, inner_offset_ft: float):
 def _lies_wholly_behind(leg, geometry, station_ft: float) -> bool:
     """Whether EVERY vertex of a piece falls short of `station_ft` - so it is an offcut.
 
-    A MEAN STATION IS NOT A SIDE, and this used to take one. A piece cut off a zone by a skewed
-    crossing is a long diagonal sliver: at W Broad & Louellen the crossing is surveyed 43.7 deg
-    off square, so the offcut behind it ran from station 26 to 47 and its mean landed at 34.4,
-    PAST the crossing's own 32.0. The test passed and 164 sq ft of hatching stayed in the
-    intersection. Every vertex, or it is not behind.
+    A MEAN STATION IS NOT A SIDE. A piece cut off a zone by a skewed crossing is a long diagonal
+    sliver: at W Broad & Louellen the crossing is surveyed 43.7 deg off square, so an offcut
+    running from station 26 to 47 has its mean at 34.4, PAST the crossing's own 32.0, and 164 sq
+    ft of hatching stays in the intersection. Every vertex, or it is not behind.
 
     The same shape of test as checks.NoPaintInsideTheJunction's, deliberately: "wholly behind the
     crossing" and "wholly inside the mouth" are the same question asked of the two things that
-    end a kerbside zone, and asking them the same way is what stops one of them being sound and
-    the other a heuristic.
+    end a kerbside zone.
     """
     coords = (geometry.exterior.coords if geometry.geom_type == "Polygon" else geometry.coords)
     stations, _offsets = station_offset_many(leg.centerline, np.asarray(coords, dtype=float))
@@ -349,24 +296,17 @@ def parking_runs(state, leg_name: str, side: str, crosswalk_offsets: dict,
 class PaintContext:
     """The machinery every treatment paints through, and the pieces it has painted so far.
 
-    curbside_paint_ft used to be one function holding this as local state and a closure per
-    helper, with a block per treatment reading DesignState's dicts. That is why forgetting one
-    line was invisible: the bike lane's kerb hatching was `add(...)` where every other hatched
-    zone was `rim(add(...))`, so in the 3D render its strokes stopped in mid-air at the crossing
-    while the plan view - which outlines a fill polygon for free - looked finished.
-
-    With the machinery in an object, a treatment can own its own markings (Treatment.paint), and
-    what is shared stays shared: the crossing bands everything is cut around, the apron surfaces
-    everything stops at, and the running list of pieces.
+    A treatment owns its own markings (Treatment.paint); what is shared stays shared here - the
+    crossing bands everything is cut around, the apron surfaces everything stops at, and the
+    running list of pieces.
     """
     state: object
     crosswalk_offsets: dict
     center_ft: object
     keep_clear: object = None          # EVERY painted crossing in the frame, buffered by the gap
-    # This junction's own crossings, same buffer. The two used to be one field doing two jobs,
-    # which curbside_paint_ft's docstring already described as two jobs - and they stopped being
-    # the same set the moment crossings at UNMODELLED junctions had to be kept clear of too. See
-    # anchors() for why aiming at those would be a disaster and cutting against them is required.
+    # This junction's own crossings, same buffer. Distinct from keep_clear, which also holds
+    # crossings at UNMODELLED junctions in the frame. See anchors() for why paint is cut against
+    # those but never aimed at them.
     junction_crossings: object = None
     marked: set = field(default_factory=set)
     straight_through: set = field(default_factory=set)
@@ -386,12 +326,9 @@ class PaintContext:
         """Ground that is BUILT rather than painted, which every marking then stops at.
 
         An apron is flush pavers or textured concrete - part of the corner rather than part of
-        the carriageway - so the ground it occupies is not roadway to be hatched. Left
-        unsubtracted, a curb extension's daylight zone and its own swept-path apron overlapped by
-        2-4 sq ft at three of the four corners at Broad & Greenwood, which MarkingsDoNotCollide
-        reported as the same ground painted twice. It is the same layering the crossings already
-        get, one rung further up: a surface outranks a marking the way a marking outranks a
-        buffer.
+        the carriageway - so the ground it occupies is not roadway to be hatched. Same layering
+        the crossings get, one rung further up: a surface outranks a marking the way a marking
+        outranks a buffer.
 
         Collected rather than unioned here, because the union has to be complete before any
         marking is cut against it - see seal_surfaces.
@@ -415,22 +352,12 @@ class PaintContext:
 
         WITH TWO CLIPS, because neither a kerb opening nor a crossing is paint. A flex post
         cannot be trimmed the way a stripe can - it is either standing in the way or it is not -
-        so a post that lands in one is dropped rather than shortened.
+        so a post that lands in one is DROPPED rather than shortened.
 
-        AN OPENING: without this the paint broke over a driveway and the bollards marched
-        straight across it, which is worse than not breaking the paint at all - it reads as a
-        protected lane whose protection you are expected to drive through.
-
-        A CROSSING: a post planted in a marked crosswalk is the same statement about a person
-        walking, and it is the worse of the two. This never arose at THIS junction's crossings,
-        because a bike lane's post row starts past where the crossing reaches
-        (props.bollard_props_from_paint takes its stations from the painted row for exactly that
-        reason) - so the rule was satisfied by an accident of ordering rather than stated. At a
-        crossing belonging to another junction in the frame there is no such ordering, and two
-        posts stood in Blackwell Avenue's zebras on the corridor proposal.
-
-        `keep_clear` and not `junction_crossings`: every crosswalk in the picture, for the same
-        reason `add` cuts against all of them.
+        AN OPENING: bollards marching across a driveway read as a protected lane whose protection
+        you are expected to drive through. A CROSSING: a post planted in a marked crosswalk is the
+        same statement about a person walking. `keep_clear` and not `junction_crossings` - every
+        crosswalk in the picture, for the same reason `add` cuts against all of them.
         """
         if piece.kind.is_object and (stands_in_an_opening(self.openings, piece.geometry)
                                       or _stands_in_a_crossing(self.keep_clear, piece.geometry)):
@@ -445,13 +372,12 @@ class PaintContext:
         crossing. A zone drawn deliberately through a crossing (so the crossing cuts its end into
         a clean diagonal) leaves an offcut back at the corner, and that offcut is not paint.
 
-        NARROWER THAN IT WAS, because the junction now cuts its own corners: an offcut inside the
-        corner return is removed by the junction's mouth (kerbs.OpeningSource.JUNCTION), so what
-        is left for this to catch is only the strip between the mouth and the crossing, on the
-        legs where the crossing sits outside the corner. Measured across all four sites and every
-        scenario that is one 1.7 sq ft sliver, on broad_st_east - which is worth knowing, because
-        a filter doing almost nothing is a filter whose failure would be invisible. It is kept and
-        made sound (see _lies_wholly_behind) rather than kept and trusted.
+        Narrow: an offcut inside the corner return is already removed by the junction's mouth
+        (kerbs.OpeningSource.JUNCTION), so what is left for this to catch is only the strip
+        between the mouth and the crossing, on the legs where the crossing sits outside the
+        corner. Across all four sites and every scenario that is one 1.7 sq ft sliver, on
+        broad_st_east - worth knowing, because a filter doing almost nothing is a filter whose
+        failure would be invisible. Kept and made sound (see _lies_wholly_behind), not trusted.
 
         shares_a_kerb dedupes against the other zones on the same through-running kerb.
         """
@@ -484,10 +410,7 @@ class PaintContext:
         if shares_a_kerb:
             self.through_painted.extend(p.geometry for p in added)
         # ...AND THE DASHES BACK ACROSS, for a marking whose row says DOTTED. The complement of
-        # the cut just made, so a treatment cannot paint the solid part and forget the broken one
-        # - which is what "whether a marking carried a dotted extension was decided by whether its
-        # treatment remembered to call emit_across_opening" meant in practice, and only the
-        # bikeways ever remembered.
+        # the cut just made, so a treatment cannot paint the solid part and forget the broken one.
         added.extend(self._dashes_across_openings(kind, geometry, leg, side))
         return added
 
@@ -510,17 +433,15 @@ class PaintContext:
         """The marks of `kind`'s dotted extension, laid IN the openings its row says it crosses.
 
         THE PARENT MARKING, CLIPPED - not rebuilt over the dash stations. The dashes have to lie
-        exactly on the line they continue, and a second construction of the same locus is a
-        second chance to disagree with the first; this project has paid for that distinction
-        several times over (see the module docstring). It also means a marking gets its extension
-        from its row alone, with nothing for a treatment to supply but the phase.
+        exactly on the line they continue, and a second construction of the same locus is a second
+        chance to disagree with it (see the module docstring). It also means a marking gets its
+        extension from its row alone, with nothing for a treatment to supply but the phase.
 
         Confined to the opening's own ground, which is what "laid IN an opening" means. The dash
         spans are STATION bands, and a station band is a band right across the marking: where an
         entrance meets the street at a skew the span reaches further along the kerb than the
         entrance's own polygon does, by more the wider the marking is. The clip against `dotted`
-        is what keeps the two exact complements - 10 sq ft of doubled green on e_broad_st_west's
-        12 ft two-way lane, which markings_collide reported, was that difference.
+        is what keeps the two exact complements.
         """
         from src.geometry.markings import opening_rule
 
@@ -569,13 +490,10 @@ class PaintContext:
         exists to occupy. Sent through there, every mark of a crossbike would be cut away by the
         rule that calls for it.
 
-        That is not a special case so much as the other half of one already here:
-        BIKE_LANE_DOTTED_EXTENSION's row reads CARRIED/CARRIED because "this IS the extension -
-        the marking laid inside an opening by the rules above... never cut against the opening it
-        exists to cross". _dashes_across_openings appends its marks straight to `pieces` for the
-        same reason. This is that door, opened to a caller that builds the ground itself rather
-        than clipping a parent marking to it - which a lane extension has to, there being no
-        parent marking spanning the box to clip.
+        The other half of BIKE_LANE_DOTTED_EXTENSION's CARRIED/CARRIED row: the marking laid
+        inside an opening is never cut against the opening it exists to cross. This is that door
+        opened to a caller that builds the ground itself rather than clipping a parent marking to
+        it - which a lane extension has to, there being no parent marking spanning the box.
 
         STILL CUT AGAINST THE TWO THINGS THAT ARE NOT OPENINGS. A crossing outranks this like it
         outranks everything else on the kerb (`keep_clear`, every crossing in the frame, not just
@@ -588,17 +506,13 @@ class PaintContext:
         is how the corner treatments' paint is handled - so this inherits the right answer rather
         than needing an exemption written for it.
 
-        `min_area_sq_ft` IS "A PART OF A MARK IS NOT A MARK", which _dashes_across_openings states
-        for a line and nothing has ever stated for an area. MIN_ZONE_AREA_SQ_FT is not that rule:
-        it is a hairline floor, sized to discard slivers left by differencing polygons that share
-        an edge, and at 1 sq ft it passes a wedge that is plainly a clipping artifact. A caller
-        laying discrete marks knows what a WHOLE one is and can say so - the crossbike at Broad &
-        Greenwood put down a 6.2 sq ft wedge against a 21.0 sq ft mark, three tenths of a dash,
-        which on the ground is a striping error rather than a marking. Left None for a caller
-        laying a continuous zone, where there is no whole mark to be a fraction of.
-        `min_length_ft` is that same rule for a LINE mark, which _dashes_across_openings states as
-        DOTTED_MARK_FT / 2; the two are separate arguments because a dash and a patch of colour
-        are not measured in the same units, not because they are different rules.
+        `min_area_sq_ft` IS "A PART OF A MARK IS NOT A MARK" for an area. MIN_ZONE_AREA_SQ_FT is
+        NOT that rule - it is a hairline floor for clip slivers, and at 1 sq ft it passes a wedge
+        that is plainly an artifact. A caller laying discrete marks knows what a WHOLE one is and
+        can say so; left None for a caller laying a continuous zone, where there is no whole mark
+        to be a fraction of. `min_length_ft` is the same rule for a LINE mark (the value
+        _dashes_across_openings uses is DOTTED_MARK_FT / 2). Two arguments because a dash and a
+        patch of colour are not measured in the same units, not because they are different rules.
         """
         added = []
         if geometry is None or geometry.is_empty:
@@ -625,13 +539,10 @@ class PaintContext:
         outer stripes have different lengths through the same mouth.
 
         AND ONLY WHERE THE MARKING GOES ON AFTERWARDS. A dotted extension carries a lane ACROSS
-        an entrance - "the lane still runs here, and here is where it is crossed" - so a lane that
-        simply ENDS at an opening has nothing to extend. The two cases look identical to a clip
-        and are opposite in meaning, and the difference only became visible once the junction's
-        own mouth was an opening: at Broad & Greenwood the bike lane already stops at its crossing,
-        19 ft short of the mouth's far end, so the intersection with the mouth was a 1.7 ft sliver
-        of the lane's own tail and the "extension" across a 25 ft junction came out as one 2 ft
-        mark and three stubs of 0.1-1.1 ft.
+        an entrance, so a lane that simply ENDS at an opening has nothing to extend. The two cases
+        look identical to a clip and are opposite in meaning: a lane stopping 19 ft short of a
+        mouth's far end otherwise yields an "extension" of one whole mark and three 0.1-1.1 ft
+        stubs.
         """
         centerline = self.state.legs[leg_name].centerline
 
@@ -660,36 +571,25 @@ class PaintContext:
 
         A hatched zone is outlined, and that outline carries on around the end where something
         cuts it: the diagonal that finishes a zone off against a crossing, and the fillet that
-        sweeps it around a driveway mouth. The lane edge already gets a line of its own; without
-        this one the zone just stops, with hatch strokes ending in mid-air. It was doing exactly
-        that at every opening, because only the crossings were rimmed.
+        sweeps it around a driveway mouth. Without it the zone just stops, with hatch strokes
+        ending in mid-air.
 
         `kind` is the zone's OWN edge line, passed by the caller, so the rim is the same paint
-        continued rather than a line of its own colour - which is the point of it. On a real
-        street the white line beside the lane peels away around the apron and comes back as one
-        continuous stroke; drawing that sweep in a different colour from the line it continues is
-        what makes a drawing look assembled out of pieces. This replaced a dedicated
-        `crossing_rim_line` kind, drawn orangered whatever it closed.
+        continued rather than a line of its own colour. On a real street the white line beside the
+        lane peels away around the apron and comes back as one continuous stroke.
 
         A rim is only the part of the cut that is NOT ALREADY PAINTED. Where the fillet meets the
-        zone's inner edge the two run together, and emitting the whole intersection laid 1.8 ft of
-        a second lane edge line on top of the first at Broad St and E Broad - which
-        MarkingsDoNotCollide reported, correctly: it is a joint, not a stroke, and the line through
-        it is already there.
+        zone's inner edge the two run together, and emitting the whole intersection lays a second
+        lane edge line on top of the first: it is a joint, not a stroke.
         """
         # The tolerance the collision check uses, imported rather than restated: "already painted"
-        # has to mean here what it means there. Locally imported, like everything else in this
-        # module that would otherwise be a cycle.
+        # has to mean here what it means there. Local import to break a cycle.
         from src.checks import COLLINEAR_PAINT_TOLERANCE_FT
 
         for piece in fills:
-            # Seeded with EVERY line already on this kerb, not only this kind's. The zone's own
-            # edge line is the one this rim continues, and now that the rim is drawn on that
-            # line's locus rather than half a stripe off it, the two are collinear where the
-            # fillet leaves the lane edge - a joint, not a second stroke. But a kerbside zone's
-            # inner edge is also some other marking's outer edge: beside a bike lane it is the
-            # lane's own outer stripe, so the rim ran 1.8 ft along the dotted extension crossing
-            # the mouth. Whatever kind painted it, it is painted.
+            # Seeded with EVERY line already on this kerb, not only this kind's: a kerbside
+            # zone's inner edge is also some other marking's outer edge - beside a bike lane it is
+            # the lane's own outer stripe. Whatever kind painted it, it is painted.
             painted = [p.geometry for p in self.pieces
                        if p.kind.is_line and p.leg == piece.leg and p.side == piece.side]
             for cutter, cause in (
@@ -699,27 +599,19 @@ class PaintContext:
                 if cutter is None or cutter.is_empty:
                     continue
                 # HALF A STRIPE OUTSIDE THE FILL, because that is where the line it continues
-                # runs. lane_edge_stripes puts the edge line's centre half its own width outside
-                # the hatching, so the stripe's body fills the space between them - and a rim
-                # traced on the fill's boundary instead sits 0.41 ft to the side of the line it is
-                # supposed to be part of. Near the fillet's tangent point, where the arc runs
-                # almost along the road, those 0.41 ft of offset stretch into a 1.78 ft break in
-                # the line: the seam where the sweep begins.
-                # ROUND joins, not mitre. A mitre corner extends to half a stripe / cos(t/2),
-                # so where the zone's inner edge turns to sweep around an opening the join
-                # spikes past the offset it is supposed to hold - 0.16 ft into the travel lane
-                # at a right-angled corner, which is what it produced on e_broad_st_west and
-                # w_broad_st_northeast once their alignments were centred on the carriageway
-                # and the corner came out square. A rim is a line held half a stripe off the
-                # fill; a spike is not part of that line.
+                # runs (lane_edge_stripes puts the edge line's centre half its own width outside
+                # the hatching). A rim traced on the fill's boundary instead sits 0.41 ft to the
+                # side of the line it is part of, which near the fillet's tangent point stretches
+                # into a 1.78 ft break in the line.
+                # ROUND joins, not mitre. A mitre corner extends to half a stripe / cos(t/2), so
+                # where the zone's inner edge turns to sweep around an opening the join spikes
+                # 0.16 ft into the travel lane at a right angle. A spike is not part of the line.
                 grown = piece.geometry.buffer(LANE_EDGE_LINE_WIDTH_FT / 2, join_style=1)
                 edge = grown.exterior.intersection(
                     cutter.buffer(RIM_SNAP_FT + LANE_EDGE_LINE_WIDTH_FT / 2))
-                # The buffer grows the fill in EVERY direction, the kerb included, and
-                # PaintInsideTheCurb duly reported the rim 0.4 ft over the traced kerb on all four
-                # of Columbia & Princeton's kerbs. Held back inside the kerb here: a marking may
-                # meet it, never cross it, and half a stripe is exactly the amount by which an
-                # unclipped grown boundary would.
+                # The buffer grows the fill in EVERY direction, the kerb included, so the rim
+                # would sit half a stripe over the TRACED kerb. Held back inside it here: a
+                # marking may meet the kerb, never cross it.
                 if piece.leg and piece.side:
                     inside = _inside_the_traced_kerb(self.state.legs[piece.leg], piece.side, edge)
                     if inside is not None and not inside.is_empty:
@@ -728,9 +620,8 @@ class PaintContext:
                     if part.geom_type != "LineString":
                         continue
                     # A zone can be cut by a crossing AND by a driveway at the same corner, and
-                    # where the two cuts converge their rims run together - 1.8 ft of doubled lane
-                    # edge line at Broad St and E Broad, which MarkingsDoNotCollide reported. The
-                    # sweep is one stroke however many things cut it.
+                    # where the two cuts converge their rims run together. The sweep is one stroke
+                    # however many things cut it.
                     if painted:
                         part = part.difference(
                             unary_union(painted).buffer(COLLINEAR_PAINT_TOLERANCE_FT))
@@ -744,15 +635,10 @@ class PaintContext:
         """This leg-side's measuring stations, with the shared crossing geometry filled in.
 
         THIS JUNCTION'S CROSSINGS ONLY, and this is the one place the distinction bites.
-        leg_anchors asks crosswalk_reach_on_leg_side_ft how far along the kerb a crossing
-        reaches, takes the FURTHEST, and starts the kerbside treatment beyond it - which is right
-        for a crossing at the corner the paint is backing away from, and catastrophic for one
-        220 ft down the block. Handed the full set, broad_st_east's taper would aim at station
-        322 (Blackwell's far crossing) instead of 26, and the leg's entire kerbside treatment
-        would vanish behind the crossing it was supposed to start after.
-
-        Everything else - `add`, its dotted extensions and `rim` - reads `keep_clear`, which is the
-        full set, because "do not paint over a crosswalk" is true of every crosswalk in the frame.
+        leg_anchors takes the FURTHEST crossing reach and starts the kerbside treatment beyond it
+        - right for a crossing at the corner the paint is backing away from, catastrophic for one
+        220 ft down the block. Handed the full set, broad_st_east's taper would aim at station 322
+        (Blackwell's far crossing) instead of 26, and the leg's whole treatment would vanish.
         """
         return leg_anchors(self.state, leg_name, side, self.crosswalk_offsets,
                             self.junction_crossings, inner_offset_ft=inner_offset_ft,
@@ -782,13 +668,7 @@ def curbside_paint_ft(state, crosswalk_offsets: dict, center_ft,
     not own: the marked ones at the other junctions inside the frame (src/geometry/surveyed.py),
     which have no leg here and therefore no entry in `crosswalk_bands`. They are subtracted and
     never aimed at - see PaintContext.anchors for why the second half of that is not an oversight.
-
-    THEY WERE GETTING NEITHER. Broad St's frame contains Blackwell Avenue with three crossings
-    traced across it, two of them a zebra; src/geometry/surveyed.py drew them and nothing got out
-    of their way, so the corridor proposal painted 120 sq ft of green bike lane, 36 ft of lane
-    edge line and its yellow contraflow stripe straight over a marked crosswalk. Measured across
-    the four sites and every scenario, up to 164 sq ft of area paint and 48 ft of line. The
-    drawing was making a claim about the street that the same drawing contradicted 6 ft away.
+    Omit them and this design's paint runs straight over a crossing another junction owns.
     """
     # Only crossings that are actually PAINTED get out of the way of anything. Every leg
     # gets a resolved offset, including ones with no marking today - cutting paint around
@@ -816,8 +696,7 @@ def curbside_paint_ft(state, crosswalk_offsets: dict, center_ft,
     # --- and now the treatments paint themselves. Each one that has markings owns them
     # (Treatment.paint), so a marking's geometry lives beside the validation and the provenance
     # of the thing that calls for it, rather than in a block of this function keyed off one of
-    # DesignState's dicts. That separation is what let the bike lane's kerb hatching be added
-    # without the rim() every other hatched zone got.
+    # DesignState's dicts.
     #
     # Dispatched in painting order, and deduplicated by (type, target) keeping the LAST applied:
     # a design's dicts are last-write-wins, so two MarkedParking treatments on one kerb are one
@@ -863,13 +742,11 @@ def _station_band(leg, start_ft: float, end_ft: float):
     """The band right across a leg between two stations - one mark's worth of ground.
 
     Deliberately NOT offset_band_polygon, which clamps its offsets to the traced kerb: this is a
-    station filter and not a lateral one. It exists to cut a marking down to the run of stations
-    one dash covers, and how far across the road that dash reaches is the marking's own business.
-    The clip against the opening's polygon is what bounds it laterally.
+    station filter and not a lateral one. The clip against the opening's polygon is what bounds it
+    laterally.
 
-    Sampled along the centreline rather than taken as one rectangle between the two ends, so a
-    dash laid on a leg that bends (louellen_st_west turns 29.4 deg in its first 15 ft) sits on
-    the road rather than cutting the corner of it.
+    Sampled along the centreline rather than taken as one rectangle, so a dash laid on a bending
+    leg sits on the road rather than cutting the corner of it.
     """
     length_ft = leg.centerline.length
     lo, hi = max(min(start_ft, length_ft), 0.0), max(min(end_ft, length_ft), 0.0)
@@ -932,12 +809,10 @@ KERB_HOLD_SAMPLE_FT = 0.5
 def _inside_the_traced_kerb(leg, side: str, near):
     """The strip from the centreline out to the TRACED kerb, over `near`'s own extent.
 
-    Not curbside_strip_polygon, and the difference is only the sampling. That function builds its
-    grid from model.paint_stations at STRIP_SAMPLE_FT, which is right for a marking that runs the
-    length of a leg and wrong for holding a line against a kerb bending through a corner return:
-    between two samples the strip's boundary is a chord, and a chord across a convex curve lies
-    OUTSIDE it. Sampled here at KERB_HOLD_SAMPLE_FT over just the span being held, so the error is
-    a sixteenth of what it was and the cost is a few dozen points on one line.
+    Not curbside_strip_polygon: that function builds its grid from model.paint_stations at
+    STRIP_SAMPLE_FT, which is right for a marking running the length of a leg but wrong for holding
+    a line against a kerb bending through a corner return. Sampled here at KERB_HOLD_SAMPLE_FT
+    over just the span being held, so the chord error is a sixteenth of what it was.
     """
     from src.geometry.model import band_from_offsets
 
@@ -970,14 +845,11 @@ def junction_mouths_ft(state, crosswalk_bands: dict | None = None,
     painted does it fall back to the corner return's tangent point, which is the same side line
     R.S. 39:4-138(e) measures its setback from on exactly those legs.
 
-    WHY IT IS NOT THE CORNER RETURN EVERYWHERE, which is what this was when the junction first
-    became an opening. The tangent point is where the KERB starts, and a hatched no-parking zone
-    held back to it stops short of the crossing - which undoes the treatment, because the bare
-    stretch beside a crossing is the parking space daylighting exists to remove, and because
-    filling that corner IS the painted curb extension. Measured: it cost 15.3 ft of hatching on
-    W Broad & Louellen's south kerb and 13.2 ft on Greenwood Ave north's, and it forced two tests
-    to accept a zone that reached the mouth instead of the crossing. The zone now reaches the
-    crossing at both, and those tests assert the original property again.
+    WHY NOT THE CORNER RETURN EVERYWHERE. The tangent point is where the KERB starts, and a
+    hatched no-parking zone held back to it stops short of the crossing - which undoes the
+    treatment, because the bare stretch beside a crossing is the parking space daylighting exists
+    to remove, and because filling that corner IS the painted curb extension. It costs 15.3 ft of
+    hatching on W Broad & Louellen's south kerb and 13.2 ft on Greenwood Ave north's.
 
     IT CAN ALSO MOVE THE MOUTH OUTWARD, which is the same rule and not a separate one: at
     W Broad & Louellen the crossing is surveyed 43.7 deg off square, so on Louellen's NORTH kerb
@@ -1025,28 +897,18 @@ def _union(shapes) -> object:
 class KerbSideOpenings:
     """Where ONE KERB opens for a vehicle, kept apart BY WHAT KIND OF OPENING IT IS.
 
-    Three shapes, and the split is MUTCD 1C.02's, not this project's: an intersecting approach and
-    a driveway are different things and the markings do different things at them. What each
-    marking does is declared once in markings.AT_AN_OPENING; this class holds the ground, and
-    `against` composes the two.
+    Three shapes, and the split is MUTCD 1C.02's: an intersecting approach and a driveway are
+    different things and the markings do different things at them. What each marking does is
+    declared once in markings.AT_AN_OPENING; this class holds the ground, and `against` composes
+    the two.
 
-      * `driveway_mouths` - the entrances that are NOT intersections, trimmed back and rounded
-        because a driveway apron flares at the kerb and a vehicle turning in cuts the corner.
-      * `driveway_tapered` - the same, plus the rounded run-out at the travel lane's edge that a
-        HATCHED zone ends on. A no-travel zone that stops square reads as a rectangle punched
-        through the hatching; the same zone at a crossing ends on the crossing's own diagonal,
-        which is what makes it look painted rather than deleted.
-      * `intersection_mouths` - the approaches that ARE intersections: a side street, and this
-        junction's own mouth. No trim and no run-out, and both omissions are the same point -
-        they model a driveway APRON, which is a thing a street mouth does not have. Its flare is
-        its corner return, and that is already in the geometry. So there is no separate
-        `intersection_tapered`: at an intersection, FILLETED and STOPPED are the same shape, which
-        is why markings.AtAnOpening carries one value for the pair.
+      * `driveway_mouths` - entrances that are NOT intersections, trimmed back and rounded.
+      * `driveway_tapered` - the same, plus the rounded run-out at the travel lane's edge.
+      * `intersection_mouths` - approaches that ARE intersections: no trim and no run-out,
+        because a street mouth has no apron.
 
-    This was three fields answering "which of these do I subtract" with an if-chain reading two
-    frozensets. The fields are now the ground and the table is the rule, so adding a marking
-    cannot silently inherit whichever branch it happens to fall through - it has no row and
-    markings.require_every_kind refuses to import.
+    The fields are the ground and markings.AT_AN_OPENING is the rule, so adding a marking cannot
+    silently inherit a branch it happens to fall through.
     """
     driveway_mouths: object = None
     driveway_tapered: object = None
@@ -1111,22 +973,15 @@ class KerbSideOpenings:
 class KerbOpenings:
     """Every kerb's openings, KEPT PER KERB, plus the union for the things that stand in one.
 
-    AN OPENING CUTS THE KERB IT OPENS, and it used to cut everything. That was harmless while a
-    driveway was the only kind: a driveway on E Broad's north kerb is nowhere near Greenwood's, so
-    a single union gave the same answer as a per-kerb one. It stopped being harmless the moment
-    this junction's own mouth became an opening, because every leg's mouth reaches into the SAME
-    throat - so at W Broad & Louellen, whose two streets meet at 43.6 deg, Louellen's south mouth
-    swallowed part of W Broad's two-way bike lane and broke the corridor at the junction it was
-    built to run through. That is not a rule about the bike lane; it is an opening being asked
-    about a kerb that is not the one it opens.
-
-    So `against` and `dotted` take the marking's own (leg, side) - which PaintPiece has carried all
-    along - and fall back to the union only where a marking belongs to no single kerb, which is the
-    corner treatments.
+    AN OPENING CUTS ONLY THE KERB IT OPENS. Every leg's junction mouth reaches into the SAME
+    throat, so a single union asks an opening about a kerb that is not the one it opens: at
+    W Broad & Louellen, whose two streets meet at 43.6 deg, Louellen's south mouth would swallow
+    part of W Broad's two-way bike lane and break the corridor at the junction it runs through.
+    So `against` and `dotted` take the marking's own (leg, side), falling back to the union only
+    where a marking belongs to no single kerb - the corner treatments.
 
     THE OBJECTS STILL READ THE UNION, deliberately: `driven` is ground a vehicle crosses, and a
-    flex post standing on it is in the way whichever kerb's entrance put it there. That is how two
-    posts standing in W Broad & Louellen's junction throat came out of the drawing.
+    flex post standing on it is in the way whichever kerb's entrance put it there.
     """
     by_kerb: dict = field(default_factory=dict)     # (leg, side) -> KerbSideOpenings
 
@@ -1194,8 +1049,7 @@ def stands_in_an_opening(openings, geometry) -> bool:
     return driven is not None and driven.intersects(geometry)
 
 
-# How many points the fillet's arc is sampled at. A curve, not a staircase - see _opening_run_out
-# for why it stopped being one.
+# How many points the fillet's arc is sampled at. A curve, not a staircase - see _opening_run_out.
 FILLET_ARC_POINTS = 28
 
 
@@ -1209,20 +1063,16 @@ def _opening_run_out(leg, side, inner_ft, outer_ft, start_ft, end_ft):
     bulge. `run(u) = R - sqrt(R^2 - (R-u)^2)` for a strip depth R, u measured out from the lane
     edge: R at the lane edge, 0 at the kerb, vertical tangent at u=0.
 
-    SAMPLED AS THE ARC ITSELF, in the leg's own frame. It was 32 nested offset_band_polygon
-    slices, whose staircase was only smooth because OPENING_TRIM_FT was buffered over the top of
-    it afterwards - and that buffer is what put a BULGE where the sweep begins, since a round
-    buffer grows the fillet by 1.5 ft in every direction including along its own tangent, so the
-    curve left the edge line 1.5 ft wide instead of at a point. The trim belongs to the mouth,
-    where a turning vehicle needs the room; the fillet is exact and unbuffered, and joins the
-    trimmed mouth at both of its ends because it is built from the trimmed stations.
+    SAMPLED AS THE ARC ITSELF, in the leg's own frame, and NEVER BUFFERED. A round buffer grows
+    the fillet in every direction including along its own tangent, so the curve would leave the
+    edge line OPENING_TRIM_FT wide instead of at a point - a bulge where the sweep begins. The
+    trim belongs to the mouth, where a turning vehicle needs the room; the fillet joins the
+    trimmed mouth at both ends because it is built from the trimmed stations.
 
-    `outer_ft` HAS TO BE THE REAL KERB, measured off the band, not the nominal width the band was
-    asked for. The band is deliberately requested wider than the road so offset_band_polygon
-    clamps it to the traced kerb - and profiling across the 25.9 ft that WAS asked for on a strip
-    only 7.6 ft deep put every step within 3% of the full run, i.e. a square-ended gap 4 ft wider
-    at both ends with no taper in it at all. The result is intersected with the kerbside strip by
-    the caller, which is what holds the arc to the traced kerb rather than to this one number.
+    `outer_ft` HAS TO BE THE REAL KERB, measured off the band, not the nominal width. A radius
+    taken from the request rather than the clamp puts every arc step within a few percent of the
+    full run, i.e. a square end. The result is intersected with the kerbside strip by the caller,
+    which is what holds the arc to the traced kerb.
     """
     from src.geometry.model import inset_point_at_station
     from src.geometry.targets import Side
@@ -1281,14 +1131,9 @@ def kerb_opening_bands(state, junction_mouths: dict | None = None) -> KerbOpenin
 
     NEITHER THE TRIM NOR THE FILLET IS APPLIED AT AN INTERSECTING APPROACH, and both omissions
     are the same point: they model a DRIVEWAY APRON, which is a thing a street mouth does not
-    have. A driveway's apron flares at the kerb and a car turning in cuts the corner, so the gap
-    is widened and rounded and a hatched zone sweeps away from it. A street mouth's flare is its
-    CORNER RETURN, and it is already in the geometry - kerbs._mouth_from_the_tracing takes the
-    mouth from where the traced kerb really stops, which is that return's tangent point - so
-    adding an apron's 1.5 ft to each end counts the same flare twice, and sweeping a fillet onto
-    it draws a driveway apron across the mouth of Blackwell Avenue. Measured at Broad &
-    Greenwood, the trim alone was 3.0 ft of kerb per intersection given up to a feature that is
-    not there.
+    have. A street mouth's flare is its CORNER RETURN, already in the geometry - so adding an
+    apron's trim counts the same flare twice, and sweeping a fillet onto it draws a driveway
+    apron across the mouth of Blackwell Avenue.
 
     A zone that ends at a street therefore ends SQUARE, which is not a shrug - it is the same end
     zone_end_line_ft already draws for a zone with nothing to end against, and past it the
@@ -1389,9 +1234,9 @@ def apron_polygon(state, corner: tuple[str, str], apron, center_ft):
     """The ground one CornerApron covers - a fixed-depth kite, or the swept-path annulus.
 
     Two shapes because there are two reasons for an apron; see
-    src/geometry/treatments/base.py:CornerApron. The annulus is the one a curb extension lays, and it
-    is built from the corner's two real curb lines rather than offset off the drawn arc, so the
-    outer edge genuinely reaches the radius a bus needs.
+    src/geometry/treatments/base.py:CornerApron. The annulus is built from the corner's two real
+    curb lines rather than offset off the drawn arc, so the outer edge genuinely reaches the
+    radius a bus needs.
     """
     if apron.swept_radius_ft is None:
         return corner_overlay_polygon(state.corner_fillets[corner], center_ft, apron.depth_ft)
@@ -1408,7 +1253,7 @@ def in_channel(pieces: list[PaintPiece], channel) -> list[PaintPiece]:
     """Every piece the 3D render will find in one of its JSON lists (markings.Channel).
 
     The export used to name the kinds per list itself, in a table beside the one in
-    src/geometry/markings.py - so a marking could be declared and still reach no renderer.
+    src/geometry/markings.py.
     """
     return [p for p in pieces if p.kind.channel is channel]
 

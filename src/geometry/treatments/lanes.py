@@ -17,32 +17,16 @@ from src.geometry.treatments.base import (BOLLARD_DEFAULT_SPACING_FT,
 
 @dataclass(frozen=True)
 class LaneNarrowing(Treatment):
-    """Paint-only visual lane narrowing: a striped buffer/shoulder painted along
-    one or both curbs of a leg (sides - see below). Zero curb/pavement
-    geometry change - the lowest-cost alternative to a real curb
-    extension, achieving the same 'narrower-looking travel way' cue with
-    paint instead of concrete.
+    """Paint-only visual lane narrowing: a striped buffer/shoulder along one or both kerbs of a
+    leg. Zero curb/pavement change - the lowest-cost alternative to a real curb extension.
 
-    line_only=True skips the diagonal chevron fill entirely - just the solid
-    line (straight run + corner taper) delineating the outside of the real
-    travel lane, nothing painted in the buffer itself. Useful as a debugging/
-    comparison scenario (bare minimum lane-width marking, easy to check by eye
-    or by measurement against the plan view without chevron hatch density
-    affecting the read) as well as a real low-cost treatment option in its
-    own right.
+    line_only=True paints the delineating line (straight run + corner taper) with no chevron
+    fill: a bare-minimum lane-width marking, useful both for measuring against the plan view
+    without hatch density affecting the read and as a low-cost treatment in its own right.
 
-    sides restricts which side(s) of the leg get narrowed - defaults to both
-    (the usual case: a real two-lane road narrowed symmetrically). Pass a
-    single side (e.g. (Side.LEFT,)) when the OTHER side's edge is already owned
-    by a different treatment - e.g. a marked-parking lane (MarkedParking)
-    already delineates its own side; this just adds the matching plain
-    delineating line on the opposite (entering-traffic) side, matching real
-    curb-to-curb width there but with no buffer painted for it.
-
-    The width bounds are the first validation this treatment has ever had. As a function it
-    checked only that the leg existed, so a zero or negative stripe was a buffer with no
-    width - it produced a degenerate polygon that the paint builder then had to guard against
-    (see src/geometry/model/stripes.py:lane_narrowing_polygons_ft's 0.5 ft floor).
+    `sides` defaults to both. Pass a single side when the OTHER side's edge is already owned by
+    another treatment - MarkedParking delineates its own side, and this then adds only the
+    matching plain line opposite.
     """
     # Painted in the order the markings are layered: the kerbside zones first, and a
     # row of posts after the buffer it stands in - see paint.curbside_paint_ft.
@@ -81,17 +65,15 @@ class LaneNarrowing(Treatment):
         for side in (str(s) for s in self.sides):
             at = ctx.anchors(leg_name, side,
                               inner_offset_ft=leg.curb_to_curb_ft / 2 - stripe_width_ft)
-            # A crossing is something to end against: run into it and let it cut the end.
-            # Only where there is none does the paint have to resolve itself back to the
-            # kerb, and only then is a taper the right way to do it.
+            # A crossing is something to end against: run into it and let it cut the end. Only
+            # where there is none does the paint have to resolve itself back to the kerb, and
+            # only then is a taper the right way to do it.
             if (leg_name, side) in ctx.straight_through:
-                # One unbroken kerb under one restriction, with no corner return at either
-                # end of it: run from the junction NODE and let any crossing cut it, keeping
-                # both halves. Tested before the marked/unmarked split because it applies to
-                # both - the two E Broad legs' north kerbs are one kerb, and the zones on
-                # them have to meet at the node rather than each stopping a few feet short of
-                # it. Discarding the junction-side half left ~20 ft of a no-stopping kerb
-                # bare between the crossing and the node, with no corner there to justify it.
+                # One unbroken kerb with no corner return at either end: run from the junction
+                # NODE and let any crossing cut it, keeping BOTH halves. Tested before the
+                # marked/unmarked split because it applies to both. Discarding the junction-side
+                # half leaves the kerb bare between the crossing and the node, with no corner
+                # there to justify it.
                 start_ft, beyond_ft, curved = 0.0, None, False
             elif leg_name in ctx.marked:
                 start_ft, beyond_ft = end_against_crossing(at)
@@ -116,10 +98,9 @@ class LaneNarrowing(Treatment):
                         leg, fill_ft, at.anchor_ft, at.target_ft, sides=(side,))),
                         leg_name, side)
                 elif leg_name not in ctx.marked and (leg_name, side) not in ctx.straight_through:
-                    # Not on a kerb that runs straight through: the zone does not END at the
-                    # junction node, it continues into the adjoining leg's zone on the same
-                    # unbroken kerb. Closing it off drew a line across the hatching in the
-                    # middle of the intersection.
+                    # Only where the kerb does NOT run straight through. On one that does, the
+                    # zone continues into the adjoining leg's zone rather than ending at the
+                    # node, and closing it off draws a line across the hatching mid-intersection.
                     ctx.add(ZONE_END_LINE, zone_end_line_ft(
                         leg, side, start_ft, leg.curb_to_curb_ft / 2 - fill_ft),
                         leg_name, side)
@@ -127,13 +108,10 @@ class LaneNarrowing(Treatment):
 
 @dataclass(frozen=True)
 class LaneNarrowingBollards(Treatment):
-    """Plastic bollards (flex-post delineators) down the center of a leg's
-    painted lane-narrowing buffer (LaneNarrowing) - a firmer, but still
-    fully paint-plus-delineator (no curb/pavement change) escalation of that
-    same treatment. Requires LaneNarrowing to already be applied to this
-    leg - a bollard line only makes sense inside a buffer that exists, and its
-    lateral placement (centered in that buffer) is derived from the buffer's
-    own stripe_width_ft, not a separately-specified position."""
+    """Flex-post delineators down the centre of a leg's LaneNarrowing buffer - a firmer
+    escalation of that treatment, still with no curb/pavement change. Requires LaneNarrowing on
+    this leg: the lateral placement is derived from that buffer's own stripe_width_ft rather
+    than specified again here."""
     paint_group: ClassVar[int] = 10
     paint_rank: ClassVar[int] = 1
     spacing_ft: float = BOLLARD_DEFAULT_SPACING_FT
@@ -152,12 +130,9 @@ class LaneNarrowingBollards(Treatment):
                             f"position comes from that buffer's own width.")
 
     def paint(self, ctx) -> None:
-        """Down the centre of the buffer LaneNarrowing paints, on both sides it narrowed.
-
-        The offset comes from that buffer's own stripe_width_ft rather than being specified
-        again here, which is the whole reason this treatment requires one: a post placed off a
-        separately-guessed offset is a post standing somewhere the buffer is not.
-        """
+        """Down the centre of the buffer LaneNarrowing paints, on both sides it narrowed. The
+        offset comes from that buffer's own stripe_width_ft - a post placed off a separately
+        guessed offset stands somewhere the buffer is not."""
         from src.geometry.markings import BOLLARD
         from src.geometry.model import bollard_points_ft, leg_clearance_ft
         from src.geometry.paint import PaintPiece, _dot

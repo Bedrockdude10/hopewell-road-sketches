@@ -536,3 +536,44 @@ def far_kerb_lane_edge(paint: CorridorFacilityPaint, default_ft: float | None = 
         return default_ft
 
     return at
+
+
+def stall_marks(corridor, side: str, spans, depth_ft: float | None = None,
+                stall_ft: float | None = None):
+    """(divider lines, stall count) - the stalls DRAWN, one mark per boundary between two cars.
+
+    COUNTED BY DRAWING RATHER THAN BY DIVISION, which is the point of it. Every parking figure in
+    this project so far has been a length divided by a stall length, and a quotient is not a count:
+    it cannot see that a 30 ft stretch holds one car and wastes 8 ft, and it silently rounds
+    fractional stalls into existence across ten separate stretches. Here a stall exists when there
+    is room to draw it against the traced kerb, and the number returned is the number of boxes on
+    the page - so the drawing and the total cannot disagree, which is the same reason
+    marked_parking_capacity goes through parking_stall_count_ft.
+
+    Marks run from the kerb inward by `depth_ft`, following the kerb rather than standing off the
+    narrowest point, for the reason the bike lane's outer edge does: a parked car sits where the
+    kerb is.
+    """
+    from src.geometry.treatments import PARKING_STALL_LENGTH_DEFAULT_FT
+    from src.geometry.treatments.parking import PARKING_STALL_DEPTH_DEFAULT_FT
+
+    depth_ft = PARKING_STALL_DEPTH_DEFAULT_FT if depth_ft is None else depth_ft
+    stall_ft = PARKING_STALL_LENGTH_DEFAULT_FT if stall_ft is None else stall_ft
+    sign = 1.0 if side == "left" else -1.0
+    marks, stalls = [], 0
+    for lo, hi in spans:
+        whole = int((hi - lo) // stall_ft)
+        if whole < 1:
+            continue          # not one car's length: no stall, and no mark pretending there is
+        stalls += whole
+        for index in range(whole + 1):
+            station = lo + index * stall_ft
+            offset = kerb_offset_ft(corridor, side, station)
+            if offset is None:
+                continue
+            inner = place_in_measured_frame(corridor.centerline, np.array([station]),
+                                           np.array([sign * (offset - depth_ft)]))
+            outer = place_in_measured_frame(corridor.centerline, np.array([station]),
+                                           np.array([sign * offset]))
+            marks.append(LineString([tuple(inner[0]), tuple(outer[0])]))
+    return marks, stalls

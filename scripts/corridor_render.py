@@ -30,8 +30,9 @@ import numpy as np
 from matplotlib.patches import Rectangle
 
 from src.geometry.corridor_paint import (CORRIDOR_SAMPLE_FT, JUNCTION_MOUTH,
-                                         centred_on_its_kerbs, far_kerb_lane_edge, kerb_offset_ft,
-                                         paint_facility, parking_bands, stall_room_spans)
+                                         centred_on_its_kerbs, far_kerb_lane_edge,
+                                         kerb_offset_ft, paint_facility, parking_bands,
+                                         stall_marks, stall_room_spans)
 from src.geometry.intersection import load_intersection_model
 from src.geometry.model import station_offset_many
 from src.geometry.network import (_complement_spans, _merged_spans, corridor_facts,
@@ -48,6 +49,7 @@ POST = "#e8663c"
 PARKING_BLUE = "#4b7fb5"
 OPENING = "#8a5a1f"
 GAP_RED = "#c1272d"
+DAYLIGHT = "#e8c33c"
 MOUTH_BLUE = "#3b6ea5"
 
 
@@ -100,7 +102,8 @@ def straighten(corridor, geometry):
     return out
 
 
-def draw_panel(ax, corridor, paint, parking, openings, lo_ft, hi_ft, half_ft):
+def draw_panel(ax, corridor, paint, parking, openings, lo_ft, hi_ft, half_ft,
+               marks=(), daylight=()):
     grid = np.arange(lo_ft, hi_ft, CORRIDOR_SAMPLE_FT)
     left = np.array([kerb_offset_ft(corridor, "left", float(s)) or np.nan for s in grid])
     right = np.array([-(kerb_offset_ft(corridor, "right", float(s)) or np.nan) for s in grid])
@@ -120,6 +123,25 @@ def draw_panel(ax, corridor, paint, parking, openings, lo_ft, hi_ft, half_ft):
             continue
         for xy in straighten(corridor, band):
             ax.fill(xy[:, 0], xy[:, 1], color=PARKING_BLUE, alpha=0.45, linewidth=0, zorder=2)
+
+    # THE DAYLIGHTING: kerb the law keeps clear so a driver and a pedestrian can see each other.
+    # Drawn under the stalls, because what a reader needs to see is that the clear zone is where
+    # the stalls STOP - the treatment is the absence, and an absence has to be shown to be read.
+    for side, start, end in daylight:
+        if end < lo_ft or start > hi_ft:
+            continue
+        sign = 1.0 if side == "left" else -1.0
+        offs = kerb_offset_ft(corridor, side, (max(start, lo_ft) + min(end, hi_ft)) / 2)
+        if offs is None:
+            continue
+        ax.add_patch(Rectangle((max(start, lo_ft), sign * offs - (8.0 if sign > 0 else 0.0)),
+                               min(end, hi_ft) - max(start, lo_ft), 8.0,
+                               facecolor=DAYLIGHT, alpha=0.35, linewidth=0, zorder=2))
+
+    for line in marks:
+        for xy in straighten(corridor, line):
+            if lo_ft <= xy[:, 0].mean() <= hi_ft:
+                ax.plot(xy[:, 0], xy[:, 1], color=PAINT_WHITE, lw=0.8, zorder=5)
 
     for run in paint.runs:
         if run.end_ft < lo_ft or run.start_ft > hi_ft:
@@ -190,6 +212,9 @@ def main() -> int:
     parser.add_argument("--panels", type=int, default=4)
     parser.add_argument("--out", default="output/corridor")
     parser.add_argument("--dpi", type=int, default=200)
+    parser.add_argument("--no-bikeway", action="store_true",
+                        help="draw the daylighting and crossing treatments only, with the parking "
+                             "stalls actually marked and counted on both kerbs")
     parser.add_argument("--side", choices=("north", "south"), default=None,
                         help="which kerb carries the facility; default is the route's own "
                              "CORRIDOR_SIDE. Both are always MEASURED and compared.")
@@ -250,6 +275,56 @@ def main() -> int:
         print(f"\n    -> THEY DISAGREE: fewer interruptions on the {fewer} kerb, more parking "
               f"kept on the {more_parking} kerb. This is a trade-off, not a calculation, and "
               f"CORRIDOR_SIDE is currently {BROAD_ST_TWO_WAY_BIKEWAY.side}.")
+
+    marks, daylight = (), ()
+    if args.no_bikeway:
+        # THE OTHER PROPOSAL: no facility at all, just the daylighting and the crossing upgrades,
+        # with the parking MARKED so the count is a count of boxes rather than a length divided by
+        # 22 ft. Both kerbs are measured against a travel lane holding 11 ft, which is what the
+        # default treatment leaves them.
+        empty = dataclasses.replace(BROAD_ST_TWO_WAY_BIKEWAY, side="south")
+        paint = paint_facility(corridor, empty, facts=facts)
+        paint.runs, paint.refusals = [], []
+        total, all_marks, daylight_spans = 0, [], []
+        for side, compass in (("left", "north"), ("right", "south")):
+            mouths = _merged_spans([(o.start_ft, o.end_ft)
+                                   for s2, o in facts.openings if s2 == side])
+            clear = _complement_spans(mouths, 0.0, corridor.length_ft)
+            room = stall_room_spans(corridor, side, lambda _s: 11.0)
+            spans = _intersect(_intersect(facts.by_side("parkable", side), clear), room)
+            lines, count = stall_marks(corridor, side, spans)
+            all_marks += lines
+            total += count
+            print(f"  {compass:5s} kerb: {count:3d} stalls DRAWN over "
+                  f"{sum(hi - lo for lo, hi in spans):,.0f} ft")
+            daylight_spans += [(side, z.start_ft, z.end_ft)
+                               for z in facts.by_side("no_parking", side)]
+        print(f"  daylighting + crossing upgrades only: {total} stalls marked on the corridor, "
+              f"counted by drawing them")
+        marks, daylight = tuple(all_marks), tuple(daylight_spans)
+        parking = ()
+        openings = tuple((side, o.start_ft, o.end_ft) for side, o in facts.openings)
+        drawn = "none"
+        half_ft = 38.0
+        edges = np.linspace(0.0, corridor.length_ft, args.panels + 1)
+        fig, axes = plt.subplots(args.panels, 1, figsize=(13, 2.0 * args.panels))
+        for ax, lo, hi in zip(np.atleast_1d(axes), edges[:-1], edges[1:]):
+            draw_panel(ax, corridor, paint, parking, openings, float(lo), float(hi), half_ft,
+                       marks=marks, daylight=daylight)
+        axes[0].set_title(
+            f"{corridor.name} - daylighting and crossing upgrades ONLY, no bike facility\n"
+            f"{total} parking stalls marked on both kerbs, counted by drawing each one; "
+            f"yellow = kerb R.S. 39:4-138 keeps clear for visibility\n"
+            f"straightened into the corridor's own frame - lengths and widths true, curvature "
+            f"removed", fontsize=8)
+        axes[-1].set_xlabel("station along the corridor (ft)", fontsize=7)
+        fig.tight_layout()
+        out_dir = Path(args.out)
+        out_dir.mkdir(parents=True, exist_ok=True)
+        path = out_dir / f"{args.road.lower().replace(' ', '_')}_strip_daylighting.png"
+        fig.savefig(path, dpi=args.dpi, bbox_inches="tight")
+        print(f"\nwrote {path}")
+        return 0
 
     drawn = args.side or BROAD_ST_TWO_WAY_BIKEWAY.side
     chosen = outcomes[drawn]

@@ -320,6 +320,40 @@ checking before any of this goes to a county engineer.
 | Buffer beside moving traffic, with vertical elements | 3 ft | `TWO_WAY_BIKE_LANE_BUFFER_FT` | `src/geometry/treatments/` |
 | Travel lane floor beside a two-way lane | 10 ft | `MIN_TRAVEL_LANE_BESIDE_TWO_WAY_FT` | `src/geometry/treatments/` |
 
+### WHICH KERB a two-way bikeway belongs on — **NOT ESTABLISHED, 2026-08-18**
+
+The `CORRIDOR_SIDE` decision (south) was made on one count - side streets cutting each kerb, 10
+north against 7 south - and never against a published guide. Asked for the accepted practice, here
+is what an hour of looking actually established.
+
+**FHWA, *Separated Bike Lane Planning and Design Guide* (2015) — OPENED, and it does NOT answer
+this.** [Page 3](https://www.fhwa.dot.gov/environment/bicycle_pedestrian/publications/separated_bikelane_pdg/page03.cfm),
+read 2026-08-18. It carries no side-of-street guidance, no driveway-conflict minimisation rule and
+nothing on contraflow riders being unexpected to turning drivers. Its own Table 1 defers
+two-way/contraflow facilities to NACTO's Urban Bikeway Design Guide, and the text says the practice
+is still evolving. **This is a verified negative and worth keeping:** the obvious federal source
+does not settle it, so nobody should cite it as though it does.
+
+**NACTO — NOT OPENED. 403 to automated fetch.** A web search reports NACTO as saying a
+bidirectional lane may be safer where one side has significantly fewer intersections and
+driveways, that bidirectional lanes add conflict points at intersections and driveways needing
+extra measures to separate turns from the bikeway, and a desirable 30 ft no-parking area either
+side of a crossing. **None of that has been read at the source**, so none of it may be quoted to
+the borough or to a county engineer. It is recorded here as a lead, not a citation, exactly as the
+width table below is.
+
+**What this means for the corridor decision.** Measured on OSM: the north kerb carries 19 driveway
+mouths and the south 26, so the lane's conflict count is 29 breaks north against 36 south, while
+the parking mirrors it - 26 stalls kept with a north-side lane, 39 with a south-side one, because
+parking lands on whichever kerb the lane does not take. The trade is real and this project cannot
+currently point to a standard that resolves it. `src/geometry/corridor_paint.py` measures both and
+refuses to pick.
+
+**To close this**, someone has to open the Urban Bikeway Design Guide - a copy, not a search
+result - and either confirm the fewer-conflicts rule or find that it too is silent. Until then the
+honest statement to the borough is that the side choice is a local trade-off between conflict
+count and parking, not a standards requirement.
+
 ### Driveways across a protected bike lane — **Verified 2026-08-14**
 
 **The lane continues through the driveway. Nobody loses a driveway.** That is the standard

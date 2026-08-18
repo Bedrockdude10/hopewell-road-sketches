@@ -260,14 +260,22 @@ def main() -> int:
     print(f"{corridor.name}: {corridor.length_ft:,.0f} ft, "
           f"{len(facts.marked_crossings)} surveyed crossings\n")
     print("  WHICH KERB SHOULD CARRY THE TWO-WAY LANE - both measured, on the same OSM pull:")
-    print(f"    {'kerb':6s} {'lane placed':>12s} {'interruptions':>14s} "
-          f"{'driveways on it':>16s} {'parking kept':>13s}")
+    print("    Read the last column carefully: parking lands on the kerb the lane does NOT take,")
+    print("    so it is the total left CORRIDOR-WIDE, not the parking on the lane's own kerb.")
+    print(f"    {'lane on':>8s} {'placed':>10s} {'breaks in':>10s} {'mouths on':>10s} "
+          f"{'parking':>8s} {'stalls left':>12s}")
+    print(f"    {'':>8s} {'':>10s} {'the lane':>10s} {'the lane':>10s} "
+          f"{'goes':>8s} {'there':>12s}")
     for compass, out in outcomes.items():
         paint = out["paint"]
-        print(f"    {compass:6s} {paint.placed_ft:9,.0f} ft {paint.placed_ft / corridor.length_ft:4.0%} "
-              f"{out['breaks']:14d} {out['openings_on_lane']:16d} {out['kept']:10d} stalls")
+        print(f"    {compass:>8s} {paint.placed_ft:7,.0f} ft {out['breaks']:10d} "
+              f"{out['openings_on_lane']:10d} {out['far_compass']:>8s} {out['kept']:9d}")
     fewer = min(outcomes, key=lambda c: outcomes[c]["breaks"])
     more_parking = max(outcomes, key=lambda c: outcomes[c]["kept"])
+    # NAMED BY WHAT THE READER HAS TO DECIDE, because the first version of this table was
+    # misread the obvious way: "parking kept" against the north row looks like the north kerb's
+    # own parking, when it is the south kerb's - the lane and the parking are never on the same
+    # side, so every row's parking figure belongs to the other one.
     if fewer == more_parking:
         print(f"\n    -> the {fewer} kerb wins on BOTH counts: fewer interruptions and more "
               f"parking kept. CORRIDOR_SIDE is currently {BROAD_ST_TWO_WAY_BIKEWAY.side}.")

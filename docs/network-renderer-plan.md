@@ -96,3 +96,26 @@ its own traced coverage beside it.
 - **No golden regeneration by a parallel stream.** Goldens move once, in D, with the diff explained.
 - **No changes to the leg frame.** That is step 4 of `network-model.md` and is not in this plan.
 - **No new second definition.** If a stream needs a constant that exists, it imports it.
+
+
+## Why the corridor cannot be drawn yet, in one number (measured 2026-08-17)
+
+Broad Street resolves as ONE road across all three modelled junctions:
+
+```
+3,693 ft  corridor length, Louellen St to Princeton Ave
+3,347 ft  with both kerbs traced  (91%) - and ZERO untraced gaps over 50 ft
+  820 ft  covered by the three junctions' Broad St legs  (22%)
+```
+
+**The survey is four times ahead of what the pipeline can draw.** The tracing is essentially
+complete end to end; the treatments reach 22% of the street, because a treatment targets a LegSide
+and a leg is a 130-170 ft stub either side of a node. Render the corridor today and it shows a
+real, surveyed kerb for 3,347 ft and a protected bikeway on 820 ft of it, with the facility
+appearing and vanishing three times.
+
+That is the case for step 4 of docs/network-model.md, stated as a deliverable rather than as
+tidiness: **the bikeway has to be paintable along a road span, not a leg**, before there is a
+corridor drawing worth showing anyone. `src/geometry/treatments/corridor.py` now declares the
+facility once for the whole route - which is the decision unified. Painting it over the other 78%
+is the datum move.

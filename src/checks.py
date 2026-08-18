@@ -1,20 +1,14 @@
 """Scene invariants: the things that must be true of every render, checked every time.
 
-This project's recurring failure mode is not a crash. It is a render that looks finished
-and asserts something false about the street - a tactile pad in the carriageway, a curb
-line drawn straight across the middle of the intersection, a crosswalk floating in the
-roadway. Every one of those shipped, was spotted by eye in a picture, and cost a round
-trip to diagnose. They are all cheap to detect in geometry.
-
-So each one is an invariant here, and each is checked on BOTH paths - the 2D plan view and
-the 3D export - because the whole premise of the 2D reconstruction is that it shows what
-the 3D render will show. A check that only guards the export lets the two drift.
+The failure mode guarded against is not a crash but a finished-looking render that asserts
+something false about the street. Each invariant is checked on BOTH paths - the 2D plan view
+and the 3D export - because the premise of the 2D reconstruction is that it shows what the 3D
+render will show, and a check that only guards the export lets the two drift.
 
 Two design choices worth stating:
 
-  * ALL violations are collected before anything is raised. Failing on the first one turns
-    a single bad junction into one edit-run cycle per violation, which is exactly the slow
-    iteration this module exists to stop.
+  * ALL violations are collected before anything is raised, so a bad junction costs one
+    edit-run cycle rather than one per violation.
   * A violation carries its coordinates. The plan view draws them, so the error message and
     the picture agree about where to look.
 
@@ -48,19 +42,14 @@ PAD_MAX_DISTANCE_FROM_CURB_FT = 12.0
 # A curb line may start a shade behind the junction node (the cross-section is not exactly
 # at the node), but not run back up the opposite leg.
 CURB_BEHIND_JUNCTION_TOLERANCE_FT = 6.0
-# A painted crosswalk lies in the roadway it crosses, full stop. This was 0.55 - i.e. 45% of
-# a crossing was allowed to sit on the footway - back when the span was half the leg's
-# NOMINAL width either side of the centerline and routinely overshot the traced kerb. Now the
-# reach is bounded by the roadway itself (crosswalks.crosswalk_reach_to_curbs_ft), every band
-# at every site measures 99.96% inside or better, and the loose bound was hiding exactly the
-# failure it was named for: end bars painted up the corner onto the sidewalk.
+# A painted crosswalk lies in the roadway it crosses, full stop. Tight because the reach is
+# bounded by the roadway itself (crosswalks.crosswalk_reach_to_curbs_ft); a loose bound here
+# hides the failure it is named for - end bars painted up the corner onto the sidewalk.
 MIN_CROSSWALK_IN_PAVEMENT = 0.99
 # A stop bar covers the entering half only, and it RESTS AGAINST the centreline rather than
 # crossing it - so this is float noise and the width of a polygon vertex, not a design margin.
-# It replaced a 15%-of-its-own-width fraction, which is a large real distance on a wide road
-# (4.9 ft on Broad St) and let a bar sit visibly across the double yellow. The bar is built to
-# start exactly at the line (crosswalks.stop_bar_band_geometry_ft), so anything past it is a
-# fault rather than a tolerance being used up.
+# The bar is built to start exactly at the line (crosswalks.stop_bar_band_geometry_ft), so
+# anything past it is a fault rather than a tolerance being used up.
 STOP_BAR_PAST_CENTERLINE_TOLERANCE_FT = 0.1
 # Paint is specified to a tenth of a foot; this absorbs float noise, nothing more.
 LANE_WIDTH_TOLERANCE_FT = 0.05
@@ -131,18 +120,14 @@ def _empty_state():
 class SceneContext:
     """Everything an invariant may ask about one scene, resolved once and handed to all of them.
 
-    One object rather than a per-check argument list, because the argument list was the bug.
-    check_scene called thirteen functions with thirteen hand-picked subsets of the same scene,
-    and getting a subset wrong was invisible: one check was handed the crossing bands built WITH
-    the two-pass mutual-exclusion reaches and another the bands built without them, so at W Broad
-    & Louellen the two were validating geometry 15 sq ft apart, and one of them geometry that no
-    renderer drew. A check cannot now be handed a different scene from its neighbour.
+    One object rather than a per-check argument list: two checks handed hand-picked subsets of
+    the same scene can silently validate geometry built two different ways, one of it geometry
+    no renderer drew. A check cannot now be handed a different scene from its neighbour.
 
     Everything defaults, and `state` defaults to a real empty DesignState rather than None, so a
-    test can describe the two parts of a scene its check reads and every other check still runs
-    over it and finds nothing. A scene with nothing in it is vacuously valid, which is what
-    test_a_check_reading_a_field_the_caller_left_out_gets_a_default pins - it caught this class
-    reaching `scene.state.legs` through a None.
+    test can describe only the parts of a scene its check reads and every other check still runs
+    over it and finds nothing. A scene with nothing in it is vacuously valid - pinned by
+    test_a_check_reading_a_field_the_caller_left_out_gets_a_default.
     """
     model: object = None
     state: "DesignState" = field(default_factory=lambda: _empty_state())
@@ -181,14 +166,11 @@ CHECKS: list["SceneCheck"] = []
 class SceneCheck:
     """One invariant. Subclassing runs it.
 
-    The point of the base class is that the registry is not written by hand. check_scene used to
-    be a `+` chain of thirteen calls, and a check that was defined and never added to that chain
-    was dead code that looked live - the same shape of mistake as a paint kind declared and
-    routed nowhere (see src/geometry/markings.py). Now the chain IS the file.
+    The registry is not written by hand: a check defined but never added to a hand-maintained
+    chain is dead code that looks live. Now the chain IS the file.
 
     A check reads what it needs off the SceneContext, returns every violation it finds, and never
-    raises: collecting all of them means one edit-run cycle for a bad junction instead of one per
-    violation. See assert_scene_valid for the raising wrapper.
+    raises. See assert_scene_valid for the raising wrapper.
     """
 
     def __init_subclass__(cls, **kwargs):
@@ -210,9 +192,9 @@ class FurnitureOffRoadway(SceneCheck):
     """Nothing that belongs on the footway may sit in the carriageway.
 
     Signs, signal poles, pushbuttons, beacons, streetlights, hydrants and tactile pads are
-    all footway furniture. A pad drawn in the road is the worst case - it is the render
-    asserting something false about an accessibility feature - but a stop sign in the
-    middle of the street is just as wrong and had no check at all before.
+    all footway furniture. A pad drawn in the road is the worst case - the render asserting
+    something false about an accessibility feature - but a stop sign in the middle of the
+    street is just as wrong.
     """
 
     def run(self, scene: SceneContext) -> list[Violation]:
@@ -287,11 +269,10 @@ class PadsAgainstACurb(SceneCheck):
 class CurbsClearOfJunction(SceneCheck):
     """No leg's curb may run back through the intersection.
 
-    A leg's curb line starts at that leg's cross-section and goes outward. When one runs
-    backwards past the junction it draws curb straight across the middle of the
-    intersection - marking a kerb where there is open roadway - and it crosses the opposite
-    leg's curb, which is what makes the pavement ring self-intersect. Measured in the leg's
-    own frame, so it is the same signed station the curb was built from.
+    A leg's curb line starts at that leg's cross-section and goes outward. One that runs
+    backwards past the junction marks a kerb where there is open roadway, and crosses the
+    opposite leg's curb, which is what makes the pavement ring self-intersect. Measured in the
+    leg's own frame, so it is the same signed station the curb was built from.
     """
 
     def run(self, scene: SceneContext) -> list[Violation]:
@@ -316,11 +297,7 @@ class CurbsClearOfJunction(SceneCheck):
 
 
 class CurbsDoNotCross(SceneCheck):
-    """A leg's two curb lines are the two sides of one street: they never meet.
-
-    They crossed when a curb was extrapolated out of a corner return's flare, which closed
-    the roadway to zero width and then opened it inside out.
-    """
+    """A leg's two curb lines are the two sides of one street: they never meet."""
 
     def run(self, scene: SceneContext) -> list[Violation]:
         legs = scene.legs
@@ -347,8 +324,8 @@ class TravelLanesKeepTheirWidth(SceneCheck):
     the target is a fact about the street, not an error we introduced - Louellen Street is
     19.3 ft curb to curb and no amount of checking widens it. What must not happen is a
     treatment taking a road that could hold two target-width lanes and marking parking or
-    hatching that leaves less: fixed 5 ft and 8 ft paint widths, applied without reference
-    to how much road was left, once produced 1.7 ft lanes there.
+    hatching that leaves less, which is what fixed paint widths applied without reference to
+    the road left over produce.
     """
 
     def run(self, scene: SceneContext) -> list[Violation]:
@@ -412,13 +389,6 @@ class PaintInsideTheCurb(SceneCheck):
     ft against a nominal 24.2 ft, so paint sized off the nominal figure sat 1.5 ft over it),
     and the pavement polygon is built from the same over-wide assumption, so paint outside
     the kerb still tested as inside the roadway.
-
-    The bug this was written for: every curbside strip was built by pairing
-    `substring(curb, start, curb.length)` with `substring(inner, start, inner.length)`.
-    Those are arc lengths along two different lines, so the two boundaries were cut at
-    unrelated stations - up to 49 ft apart at the far end, where the traced kerb ran on past
-    the leg. The result was a wedge with long diagonal ends rather than a strip, which both
-    fragmented the hatching and pushed paint outside the kerb.
     """
 
     def run(self, scene: SceneContext) -> list[Violation]:
@@ -507,10 +477,9 @@ class MarkingsDoNotCollide(SceneCheck):
     strokes drawn twice - z-fighting in the 3D render, double ink on the plan - and it means
     the design is asserting two different things about one patch of road.
 
-    Written after the daylighting work put a hydrant's no-parking zone (18.9-38.9 ft on
-    broad_st_west) entirely inside the junction's (0-45.7 ft) and hatched both. Nothing
-    caught it: every other invariant here checks paint against the STREET - the kerb, the
-    roadway, the crosswalk - and none checked paint against other paint.
+    Every other invariant here checks paint against the STREET - the kerb, the roadway, the
+    crosswalk. This is the one that checks paint against other paint, which is how two
+    overlapping no-parking zones came to be hatched twice with nothing complaining.
     """
 
     def run(self, scene: SceneContext) -> list[Violation]:
@@ -518,13 +487,10 @@ class MarkingsDoNotCollide(SceneCheck):
         violations = []
         # covers_area, not "is a Polygon": a bollard's geometry is a degenerate 1e-6 ft square
         # standing in for a point (src/geometry/paint.py:_dot), so it is a Polygon by type with no
-        # area to collide, and every test here used to carry `and p.kind != "bollard"` to say so.
-        # The marking knows what it is - see src/geometry/markings.py:Role.
+        # area to collide. The marking knows what it is - see src/geometry/markings.py:Role.
         fills = [p for p in paint if p.covers_area]
         # Bounding boxes first: two markings can only share ground if their extents do, and an
-        # envelope test is arithmetic against a GEOS overlay. This is O(n^2) either way, and a
-        # proposal carries a few hundred pieces, so the pairs that reach GEOS should be the pairs
-        # that might actually overlap.
+        # envelope test is arithmetic against a GEOS overlay.
         fill_bounds = [p.geometry.bounds for p in fills]
         for i, a in enumerate(fills):
             for j in range(i + 1, len(fills)):
@@ -549,9 +515,7 @@ class MarkingsDoNotCollide(SceneCheck):
         # painted down the same stretch of road: the daylight zone's edge line and the parking
         # lane's sit at the same offset and are kept apart only by their station ranges.
         lines = [p for p in paint if p.kind.is_line]
-        # Buffered once each, not once per comparison: buffering is the expensive half of this
-        # test and it was inside the inner loop, so each line was re-buffered for every line
-        # after it.
+        # Buffered once each, not once per comparison: buffering is the expensive half of this test.
         fattened = [p.geometry.buffer(COLLINEAR_PAINT_TOLERANCE_FT) for p in lines]
         line_bounds = [g.bounds for g in fattened]
         for i, a in enumerate(lines):
@@ -594,10 +558,8 @@ def _travel_lane_target_ft(state, leg_name: str, side: str) -> float:
         that is what the lane's paint has to stay outside of.
       * the side OPPOSITE it - the travel lane still holds its target width, but it is measured
         from the shifted divider rather than from the alignment, so the offset paint must clear
-        is the target plus however far the divider moved this way.
-
-    Missing that second case reported broad_st_west's own correctly-sized 11.00 ft lane as a
-    9.58 ft violation, because the divider there sits 1.42 ft on the far side of the alignment.
+        is the target plus however far the divider moved this way. Missing this second case
+        reports a correctly-sized 11 ft lane as a violation.
     """
     from src.geometry.treatments import TARGET_LANE_WIDTH_FT, AddTwoWayBikeLane
 
@@ -612,10 +574,9 @@ class PaintClearOfTheTravelLane(SceneCheck):
 
     Distinct from check_travel_lanes, which checks the DESIGN arithmetic (does the paint the
     design calls for leave a target-width lane?). This checks the drawn geometry, and
-    crucially it accounts for the fact that PAINT HAS WIDTH. Every edge line was centred on
-    the 11 ft mark and painted 0.82 ft wide, so half its body lay inside the lane and every
-    approach at every site was really 10.59 ft. The arithmetic said 11.0 and the check that
-    only looked at the arithmetic agreed with it.
+    crucially it accounts for the fact that PAINT HAS WIDTH: an edge line centred on the 11 ft
+    mark and painted 0.82 ft wide puts half its body inside the lane, so the arithmetic says
+    11.0 ft where the asphalt is 10.59.
     """
 
     def run(self, scene: SceneContext) -> list[Violation]:
@@ -636,24 +597,21 @@ class PaintClearOfTheTravelLane(SceneCheck):
             curb_offsets = curb_offsets_at_stations(leg, piece.side, stations)
             if curb_offsets is None:
                 continue
-            # What the lane is entitled to AT EACH STATION: the target, or the kerb where the
-            # kerb is closer than that. A road narrower than the target is a fact about the
-            # street, not something this design introduced - and it is not hypothetical.
-            # W Broad's north-east approach has the NJDOT alignment 7.2 ft from its right kerb
-            # and 25-31 ft from its left, so on that side there is no 11 ft lane to protect and
-            # the paint correctly clamps to the kerb. Comparing against the NOMINAL half-width
-            # instead would call that a violation on every vertex.
+            # What the lane is entitled to AT EACH STATION: the target, or the TRACED kerb where
+            # the kerb is closer than that. A road narrower than the target is a fact about the
+            # street, not something this design introduced - W Broad's north-east approach has
+            # the NJDOT alignment 7.2 ft from its right kerb, so there is no 11 ft lane to
+            # protect there and the paint correctly clamps to the kerb. Comparing against the
+            # NOMINAL half-width instead would call that a violation on every vertex.
             #
-            # AND THE TARGET ITSELF MOVES WHERE THE TRAVEL LANES DO. This check measures the lane
-            # from the alignment, which is right only while the two travel lanes straddle it. A
-            # two-way bike lane on one side shifts them off it (see TwoWayBikeLane), so on that
-            # kerb the lane a rider is protected from does not begin at 11 ft from the alignment
-            # - it begins at the section's inner edge, and paint outside that is in the lane the
-            # design actually drew rather than in a travel lane.
+            # AND THE TARGET ITSELF MOVES WHERE THE TRAVEL LANES DO. Measuring from the alignment
+            # is right only while the two travel lanes straddle it; a two-way bike lane on one
+            # side shifts them off it (see TwoWayBikeLane), so on that kerb the travel lane
+            # begins at the section's inner edge, not at 11 ft from the alignment.
             #
-            # Re-expressed rather than skipped. The property being checked is unchanged - no
-            # paint inside the travel lane - and dropping the check on these legs would have
-            # dropped it on precisely the design most likely to get the arithmetic wrong.
+            # Re-expressed rather than skipped: the property is unchanged - no paint inside the
+            # travel lane - and exempting these legs would drop the check on precisely the
+            # design most likely to get the arithmetic wrong.
             target_ft = _travel_lane_target_ft(state, piece.leg, piece.side)
             entitled = np.minimum(target_ft,
                                    np.abs(curb_offsets) - LANE_EDGE_LINE_WIDTH_FT)
@@ -684,9 +642,7 @@ class TravelLanesHoldTheTarget(SceneCheck):
     ONLY LEGS THAT CARRY PAINT. A leg nobody has touched is the street as it is, and existing
     conditions must be drawable however wide the road happens to be - failing that would be
     reporting reality as a defect. What this catches is a design that narrowed one kerb and
-    forgot the other, which is what shipped: the two-way corridor held Broad & Greenwood's lanes
-    at 11.00 ft and left E Broad's at 11.68 and 13.21, because the far-kerb rule was written
-    inline in one site's scenarios.py and not the other's.
+    forgot the other.
 
     Distinct from TravelLanesKeepTheirWidth, which is the same measurement in the other
     direction - that one catches paint that leaves TOO LITTLE lane. Together they pin the lane
@@ -727,10 +683,7 @@ class TravelLanesHoldTheTarget(SceneCheck):
                 # nominal one. travel_lane_width_ft works in the NOMINAL frame, which is right
                 # when it is subtracting nominal-referenced paint - but on an unpainted side the
                 # lane really ends at the traced kerb, and on w_broad_st_northeast that is 1.66 ft
-                # closer than nominal. Measured nominally the lane read 12.93 ft and this check
-                # called it over target; measured to the kerb it is the 10.14 ft the section
-                # actually leaves. A false positive on the one junction where the street has
-                # nothing left to give.
+                # closer than nominal (12.93 ft nominal against the 10.14 ft the section leaves).
                 lane_ft = travel_lane_width_ft(state, leg_name, side, painted_ft(side))
                 if painted_ft(side) <= 0:
                     traced_ft = narrowest_half_width_ft(leg, side)
@@ -752,17 +705,13 @@ class BollardsStandInTheirBuffer(SceneCheck):
     """A flex post protecting a bike lane must stand in the BUFFER, not in the lane.
 
     A post inside the lane is worse than no post: it removes ridable width, it is an obstacle
-    exactly where a rider is meant to be, and the drawing still reads as a protected lane. This
-    is the invariant that was missing when a two-way lane's posts were drawn 12.5 ft from the
-    alignment on broad_st_east, inside a lane spanning 8.85-20.85 ft - 30 posts down the middle
-    of the ridable surface, in both views.
+    exactly where a rider is meant to be, and the drawing still reads as a protected lane.
 
-    NOTHING CAUGHT IT, and the reason is worth stating. post_not_in_the_render compares the paint
-    against the props, and both were derived from the same wrong cross-section, so they agreed.
-    PaintClearOfTheTravelLane looks at the other edge. The geometry goldens would have caught a
-    CHANGE, but this scenario was new, so there was no golden to differ from. Two consistent views
-    of a wrong design is precisely the failure mode this module exists for, and the guard has to
-    compare a post against the lane it protects rather than against another derivation of itself.
+    Nothing else catches it. post_not_in_the_render compares the paint against the props, and a
+    wrong cross-section produces both, so they agree; PaintClearOfTheTravelLane looks at the
+    other edge; a golden only catches a CHANGE, and a new scenario has none. Two consistent
+    views of a wrong design is the failure mode this module exists for, so the guard compares a
+    post against the lane it protects rather than against another derivation of itself.
 
     Checked against the painted lane SURFACE rather than recomputed offsets, deliberately: the
     surface is what a rider rides on and what the render draws, so a post outside it is genuinely
@@ -815,9 +764,8 @@ class BollardsAreProps(SceneCheck):
     The two renderers get posts from different places. The plan view draws them straight off
     the paint (src/geometry/paint.py emits a dot per post); the 3D render builds objects, and
     it only ever builds objects from props - it never turns a marking into one. So a post that
-    exists only as a PaintPiece is a post that is in the 2D picture and absent from the
-    render. That shipped: Broad St's bike lanes were drawn with 61 protecting flex posts and
-    exported with none, and neither view was internally wrong about anything.
+    exists only as a PaintPiece is a post that is in the 2D picture and absent from the render,
+    with neither view internally wrong about anything.
 
     Deliberately one-directional. A daylight zone's posts are props ONLY - nothing paints
     them, and the plan view draws them from the props - so a prop with no paint behind it is
@@ -890,13 +838,11 @@ class CrossingsAreNotPaintedOver(SceneCheck):
     crossings are cut out of everything by curbside_paint_ft. Neither covered the case this
     exists for: a crosswalk at a junction this site does not model. Broad St's frame contains
     Blackwell Avenue, whose three traced crossings src/geometry/surveyed.py draws and whose
-    ground nothing was cut against - so the corridor proposal laid 120 sq ft of green bike lane,
-    36 ft of edge line and a yellow contraflow stripe over a marked zebra, and every check passed.
-
-    The failure is exactly the shape this project keeps finding: the crossings reached the
-    drawing through one path and the paint through another, and no invariant looked across the
-    two. The fix (curbside_paint_ft's `crossings_elsewhere`) is a subtraction; this is what makes
-    it stay a fix, because a subtraction that is quietly dropped looks like nothing at all.
+    ground nothing was cut against, so kerbside paint was laid straight over a marked zebra.
+    The crossings reached the drawing through one path and the paint through another, and no
+    invariant looked across the two. The fix (curbside_paint_ft's `crossings_elsewhere`) is a
+    subtraction, and a subtraction that is quietly dropped looks like nothing at all - which is
+    what this makes visible.
 
     Not restricted to fills. A line painted down a crosswalk is the same false statement about
     the street as a hatched zone over one, and on the corridor proposal the lines were most of it.
@@ -943,18 +889,13 @@ class NoPaintInsideTheJunction(SceneCheck):
     """No kerbside marking may be drawn entirely inside the junction's own mouth.
 
     THE ONE INTERSECTION THAT HAD NO RULE. Every other street these legs cross becomes a
-    src/geometry/kerbs.py:KerbOpening, and one table decides what each marking does at it. The
-    junction the drawing is CENTRED on was handled by hand instead - a `marked` /
-    `straight_through` / else branch copied into three Treatment.paint methods, with a
-    `beyond_ft` mean-station test as the only thing keeping paint out of the corner. A mean
-    station is not a side: at W Broad & Louellen the crossing is surveyed 43.7 deg off square, so
-    the offcut behind it runs diagonally from station 26 to 47 and its MEAN lands at 34.4, past
-    the crossing's own 32.0. The test passed and 163.8 sq ft of daylight hatching was drawn
-    inside the intersection, 34 ft short of the corner return's tangent point at 68.0. It is
-    visible in phase4_render_proposal_two_way_bike_lane.png as two hatch strokes standing alone
-    in the middle of the junction, and nothing in this module looked at it: CrossingsAreNotPaintedOver
-    scopes itself to junctions this site does not model, on the stated grounds that this one's
-    crossings "are cut out of everything by curbside_paint_ft". They are. The OFFCUT is not.
+    src/geometry/kerbs.py:KerbOpening and one table decides what each marking does at it; the
+    junction the drawing is CENTRED on was handled by hand, with a mean-station test as the only
+    thing keeping paint out of the corner. A mean station is not a side - on a crossing surveyed
+    43.7 deg off square the offcut behind it runs diagonally and its mean lands past the
+    crossing - so hatching was drawn inside the intersection. CrossingsAreNotPaintedOver does not
+    cover this: this junction's CROSSINGS are cut out of everything by curbside_paint_ft, but the
+    OFFCUT is not.
 
     THE MOUTH, NOT THE CROSSING, is what this measures against - see
     src/geometry/model/corners.py:junction_mouth_ft. The corner return's tangent point is where
@@ -1027,8 +968,8 @@ class NoPaintInsideTheJunction(SceneCheck):
 class StopBarsOnEnteringHalf(SceneCheck):
     """A driver stops in their own lanes, never across the opposing ones.
 
-    The bar must stay on one side of its leg's centerline. It was previously drawn full
-    width, across both directions of travel.
+    The bar must stay on one side of its leg's centerline, never full width across both
+    directions of travel.
     """
 
     def run(self, scene: SceneContext) -> list[Violation]:
@@ -1067,9 +1008,9 @@ class StopBarsOnEnteringHalf(SceneCheck):
 def check_scene(scene: SceneContext) -> list[Violation]:
     """Every registered invariant, all violations, no raising.
 
-    A loop over CHECKS, not a list of calls: this used to name each check and pick its arguments
-    here, so a check could be written and never run, and two checks could be handed different
-    versions of the same geometry. See SceneCheck and SceneContext for both halves of that.
+    A loop over CHECKS, not a hand-written list of calls: that lets a check be written and never
+    run, and lets two checks be handed different versions of the same geometry. See SceneCheck
+    and SceneContext for both halves of that.
     """
     return [violation for check in CHECKS for violation in check.run(scene)]
 

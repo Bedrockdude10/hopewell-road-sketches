@@ -119,9 +119,25 @@ BIKE_LANE_BOLLARD_SPACING_FT = 8.0
 # the hazard this treatment specifically creates: a two-way lane puts contraflow riders at every
 # one of them, arriving from the direction a turning driver does not check.
 #
+# CHANGED TO NORTH, 2026-08-18, by Danny, to protect rider safety. The side-street count above was
+# never the right denominator: a rider meets every DRIVEWAY mouth on their own kerb too, and
+# driveways outnumber side streets roughly 2:1 here. Counted over the whole corridor on OSM:
+#
+#     lane on   breaks in the lane   mouths on it   parking left (other kerb)
+#     north            29                19                26 stalls
+#     south            36                26                39 stalls
+#
+# It is a genuine trade and the two criteria disagree - parking lands on whichever kerb the lane
+# does NOT take, so the lane's quiet kerb is the parking's broken one. North costs 13 of the 39
+# stalls the street can hold and removes 7 conflict points. The decision is that a conflict point
+# is a crash type concentrated on a few riders while lost parking is an inconvenience spread over
+# many, and NACTO warns that other street users do not expect contraflow bike traffic
+# (STANDARDS.md, verified 2026-08-18). Driveway conflicts also respond to design - corner islands,
+# turn wedges, visibility zones - and lost parking responds to nothing.
+#
 # Translated per leg by side_facing() - a leg's left/right is in its own frame, so the same real
 # kerb is "left" on one approach and "right" on the next.
-CORRIDOR_SIDE = "south"
+CORRIDOR_SIDE = "north"
 # The contraflow stripe's cadence. Shorter than the roadway's dashed centreline, because it is
 # read at bicycle speed over a 12 ft lane rather than at 25 mph over a 40 ft one, and a stripe
 # scaled to the road reads as two or three marks over a whole block.

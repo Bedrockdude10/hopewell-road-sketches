@@ -305,20 +305,59 @@ Two of these carry project decisions worth knowing:
 | …**plus** NJDOT's truck-route allowance (§6) | **11 ft** | `TARGET_LANE_WIDTH_FT` | `src/geometry/treatments/` |
 | Crosswalk visibility ranking | continental > ladder > transverse | — | `src/render/crosswalks.py` |
 
-### Two-way (bidirectional) bikeway — *as cited, and NONE OF IT CHECKED*
+### Two-way (bidirectional) bikeway — **Verified 2026-08-18**
 
-Added 2026-08-14 for the Broad St corridor. **Every figure below was written into a code comment
-from memory and never opened against the Urban Bikeway Design Guide**, which is exactly the
-failure this file's preamble describes. They are plausible and they are load-bearing - the 10 ft
-row is what the corridor's lane width was reduced TO in order to free parking - so they need
-checking before any of this goes to a county engineer.
+Source: NACTO *Urban Bikeway Design Guide*, Third Edition (Island Press), *Designing Protected
+Bike Lanes* — "Contraflow and Two-Way Protected Bike Lanes". Text supplied by Danny 2026-08-18
+after nacto.org returned 403 to automated fetch. **This section replaces four figures that had been
+written from memory since 2026-08-14, and TWO OF THEM WERE WRONG.**
 
-| figure | value | constant | file |
+| figure | NACTO | what this project had | constant |
 |---|---|---|---|
-| Two-way lane width, desirable | 12 ft | `TWO_WAY_BIKE_LANE_WIDTH_FT` | `src/geometry/treatments/` |
-| Two-way lane width, minimum | 10 ft | `MIN_TWO_WAY_BIKE_LANE_FT` | `src/geometry/treatments/` |
-| Buffer beside moving traffic, with vertical elements | 3 ft | `TWO_WAY_BIKE_LANE_BUFFER_FT` | `src/geometry/treatments/` |
-| Travel lane floor beside a two-way lane | 10 ft | `MIN_TRAVEL_LANE_BESIDE_TWO_WAY_FT` | `src/geometry/treatments/` |
+| Two-way width, should be at least | **13 ft** | 12 ft "desirable" | `TWO_WAY_BIKE_LANE_WIDTH_FT` |
+| Two-way width, absolute minimum | **8 ft**, "avoided except on short street segments" | 10 ft "minimum" | `MIN_TWO_WAY_BIKE_LANE_FT` |
+| Buffer, parking-protected (door swing) | 3 ft | 3 ft ✓ | `TWO_WAY_BIKE_LANE_BUFFER_FT` |
+| General travel lane, ≤35 mph, supports trucks | **10 ft** | 10 ft floor ✓ | `MIN_TRAVEL_LANE_BESIDE_TWO_WAY_FT` |
+
+**THE CORRIDOR'S 10 FT LANE HAS NO STANDING IN THIS GUIDE.** It is neither the ≥13 ft NACTO asks
+for nor the 8 ft absolute floor; it was chosen to free parking and recorded as "NACTO's MINIMUM",
+which it is not. The 8 ft constrained rung IS the absolute minimum and NACTO says to avoid it
+except on short segments - W Broad & Louellen is a short pinch, so using it there is defensible,
+but it has to be described as the absolute minimum being spent, not as a NACTO width.
+
+**Travel lanes: NACTO says 10 ft supports trucks at ≤35 mph** and asks that motor lanes be
+narrowed to widen the bikeway. Broad St is posted 25. This is evidence AGAINST holding 11 ft, and
+it is recorded rather than acted on: 11 ft is Danny's standing requirement for Broad St as a rural
+arterial with truck traffic, and NJDOT §6's truck-route allowance is the local basis. A local
+authority may be stricter than NACTO; it may not be stricter and pretend NACTO required it.
+
+#### Markings a two-way bikeway needs BESIDES the lane — **Verified 2026-08-18**
+
+| marking | rule | drawn? |
+|---|---|---|
+| **Crossbikes** through **all** intersections **and driveways** - alleys, minor and major cross-streets alike | required; the lane *"must continue through intersections and driveways"* and cannot merge into traffic | **NO - and the corridor render currently does the OPPOSITE** |
+| Dotted **yellow** centreline along the lane **and in the crossbikes** | required | lane only |
+| BIKE LANE symbol / word marking (MUTCD Fig 9E-1) | after every driveway and intersection, and at least every 500 ft | no |
+| Green surfacing | optional full length; or 20-50 ft approaching/departing each intersection and driveway | no |
+| Solid white line along **both** buffer edges | required for street-level lanes | yes |
+| Diagonals or chevrons in the buffer | **required** at ≥3 ft buffer, spacing ≥10 ft; diagonals slant away from adjacent traffic's direction | partly |
+| Warning signage for two-way bike traffic (modified MUTCD W6-3) | at any T intersection or major driveway | n/a (signs) |
+
+**THE CROSSBIKE ROW IS A DEFECT IN OUR DRAWING, not a missing nicety.** `081e990` broke the lane at
+all 33 crossings and driveway mouths, on the reasoning that a crossing outranks what runs along the
+kerb. That is right for a pedestrian crosswalk and WRONG for a driveway or side street: NACTO
+requires the bikeway to carry through, marked as a crossbike with the dotted yellow centreline
+continuing. A drawing that shows the lane stopping at each mouth depicts a facility NACTO
+explicitly rejects - riders merging into traffic - and it understates the design's own continuity.
+
+#### Turning riders out of a two-way lane — **Verified 2026-08-18**
+
+NACTO: bidirectional lanes *"introduce additional conflict points at intersections and driveways"*
+and additional measures to separate vehicular turns from the bikeway are often necessary, because
+other street users are unlikely to expect contraflow bike traffic. Named tools: signal phase
+separation, corner islands, turn wedges, medians to slow turning vehicles, and visibility zones at
+turn conflicts. **All three of Broad St's modelled junctions are signalized** (Greenwood, E Broad &
+Princeton, and Louellen - corrected 2026-08-18), so phase separation is available at each.
 
 ### WHICH KERB a two-way bikeway belongs on — **NOT ESTABLISHED, 2026-08-18**
 

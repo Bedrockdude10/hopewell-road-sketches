@@ -532,10 +532,7 @@ def test_the_daylight_hatching_reaches_the_crossing_it_daylights(site_models):
     import contextlib
     import io
 
-    import numpy as np
-
     from src.geometry.markings import DAYLIGHT_FILL
-    from src.geometry.model import junction_mouth_ft, station_offset_many
     from src.geometry.paint import PAINT_TO_CROSSWALK_GAP_FT
     from src.site import load_site_scenarios, run_scenario
     from tests.test_sites import resolved_scene, scene_props
@@ -543,19 +540,14 @@ def test_the_daylight_hatching_reaches_the_crossing_it_daylights(site_models):
     # A hair over the striper's gap: the fill is cut against the crossing band buffered by
     # exactly that, so anything further out is the zone failing to reach.
     allowed_ft = PAINT_TO_CROSSWALK_GAP_FT + 0.25
-    # OR IT REACHES THE JUNCTION'S OWN MOUTH, which is the same property and not an exemption
-    # from it. There are two things that can end a kerbside zone at the junction end, and this
-    # test knew about one of them. Where the corner return's tangent point lands OUTSIDE the
-    # crossing's reach the zone stops there, because past it there is no kerb to run beside - it
-    # is corner return - so it leaves no parkable stretch and the statute's purpose is served.
-    #
-    # Real and marginal, which is why it is worth writing down rather than widening the tolerance
-    # and moving on: at Broad & Greenwood the two datums on broad_st_east's right kerb are 0.14 ft
-    # apart (tangent point 25.20, crossing reach 25.34). The crossing is skewed, so it is cut on a
-    # diagonal while the mouth is cut square, and that alone moves the fill's nearest vertex from
-    # 1.24 ft to 1.65 ft. Nothing about the drawing changed by 0.4 ft of "giving up early" - the
-    # zone's own rim still lands 1.24 ft off the crossing.
-    started_at_the_mouth_ft = 0.5
+    # NO EXEMPTION FOR THE JUNCTION'S OWN MOUTH, and there was one here for about an hour. When
+    # the junction first became a kerb opening its mouth ended at the CORNER RETURN, which on two
+    # of these kerbs sits well outside the crossing - 15.3 ft on W Broad & Louellen's south kerb,
+    # 13.2 ft on Greenwood Ave north's - so the hatching was cut back to the corner and this test
+    # was widened to accept "reaches the mouth" instead. That was the test being talked out of the
+    # property it exists for. The mouth now ends AT the crossing where one is painted
+    # (paint.junction_mouths_ft), because filling the corner outside the crosswalk is the whole
+    # point of a painted curb extension - so the original assertion holds again, unqualified.
 
     checked = 0
     for site, model in site_models.items():
@@ -578,28 +570,10 @@ def test_the_daylight_hatching_reaches_the_crossing_it_daylights(site_models):
                         continue        # no marked parking on this kerb, so no zone to draw
                     checked += 1
                     nearest_ft = min(f.distance(band) for f in fills)
-                    mouth = junction_mouth_ft(leg_name, side, state.legs, state.corner_fillets)
-                    centerline = state.legs[leg_name].centerline
-                    starts_ft = min(
-                        float(station_offset_many(
-                            centerline,
-                            np.asarray(f.exterior.coords, dtype=float))[0].min())
-                        for f in fills)
-                    # RUNS ALL THE WAY IN, which is the property - not "starts exactly at the
-                    # mouth". The zone is cut by the mouth on a station line while its own outer
-                    # edge is measured from the NOMINAL half-width and the mouth's from the
-                    # TRACED kerb (the two datums this repo keeps rediscovering are not the same
-                    # one), so a foot or two of the zone's kerb-side corner survives past the
-                    # cut. What matters is that nothing is holding the zone back from the
-                    # junction, and reaching the mouth's far end is that.
-                    at_the_mouth = (mouth is not None
-                                     and starts_ft <= mouth[1] + started_at_the_mouth_ft)
-                    assert nearest_ft <= allowed_ft or at_the_mouth, (
+                    assert nearest_ft <= allowed_ft, (
                         f"{site}/{name}: the daylight hatching on {leg_name}/{side} stops "
                         f"{nearest_ft:.2f} ft short of the crossing it is there to daylight "
-                        f"(the striper's gap is {PAINT_TO_CROSSWALK_GAP_FT:.1f} ft), and it does "
-                        f"not start at this junction's own mouth either (it starts at "
-                        f"{starts_ft:.2f} ft; the mouth ends at "
-                        f"{'-' if mouth is None else format(mouth[1], '.2f')}) - the bare stretch "
-                        f"beside a crossing is the parking space daylighting exists to remove")
+                        f"(the striper's gap is {PAINT_TO_CROSSWALK_GAP_FT:.1f} ft) - the bare "
+                        f"stretch beside a crossing is the parking space daylighting exists to "
+                        f"remove")
     assert checked, "no marked crossing had a daylight zone beside it, so this asserted nothing"

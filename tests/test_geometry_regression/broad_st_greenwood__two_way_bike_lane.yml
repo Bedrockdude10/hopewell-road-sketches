@@ -21,9 +21,9 @@ channels:
       min:
       - -30.44
       - -28.888
-    points: 438
+    points: 443
   bike_lane_hatch_lines:
-    count: 21
+    count: 22
     extent:
       max:
       - 46.306
@@ -31,7 +31,7 @@ channels:
       min:
       - -27.876
       - -24.58
-    points: 42
+    points: 44
   bike_lane_surface_polygons:
     count: 2
     extent:
@@ -41,7 +41,7 @@ channels:
       min:
       - -29.997
       - -28.784
-    points: 252
+    points: 258
   corner_apron_polygons:
     count: 0
     extent: null
@@ -71,7 +71,7 @@ channels:
       - -36.217
     points: 112
   lane_narrowing_edge_lines:
-    count: 11
+    count: 10
     extent:
       max:
       - 22.027
@@ -79,9 +79,9 @@ channels:
       min:
       - -34.392
       - -36.487
-    points: 327
+    points: 322
   lane_narrowing_hatch_lines:
-    count: 36
+    count: 39
     extent:
       max:
       - 22.913
@@ -89,7 +89,7 @@ channels:
       min:
       - -36.234
       - -34.545
-    points: 72
+    points: 78
   lane_narrowing_taper_lines:
     count: 0
     extent: null
@@ -102,8 +102,8 @@ channels:
       - 29.504
       min:
       - 1.768
-      - 7.983
-    points: 204
+      - 8.019
+    points: 206
   parking_buffer_hatch_lines:
     count: 9
     extent:
@@ -112,7 +112,7 @@ channels:
       - 24.91
       min:
       - 2.345
-      - 8.6
+      - 8.644
     points: 18
   parking_buffer_taper_lines:
     count: 0

@@ -901,7 +901,8 @@ def continental_bar_count(span_ft: float,
     return max(int((span_ft + gap_ft) / period), 1)
 
 
-def crosswalk_reach_on_leg_side_ft(leg, side: str, crossings, inner_offset_ft: float = 0.0) -> float:
+def crosswalk_reach_on_leg_side_ft(leg, side: str, crossings, inner_offset_ft: float = 0.0,
+                                    beyond_the_tracing: bool = False) -> float:
     """The furthest station along one side of a leg that ANY painted crossing reaches.
 
     Curbside paint has to stop before the crossing, and "before" has to be measured against
@@ -921,6 +922,13 @@ def crosswalk_reach_on_leg_side_ft(leg, side: str, crossings, inner_offset_ft: f
     leg near the centerline than it does at the kerb, and curbside paint never goes near the
     centerline - measuring across the whole half-road made the target 6-8 ft too conservative
     and opened a visible gap between the taper and the crossing.
+
+    `beyond_the_tracing` lifts the bound at the traced kerb, and only one caller asks for it:
+    paint.junction_mouths_ft, which uses this to say where the INTERSECTION ends on a kerb rather
+    than where a marking should stop. That is a fact about the street, so it must not be cut short
+    where nobody traced the kerb - see model.paint_stations for the same distinction, and W Broad
+    & Louellen's south kerb, traced only from station 60.3, for the case that shows it: the
+    crossing really reaches station 52.7 there and the traced strip alone reports 32.0.
     """
     import numpy as np
 
@@ -928,7 +936,8 @@ def crosswalk_reach_on_leg_side_ft(leg, side: str, crossings, inner_offset_ft: f
 
     if crossings is None or crossings.is_empty:
         return 0.0
-    strip = curbside_strip_polygon(leg, side, inner_offset_ft, 0.0, leg.centerline.length)
+    strip = curbside_strip_polygon(leg, side, inner_offset_ft, 0.0, leg.centerline.length,
+                                    beyond_the_tracing=beyond_the_tracing)
     if strip is None:
         return 0.0
     region = crossings.intersection(strip)

@@ -406,18 +406,28 @@ def corner_tangent_station_ft(leg_name: str, side: str, legs: dict, corner_fille
     return station
 
 
-def junction_mouth_ft(leg_name: str, side: str, legs: dict,
-                      corner_fillets: dict) -> tuple[float, float] | None:
+def junction_mouth_ft(leg_name: str, side: str, legs: dict, corner_fillets: dict,
+                      crossing_reach_ft: float | None = None) -> tuple[float, float] | None:
     """The stations over which THIS junction opens this kerb, or None where it does not.
 
     The modelled junction is an intersecting approach like any other, and this is its mouth in
-    the same (start, end) form src/geometry/cross_streets.py gives Blackwell Avenue's. It runs
-    from the leg's origin - the junction centre - out to the corner return's tangent point, and
-    over that stretch there is no kerb for a marking to run beside: there is the corner.
+    the same (start, end) form src/geometry/cross_streets.py gives Blackwell Avenue's.
+
+    IT ENDS AT THE CROSSWALK where the leg has one painted - `crossing_reach_ft`, how far that
+    crossing reaches along THIS kerb - because the crosswalk is where a person reads the
+    intersection as ending, and the corner outside it is the ground a painted curb extension goes
+    on. Only where nothing is painted does it fall back to the corner return's tangent point,
+    which is where the kerb starts and also the side line R.S. 39:4-138(e) measures from on
+    exactly those legs. See paint.junction_mouths_ft, which resolves the reach; this function is
+    the geometry and takes it as a number so it stays usable before any crossing is resolved.
 
     None, not (0, 0), where the kerb runs straight through. An opening of zero length is a fact
     that has to be filtered downstream by everyone who reads it; the absence of one is the same
     fact stated once, here.
     """
-    end_ft = corner_tangent_station_ft(leg_name, side, legs, corner_fillets)
+    if (leg_name, side) in through_street_sides(legs):
+        return None
+    end_ft = crossing_reach_ft
+    if end_ft is None:
+        end_ft = corner_tangent_station_ft(leg_name, side, legs, corner_fillets)
     return (0.0, end_ft) if end_ft > 0.0 else None

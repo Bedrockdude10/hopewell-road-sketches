@@ -26,7 +26,6 @@ from shapely.geometry import LineString, Polygon
 from shapely.ops import unary_union
 
 from src.geometry.model import (point_at, clip_paint_clear_of, corner_apron_annulus,
-                                curbside_strip_polygon,
                                 corner_overlay_polygon, curb_offsets_at_stations,
                                 leg_clearance_ft, station_offset_many, through_street_sides)
 from src.geometry.markings import PaintKind
@@ -665,8 +664,7 @@ class PaintContext:
                 # meet it, never cross it, and half a stripe is exactly the amount by which an
                 # unclipped grown boundary would.
                 if piece.leg and piece.side:
-                    inside = curbside_strip_polygon(self.state.legs[piece.leg], piece.side,
-                                                     0.0, 0.0)
+                    inside = _inside_the_traced_kerb(self.state.legs[piece.leg], piece.side, edge)
                     if inside is not None and not inside.is_empty:
                         edge = edge.intersection(inside)
                 for part in getattr(edge, "geoms", [edge]):
@@ -757,7 +755,7 @@ def curbside_paint_ft(state, crosswalk_offsets: dict, center_ft,
                  if band is not None and not band.is_empty]
     all_bands = list(bands.values()) + elsewhere
     keep_clear = (unary_union(all_bands).buffer(PAINT_TO_CROSSWALK_GAP_FT) if all_bands else None)
-    openings = kerb_opening_bands(state)
+    openings = kerb_opening_bands(state, junction_mouths_ft(state, bands, marked))
     # --- and now the treatments paint themselves. Each one that has markings owns them
     # (Treatment.paint), so a marking's geometry lives beside the validation and the provenance
     # of the thing that calls for it, rather than in a block of this function keyed off one of
@@ -864,6 +862,98 @@ def _dash_spans(lo_ft: float, hi_ft: float) -> list[tuple[float, float]]:
         span = n * DOTTED_MARK_FT + (n - 1) * DOTTED_GAP_FT
     start_ft = lo_ft + max((length_ft - span) / 2, 0.0)
     return [(start_ft + i * period, start_ft + i * period + DOTTED_MARK_FT) for i in range(n)]
+
+
+# How finely the kerb is sampled when holding a rim inside it. Well under STRIP_SAMPLE_FT,
+# because a corner return curves through most of its bearing inside two feet and a chord across
+# that bulges OUTSIDE the kerb it is supposed to bound - which is the one direction that matters
+# here (checks.PaintInsideTheCurb allows 0.25 ft and the chord let 0.46 ft through at W Broad &
+# Louellen's north corner). Only the rim pays for the finer grid; nothing else is held this way.
+KERB_HOLD_SAMPLE_FT = 0.5
+
+
+def _inside_the_traced_kerb(leg, side: str, near):
+    """The strip from the centreline out to the TRACED kerb, over `near`'s own extent.
+
+    Not curbside_strip_polygon, and the difference is only the sampling. That function builds its
+    grid from model.paint_stations at STRIP_SAMPLE_FT, which is right for a marking that runs the
+    length of a leg and wrong for holding a line against a kerb bending through a corner return:
+    between two samples the strip's boundary is a chord, and a chord across a convex curve lies
+    OUTSIDE it. Sampled here at KERB_HOLD_SAMPLE_FT over just the span being held, so the error is
+    a sixteenth of what it was and the cost is a few dozen points on one line.
+    """
+    from src.geometry.model import band_from_offsets
+
+    coords = [xy for part in getattr(near, "geoms", [near])
+              if not part.is_empty and part.geom_type in ("LineString", "Polygon")
+              for xy in (part.exterior.coords if part.geom_type == "Polygon" else part.coords)]
+    if not coords:
+        return None
+    stations, _offsets = station_offset_many(leg.centerline, np.asarray(coords, dtype=float))
+    lo = max(float(stations.min()) - KERB_HOLD_SAMPLE_FT, 0.0)
+    hi = min(float(stations.max()) + KERB_HOLD_SAMPLE_FT, leg.centerline.length)
+    if hi - lo < KERB_HOLD_SAMPLE_FT:
+        return None
+    grid = np.linspace(lo, hi, max(int((hi - lo) / KERB_HOLD_SAMPLE_FT) + 1, 2))
+    kerb = curb_offsets_at_stations(leg, side, grid)
+    if kerb is None:
+        return None
+    kerb = np.abs(kerb)
+    return band_from_offsets(leg, side, grid, np.zeros_like(kerb), kerb)
+
+
+def junction_mouths_ft(state, crosswalk_bands: dict | None = None,
+                        marked: set | None = None) -> dict:
+    """{(leg, side): (0.0, end_ft)} - where THIS junction opens each kerb.
+
+    THE INTERSECTION ENDS AT THE CROSSWALK, and that is the whole rule. A person reads a junction
+    by its crosswalks: the box between them is the intersection, and the corner OUTSIDE a crosswalk
+    is approach - the ground a painted curb extension is put on. So on a leg whose crossing is
+    painted, the mouth ends at that crossing's reach along this kerb; only where no crossing is
+    painted does it fall back to the corner return's tangent point, which is the same side line
+    R.S. 39:4-138(e) measures its setback from on exactly those legs.
+
+    WHY IT IS NOT THE CORNER RETURN EVERYWHERE, which is what this was when the junction first
+    became an opening. The tangent point is where the KERB starts, and a hatched no-parking zone
+    held back to it stops short of the crossing - which undoes the treatment, because the bare
+    stretch beside a crossing is the parking space daylighting exists to remove, and because
+    filling that corner IS the painted curb extension. Measured: it cost 15.3 ft of hatching on
+    W Broad & Louellen's south kerb and 13.2 ft on Greenwood Ave north's, and it forced two tests
+    to accept a zone that reached the mouth instead of the crossing. The zone now reaches the
+    crossing at both, and those tests assert the original property again.
+
+    IT CAN ALSO MOVE THE MOUTH OUTWARD, which is the same rule and not a separate one: at
+    W Broad & Louellen the crossing is surveyed 43.7 deg off square, so on Louellen's NORTH kerb
+    it reaches station 25.4 against a tangent point at 7.9. The 17.5 ft between them is on the
+    junction side of the crosswalk however short the corner is, and paint there is paint in the
+    intersection.
+
+    Empty for a kerb that runs straight through, via junction_mouth_ft - MUTCD 3B.11(07)'s
+    T-intersection exception, falling out of the geometry rather than written as a rule.
+    """
+    from src.geometry.model import junction_mouth_ft
+    from src.geometry.treatments import TARGET_LANE_WIDTH_FT, divider_shift_toward_ft
+
+    marked = set(marked or ())
+    bands = crosswalk_bands or {}
+    out = {}
+    for leg_name, leg in state.legs.items():
+        band = bands.get(leg_name) if leg_name in marked else None
+        for side in ("left", "right"):
+            reach_ft = None
+            if band is not None and not band.is_empty and leg.curb_to_curb_ft is not None:
+                # THE STRIP THIS KERB'S PAINT OCCUPIES, which is the same restriction
+                # leg_anchors makes and for the same reason: a skewed band reaches further along
+                # the leg near the centreline than it does at the kerb, and no kerbside marking
+                # goes near the centreline.
+                inner_ft = divider_shift_toward_ft(state, leg_name, side) + TARGET_LANE_WIDTH_FT
+                reach_ft = crosswalk_reach_on_leg_side_ft(leg, side, band, inner_ft,
+                                                           beyond_the_tracing=True) or None
+            mouth = junction_mouth_ft(leg_name, side, state.legs, state.corner_fillets,
+                                       crossing_reach_ft=reach_ft)
+            if mouth is not None:
+                out[(leg_name, side)] = mouth
+    return out
 
 
 def _union(shapes) -> object:
@@ -1105,7 +1195,7 @@ def _opening_run_out(leg, side, inner_ft, outer_ft, start_ft, end_ft):
     return out
 
 
-def kerb_opening_bands(state) -> KerbOpenings:
+def kerb_opening_bands(state, junction_mouths: dict | None = None) -> KerbOpenings:
     """Where the kerbside markings open for a vehicle, in the two shapes KerbOpenings holds.
 
     WHERE A VEHICLE CROSSES THE KERB, the markings it drives over open for it. A driveway is not
@@ -1148,9 +1238,15 @@ def kerb_opening_bands(state) -> KerbOpenings:
     statutory setback (R.S. 39:4-138(e), src/geometry/daylighting.py) has usually stopped the
     parking well before the mouth anyway.
     """
+    from src.geometry.kerbs import OpeningSource
     from src.geometry.model import offset_band_polygon
     from src.geometry.treatments import TARGET_LANE_WIDTH_FT, divider_shift_toward_ft
 
+    # WHERE THIS JUNCTION'S OWN MOUTH ENDS, resolved against the crossings by junction_mouths_ft
+    # and passed in rather than re-derived: the span seeded onto the state by kerbs.py is the
+    # corner return's, which is the right answer only where no crossing is painted. Absent (a
+    # design built with no scene behind it) the seeded span stands.
+    junction_mouths = junction_mouths or {}
     by_kerb: dict = {}
     for (leg_name, side), openings in getattr(state, "kerb_openings", {}).items():
         leg = state.legs.get(leg_name)
@@ -1179,11 +1275,17 @@ def kerb_opening_bands(state) -> KerbOpenings:
         kerbside = offset_band_polygon(leg, side, inner_ft, leg.curb_to_curb_ft, 0.0, None,
                                         beyond_the_tracing=True)
         for opening in openings:
+            start_ft, end_ft = opening.start_ft, opening.end_ft
+            if opening.source is OpeningSource.JUNCTION:
+                start_ft, end_ft = junction_mouths.get((leg_name, side), (start_ft, end_ft))
+                if end_ft <= start_ft:
+                    continue
             band = offset_band_polygon(leg, side, inner_ft, leg.curb_to_curb_ft,
-                                        opening.start_ft, opening.end_ft,
+                                        start_ft, end_ft,
                                         beyond_the_tracing=True)
             if band is None or band.is_empty:
                 continue
+            opening_start_ft, opening_end_ft = start_ft, end_ft
             # The kerb as traced HERE, off the band the clamping already produced - see
             # _opening_run_out for the flat 4 ft gap that using the requested width gave instead.
             _stations, offsets = station_offset_many(
@@ -1205,8 +1307,8 @@ def kerb_opening_bands(state) -> KerbOpenings:
                 # entrance's edge and the two join without a step.
                 run_out = _opening_run_out(leg, side, inner_ft,
                                            float(np.abs(offsets).max()),
-                                           opening.start_ft - OPENING_TRIM_FT,
-                                           opening.end_ft + OPENING_TRIM_FT)
+                                           opening_start_ft - OPENING_TRIM_FT,
+                                           opening_end_ft + OPENING_TRIM_FT)
             shapes = by_kerb.setdefault((leg_name, side), {"driveway_mouths": [],
                                                             "driveway_tapered": [],
                                                             "intersection_mouths": []})

@@ -252,6 +252,7 @@ class SceneGeometry:
         return SceneContext(model=self.model, state=self.state, pavement=self.pavement,
                              props=tuple(props), paint=tuple(paint),
                              crosswalk_bands=self.crosswalk_bands,
+                             marked_crosswalks=self.marked_crosswalks,
                              crosswalk_offsets=self.crosswalk_offsets,
                              stop_bars=self.stop_bar_bands,
                              # The same tuple build_paint was cut against, not a second

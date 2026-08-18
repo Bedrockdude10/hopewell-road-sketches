@@ -1144,16 +1144,12 @@ def test_curbside_paint_ends_against_its_crossing(site, site_models):
     anything to do. That was right while a taper was supposed to resolve itself back to the
     kerb BEFORE the crossing, and wrong once the crossing became the thing to end against.
 
-    THERE ARE TWO THINGS THAT CAN END A KERBSIDE ZONE at the junction end, and this knew about
-    one. The other is the junction's own mouth (model.junction_mouth_ft): past the corner return's
-    tangent point there is no kerb to run beside, so a zone that reaches the mouth has run as far
-    in as any marking may go, whatever the crossing does. Where the two disagree the mouth is
-    further in and wins, and it is not always the crossing that is further out - at Broad &
-    Greenwood the SURVEYED crossing on greenwood_ave_north lies 32.2-40.7 ft out while the
-    modelled corner return's tangent point is at 43.8, so the crossing is drawn 3.1 ft INSIDE the
-    corner. That is the same source conflict the stop bars print a note about, and this test is
-    not the place to settle it: the drawing is right either way, because a zone stopping where
-    the kerb starts is not a zone giving up early.
+    AND THE JUNCTION'S OWN MOUTH DOES NOT WEAKEN IT. When the junction became a kerb opening its
+    mouth first ended at the CORNER RETURN, which on greenwood_ave_north sits 13.2 ft outside the
+    crossing - the surveyed crossing there lies 32.2-40.7 ft out against a tangent point at 43.8,
+    i.e. drawn 3.1 ft INSIDE the corner - so the hatching was cut back to the corner and this test
+    had to accept it. It does not any more: paint.junction_mouths_ft ends the mouth AT the
+    crossing wherever one is painted, so the zone runs up to the crossing here as everywhere.
     """
     from src.geometry.paint import PAINT_TO_CROSSWALK_GAP_FT
 
@@ -1181,29 +1177,9 @@ def test_curbside_paint_ends_against_its_crossing(site, site_models):
             gap_ft = min(p.geometry.distance(band) for p in near)
             assert gap_ft >= PAINT_TO_CROSSWALK_GAP_FT - 0.3, \
                 f"{site}/{name}/{leg_name}: paint {gap_ft:.2f} ft from the crossing"
-            at_the_mouth = any(
-                _reaches_the_junction_mouth(state, p, leg_name) for p in near)
-            assert gap_ft <= PAINT_TO_CROSSWALK_GAP_FT + 2.0 or at_the_mouth, \
+            assert gap_ft <= PAINT_TO_CROSSWALK_GAP_FT + 2.0, \
                 (f"{site}/{name}/{leg_name}: hatching stops {gap_ft:.1f} ft short of the "
-                 f"crossing and does not reach this junction's own mouth either - so nothing "
-                 f"ends it and it has simply given up early")
-
-
-def _reaches_the_junction_mouth(state, piece, leg_name: str, slack_ft: float = 0.5) -> bool:
-    """Whether this zone runs all the way in to the far end of its kerb's junction mouth."""
-    from src.geometry.model import junction_mouth_ft, station_offset_many
-
-    mouth = junction_mouth_ft(leg_name, str(piece.side), state.legs, state.corner_fillets)
-    if mouth is None or piece.leg != leg_name:
-        return False
-    geometry = piece.geometry
-    coords = (geometry.exterior.coords if geometry.geom_type == "Polygon"
-              else getattr(geometry, "coords", None))
-    if coords is None:
-        return False
-    stations, _offsets = station_offset_many(state.legs[leg_name].centerline,
-                                              np.asarray(coords, dtype=float))
-    return float(stations.min()) <= mouth[1] + slack_ft
+                 f"crossing instead of ending against it")
 
 
 

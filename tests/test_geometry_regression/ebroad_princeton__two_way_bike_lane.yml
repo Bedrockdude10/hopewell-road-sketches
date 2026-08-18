@@ -79,9 +79,9 @@ channels:
       min:
       - -39.345
       - -38.139
-    points: 520
+    points: 521
   lane_narrowing_hatch_lines:
-    count: 17
+    count: 18
     extent:
       max:
       - 18.767
@@ -89,7 +89,7 @@ channels:
       min:
       - -32.664
       - -36.35
-    points: 34
+    points: 36
   lane_narrowing_taper_lines:
     count: 0
     extent: null

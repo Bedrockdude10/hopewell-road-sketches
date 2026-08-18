@@ -149,6 +149,11 @@ class SceneContext:
     props: tuple = ()
     paint: tuple = ()
     crosswalk_bands: dict = field(default_factory=dict)
+    # Which of those bands are actually PAINTED. Every leg gets a resolved band, including legs
+    # with no marking today, and the difference decides where the intersection ends for marking
+    # purposes - see NoPaintInsideTheJunction. Carried on the context rather than re-derived,
+    # because it is the same set curbside_paint_ft cut the paint against.
+    marked_crosswalks: frozenset = frozenset()
     crosswalk_offsets: dict = field(default_factory=dict)
     stop_bars: dict = field(default_factory=dict)
     # The MARKED crossings at junctions inside the frame that this site does not model - the ones
@@ -972,9 +977,15 @@ class NoPaintInsideTheJunction(SceneCheck):
 
     def run(self, scene: SceneContext) -> list[Violation]:
         from src.geometry.markings import carries_across_an_intersection
-        from src.geometry.model import junction_mouth_ft
+        from src.geometry.paint import junction_mouths_ft
 
-        legs, fillets = scene.legs, scene.corner_fillets
+        # THE SAME RESOLUTION THE PAINT WAS CUT AGAINST - the mouth ends at the leg's crosswalk
+        # where one is painted, and at the corner return only where none is. Asked of the shared
+        # resolver rather than recomputed from the corner alone, because a check measuring against
+        # a different boundary from the cut is a check that passes on paint nobody drew.
+        legs = scene.legs
+        mouths = junction_mouths_ft(scene.state, scene.crosswalk_bands,
+                                     scene.marked_crosswalks)
         violations = []
         for piece in scene.paint:
             if not piece.leg or not piece.side or piece.rim is not None:
@@ -984,7 +995,7 @@ class NoPaintInsideTheJunction(SceneCheck):
             leg = legs.get(piece.leg)
             if leg is None:
                 continue
-            mouth = junction_mouth_ft(piece.leg, str(piece.side), legs, fillets)
+            mouth = mouths.get((piece.leg, str(piece.side)))
             if mouth is None:
                 continue
             geometry = piece.geometry

@@ -47,7 +47,7 @@ channels:
       - -36.217
     points: 112
   lane_narrowing_edge_lines:
-    count: 14
+    count: 13
     extent:
       max:
       - 22.027
@@ -55,9 +55,9 @@ channels:
       min:
       - -34.634
       - -36.487
-    points: 415
+    points: 403
   lane_narrowing_hatch_lines:
-    count: 44
+    count: 48
     extent:
       max:
       - 22.913
@@ -65,31 +65,31 @@ channels:
       min:
       - -36.234
       - -34.545
-    points: 88
+    points: 96
   lane_narrowing_taper_lines:
     count: 0
     extent: null
     points: 0
   parking_buffer_edge_lines:
-    count: 9
+    count: 8
     extent:
       max:
       - 48.638
       - 29.131
       min:
       - 1.768
-      - -4.147
-    points: 332
+      - -4.236
+    points: 324
   parking_buffer_hatch_lines:
-    count: 26
+    count: 28
     extent:
       max:
       - 48.236
       - 29.544
       min:
       - 2.345
-      - -1.202
-    points: 52
+      - -2.904
+    points: 56
   parking_buffer_taper_lines:
     count: 0
     extent: null

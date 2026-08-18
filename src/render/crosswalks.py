@@ -29,48 +29,39 @@ OSM_MARKINGS_TO_STYLE = {
     "ladder": "ladder",
 }
 
-CROSSWALK_CLEARANCE_FT = 5.0  # safety margin beyond a leg's resolved crosswalk offset that a lane-narrowing
-                               # taper must stay clear of - comfortably more than half CROSSWALK_DEPTH_FT (below),
-                               # deliberately, because a curved taper's closest approach to the intersection isn't
-                               # exactly at its target_ft endpoint (the arc can bow slightly past it), so this errs
-                               # generous rather than tracking the depth exactly. Shared by src/render/export.py (3D) and
-                               # src/render/plan_view.py (2D) so both compute the exact same taper - if they used
-                               # separately-defined copies of this constant, the two views could silently drift
-                               # apart, which is exactly the kind of "why does the 3D render disagree with the 2D
-                               # one" confusion this constant being centralized here is meant to prevent.
+# Margin beyond a leg's resolved crosswalk offset that a lane-narrowing taper must stay clear of.
+# Deliberately more than half CROSSWALK_DEPTH_FT: a curved taper's closest approach to the
+# intersection is not exactly at its target_ft endpoint, so this errs generous rather than
+# tracking the depth. Single home for both views - export.py (3D) and plan_view.py (2D) compute
+# the taper from this one constant so they cannot drift apart.
+CROSSWALK_CLEARANCE_FT = 5.0
 
 # Typical MUTCD gap between a stop line and the near edge of the crosswalk ahead of it.
 STOP_BAR_TO_CROSSWALK_GAP_FT = 4.0
 
-# Depth of a painted crosswalk - the gap between the two transverse lines, i.e. its
-# dimension along the direction of travel. 6 ft is Mercer County's recommended width for
-# a transverse crosswalk (Danny, 2026-08-02); the previous ~10 ft was a generic default
-# and rendered visibly too wide at this scale.
+# Depth of a painted crosswalk - the gap between the two transverse lines, i.e. its dimension
+# along the direction of travel. 6 ft is Mercer County's recommended width for a transverse
+# crosswalk (Danny, 2026-08-02).
 #
-# Authoritative in FEET because the source standard is in feet; the metres value is
-# derived for the renderer. Single source of truth for BOTH views: plan_view.py draws it
-# directly, and export.py writes it into the geometry JSON as `crosswalk_depth_m` for
-# scripts/blender/blender_crosswalks.py, which can't import from src/ (it runs under
-# Blender's bundled Python). That JSON hand-off is what keeps the 2D reconstruction and
-# the 3D render from drifting apart.
+# Authoritative in FEET because the source standard is in feet; the metres value is derived for
+# the renderer. Single home for both views: plan_view.py draws it directly, and export.py writes
+# it into the geometry JSON as `crosswalk_depth_m` for scripts/blender/blender_crosswalks.py,
+# which cannot import from src/ (it runs under Blender's bundled Python). That JSON hand-off is
+# what keeps the 2D reconstruction and the 3D render from drifting apart.
 CROSSWALK_DEPTH_FT = 6.0
 CROSSWALK_DEPTH_M = CROSSWALK_DEPTH_FT * FT_TO_M
 
-# Distance back toward the intersection from a leg's resolved crosswalk offset (which is
-# the crosswalk's CENTRE) to its stop bar. Derived from the crosswalk depth rather than
-# hardcoded, so narrowing the crosswalk moves the stop bar with it instead of leaving a
-# stale literal whose own comment no longer describes it: half the depth reaches the
-# crosswalk's near edge, then the MUTCD gap. An approximation - no site here is surveyed
-# down to exact striping.
+# Distance back toward the intersection from a leg's resolved crosswalk offset (which is the
+# crosswalk's CENTRE) to its stop bar: half the depth reaches the crosswalk's near edge, then the
+# MUTCD gap. Derived from the depth rather than hardcoded, so narrowing the crosswalk moves the
+# stop bar with it. An approximation - no site here is surveyed down to exact striping.
 STOP_BAR_SETBACK_FT = CROSSWALK_DEPTH_FT / 2 + STOP_BAR_TO_CROSSWALK_GAP_FT
 
 # A stop bar spans only the ENTERING half of the roadway - a driver stops in their own
 # lanes, never across the opposing ones - unlike a crosswalk, which spans curb to curb.
-# This clearance keeps it off the centerline and the curb at each end. Shared, like
-# CROSSWALK_DEPTH_M: src/render/plan_view.py draws the 2D bar from it, and
-# src/render/export.py writes it into the geometry JSON as `stop_bar_curb_clearance_m`
-# for scripts/blender/blender_crosswalks.py:add_stop_bar. The 2D view previously drew
-# the bar full curb-to-curb, disagreeing with the render it was supposed to preview.
+# This clearance keeps it off the centerline and the curb at each end. Single home for both
+# views, like CROSSWALK_DEPTH_M: plan_view.py draws the 2D bar from it, and export.py writes it
+# into the geometry JSON as `stop_bar_curb_clearance_m` for blender_crosswalks.py:add_stop_bar.
 STOP_BAR_CURB_CLEARANCE_M = 0.5
 
 # Plan/check depth of a stop bar. The painted bar is ~1.5 ft deep; this is only used to
@@ -87,25 +78,20 @@ def stop_bar_band_geometry_ft(width_ft: float, edge_is_kerb: bool = True,
     blender_crosswalks.add_stop_bar for why that is the entering driver's side under
     right-hand traffic).
 
-    It STARTS AT THE CENTERLINE. This used to subtract the clearance from the span while
-    centring the bar on the middle of the entering half, which split the clearance between
-    the two ends and left the bar standing 0.7-0.8 ft off the centerline - a gap with nothing
-    on the other side of it, which reads as a striping error because that is what it would be.
-    MUTCD's stop line runs across the approach lanes; at the centerline it meets the
-    centerline. Only the far end is held back, and only when that end is the KERB: paint does
-    not run into the gutter. Where a treatment has narrowed the lane, the far end is a painted
-    edge line instead, and a bar stopping 1.6 ft short of its own edge line looks like the
-    same mistake at the other end - so `edge_is_kerb` is False there and the bar meets it.
+    It STARTS AT THE CENTERLINE, with no clearance there: MUTCD's stop line runs across the
+    approach lanes and at the centerline it meets the centerline. A bar standing off it leaves a
+    gap with nothing on the other side, which reads as a striping error. Only the far end is held
+    back, and only when that end is the KERB, because paint does not run into the gutter. Where a
+    treatment has narrowed the lane the far end is a painted edge line instead, and a bar stopping
+    short of its own edge line is the same error - so `edge_is_kerb` is False there.
     """
     clearance_ft = STOP_BAR_CURB_CLEARANCE_M / FT_TO_M
     outer_ft = width_ft / 2 - (clearance_ft if edge_is_kerb else 0.0)
     # IT STARTS AT THE PAINTED CENTRELINE, WHICH IS NOT ALWAYS THE ALIGNMENT. `inner_ft` is where
     # that line actually is - zero while the two travel lanes straddle the alignment, and the
     # divider's own offset where a two-way bike lane has shifted them (see
-    # treatments.divider_shift_toward_ft). Starting at the alignment regardless ran the bar
-    # 3.15 ft past the double yellow on broad_st_east and 1.42 ft on broad_st_west, painting a
-    # stop line across the opposing lanes - which is the same striping error this function's
-    # docstring already describes at the other end, in the other direction.
+    # treatments.divider_shift_toward_ft). Starting at the alignment regardless paints the stop
+    # line across the opposing lanes.
     span_ft = max(outer_ft - inner_ft, clearance_ft)
     return span_ft, inner_ft + span_ft / 2
 
@@ -114,42 +100,27 @@ def travel_lane_edge_ft(state: DesignState, leg_name: str, side) -> float | None
     """How far from the centerline the MOTOR travel lane reaches on `side`, or None for the
     full curb-to-curb half where no treatment has narrowed it.
 
-    One rule with two callers, and they are not obviously the same question until you say it
-    out loud: a stop bar must not run across a bike lane, a painted buffer or a parking lane,
-    and a person crossing is not in front of motor traffic while they are in one either. Both
-    are asking where the ground a car drives on ends. It was written for the stop bar and
-    hardcoded to the LEFT side; src/metrics.py needs both sides, so the side is a parameter and
-    entering_lane_width_ft is the left-hand case of it.
+    One rule with two callers asking the same question - where the ground a car drives on ends.
+    A stop bar must not run across a bike lane, a painted buffer or a parking lane, and a person
+    crossing is not in front of motor traffic while they are in one either. `side` is a parameter
+    because src/metrics.py needs both; entering_lane_width_ft is the left-hand case.
 
-    THE ORDER IS A DECISION, and it is load-bearing. Three treatments can each narrow this
-    kerb, and asked of the design rather than of three dicts it has to be stated rather than
-    implied by which lookup came first:
+    THE ORDER IS A DECISION. Three treatments can each narrow this kerb:
 
-      1. a BIKE LANE, which answers with the travel lane's own edge. Everything outside that
-         edge - the buffer, the lane, the kerb hatching - is width a stopping car has no
-         business in, and the bar used to run straight across all of it because this rule knew
-         about narrowing and parking and not about bike lanes. That was a user-visible bug, and
-         test_a_stop_bar_stops_where_the_bike_lane_starts pins the fix.
+      1. a BIKE LANE, which answers with the travel lane's own edge;
       2. a LANE NARROWING on this side, whose buffer is spare asphalt the bar stops at;
       3. MARKED PARKING, whose stalls plus kerb buffer the bar stops at.
 
-    The bike lane wins because it is the most specific claim about the same ground: it names
-    the travel lane's edge directly, where the other two name what lies outside it. Nothing in
-    the four sites applies two of these to one kerb, so this ordering is a statement about what
-    should happen if one ever does, not a description of current output.
+    The bike lane wins because it is the most specific claim about the same ground: it names the
+    travel lane's edge directly, where the other two name what lies outside it. No site here
+    applies two to one kerb, so the order states what should happen if one ever does.
+    (test_a_stop_bar_stops_where_the_bike_lane_starts pins the bike-lane case.)
 
     THE SECTION IS ASKED OF THE DESIGN, not read off the treatment. `treatment.lane` is the
-    section as REQUESTED - the nominal one, measured from the alignment; `treatment.section(state)`
-    is the section as RESOLVED against the street it is being painted on, and for a two-way lane
-    those are different numbers because the travel lanes have been shifted off the alignment to
-    make room for it. On w_broad_st_southwest the requested section puts the travel lane edge at
-    11.00 ft and the resolved one at 8.20.
-
-    Reading the requested one drew the stop bar 2.80 ft past the end of the travel lane: across
-    the bike lane's inner edge line, into its buffer, and through a flex post standing in that
-    buffer. src/checks.py:_travel_lane_target_ft had been asking the same question correctly the
-    whole time, so this was two definitions of one number with the wrong one wired to the paint -
-    which is the failure this function's own docstring opens by claiming it prevents.
+    section as REQUESTED - nominal, measured from the alignment; `treatment.section(state)` is the
+    section as RESOLVED against the street it is painted on. For a two-way lane those differ,
+    because the travel lanes have been shifted off the alignment to make room for it, and reading
+    the requested one runs the stop bar past the travel lane's end and into the bike lane.
     """
     side = Side(side)
     kerb = LegSide(leg_name, side)
@@ -179,24 +150,15 @@ def stop_bar_width_ft(state: DesignState, leg_name: str) -> float:
     return 2 * entering_ft if entering_ft is not None else state.legs[leg_name].curb_to_curb_ft
 
 
-# How square-on a crossing has to be to the leg it's credited with crossing. Measured
-# across all four configured sites, candidate matches surviving the distance checks are
-# sharply bimodal: the true ones run 82.3-89.8 deg (square across the road, 0.1-8.4 ft
-# off its centerline), the false ones 0.6-5.9 deg (parallel to it, 17-33 ft off). The
-# one value between those clusters is the W Broad & Louellen crossing at 42.2 deg - a
-# real crossing that OSM has drawn oddly (78 ft end-to-end across a ~34 ft road; see
-# that site's config.yaml, where the same way contradicts the width estimate).
-# 30 deg sits well clear of both clusters and keeps that real-but-skewed case.
+# Minimum angle between a crossing way and a leg centerline for the crossing to be
+# credited to that leg. True crossings and false matches split sharply: 30 deg sits
+# well clear of both clusters and keeps the one real-but-skewed case.
 MIN_CROSSING_ANGLE_DEG = 30.0
 
-# Past this, a surveyed crossing's angle is worth REPORTING - it is not a reason to discard
-# it. It used to be a discard, and that was the assumption talking: skews at the other three
-# sites run 0.2-7.7 deg, so W Broad & Louellen's -44 deg looked like a loosely drawn way and
-# got replaced with a square crosswalk. It is not loosely drawn. That junction is a Y with a
-# 48 deg gore, the kerb ramps a crossing has to join are not opposite each other, and a
-# crossing between them is genuinely diagonal. Squareness is our assumption; the traced line
-# is the survey, and where the two disagree at a skewed junction it is the assumption that is
-# wrong. Drawn as surveyed now, and said out loud so a real tracing error still surfaces.
+# Past this, a surveyed crossing's angle is worth REPORTING but not discarding. Squareness
+# is our assumption; the traced line is the survey, and where the two disagree at a skewed
+# junction it is the assumption that is wrong. Drawn as surveyed, said out loud so a real
+# tracing error still surfaces.
 REPORT_CROSSING_SKEW_DEG = 20.0
 
 
@@ -220,20 +182,16 @@ def _crossing_skew_deg(crossing_line: LineString, centerline: LineString,
     centerline; positive is counter-clockwise.
 
     "Square" is measured against the leg AT `station_ft`, because that is the frame
-    crosswalk_axes applies the answer in. Measuring it against the whole-leg chord instead -
-    which this did - makes the two disagree by however much the centerline bends between
-    them: 4.54 deg on broad_st_east, whose alignment kinks 4.5 deg where NJDOT rounds the
-    corner 43.1 ft out. The skew is carried precisely so the marking lines up with the
-    surveyed one, and measuring it in a different frame from the one it is used in threw
-    away exactly as much as it recovered.
+    crosswalk_axes applies the answer in. Measuring against the whole-leg chord makes
+    the two disagree by however much the centerline bends between them. The skew is
+    carried precisely so the marking lines up with the surveyed one.
 
     Real crosswalks are not always square to the road they cross - they are painted to
     line up with the curb ramps and the sidewalks either side, which at a skewed
-    junction can be several degrees off. Reconstructing the crosswalk perpendicular to
-    the road centerline (as this code originally did) throws that away and draws the
-    band at a visible angle to the surveyed crossing line it came from: 7.7 degrees on
-    princeton_ave_south, 6.6 on broad_st_west. Carried through so both the plan view and
-    the Blender render orient the crosswalk the way it was actually surveyed.
+    junction can be several degrees off. Reconstructed perpendicular to the road
+    centerline they draw the band at a visible angle to the surveyed crossing line it
+    came from. Carried through so both the plan view and the Blender render orient the
+    crosswalk the way it was actually surveyed.
     """
     (cx0, cy0), (cx1, cy1) = crossing_line.coords[0], crossing_line.coords[-1]
     crossing_dir = math.atan2(cy1 - cy0, cx1 - cx0)
@@ -261,11 +219,9 @@ _CROSSING_MATCH_LIMIT = 64
 def _match_key(legs: dict):
     """Exactly what the matcher reads off each leg: its name, its centerline and its width.
 
-    Spelled out rather than keyed on the Leg objects' identity, because a Leg is mutable - the
-    curb lines and traced_sides are assigned in place while the widths are being fitted
-    (src/geometry/intersection/fitting.py:_apply_traced_curb_lines). The matcher does not read those
-    today, but a cache whose correctness rests on that staying true is a trap. Centerlines are
-    shapely geometries, which hash by value.
+    Spelled out rather than keyed on Leg identity, because a Leg is mutable (curb lines and
+    traced_sides are assigned in place during fitting) and a cache keyed on mutable objects
+    is a trap. Centerlines are shapely geometries, which hash by value.
     """
     return tuple((name, leg.centerline, leg.curb_to_curb_ft) for name, leg in sorted(legs.items()))
 
@@ -286,20 +242,8 @@ def _match_crossings_to_legs(legs: dict, crossings: list[dict]) -> dict:
 
 
 # How far down a leg a mapped crossing may sit and still be THIS junction's crossing.
-#
-# There was no such bound: the only longitudinal test was that the crossing projects between the
-# junction and the leg's FAR END, so `leg_working_length_ft` - a drawing-extent setting in
-# config.yaml - was also deciding junction membership. Lengthening a leg from 170 ft to 374 ft
-# made broad_st_east adopt the NEXT junction's crossing at station 264, reported as `osm_survey`;
-# daylighting then set its 25 ft setback from that crossing and blanked 289 ft of kerb, moving
-# the statutory zone from the corner into the middle of the block. Everything downstream was
-# correct arithmetic on the wrong crossing.
-#
-# 80 ft, which is KERB_NEAR_JUNCTION_FT and carries the same justification: a feature belonging
-# to this junction is close to it. Measured, the 11 genuine matches across the four sites run
-# 19.5-41.7 ft (the furthest is greenwood_ave_south), so this is nearly twice the observed worst
-# case and cannot exclude a real crossing - while a neighbouring junction's is hundreds of feet
-# away. The lateral and orientation guards below are unchanged; this is the missing third one.
+# 80 ft, same as KERB_NEAR_JUNCTION_FT: a feature belonging to this junction is close to it.
+# The lateral and orientation guards below are unchanged; this is the missing third one.
 CROSSING_NEAR_JUNCTION_FT = 80.0
 
 
@@ -476,17 +420,8 @@ def resolve_crosswalk_skews(state: DesignState, crossings: list[dict]) -> dict[s
 
 # A stop bar crosses its approach, so it should sit square-ish to the leg, and it belongs
 # to the leg it is painted on rather than the one it happens to point at. Same shape of test
-# the crossing matcher uses, and the same reason: the cross street passes just as close - so
-# the same threshold. A stop bar is painted parallel to the crossing ahead of it, and a
-# tolerance that fits one fits the other.
-#
-# It was 45, and Louellen St's surveyed bar sits at 43.9 deg: rejected by 1.1 deg, on a leg
-# whose two rival candidates are at 13.0 and 4.3 deg and 32-59 ft off the centerline, so
-# there was never any ambiguity about whose bar it was. The approach then fell back to the
-# DERIVED position, which is clamped to the corner return - putting the bar at 70.8 ft when
-# the paint is at 55.6, 15 ft out, on the leg carrying this junction's only marked crossing.
-# 30 deg leaves both rivals far outside; see MIN_CROSSING_ANGLE_DEG for how that value was
-# picked from the real spread.
+# the crossing matcher uses, and the same threshold: a stop bar is painted parallel to the
+# crossing ahead of it, and a tolerance that fits one fits the other.
 STOP_LINE_MIN_ANGLE_DEG = MIN_CROSSING_ANGLE_DEG
 STOP_LINE_MAX_OFFSET_FT = 40.0   # lateral distance from the leg centerline to the bar's midpoint
 STOP_LINE_MAX_ALONG_FT = 120.0   # beyond this it belongs to a neighbouring junction
@@ -572,21 +507,14 @@ def centerline_start_ft(crosswalk_offset_ft: float, stop_bar_offset_ft: float | 
     """How far out along a leg its centerline paint begins.
 
     A centerline terminates AT the stop bar - it does not continue into the junction past
-    the line drivers stop on. Before stop bars were surveyed this was approximated as a
-    fixed gap past the crosswalk, which was fine while the bar was itself derived from the
-    crosswalk. It stopped being fine the moment real bars arrived: E Broad's east approach
-    has its bar 52.9 ft out against a crosswalk at ~39 ft, so the centerline ran 14 ft past
-    the bar and into the intersection.
+    the line drivers stop on.
 
     max() rather than just the bar, so a leg whose surveyed bar sits unusually close in
     still doesn't get centerline paint laid across its crosswalk - but ONLY where there is a
     crosswalk. An unmarked leg still gets a crosswalk_offset_ft, because every leg needs a
-    resolved station for a crossing a proposal might add; on e_broad_st_east that station is
-    the geometric estimate, 70.1 ft, which is this junction's modelled corner return - a
-    figure the phase output already flags as contradicted by the surveyed stop bar 17 ft
-    inside it. Holding the double yellow back behind it stopped the paint 23.8 ft short of
-    the bar, keeping clear of a crossing that is not painted, using a number the pipeline
-    itself does not believe. Where nothing is painted there is nothing to keep clear of.
+    resolved station for a crossing a proposal might add; using that station to hold the
+    centerline back behind a crossing that is not painted keeps clear of nothing. Where
+    nothing is painted there is nothing to keep clear of.
     """
     past_crosswalk_ft = crosswalk_offset_ft + CENTERLINE_CROSSWALK_GAP_FT
     if stop_bar_offset_ft is None:
@@ -609,19 +537,10 @@ def centerline_paint_ft(leg, start_ft: float, style: str,
                          shift_ft: float = 0.0, shift_side: str | None = None) -> list[LineString]:
     """The stripes actually painted down this leg's middle, from `start_ft` to its far end.
 
-    ONE definition for both views, because they had two and only one of them followed the road.
-    The plan view offset the leg's real centerline; the 3D render was handed the leg's near and
-    far points and drew a straight stripe between them - the CHORD. Identical on a straight leg,
-    which ten of this project's twelve are, and on the two that are not:
-
-        broad_st_east      the chord runs up to 3.98 ft off the centerline
-        louellen_st_west   up to 7.58 ft
-
-    Four feet is most of a lane's worth of asphalt moved from one side of Broad St to the other.
-    It put the double yellow somewhere the stop bar it is supposed to meet is not, and made the
-    lanes either side of it read as different widths - both visible in the render, and neither
-    visible in the plan view, which was drawing it correctly all along. Same failure as
-    crosswalk_axes had for the crossing frame, in the marking next to it.
+    ONE definition for both views, because they had two and only one of them followed the
+    road. The plan view offset the leg's real centerline; the 3D render was handed the
+    leg's near and far points and drew a straight stripe between them - the CHORD. Same
+    on a straight leg, but off by several feet on a curving one.
     """
     if style == "none" or start_ft >= leg.centerline.length:
         return []
@@ -635,12 +554,9 @@ def centerline_paint_ft(leg, start_ft: float, style: str,
         # all: it is the same lateral-offset machinery the bike lane's own stripes use, on the
         # same station grid, with the same clamping inside the traced kerb. An offset curve's arc
         # length differs from the centerline's, so stationing along it is not stationing along
-        # the road - which is what put the stall ticks adrift before - and a second mechanism for
-        # "a line N ft to one side" is exactly the divergence the single-definition rule forbids.
-        # A NEGATIVE shift means the other side, not the same distance on this one. Callers pass
-        # the canonical non-negative form (DesignState.travel_lane_divider_shift), but abs() alone
-        # silently mirrored a negative one onto the wrong side of the road, so the sign is
-        # resolved here too rather than assumed away.
+        # the road - exactly the divergence the single-definition rule forbids.
+        # A NEGATIVE shift means the other side, not the same distance on this one. The sign is
+        # resolved here rather than assumed away.
         if shift_ft < 0:
             shift_side = str(Side(shift_side).other)
             shift_ft = -shift_ft
@@ -673,22 +589,12 @@ def crosswalk_axes(leg, offset_ft: float, skew_deg: float = 0.0):
     3D export writes and the check in src/checks.py are all measured off the same axes.
 
     Read AT the station, off the polyline, not extrapolated from the leg's first segment.
-    That shortcut is exact for a straight centerline and ten of this project's twelve legs
-    are straight 2-vertex lines, which is why it survived this long. The two that are not:
-
-        louellen_st_west      first segment 15.4 ft at 239.2 deg, leg 268.6  -> 29.4 deg out
-        broad_st_east         first segment 43.1 ft at  57.3 deg, leg  61.8  ->  4.5 deg out
-
-    Louellen bends because NJDOT's alignment rounds the corner where CR 518 turns off W
-    Broad onto Louellen, and the crossing pays for it three times over: its bars came out
-    29.4 deg off square to the street they cross, its centre landed ~8 ft sideways of the
-    real carriageway centre at station 31.5 (and the first-segment ray is 62.7 ft off the
-    centerline by the far end of the leg), and crosswalk_reach_to_curbs_ft then measured
-    from that displaced centre and returned 14.0 ft to one kerb against 32.5 to the other -
-    a 46.5 ft pair of lines across a 42.1 ft street, one end of it out on the grass.
+    A centerline that bends between the first segment and the crossing's station throws the
+    axes off - by 29.4 deg on Louellen, whose NJDOT alignment rounds the corner where CR
+    518 turns off W Broad.
 
     frame_at is the same leg-frame transform station_offset_many inverts, so the centre a
-    crossing is built on and the station everything else measures it by are now the same
+    crossing is built on and the station everything else measures it by are the same
     arithmetic. See src/geometry/model/leg_frame.py:polyline_frame.
     """
     from src.geometry.model import frame_at
@@ -799,21 +705,9 @@ def crosswalk_reach_to_curbs_ft(leg, center, normal, along=None,
                                  depth_ft: float = 0.0, roadway=None) -> tuple[float, float]:
     """(left, right) distance from `center` out to this leg's two kerbs along `normal`.
 
-    A crosswalk runs kerb to kerb. It was drawn as half the leg's NOMINAL width either side
-    of the NJDOT centerline, which is right only if the curbs are a symmetric offset of that
-    centerline - and since they became the surveyor's traced kerbs, they are not.
-
-    The obvious repair, casting a ray from the centre until it crosses the curb LINE, is
-    wrong near a junction and is what put the crossings on the footway. A traced kerb
-    includes the corner return, which flares away from the road; a skewed crossing's ray
-    runs diagonally into that flare and hits it far outside the actual carriageway. At
-    broad_st_west the ray reached 39.8 ft on a street 27.8 ft wide, so the end bars were
-    painted 12 ft up the corner.
-
-    So the test is not "has the ray crossed the kerb line" but "is this point still inside
-    the roadway", asked in the leg's own frame: a point is outside once its perpendicular
-    offset exceeds the traced kerb's offset AT ITS OWN STATION. That never walks up a corner
-    return, because the return is at a different station from the point beside it.
+    A crosswalk runs kerb to kerb. Cast rays outward from the centre until they leave the
+    roadway - the traced kerb's offset AT ITS OWN STATION, not the corner return, which
+    flares away from the road and catches diagonal rays far outside the carriageway.
 
     `along` and `depth_ft` describe the crossing's own depth. The reach is the smallest found
     across the near edge, centre and far edge, so the corners of the painted band stay inside
@@ -887,13 +781,7 @@ def continental_bar_count(span_ft: float,
     n bars with n-1 gaps between them, at most as many as fit at the nominal pitch. The
     renderer then spreads the leftover across the GAPS so the two end bars land exactly on
     the kerbs (scripts/blender/blender_crosswalks.py:_crosswalk_bars) - a whole-period pitch
-    leaves up to one period unpainted, 3.2 ft at Columbia Ave, which still reads as a
-    crossing stopping short. Real striping adjusts the spacing to fit the road.
-
-    The renderer used to inset a flat 1.5 m from the span first, costing ~2.5 ft at each
-    kerb. add_crosswalk_lines carried the same fudge and lost it when crossings were made to
-    reach the kerb; the bar layout - which every continental crossing in every proposal uses
-    - was missed, so the simple crossings reached the kerb and the continental ones did not.
+    leaves up to one period unpainted, which still reads as a crossing stopping short.
     """
     period = bar_ft + gap_ft
     if period <= 0:
@@ -909,26 +797,21 @@ def crosswalk_reach_on_leg_side_ft(leg, side: str, crossings, inner_offset_ft: f
     where the crossings actually ARE. Two things make a single number per leg wrong:
 
       * Skew. A band pivots about its centre, so one end swings further along the leg than
-        the other. At broad_st_west, skewed 7.1 degrees, its own band reaches station 28.6
-        on the left kerb and 19.2 on the right - a 9.4 ft spread. Aiming at the centre
-        offset plus a fixed 5 ft put the taper 2.9 ft inside the crossing.
+        the other.
       * The CROSS street's crossing. A taper curving into the corner runs into the crossing
-        on the intersecting leg, which has nothing to do with this leg's own offset. That is
-        the last 30 sq ft of overlap at broad_st_west, and no per-leg figure finds it.
+        on the intersecting leg, which has nothing to do with this leg's own offset.
 
     So this measures against every crossing at the junction, restricted to the strip this
     leg's curbside paint actually occupies on this side: from inner_offset_ft out to the
-    kerb. Restricting matters as much as including. A skewed band reaches further along the
-    leg near the centerline than it does at the kerb, and curbside paint never goes near the
-    centerline - measuring across the whole half-road made the target 6-8 ft too conservative
-    and opened a visible gap between the taper and the crossing.
+    kerb. A skewed band reaches further along the leg near the centerline than it does at
+    the kerb, and curbside paint never goes near the centerline, so restricting matters as
+    much as including.
 
     `beyond_the_tracing` lifts the bound at the traced kerb, and only one caller asks for it:
-    paint.junction_mouths_ft, which uses this to say where the INTERSECTION ends on a kerb rather
-    than where a marking should stop. That is a fact about the street, so it must not be cut short
-    where nobody traced the kerb - see model.paint_stations for the same distinction, and W Broad
-    & Louellen's south kerb, traced only from station 60.3, for the case that shows it: the
-    crossing really reaches station 52.7 there and the traced strip alone reports 32.0.
+    paint.junction_mouths_ft, which uses this to say where the INTERSECTION ends on a kerb
+    rather than where a marking should stop. That is a fact about the street, so it must not
+    be cut short where nobody traced the kerb - see model.paint_stations for the same
+    distinction.
     """
     import numpy as np
 

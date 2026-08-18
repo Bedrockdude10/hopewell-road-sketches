@@ -62,13 +62,24 @@ def _intersect(a, b):
 
 
 def straighten(corridor, geometry):
-    """One geometry's coordinates as (station, offset) in the corridor's frame."""
+    """One geometry's parts, each as (station, offset) in the corridor's frame.
+
+    A LIST, because cutting the lane at every crossing and driveway mouth turns one polygon into
+    a MultiPolygon - which is the whole point of the cut, and a drawing that took only the first
+    part would show the lane stopping at its first break and never resuming.
+    """
     if geometry is None or geometry.is_empty:
-        return None
-    coords = (np.asarray(geometry.exterior.coords, dtype=float)
-              if geometry.geom_type == "Polygon" else np.asarray(geometry.coords, dtype=float))
-    stations, offsets = station_offset_many(corridor.centerline, coords)
-    return np.column_stack([stations, offsets])
+        return []
+    parts = list(getattr(geometry, "geoms", [geometry]))
+    out = []
+    for part in parts:
+        if part.is_empty:
+            continue
+        coords = (np.asarray(part.exterior.coords, dtype=float) if part.geom_type == "Polygon"
+                  else np.asarray(part.coords, dtype=float))
+        stations, offsets = station_offset_many(corridor.centerline, coords)
+        out.append(np.column_stack([stations, offsets]))
+    return out
 
 
 def draw_panel(ax, corridor, paint, parking, openings, lo_ft, hi_ft, half_ft):
@@ -89,8 +100,7 @@ def draw_panel(ax, corridor, paint, parking, openings, lo_ft, hi_ft, half_ft):
     for lo, hi, band in parking:
         if hi < lo_ft or lo > hi_ft:
             continue
-        xy = straighten(corridor, band)
-        if xy is not None:
+        for xy in straighten(corridor, band):
             ax.fill(xy[:, 0], xy[:, 1], color=PARKING_BLUE, alpha=0.45, linewidth=0, zorder=2)
 
     for run in paint.runs:
@@ -98,12 +108,10 @@ def draw_panel(ax, corridor, paint, parking, openings, lo_ft, hi_ft, half_ft):
             continue
         for geometry, colour, z in ((run.buffer_zone, BUFFER_GREY, 2),
                                     (run.lane_surface, LANE_GREEN, 3)):
-            xy = straighten(corridor, geometry)
-            if xy is not None:
+            for xy in straighten(corridor, geometry):
                 ax.fill(xy[:, 0], xy[:, 1], color=colour, alpha=0.85, linewidth=0, zorder=z)
         for line in run.edge_lines:
-            xy = straighten(corridor, line)
-            if xy is not None:
+            for xy in straighten(corridor, line):
                 ax.plot(xy[:, 0], xy[:, 1], color=PAINT_WHITE, lw=1.0, zorder=4)
         posts = np.asarray(run.bollards, dtype=float)
         if len(posts):
@@ -177,11 +185,12 @@ def main() -> int:
               f"{', '.join(sorted(c.name for c in corridors))}")
         return 2
     corridor = centred_on_its_kerbs(matching[0])
-    paint = paint_facility(corridor, BROAD_ST_TWO_WAY_BIKEWAY)
-    print(paint.summary(corridor.length_ft))
-
     with contextlib.redirect_stdout(quiet):
         facts = corridor_facts(corridor, models)
+    paint = paint_facility(corridor, BROAD_ST_TWO_WAY_BIKEWAY, facts=facts)
+    print(paint.summary(corridor.length_ft))
+    print(f"  the lane's markings break at {len(paint.breaks)} places - driveway mouths on its "
+          f"own kerb, and every surveyed crossing")
     far_side = "left" if paint.side == "right" else "right"
     far_compass = "north" if paint.compass_side == "south" else "south"
     parking = parking_bands(corridor, facts, far_side)

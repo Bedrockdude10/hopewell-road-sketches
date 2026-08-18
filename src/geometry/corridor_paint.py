@@ -95,6 +95,8 @@ class CorridorFacilityPaint:
     runs: list = field(default_factory=list)
     refusals: list = field(default_factory=list)
     untraced: list = field(default_factory=list)
+    #: (lo, hi) where the lane's markings break - a driveway mouth on its own kerb, or a crossing.
+    breaks: tuple = ()
 
     @property
     def placed_ft(self) -> float:
@@ -179,7 +181,65 @@ def section_at(facility, near_half_ft: float, far_half_ft: float):
     return None, refusal
 
 
-def paint_facility(corridor, facility) -> CorridorFacilityPaint:
+#: How wide a surveyed crossing's break in the lane is taken to be, where the corridor knows the
+#: crossing only as a station. The marked crossings on Broad St are traced ways 38-77 ft long
+#: ACROSS the street; what is needed here is their extent ALONG it, which is the crosswalk's own
+#: width, and MUTCD 3C.02 puts a marked crosswalk at 6 ft minimum with 10 ft usual on a road like
+#: this. Taken as a constant and labelled an assumption, because reading it off each traced way
+#: needs the way's own bearing and that belongs with surveyed.py rather than here.
+CROSSING_BREAK_FT = 10.0
+
+
+def break_spans(corridor, facts, side: str) -> tuple:
+    """Where the facility's markings break: driveway mouths on its kerb, and every crossing.
+
+    TWO DIFFERENT REASONS AND ONE CONSEQUENCE. A driveway mouth is a place vehicles cross the
+    lane, so the lane's lines and its colour go dotted over it (markings.AT_AN_OPENING). A
+    pedestrian crossing outranks whatever runs along the kerb, so the lane is cut around it - the
+    same rule the per-leg paint applies through PaintContext's crossing bands, which is not
+    reachable from a corridor.
+
+    THE OPENINGS ARE TAKEN FROM THIS KERB ONLY. A driveway on the far kerb does not touch this
+    lane, and counting it would break the facility at every mouth on the street rather than at the
+    ones a rider actually meets.
+    """
+    spans = [(opening.start_ft, opening.end_ft)
+             for opening_side, opening in facts.openings if opening_side == side]
+    spans += [(station_ft - CROSSING_BREAK_FT / 2, station_ft + CROSSING_BREAK_FT / 2)
+              for station_ft, _markings in facts.marked_crossings]
+    return tuple(sorted((max(lo, 0.0), min(hi, corridor.length_ft))
+                        for lo, hi in spans if hi > 0 and lo < corridor.length_ft))
+
+
+def _cut_around(geometry, corridor, side: str, spans, reach_ft: float = 60.0):
+    """`geometry` with the break spans taken out of it.
+
+    Cut as full-depth bands across the kerbside rather than as station ranges of the polygon,
+    because the lane, its buffer and its edge lines all have to break at the SAME stations - a
+    drawing where the green stops and the stripe carries on is worse than one that breaks
+    neither.
+    """
+    from shapely.ops import unary_union
+
+    if geometry is None or geometry.is_empty or not spans:
+        return geometry
+    on = Alignment(corridor.centerline)
+    cutters = []
+    for lo, hi in spans:
+        if hi - lo <= 0:
+            continue
+        stations = np.linspace(lo, hi, max(int((hi - lo) / 2.0) + 2, 3))
+        band = band_from_offsets(on, side, stations, np.zeros(len(stations)),
+                                 np.full(len(stations), reach_ft))
+        if band is not None and not band.is_empty:
+            cutters.append(band)
+    if not cutters:
+        return geometry
+    cut = geometry.difference(unary_union(cutters))
+    return None if cut.is_empty else cut
+
+
+def paint_facility(corridor, facility, facts=None) -> CorridorFacilityPaint:
     """Place `facility` along `corridor`, wherever the street can carry it.
 
     Walks the stations at which BOTH kerbs are traced - the only stations at which a width is a
@@ -197,6 +257,7 @@ def paint_facility(corridor, facility) -> CorridorFacilityPaint:
     # worth calling a facility; it has nothing to say about whether a GAP is worth admitting to.
     paint.untraced = [(lo, hi, _why_no_kerb(corridor, lo, hi))
                       for lo, hi in corridor.untraced_gaps_ft(min_ft=0.0)]
+    paint.breaks = break_spans(corridor, facts, side) if facts is not None else ()
 
     for span_lo, span_hi in corridor.both_traced_spans():
         if span_hi - span_lo < MIN_FACILITY_RUN_FT:
@@ -242,7 +303,8 @@ def _collect(paint, corridor, facility, side, stations, near, far, fits):
                 lo, hi, refusal or "one or both kerbs untraced here", narrowest))
             continue
         paint.section_ft = section.section_ft
-        run, why = _build_run(corridor, side, section, stations[lo_i:hi_i + 1], block_near)
+        run, why = _build_run(corridor, side, section, stations[lo_i:hi_i + 1], block_near,
+                              paint.breaks)
         if run is None:
             paint.refusals.append(FacilityRefusal(lo, hi, why, narrowest))
         elif run.length_ft < MIN_FACILITY_RUN_FT:
@@ -266,7 +328,7 @@ def _blocks(flags: np.ndarray):
             for i in range(len(bounds) - 1)]
 
 
-def _build_run(corridor, side: str, section, stations, offs):
+def _build_run(corridor, side: str, section, stations, offs, breaks=()):
     """The paint itself, from the SAME section accounting the per-leg treatment uses.
 
     The lane hugs the kerb (TwoWayBikeLane.hugs_kerb), so its three boundaries are insets from the
@@ -291,8 +353,12 @@ def _build_run(corridor, side: str, section, stations, offs):
                       f"comes within {float(np.min(offs)):.1f} ft of it here, less than the "
                       f"{section.section_ft:.1f} ft the section needs on this side")
 
-    lane = band_from_offsets(on, side, stations, lane_inner, lane_outer)
-    buffer_zone = band_from_offsets(on, side, stations, travel_edge, lane_inner)
+    mine = tuple((lo, hi) for lo, hi in breaks
+                 if hi > float(stations[0]) and lo < float(stations[-1]))
+    lane = _cut_around(band_from_offsets(on, side, stations, lane_inner, lane_outer),
+                       corridor, side, mine)
+    buffer_zone = _cut_around(band_from_offsets(on, side, stations, travel_edge, lane_inner),
+                              corridor, side, mine)
     edges = [line_from_offsets(on, side, stations, off)
              for off in (lane_outer, lane_inner, travel_edge)]
     return FacilityRun(start_ft=float(stations[0]), end_ft=float(stations[-1]),

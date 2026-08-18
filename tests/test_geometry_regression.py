@@ -93,9 +93,9 @@ LEG_FIELDS = ("width_m", "near_m", "far_m", "crosswalk_centre_m", "crosswalk_axi
               # check reported two 11.00 ft lanes. Nothing failed, because every check measured
               # the divider the design INTENDED and none compared it against the line drawn.
               #
-              # This is the marking the README already devotes a section to ("The centerline
-              # follows the road"), where the 3D render drew the leg's chord and was up to 7.58 ft
-              # out. Twice now the double yellow has moved feet with the suite green.
+              # This is the marking src/render/crosswalks.py documents at
+              # `centerline_paint_ft`, where the 3D render drew the leg's chord and was up to
+              # 7.58 ft out. Twice now the double yellow has moved feet with the suite green.
               "centerline_paint_m",
               # THE SWEEP FOR EXTENT-WITHOUT-FRAME, after the stop bar and the centreline each
               # turned out to be pinned by position and not by size. A crosswalk had the same

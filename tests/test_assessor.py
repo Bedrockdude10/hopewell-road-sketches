@@ -3,7 +3,8 @@
 OSM gave this project real building outlines and no heights at all - 0 of the borough's 1150
 building ways carry `height`, 7 carry `building:levels` - so every building was extruded to the
 same 7 m default. The MOD-IV tax list has been in data/ the whole time with a storey count per
-parcel, described in the README as "joinable by PIN, not currently used".
+parcel, sitting unused in data/ and described in the README as "joinable by PIN, not currently
+used" - see src/sources/assessor.py for the join and how it is ordered against OSM's own tags.
 """
 import contextlib
 import io

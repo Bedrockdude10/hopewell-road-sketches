@@ -32,7 +32,8 @@ from src.geometry.corridor_paint import (CORRIDOR_SAMPLE_FT, JUNCTION_MOUTH,
                                          centred_on_its_kerbs, kerb_offset_ft, paint_facility, parking_bands)
 from src.geometry.intersection import load_intersection_model
 from src.geometry.model import station_offset_many
-from src.geometry.network import corridor_facts, corridors_from_models
+from src.geometry.network import (_complement_spans, _merged_spans, corridor_facts,
+                                  corridors_from_models, marked_parking_capacity)
 from src.geometry.treatments import BROAD_ST_TWO_WAY_BIKEWAY
 from src.site import list_sites
 
@@ -43,6 +44,7 @@ BUFFER_GREY = "#9a9a9a"
 PAINT_WHITE = "#ffffff"
 POST = "#e8663c"
 PARKING_BLUE = "#4b7fb5"
+OPENING = "#8a5a1f"
 GAP_RED = "#c1272d"
 MOUTH_BLUE = "#3b6ea5"
 
@@ -57,7 +59,7 @@ def straighten(corridor, geometry):
     return np.column_stack([stations, offsets])
 
 
-def draw_panel(ax, corridor, paint, parking, lo_ft, hi_ft, half_ft):
+def draw_panel(ax, corridor, paint, parking, openings, lo_ft, hi_ft, half_ft):
     grid = np.arange(lo_ft, hi_ft, CORRIDOR_SAMPLE_FT)
     left = np.array([kerb_offset_ft(corridor, "left", float(s)) or np.nan for s in grid])
     right = np.array([-(kerb_offset_ft(corridor, "right", float(s)) or np.nan) for s in grid])
@@ -97,6 +99,19 @@ def draw_panel(ax, corridor, paint, parking, lo_ft, hi_ft, half_ft):
             inside = (st >= lo_ft) & (st <= hi_ft)
             ax.plot(st[inside], off[inside], linestyle="none", marker="o", markersize=1.6,
                     color=POST, zorder=5)
+
+    # WHERE A VEHICLE CROSSES THE KERB. Drawn on the kerb it actually breaks, because that is the
+    # asymmetry that matters here: a driveway on the north kerb interrupts the parking, and one on
+    # the south interrupts the bikeway - the same feature with two different consequences.
+    for side, start, end in openings:
+        if end < lo_ft or start > hi_ft:
+            continue
+        sign = 1.0 if side == "left" else -1.0
+        at = np.array([max(start, lo_ft), min(end, hi_ft)])
+        offs = np.array([kerb_offset_ft(corridor, side, float(x)) or np.nan for x in at])
+        if not np.isfinite(offs).all():
+            continue
+        ax.plot(at, sign * offs, color=OPENING, lw=2.6, solid_capstyle="butt", zorder=9)
 
     # Where the route breaks, and why - drawn, not left to the caption.
     # Labelled by WHAT the refusal actually was. A stretch the section could not fit and a
@@ -162,18 +177,39 @@ def main() -> int:
     print(f"  parking room on the {far_compass} kerb: {parkable_ft:,.0f} ft in {len(parking)} "
           f"stretch(es), where R.S. 39:4-138 and OSM leave it legal")
 
+    openings = tuple((side, opening.start_ft, opening.end_ft) for side, opening in facts.openings)
+    stalls = {}
+    for side, compass in ((far_side, far_compass), (paint.side, paint.compass_side)):
+        mine = _merged_spans([(lo, hi) for s, lo, hi in openings if s == side])
+        # R.S. 39:4-138(f) forbids parking in front of a driveway, so a mouth is subtracted rather
+        # than counted. _no_parking_zones_on applies (e), (h) and (i); the openings are resolved
+        # separately, so this is where the two meet.
+        clear = _complement_spans(mine, 0.0, corridor.length_ft)
+        stalls[compass] = marked_parking_capacity(corridor, facts, side, within=clear)
+    print("\n  STALLS, counted over kerb that is legally parkable and clear of a driveway mouth:")
+    for compass, (count, over_ft) in stalls.items():
+        print(f"    {compass:5s} kerb  {count:4d} stalls over {over_ft:6,.0f} ft")
+    both = sum(count for count, _ft in stalls.values())
+    kept = stalls[far_compass][0]
+    print(f"    default treatment (both kerbs marked)        {both:4d}")
+    print(f"    two-way bikeway on the {paint.compass_side} kerb          "
+          f"{kept:4d}   ({kept - both:+d}, the {paint.compass_side} kerb's "
+          f"{stalls[paint.compass_side][0]} give way to the lane)")
+
     half_ft = 38.0
     edges = np.linspace(0.0, corridor.length_ft, args.panels + 1)
     fig, axes = plt.subplots(args.panels, 1, figsize=(13, 2.0 * args.panels))
     for ax, lo, hi in zip(np.atleast_1d(axes), edges[:-1], edges[1:]):
-        draw_panel(ax, corridor, paint, parking, float(lo), float(hi), half_ft)
+        draw_panel(ax, corridor, paint, parking, openings, float(lo), float(hi), half_ft)
     axes[0].set_title(
         f"{corridor.name} - existing kerbs (surveyed) and the proposed two-way protected bikeway "
         f"on the {paint.compass_side} kerb; blue = where the law leaves parking room on the "
-        f"{far_compass} kerb\n"
+        f"{far_compass} kerb, brown = a driveway or side road crossing it\n"
         f"{paint.placed_ft:,.0f} ft placed of {corridor.length_ft:,.0f} ft "
         f"({paint.placed_ft / corridor.length_ft:.0%}); straightened into the corridor's own frame "
-        f"- lengths and widths true, curvature removed", fontsize=8)
+        f"- lengths and widths true, curvature removed\n"
+        f"parking: {both} stalls with both kerbs marked, {kept} with the bikeway taking the "
+        f"{paint.compass_side} kerb", fontsize=8)
     axes[-1].set_xlabel("station along the corridor (ft)", fontsize=7)
     fig.tight_layout()
 

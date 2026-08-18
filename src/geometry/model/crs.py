@@ -20,12 +20,10 @@ NJ_STATE_PLANE_FT = "EPSG:3424"  # NAD83(HARN) / New Jersey (ftUS)
 def _utm_crs_at(lon: float, lat: float):
     """The local UTM CRS for a WGS84 point.
 
-    Cached because geopandas' estimate_utm_crs() is the single most expensive call in this
-    pipeline and it is asked the same question over and over: it queries the PROJ database for
-    every candidate CRS and takes ~38 ms, and a scenario export made 43 of those - 1.67 s out
-    of a 2.76 s export, all of them about one intersection. The answer depends only on the
-    point, and UTM zones are 6 degrees wide, so this is a pure function being called with a
-    handful of distinct arguments.
+    Cached because geopandas' estimate_utm_crs() queries the PROJ database for every candidate
+    CRS at ~38 ms a call and is the single most expensive call in this pipeline (43 of them,
+    1.67 s of a 2.76 s scenario export, all about one intersection). It is a pure function of
+    the point, called with a handful of distinct arguments.
 
     Keyed on (lon, lat) rather than the Point, because a Point is unhashable and two Points at
     the same place are different objects.

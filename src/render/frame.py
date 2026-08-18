@@ -1,33 +1,22 @@
 """The one piece of ground both views are pointed at.
 
 The plan view and the 3D render are the same reconstruction drawn twice, so a reader comparing
-them is entitled to assume the two pictures cover the same street. They did not. The plan view
-framed a hardcoded 110 ft square on the junction node; the 3D camera framed the pavement's own
-extent, clipped to the modelled legs and grown 20%. Measured on the four sites, the 3D frame was
-**1.15x to 1.57x** the 2D frame and centred 6.5-12.5 ft away from it - so the plan view cropped a
-third of Broad St's modelled legs (and with them the far ends of the bike lanes the proposal
-paints) while the render showed all of it, and by how much the two disagreed varied per site,
-because one number was computed from the geometry and the other was a constant.
+them is entitled to assume both pictures cover the same street. That only holds if ONE number
+decides the framing, so it is computed here and both views take it: `plan_view.plot_design_state`
+sets its axis limits from it, and `export_scenario` writes it into the JSON as `frame` for
+`blender_scene.py` to frame its camera on rather than recomputing an extent of its own.
 
-So the frame is computed once, here, and both views take it:
-
-  * `plan_view.plot_design_state` sets its axis limits from it;
-  * `export_scenario` writes it into the JSON as `frame`, and `blender_scene.py` frames its
-    camera on that rather than recomputing an extent of its own.
-
-WHAT THE FRAME IS. The extent of the pavement this project actually modelled, plus a small
-margin. Two consequences worth stating:
+WHAT THE FRAME IS. The extent of the pavement this project modelled, plus a small margin. Two
+consequences worth stating:
 
   * Vertices past a leg's own far end are dropped. The pavement ring is stitched from traced OSM
     `barrier=kerb` ways, which do not stop where our leg does - at E Broad & Princeton one kerb
-    runs 425 ft from the junction off a 130 ft leg, because the mapper drew the whole block in
-    one way. That single vertex used to put the 3D camera at nearly twice the radius of the other
-    three sites and not even pointed at the junction. A leg's far end is the edge of what was
-    modelled; kerb beyond it is street, not junction.
+    runs 425 ft from the junction off a 130 ft leg because the mapper drew the whole block as one
+    way. A leg's far end is the edge of what was modelled; kerb beyond it is street, not junction.
   * It is measured from the MODEL, not from a DesignState. A curb extension moves the kerb, so
-    framing on the resolved pavement would frame a proposal slightly differently from its own
-    baseline - and these are published as before/after pairs, where a frame that shifts between
-    the panels is exactly the thing that makes two pictures incomparable.
+    framing on resolved pavement would frame a proposal differently from its own baseline - and
+    these are published as before/after pairs, where a frame that shifts between the panels is
+    exactly what makes two pictures incomparable.
 
 The 3D camera is a tilted perspective camera, so it necessarily sees ground beyond the frame:
 what matches between the views is the subject and the radius, not the outline of the visible
@@ -46,16 +35,12 @@ from src.render.coords import FT_TO_M
 # drawing of one junction, and the paint and signage detail is the subject.
 FRAME_MARGIN = 1.2
 
-# A deliberate zoom-out, for a picture whose subject is longer than one junction - a corridor
-# treatment down a street, say, where the point is that the bike lane runs the whole way rather
-# than what colour the flex posts are. It scales the RADIUS only, so the frame stays centred on
-# the same ground and both views widen together: the plan view's axes and the camera both come
-# through junction_frame, and a knob that moved one of them would undo the whole reason this
-# module exists.
-#
-# An environment variable because it has to reach two call sites several layers down (plot_design_
-# state and export_scenario), which is the same problem HOPEWELL_RENDER_SCALE has and the same
-# answer - see scripts/phase4_render_3d.py, which sets both from flags.
+# A deliberate zoom-out, for a picture whose subject is longer than one junction (a corridor
+# treatment down a street). It scales the RADIUS only, so the frame stays centred on the same
+# ground and both views widen together - a knob that moved only one of them would undo the reason
+# this module exists. An environment variable because it must reach two call sites several layers
+# down (plot_design_state and export_scenario); same problem and answer as HOPEWELL_RENDER_SCALE,
+# and scripts/phase4_render_3d.py sets both from flags.
 FRAME_SCALE_ENV = "HOPEWELL_FRAME_SCALE"
 
 
@@ -77,17 +62,13 @@ def frame_scale() -> float:
 def context_radius_m(base_m: float) -> float:
     """How far out to pull CONTEXT - buildings, roads, parking - for the frame in force.
 
-    The frame scale widens what the camera takes in; it has to widen what there IS to take in
-    by the same factor, or a zoom-out just adds bare ground. That was the defect at 2.2x: the
-    ground plane got bigger (see FRAME_SCALE_ENV above), the buildings and driveways already
-    reached 130 m so they filled it, and the STREET stopped dead at the modelled legs' 52 m -
-    a road cross floating on grass with sharply cut ends.
+    The frame scale widens what the camera takes in; it must widen what there IS to take in by
+    the same factor, or a zoom-out just adds bare ground around a street with sharply cut ends.
 
-    Scaled off the base radius rather than off the frame's own radius on purpose. The frame is
-    measured FROM the model, and the context is fetched to BUILD the model, so reading one from
-    the other is circular. A flat multiple of the constant each layer already uses is not
-    circular, is the same factor everywhere, and at 1x returns exactly the radius that layer
-    used before - so an unscaled render pulls the identical context it always did.
+    Scaled off the base radius rather than off the frame's own radius on purpose: the frame is
+    measured FROM the model and the context is fetched to BUILD the model, so reading one from
+    the other is circular. A flat multiple of the constant each layer already uses is not, and at
+    1x returns exactly the radius that layer used before, so an unscaled render is unchanged.
     """
     return base_m * frame_scale()
 
@@ -96,20 +77,16 @@ def frame_covering_radius_m(model, base_m: float) -> float:
     """Enough to cover the FRAME, for a layer whose extent is radial rather than along a street.
 
     THE DIFFERENCE FROM context_radius_m, which is easy to get wrong and expensive when you do.
-    That one multiplies a base radius by the frame scale, which is right for a layer that follows
-    the street: kerbs and roads run along a leg, so a wider frame needs more of their length and
-    the scale is the honest multiplier.
+    That one multiplies a base radius by the frame scale, right for a layer that follows the
+    street: kerbs and roads run along a leg, so a wider frame needs more of their length.
 
-    Buildings and crossings are not like that. They fill the picture, and the picture is a circle of
-    known radius - so what they need is the frame's own radius, not the base times the zoom. Those
-    two diverge fast: at Broad & Greenwood at 2.5x the frame reaches 131.4 m while
-    context_radius_m(130) asks for 325 m, which fetched 352 buildings instead of the 80 in shot and
-    made a single 3D render take 85 minutes instead of 13. Over-fetching is not free here, because
-    every building is meshed and decimated.
+    Buildings and crossings instead fill the picture, and the picture is a circle of known radius,
+    so what they need is the frame's own radius rather than base times zoom. The two diverge fast
+    - at Broad & Greenwood at 2.5x the frame reaches 131.4 m while context_radius_m(130) asks for
+    325 m - and over-fetching is not free, because every building is meshed and decimated.
 
-    Still floored at `base_m`, so at 1x this returns exactly the radius each layer used before and no
-    existing render moves. The 10% margin covers the difference between a circular fetch and the
-    square-ish ground the camera actually sees.
+    Floored at `base_m`, so at 1x no existing render moves. The 10% margin covers the difference
+    between a circular fetch and the square-ish ground the camera actually sees.
     """
     return max(base_m, junction_frame(model).radius_ft * FT_TO_M * 1.1)
 
@@ -140,19 +117,16 @@ class Frame:
 def leg_reach_ft(model) -> float:
     """How far from the junction the SURVEYED street extends, along its longest leg.
 
-    The site's configured working length, not the built centerline, once the frame scale began
-    carrying the legs out with it (src/geometry/intersection/). Otherwise the two compound:
-    longer legs make a longer pavement ring, this measures the ring, the radius is multiplied by
-    the scale a second time, and a 2.2x frame comes out 4.8x. Measuring against the surveyed
-    length keeps the radius exactly what it has always been at 1x and a clean multiple of it
-    above - the legs then fill the frame instead of ending a third of the way across it.
+    The site's configured working length, not the built centerline, because the frame scale also
+    carries the legs out (src/geometry/intersection/) and the two would compound: longer legs make
+    a longer pavement ring, this measures the ring, and the scale multiplies a second time, so a
+    2.2x frame comes out 4.8x.
 
-    Measured by TRUNCATING each centerline to its surveyed length and taking the far end of
-    that, rather than by reading the configured number straight off. The two are not the same:
-    a centerline does not start exactly at the junction node and is not always straight, so
-    w_broad_louellen's 130 ft leg reaches 136.4 ft. Taking the number would have moved that
-    site's frame at 1x, and a frame that shifts is the one thing this module exists to stop.
-    Truncating reproduces the old value exactly wherever the scale is 1.
+    Measured by TRUNCATING each centerline to its surveyed length and taking the far end, not by
+    reading the configured number off directly. The two differ - a centerline does not start
+    exactly at the junction node and is not always straight, so w_broad_louellen's 130 ft leg
+    reaches 136.4 ft - and truncating reproduces the pre-scale value exactly at 1x, where taking
+    the number would shift that site's frame.
 
     Falls back to the built centerline for a model with no configured lengths recorded, which is
     every synthetic model in the tests.

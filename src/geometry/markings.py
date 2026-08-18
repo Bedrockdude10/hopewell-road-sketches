@@ -1,17 +1,7 @@
 """Every kind of marking this project paints, and every channel a renderer reads, declared once.
 
-A marking used to be a bare string. That string was a key into three tables in three modules -
-`plan_view.PAINT_STYLE` (how the 2D view draws it), `export.PAINT_KIND_LISTS` (which JSON list
-the 3D render finds it in) and `plan_view.PAINT_FILL_EDGE` (what colour outlines it) - plus
-`kind == "bollard"` and `kind.startswith("daylight")` branches in the invariants. Nothing tied
-the four together, so adding a marking meant remembering four edits in four files, and
-forgetting one produced a treatment that was built correctly, drawn in one view and silently
-missing from the other. That happened three times: renaming `buffer_taper_*` to
-`daylight_taper_*` orphaned the taper, `daylight_fill` was never wired up, and the bike lane's
-bollards reached the plan view and nothing else.
-
-So the declarations live here, and the relationship between them is checked when this module is
-imported rather than by a test that has to remember to look:
+The declarations live here and their relationships are checked at import, not by a test that has
+to remember to look:
 
   * a marking's ROLE says what it is - a line, a hatched area, a drivable surface, an object -
     and every renderer decides how to draw it from that instead of from its name;
@@ -37,12 +27,10 @@ class Role(Enum):
              hatch pattern with an outline in the plan view.
     SURFACE  ground that is built rather than painted - a mountable apron. Extruded in 3D.
     COLOUR   carriageway painted a solid colour rather than striped: a green bike lane. Distinct
-             from FILL, which is hatching and reaches the 3D render as the diagonal strokes that
-             are actually applied - a green lane has no strokes, it is the asphalt's colour, so
-             it travels as its polygon and is drawn as one. Distinct from SURFACE too, and that
-             distinction is load-bearing rather than pedantic: a SURFACE is built ground that
-             every marking is cut around (PaintContext.seal_surfaces), and colouring a bike lane
-             must not cut the lane's own edge lines out of existence.
+             from FILL because it has no strokes - it travels as its polygon. Distinct from
+             SURFACE because a SURFACE is built ground that every marking is cut around
+             (PaintContext.seal_surfaces), and colouring a bike lane must not cut the lane's own
+             edge lines out of existence.
     OBJECT   a physical thing standing on the road - a flex post. The 3D render builds objects
              only from props, so an OBJECT marking is the plan view's copy of something that
              must ALSO exist as a prop; check_bollards_are_props enforces exactly that.
@@ -90,15 +78,13 @@ class PaintKind:
     @property
     def is_fill(self) -> bool:
         """Hatched paint. NOT the same question as "is this a polygon" - a bollard is stored as
-        a degenerate polygon standing in for a point, which is why the invariants used to carry
-        `and p.kind != "bollard"` everywhere they asked about polygons."""
+        a degenerate polygon standing in for a point."""
         return self.role is Role.FILL
 
     @property
     def covers_area(self) -> bool:
         """Occupies ground rather than tracing a line: a hatched zone, a built surface, or a
-        coloured stretch of carriageway. What MarkingsDoNotCollide compares, so a green bike
-        lane laid over a hatched buffer would be reported the way any doubled paint is."""
+        coloured stretch of carriageway. What MarkingsDoNotCollide compares."""
         return self.role in (Role.FILL, Role.SURFACE, Role.COLOUR)
 
     @property
@@ -121,33 +107,21 @@ PARKING_STALL_DIVIDER_LINES = Channel("parking_stall_divider_lines", Role.LINE)
 PARKING_BUFFER_HATCH_LINES = Channel("parking_buffer_hatch_lines", Role.FILL)
 PARKING_BUFFER_EDGE_LINES = Channel("parking_buffer_edge_lines", Role.LINE)
 # Empty today, and deliberately kept: a curved line needs Blender's add_paint_polyline rather
-# than add_paint_line, so tapers travel in their own channel. Daylight zones went square-ended
-# (a keep-clear block has no taper) and nothing else needs it yet, but blender_scene.py reads
-# the key and a lane-narrowing taper could be routed here.
+# than add_paint_line, so tapers travel in their own channel. blender_scene.py reads the key.
 PARKING_BUFFER_TAPER_LINES = Channel("parking_buffer_taper_lines", Role.LINE)
 BIKE_LANE_EDGE_LINES = Channel("bike_lane_edge_lines", Role.LINE)
 BIKE_LANE_HATCH_LINES = Channel("bike_lane_hatch_lines", Role.FILL)
-# The lane's own asphalt, painted green. This used to be plan-view-only - the note here read
-# "nothing in scripts/blender/ paints a coloured surface yet", so the 3D render showed the
-# striping alone and the two views disagreed about what the proposal looked like. It is a real
-# treatment and a widely used one, so it now travels to the render as the polygon it is.
+# The lane's own asphalt, painted green. Travels to the render as the polygon it is, so both
+# views agree about what the proposal looks like.
 BIKE_LANE_SURFACE_POLYGONS = Channel("bike_lane_surface_polygons", Role.COLOUR)
 # The YELLOW centre stripe of a two-way bike lane, separating opposing riders. Its own channel
-# rather than more BIKE_LANE_EDGE_LINES, because the channel is what decides the colour at the
-# far end: blender_scene.py draws every edge-line channel in the white marking material, and a
-# yellow line is not a white line that happens to be somewhere else. It is the same distinction
-# the road's own centreline gets, for the same reason - yellow means opposing directions.
+# rather than more BIKE_LANE_EDGE_LINES, because the channel decides the colour at the far end:
+# blender_scene.py draws every edge-line channel in the white marking material.
 BIKE_LANE_CONTRAFLOW_LINES = Channel("bike_lane_contraflow_lines", Role.LINE)
 # The BIKE LANE symbol (MUTCD Fig 9E-1). A COLOUR channel and not a LINE one, because a symbol is
-# a painted AREA - it reaches the render as its footprint and is drawn as one, the same way the
-# green lane surface is. That also means it needs no new handling in scripts/blender/: the
-# coloured-polygon path already exists, which matters because that seam has no automated test.
-#
-# WHAT THE FOOTPRINT IS, stated because a drawing may not overclaim: a schematic arrow, not a
-# drawn bicycle. This pipeline positions paint; it does not draw glyph art, and a hand-traced
-# bicycle outline would be decoration carrying no more information than the arrow about WHERE the
-# marking goes and which way it faces. MUTCD Fig 9E-1 is the marking being represented and the
-# legend says so.
+# a painted AREA - it reaches the render as its footprint, reusing the coloured-polygon path.
+# The footprint is a schematic arrow, not a drawn bicycle: this pipeline positions paint, it does
+# not draw glyph art. The legend says so, so the drawing does not overclaim.
 BIKE_LANE_SYMBOL_POLYGONS = Channel("bike_lane_symbol_polygons", Role.COLOUR)
 CORNER_APRON_POLYGONS = Channel("corner_apron_polygons", Role.SURFACE)
 
@@ -213,11 +187,10 @@ ZONE_END_LINE = _kind("zone_end_line", Role.LINE, PARKING_BUFFER_EDGE_LINES)
 # An exclusive bike lane: its own edge lines, and the hatched buffer beside it.
 BIKE_LANE_EDGE_LINE = _kind("bike_lane_edge_line", Role.LINE, BIKE_LANE_EDGE_LINES)
 # The same line carried across a driveway as a dotted extension - the lane does not end at an
-# entrance, it is crossed there. Its own kind rather than more BIKE_LANE_EDGE_LINE pieces so a
-# check or a reader can tell a continuous stripe from a broken one, and because a dotted line is a
-# different instruction; it travels in the same channel, since a dash is a short stripe and both
-# renderers already draw one. The dashes are in the GEOMETRY (see paint.py:_dashes_along), not in a
-# line style, so the plan view and the 3D render cannot disagree about where the gaps fall.
+# entrance, it is crossed there. Its own kind so a check or a reader can tell a continuous stripe
+# from a broken one; same channel, since a dash is a short stripe. The dashes are in the GEOMETRY
+# (see paint.py:_dashes_along), not in a line style, so the two renderers cannot disagree about
+# where the gaps fall.
 BIKE_LANE_DOTTED_EXTENSION = _kind("bike_lane_dotted_extension", Role.LINE, BIKE_LANE_EDGE_LINES)
 BIKE_BUFFER_FILL = _kind("bike_buffer_fill", Role.FILL, BIKE_LANE_HATCH_LINES)
 # The green a bike lane's asphalt is painted, between its two edge stripes - the lane itself
@@ -246,16 +219,6 @@ KINDS: dict[str, PaintKind] = dict(_REGISTRY)
 # and every marking has exactly one answer for each of the two KINDS of event that MUTCD
 # distinguishes. Which kind a given gap is, is kerbs.OpeningSource.is_an_intersection's answer and
 # nothing else's; what the marking then does is this table's and nothing else's.
-#
-# IT WAS FOUR PLACES. Membership of ZONE_BOUNDARY_LINES decided whether a line followed its zone's
-# fillet; membership of LINES_UNBROKEN_BY_A_DRIVEWAY decided whether it was cut at a driveway at
-# all; whether a marking carried a dotted extension was decided by whether its treatment
-# remembered to call PaintContext.emit_across_opening, which only the bikeways did; and what
-# happened at the junction's own mouth was a `marked` / `straight_through` / else branch copied
-# into LaneNarrowing.paint, MarkedParking.paint and AddBikeLane.paint. Three of those four are not
-# declarations at all - they are the absence of one - and the fourth was two sets that had to be
-# read together to predict anything. A marking added today had to be remembered in four places to
-# behave, and the failure mode of forgetting was silence.
 # --------------------------------------------------------------------------------------
 
 class AtAnOpening(Enum):
@@ -300,13 +263,11 @@ class OpeningRule:
     sentence read the other way: at an intersection the running lane genuinely does end, because
     the ground beyond it is another street's.
 
-    (Cited as Section 3B.07 here until 2026-08-17, from the 2009 numbering. In the 11th edition
-    3B.07 is "White Lane Line Markings for Non-Continuing Lanes" and says nothing about any of
-    this; the counterpart to 3B.11 is 3B.09(07).)
+    (Numbering is the 11th edition. Do not "correct" this to the 2009 Section 3B.07, which is
+    "White Lane Line Markings for Non-Continuing Lanes" and says nothing about any of this.)
 
-    `why` is the clause, per row, because a table of enum values is unreviewable. Somebody
-    checking this against the manual needs to see which sentence each cell came from without
-    reading the code that applies it.
+    `why` is the clause, per row, so somebody checking this against the manual can see which
+    sentence each cell came from without reading the code that applies it.
     """
     at_a_driveway: AtAnOpening
     at_an_intersection: AtAnOpening
@@ -342,16 +303,12 @@ _ZONE = OpeningRule(
 #: (upper, lower) pairs where the upper marking is LEGITIMATELY applied on top of the lower one.
 #:
 #: check_markings_do_not_collide is blanket over every pair of area-covering markings, and it is
-#: right to be: two hatch zones over one patch means the design asserts two things about it, and
-#: that is how a hydrant's no-parking zone was found sitting entirely inside the junction's. But
-#: LAYERING is a real thing on a real street and is not that failure. A BIKE LANE symbol is
-#: painted white ON the green lane it marks - that is what the marking IS - and the two are applied
-#: once each, in order, with the white covering the green. Both renderers already draw them that
-#: way: plan_view puts the symbol at zorder 4 over the surface's 2, and the 3D export sends them
-#: in separate channels.
+#: right to be: two hatch zones over one patch means the design asserts two things about it. But
+#: LAYERING is not that failure - a BIKE LANE symbol is painted white ON the green lane it marks,
+#: and both renderers already draw it that way (plan_view zorder 4 over the surface's 2; separate
+#: export channels).
 #:
-#: Declared here rather than in checks.py because it is a fact about what these markings ARE, and
-#: the check should ask the markings rather than carry a list of its own.
+#: Declared here rather than in checks.py because it is a fact about what these markings ARE.
 MAY_LIE_ON: frozenset = frozenset()      # filled in below, once the kinds exist
 
 
@@ -469,10 +426,6 @@ def require_every_kind(table: dict, what: str, skip: tuple = (Role.OBJECT,)) -> 
     return table
 
 
-# EVERY DECLARED MARKING HAS A ROW, checked when this module is imported rather than by a test
-# that has to remember to look - the same rule, for the same reason, as the channel/role check in
-# _kind above. A marking with no row is one that will be drawn across an entrance and across an
-# intersection with nothing able to notice, which is the failure this whole table replaces.
 MAY_LIE_ON = frozenset({(BIKE_LANE_SYMBOL, BIKE_LANE_SURFACE)})
 
 
@@ -481,4 +434,6 @@ def lies_legitimately_on(a: PaintKind, b: PaintKind) -> bool:
     return (a, b) in MAY_LIE_ON or (b, a) in MAY_LIE_ON
 
 
+# Every declared marking has a row, checked at import rather than by a test that has to remember
+# to look. A marking with no row is one drawn across an entrance with nothing able to notice.
 require_every_kind(AT_AN_OPENING, "markings.AT_AN_OPENING", skip=())

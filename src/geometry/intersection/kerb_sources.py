@@ -1,9 +1,8 @@
 """Getting the TRACED KERB out of OSM and into state-plane feet.
 
-One cache, one radius, one projection - and the radius is the DRAWING's, not the fit's, which is a
-distinction this project has got wrong more than once: what a render contains is a question about
-the render, while how far out to trust a kerb for a corner-radius fit is a question about the
-fit."""
+One cache, one radius, one projection - and the radius is the DRAWING's, not the fit's. What a
+render contains is a question about the render; how far out to trust a kerb for a corner-radius
+fit is a question about the fit."""
 
 
 import numpy as np
@@ -34,12 +33,10 @@ def _runs_along_a_leg(line: LineString, legs: dict) -> bool:
     otherwise drags in neighbouring junctions' returns, which produced a nonsense 7.9-30.2 ft
     radius spread at Columbia & Princeton.
 
-    It is wrong for building the CURB LINES, which want kerb anywhere along a 130 ft leg. On a
-    130 ft leg a kerb at station 100 is 100 ft from the junction centre and was being thrown
-    away: 14 traced ways across the four junctions, at stations 76-127 and plausible kerb
-    offsets, including both sides of greenwood_ave_south from 87 ft out. Their absence was
-    invisible because curb_line_from_points EXTRAPOLATES to the working length, so the outer
-    half of those legs was drawn from a bearing instead of from the tracing that existed.
+    It is wrong for building the CURB LINES, which want kerb anywhere along a leg - a kerb at
+    station 100 of a 130 ft leg is 100 ft from the centre and fails the near test. Losing those
+    ways is INVISIBLE, because curb_line_from_points extrapolates to the working length: the
+    outer half of the leg is then drawn from a bearing instead of from tracing that existed.
     """
     for leg in legs.values():
         if leg.curb_to_curb_ft is None:
@@ -58,17 +55,14 @@ def _runs_along_a_leg(line: LineString, legs: dict) -> bool:
 def drawn_kerb_radius_ft() -> float:
     """How far out a kerb still counts as part of the PICTURE, in feet.
 
-    Every kerb that was fetched, which is the honest answer: the fetch radius already scales
-    with the frame, so this is "all the traced kerb around this junction" and not a second
-    independent idea of how much is relevant.
+    Every kerb that was fetched: the fetch radius already scales with the frame, so this is not
+    a second independent idea of how much is relevant.
 
-    Both renderers take this one number, so the set they draw is literally the same set. The
-    plan view is a square window on it and matplotlib crops what falls outside the axes; the
-    3D camera is a tilted perspective and necessarily sees further. That asymmetry is the one
-    src/render/frame.py already describes - the views share the subject and the radius, not the
-    outline of the visible region - and it is not the same thing as the two disagreeing about
-    which kerbs exist, which is what the frame radius was quietly doing when the roads ran to
-    938 ft and the kerbs stopped at 379.
+    Both renderers take this one number, so they draw the same SET. They still show different
+    regions of it - the plan view crops to its axes, the tilted 3D camera sees further - and
+    src/render/frame.py describes that asymmetry. Sharing the subject is not the same as
+    agreeing on the outline of the visible region, and neither may be left to disagree about
+    which kerbs exist.
     """
     from src.render.frame import context_radius_m
 
@@ -87,26 +81,21 @@ def kerb_lines_with_tags_ft(center_wgs84: Point, center_ft: Point, legs: dict | 
         only one of the three that is about the picture rather than about the junction. Use it
         for anything being rendered.
       * `legs` - _runs_along_a_leg: kerb anywhere along a leg, however far out, which is what a
-        curb LINE wants. 14 traced ways across the four junctions sit at stations 76-127 with
-        plausible kerb offsets and fail the near test - both sides of greenwood_ave_south from
-        ~90 ft out among them.
+        curb LINE wants. Traced ways well out along a leg fail the near test.
       * neither - the NEAR set, within KERB_NEAR_JUNCTION_FT of the junction CENTRE. The right
         test for fitting a corner RADIUS and for measuring a width: a return belonging to this
         junction is close to it, and at the fetch radius anything looser drags in the
         neighbouring junctions' returns.
 
-    The near set was the DEFAULT, and both renderers took the default, which is how a wide render
-    came to show a cross of asphalt floating on grass: 8,938 ft of kerb is traced within 600 m of
-    Broad & Greenwood - both sides of the corridor, Louellen to Princeton - and an 80 ft filter
-    meant for the radius fit threw all but the corner returns away. A test written to keep a
-    neighbouring junction out of a CIRCLE FIT was silently deciding what a drawing contains.
+    There is no default: a caller must say which question it is asking. A renderer taking the
+    near set draws a cross of asphalt floating on grass, because a filter written to keep a
+    neighbouring junction out of a CIRCLE FIT then decides what the drawing contains.
 
-    The wide set is deliberately NOT fed to the fit. Admitting those ways shifts
-    w_broad_st_southwest's measured width, that reshuffles the vertex contest at the one
-    junction with an acute Y and partial tracing, and louellen_st_west drops from two traced
-    kerbs to one - more data in, less data used. So the fit runs on the near set and
+    The wide set is deliberately NOT fed to the fit - admitting those ways reshuffles the vertex
+    contest at the acute, partly traced junction and leaves louellen_st_west with fewer usable
+    kerbs: more data in, less data used. So the fit runs on the near set, and
     _extend_curbs_with_far_tracing rebuilds the curb lines from the wide set afterwards, once
-    the widths are settled and the extra ways can only lengthen a curb, never redefine one.
+    the widths are settled and extra ways can only lengthen a curb, never redefine one.
     See tests/test_leg_frame.py.
     """
     def relevant(line):
@@ -133,25 +122,21 @@ def _projected_kerbs(center_wgs84: Point) -> list[tuple]:
     """[(LineString in feet, tags, way id)] for every traced kerb WAY near the junction.
 
     The id is carried because a marking this project BREAKS for a kerb has to be traceable to
-    the kerb that broke it - see src/geometry/kerbs.py:KerbOpening.citation. It was dropped here
-    before, and nothing read the tags either, so a caller wanting to know which way a line came
-    from had to re-fetch and re-project to find out.
+    the kerb that broke it - see src/geometry/kerbs.py:KerbOpening.citation.
 
     Lone `barrier=kerb` NODES are dropped: they carry no arc to fit and no line to draw.
     """
     from src.render.frame import context_radius_m
 
     # Scaled with the frame (see _paved_surfaces_ft for why the import is lazy). Widening this
-    # cannot disturb the fits: the near set filters to 80 ft and the wide set to a 130-170 ft
-    # leg, both far inside the unscaled 120 m, so the extra ways are candidates that every
-    # existing test then rejects. It is the DRAWING that needed them.
+    # cannot disturb the fits: both the near and the wide filter sit far inside the unscaled
+    # 120 m, so extra ways are candidates every existing test rejects. Only the DRAWING wanted them.
     try:
         kerbs = fetch_kerbs(center_wgs84, radius_m=context_radius_m(KERB_CONTEXT_RADIUS_M))
     except RuntimeError as e:
-        # An outage must not look like "nothing is mapped here". Returning [] silently
-        # would drop the traced kerbs, and with them the measured widths, the per-corner
-        # radii and every tactile pad - producing a confident-looking render built on
-        # absent data. Overpass mirrors are flaky enough that this happens in practice.
+        # An outage must not look like "nothing is mapped here": returning [] drops the widths,
+        # the per-corner radii and every tactile pad, and the render looks finished. Overpass
+        # mirrors are flaky enough that this happens in practice.
         raise OSMDataUnavailableError(
             f"could not fetch OSM kerbs for this junction ({e}). Refusing to build geometry: "
             "without them the widths, corner radii and tactile paving would silently fall back "
@@ -177,15 +162,12 @@ def _projected_kerbs(center_wgs84: Point) -> list[tuple]:
 def _kerb_lines_ft(center_wgs84: Point, center_ft: Point) -> list[LineString]:
     """Traced OSM kerb ways near this junction, in state-plane feet.
 
-    Only kerbs within KERB_NEAR_JUNCTION_FT of the centre are kept. The fetch radius has
-    to be generous enough to catch a whole corner return, but at 120 m it also pulls in
-    kerbs belonging to NEIGHBOURING junctions - and those were being assigned to this
-    junction's corners, producing a nonsense 7.9-30.2 ft spread at Columbia & Princeton.
-    A corner return sits within a few tens of feet of the junction it belongs to.
+    The near set of kerb_lines_with_tags_ft without the tags - routed through it rather than
+    repeating its fetch-and-project loop, so an outage still raises OSMDataUnavailableError.
 
-    The near set of kerb_lines_with_tags_ft without the tags. It used to be a second copy of
-    that function's fetch-and-project loop, which meant an Overpass outage reached this one
-    first and came out as a bare RuntimeError rather than the OSMDataUnavailableError written
-    to explain it.
+    Only kerbs within KERB_NEAR_JUNCTION_FT of the centre are kept: the fetch radius has to be
+    generous enough to catch a whole corner return, but at 120 m it also pulls in NEIGHBOURING
+    junctions' returns, which get assigned to this junction's corners and scatter the fitted
+    radius. A corner return sits within a few tens of feet of the junction it belongs to.
     """
     return [line for line, *_ in kerb_lines_with_tags_ft(center_wgs84, center_ft)]

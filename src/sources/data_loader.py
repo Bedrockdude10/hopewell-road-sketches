@@ -42,10 +42,8 @@ OVERPASS_MIRRORS = [
     "https://overpass.openstreetmap.ru/api/interpreter",
 ]
 
-# Nominatim geocodes a single street name to an arbitrary point along it (often
-# a street midpoint), not to a cross-street intersection - "East Broad Street,
-# Hopewell, NJ" lands ~900 ft from the actual Broad St/Greenwood Ave corner.
-# Intersection sanity threshold, in degrees (~0.0007 deg ~= 230 ft at this latitude).
+# Nominatim geocodes a single street name to an arbitrary point along it, not to a
+# cross-street intersection. This threshold catches the gap (~230 ft at this latitude).
 INTERSECTION_MATCH_TOLERANCE_DEG = 0.0007
 
 
@@ -56,24 +54,15 @@ _pinned_mirror: list[str] = []
 # is not there.
 CONNECT_TIMEOUT_S = 5
 
-# Mirrors that have already failed their whole retry budget this run. Without this, every
-# subsequent layer pays the same dead mirror's timeouts again - six layers x four sites was
-# a 30+ minute stall against one unreachable host.
+# Mirrors that have already failed their whole retry budget this run.
 _dead_mirrors: set[str] = set()
 
 
 def query_overpass(query: str, attempts_per_mirror: int = 4, timeout: int = 30) -> dict:
     """POST an Overpass QL query, retrying across mirrors on timeout/5xx errors.
 
-    Once a mirror answers, it is PINNED for the rest of the process. Mirrors replicate
-    OSM edits at different rates, so failing over mid-run mixes replication states: during
-    one editing session this produced 4 tactile pads then 0 at the same junction on
-    consecutive fetches, and 0 then 3 at another. Pinning makes a run internally
-    consistent - every fetch sees the same snapshot - and the mirror is printed so a
-    surprising result can be attributed rather than puzzled over.
-
-    Retries are per-mirror before failover, so a briefly slow primary doesn't silently
-    demote the whole run to a staler replica.
+    Once a mirror answers, it is PINNED for the rest of the process, so every fetch sees
+    the same snapshot. Retries are per-mirror before failover.
     """
     if os.environ.get("HOPEWELL_OFFLINE"):
         # The test suite runs against a committed fixture cache. If something reaches this
@@ -132,26 +121,15 @@ def approximate_geocode(query: str) -> Point:
 
 
 def geocode_intersection(street1: str, street2: str, anchor_query: str, search_radius_m: float = 1000) -> Point:
-    """
-    Resolve the real intersection point of two named streets by querying OSM/Overpass
-    for way geometry within a search bbox and locating the node the two streets share.
+    """Resolve the real intersection point of two named streets by querying OSM/Overpass
+    for way geometry and locating the node the two streets share.
 
-    This is more precise than address-string geocoding: street geocoders return a
-    single point along the street (often its midpoint), not the cross-street corner.
-    `anchor_query` is only used to center a search bbox via Nominatim.
+    More precise than address-string geocoding: street geocoders return a single point along
+    the street, not the cross-street corner. `anchor_query` centers a search bbox via
+    Nominatim. Matching is on ANY shared node, not just shared way endpoints - a way only
+    ends at a junction when OSM happens to split it there.
 
-    Matching is on ANY shared node, not just shared way *endpoints*. A way only ends
-    at a junction when OSM happens to split it there (as it does at Broad/Greenwood,
-    where four ways meet); where the cross street runs through, or where OSM has
-    drawn the through road as one continuous way, the junction node is interior to
-    at least one of the ways and an endpoint-only match finds nothing. E Broad St &
-    Princeton Ave and Columbia Ave & Princeton Ave both fail that way - the nearest
-    pair of endpoints there is ~893 ft / ~1264 ft apart, at unrelated junctions.
-
-    Where the two streets share several nodes (a divided road, a dual-carriageway
-    pair, or a street that meets the same cross street twice), the shared node
-    nearest the anchor is returned; pass a tighter `anchor_query`/`search_radius_m`,
-    or set center_wgs84 by hand, if that isn't the junction you meant.
+    Where several nodes are shared, the one nearest the anchor is returned.
     """
     anchor = approximate_geocode(anchor_query)
     west, south, east, north = buffer_point_wgs84(anchor, search_radius_m)
@@ -229,11 +207,8 @@ def _resolve_indexed_path(path: Path | str) -> Path:
     """Return an indexed sibling of `path` (same stem, .fgb/.gpkg) if one exists and
     is at least as new as `path`, else `path` unchanged.
 
-    This is a pure format/index swap, NOT a data substitution: the converter writes
-    every feature and attribute through untouched, and the loaded result is verified
-    WKB-identical to reading the original (see scripts/convert_road_network.py, which
-    checks exactly that). A stale sibling - older than the source it was built from -
-    is ignored rather than silently preferred.
+    Pure format/index swap: the converter writes every feature and attribute through
+    untouched. A stale sibling - older than the source - is ignored.
     """
     path = Path(path)
     if path.suffix.lower() in INDEXED_SUFFIXES:
@@ -256,13 +231,9 @@ def _resolve_indexed_path(path: Path | str) -> Path:
 def _unpack_single_part(geometry):
     """Collapse single-part Multi* geometries back to their simple counterpart.
 
-    FlatGeobuf and GeoPackage both store one geometry type per layer, so writing a
-    mixed LineString/MultiLineString layer promotes EVERYTHING to MultiLineString.
-    Downstream code takes leg centerlines as simple LineStrings
-    (src/geometry/model/crs.py:split_leg_centerlines uses .coords, which a
-    MultiLineString doesn't have), so undo the promotion on read. Genuinely
-    multi-part geometries are left alone - in NJDOT's statewide layer exactly 2 of
-    105,838 features are real 2-part MultiLineStrings, and they stay that way.
+    Indexed formats store one geometry type per layer, so a mixed LineString/MultiLineString
+    layer promotes everything to MultiLineString. Genuinely multi-part geometries are left
+    alone.
     """
     if isinstance(geometry, (MultiLineString, MultiPolygon)) and len(geometry.geoms) == 1:
         return geometry.geoms[0]
@@ -305,8 +276,8 @@ def load_parcels_near(
     center_wgs84: Point, radius_ft: float, path: Path | str = DEFAULT_PARCELS_PATH
 ) -> gpd.GeoDataFrame:
     """Load parcels within a square bbox (radius_ft) of a WGS84 point, reprojected
-    to NJ State Plane. Full parcel polygons are kept (not circle-clipped) since
-    partial lot fragments aren't meaningful for establishing ROW boundaries."""
+    to NJ State Plane. Full parcel polygons are kept, not circle-clipped.
+    """
     center_ft = gpd.GeoSeries([center_wgs84], crs=WGS84).to_crs(NJ_STATE_PLANE_FT).iloc[0]
     bbox_geom = box(center_ft.x - radius_ft, center_ft.y - radius_ft, center_ft.x + radius_ft, center_ft.y + radius_ft)
     # Passing a CRS-tagged GeoSeries (rather than a plain tuple) lets pyogrio resolve

@@ -31,29 +31,18 @@ KERB_PLAUSIBLE_HALF_WIDTH_FT = (8.0, 45.0)  # a kerb this far off a centerline i
 def _widths_from_traced_kerbs(legs: dict, kerb_lines: list, legs_cfg: dict) -> dict:
     """First-pass leg half-widths from traced OSM kerbs: nearest approach, doubled.
 
-    A corner return is TANGENT to its leg's curb line, so the closest approach of a traced
-    kerb to a leg centerline is that leg's half-width. (Away from the tangent point the
-    return curves off around the corner, so the measurement is an upper bound - the real
-    curb is at most this far out, never further.)
+    A corner return is TANGENT to its leg's curb line, so a kerb's closest approach to the
+    centerline is an UPPER BOUND on that leg's half-width. That one-sidedness is what makes
+    it safe: it may only narrow a leg, never widen one, and never against a field
+    measurement (src/provenance.py), though a conflict is reported.
 
-    That one-sidedness is what makes it safe to apply: a traced kerb closer to the
-    centerline than our modelled curb PROVES the modelled road is too wide. It is only
-    used to narrow a leg, never to widen one, and never against a field measurement -
-    those win outright (src/provenance.py), though a conflict is reported.
-
-    WHY THIS IS ONLY A FIRST PASS. Doubling one side's distance assumes the centerline sits
-    midway between the two kerbs, and NJDOT's route alignment frequently does not - it is
-    10.4 ft off centre on w_broad_st_northeast, where CR 518 turns onto Louellen and the
-    alignment cuts the corner. Doubling the NEAR kerb there gives 30.3 ft for a street the
-    two traced kerbs measure at 35.6. Every leg at every site came out too narrow this way,
-    by 1-6 ft. _resize_and_centre_from_traced_kerbs below re-measures each leg properly
-    once both kerbs are in its frame, and that measurement governs.
-
-    What this pass is still needed for: assign_curb_points_to_legs disqualifies a traced
-    vertex whose |offset| / half-width falls outside CURB_POINT_MIN/MAX_WIDTH_RATIO, so a
-    badly wrong configured width (w_broad_st_southwest's 50 ft parcel-gap estimate) throws
-    away the very kerbs the second pass needs. This gets the width close enough to collect
-    them, and nothing else depends on its result.
+    Only a first pass, because doubling one side assumes the alignment runs down the middle
+    and NJDOT's route alignment often does not (10.4 ft off centre on w_broad_st_northeast).
+    Every leg came out 1-6 ft too narrow this way. _resize_and_centre_from_traced_kerbs
+    re-measures properly once both kerbs are in the leg's frame, and that measurement
+    governs. This pass exists only to get the width close enough that
+    assign_curb_points_to_legs' ratio window does not discard the kerbs the second pass
+    needs; nothing else depends on its result.
     """
     from src.provenance import field_measurement_governs_corner
 
@@ -81,60 +70,47 @@ def _widths_from_traced_kerbs(legs: dict, kerb_lines: list, legs_cfg: dict) -> d
     return updates
 
 
-# How far outside its assumed half-width the SEEDING assignment will still claim a traced
-# vertex. Deliberately loose: that pass is collecting the kerbs the widths will be measured
-# FROM, so it must not throw one away for disagreeing with a width nobody has measured yet.
-# At W Broad & Louellen the two real kerbs sit at 0.43x and 3.5x the seed half-width, and
-# the normal window (0.45-2.6) excluded one of them on every leg. Later rounds use the
-# normal window against a width that by then is a measurement.
+# Ratio window for the SEEDING assignment. Deliberately looser than the normal
+# CURB_POINT_MIN/MAX_WIDTH_RATIO window: this pass collects the kerbs the widths will be
+# measured FROM, so it must not discard one for disagreeing with a width nobody has measured
+# yet. Later rounds use the normal window against a width that by then is a measurement.
 SEED_RATIO_BOUNDS = (0.2, 5.0)
 
-# A traced kerb within this of the junction is a corner RETURN, flaring out to as much as
-# 2.3x the half-width (CURB_POINT_MAX_WIDTH_RATIO). A cross-section measured across two
-# returns is the width of the corner, not of the street, so the measurement below starts
-# beyond them. Same distance UNTRACED_CORNER_THRESHOLD_FT uses for the same reason.
+# A traced kerb within this of the junction is a corner RETURN, flaring to as much as 2.3x the
+# half-width, so a cross-section taken there measures the corner and not the street. Same
+# distance UNTRACED_CORNER_THRESHOLD_FT uses for the same reason.
 TRACED_SECTION_START_FT = 35.0
-# ...and it ENDS here, which is not the same as ending where the leg does. The window used to
-# run to the traced curb line's far end, and a curb line is drawn to the leg's working length -
-# so lengthening a leg to show more of it silently re-measured its width. Carrying
-# broad_st_east from 130 to 170 ft moved it 52.0 -> 49.9 ft, because East Broad narrows as it
-# leaves the junction and the extra 40 ft of narrower street pulled the median down. A width
-# is a fact about the approach; how far we chose to DRAW the approach is a presentation
-# choice, and a presentation choice may not move a measurement. So the cross-section is always
-# taken over the same stretch of road whatever working_length_ft says.
+# A FIXED end, deliberately not the leg's working length: a width is a fact about the approach
+# and how far we chose to DRAW the approach is a presentation choice, which may not move a
+# measurement. (Tied to working length, carrying broad_st_east 130 -> 170 ft moved its width
+# 52.0 -> 49.9 ft, because East Broad narrows as it leaves the junction.)
 TRACED_SECTION_END_FT = 130.0
 # Below this there isn't enough of a traced overlap to call it a cross-section.
 MIN_TRACED_SECTION_FT = 20.0
 TRACED_SECTION_SAMPLES = 40
-# How finely the kerbs' midpoint is sampled when the alignment is centred on it, and over how
-# long a run each sample is averaged. The centring used to be a single constant per leg, on the
-# reasoning that a striper lays a straight line - true of the line, but the thing being
-# corrected is not a stripe. NJDOT's alignment is a linear-referencing reference that BENDS
-# relative to the carriageway, and a constant cannot follow that: broad_st_east is centred to
-# 0.07 ft over the 35-130 ft the constant was measured across and 4.28 ft off 290 ft out, where
-# an 11 ft lane measured from it left 4.6 ft of kerb on one side and 13.0 ft on the other. The
-# smoothing window is what keeps the result something a striper would lay - it follows the
-# street's bend and not every wobble in the tracing.
+# Sampling interval and smoothing window for centring the alignment on the kerbs' midpoint.
+# NJDOT's alignment BENDS relative to the carriageway, so the correction has to vary along the
+# leg; a single constant is centred to 0.07 ft over the window it was measured across and
+# 4.28 ft off 290 ft out. The smoothing window keeps the result something a striper would lay:
+# it follows the street's bend, not every wobble in the tracing.
 CENTRE_SAMPLE_FT = 10.0
 CENTRE_SMOOTH_FT = 60.0
 # No two vertices of a corrected alignment closer than this - see _thinned.
 MIN_CENTRE_VERTEX_GAP_FT = 2.5
 # Over how far each half of a through street eases from the shared junction tangent back onto
 # its own measured centre, and how finely that easing is sampled - see _join_through_legs.
-# 60 ft is about the run over which a striper actually swings a centreline through a bend:
-# much shorter reads as a kink again, much longer starts overriding the measurement it is
-# meant to be blending into.
+# 60 ft is about the run over which a striper swings a centreline through a bend: shorter
+# reads as a kink, longer starts overriding the measurement it is blending into.
 THROUGH_JOIN_BLEND_FT = 60.0
 THROUGH_JOIN_SAMPLE_FT = 5.0
-# How much the kerbs' midpoint may wander before a single CONSTANT stops describing it. Only
-# the constant inside the fit is bounded by this now - past it the fit leaves the alignment
-# alone and the final profile pass does the centring instead.
+# How much the kerbs' midpoint may wander before a single CONSTANT stops describing it. Past
+# this the fit leaves the alignment alone and the final profile pass does the centring.
 MAX_CENTRE_SPREAD_FT = 5.0
 # A sanity bound on the correction. Past this the two "kerbs" are more likely to be one
 # street's kerb and a neighbouring one's than the two sides of this leg.
 MAX_CENTRE_SHIFT_FT = 15.0
-# What counts as a real change between two rounds of the fit below, as opposed to the
-# geometry jittering on the last decimal place and the loop never terminating.
+# What counts as a real change between two rounds of the fit, as opposed to the geometry
+# jittering on the last decimal place and the loop never terminating.
 MATERIAL_WIDTH_CHANGE_FT = 0.25
 MATERIAL_SHIFT_FT = 0.1
 MAX_FIT_ITERATIONS = 6
@@ -143,12 +119,11 @@ MAX_FIT_ITERATIONS = 6
 def _traced_cross_section(leg) -> tuple[np.ndarray, np.ndarray] | None:
     """(width, centre-offset) sampled along the run where BOTH of a leg's kerbs are traced.
 
-    Both kerbs are read at the SAME centerline station, so the width there is left minus
-    right and the centre is their midpoint. Neither quantity needs the alignment to be
-    centred, or the street to be symmetrical, or the tracing to have started at the same
-    place on the two sides - which is what makes this a measurement rather than a guess.
-    Returns None unless both sides are traced: with one kerb there is no cross-section,
-    only a distance to one edge.
+    Both kerbs are read at the SAME station, so the width is left minus right and the centre
+    is their midpoint. Neither needs the alignment to be centred, the street to be
+    symmetrical, or the two sides to have been traced over the same run - which is what makes
+    this a measurement rather than a guess. Returns None unless both sides are traced: with
+    one kerb there is no cross-section, only a distance to one edge.
     """
     if not {"left", "right"} <= leg.traced_sides:
         return None
@@ -171,8 +146,8 @@ def _smoothed(values: np.ndarray, sample_ft: float, window_ft: float) -> np.ndar
     """A centred moving average over `window_ft`, with the ends held rather than tapered.
 
     Edge-padded, so the first and last samples average the run they can see instead of being
-    dragged toward zero by absent neighbours - the ends are exactly where the correction is
-    least forgiving, since the junction end sets where station 0 sits.
+    dragged toward zero by absent neighbours - and the junction end, where the correction is
+    least forgiving, is one of them.
     """
     width = int(round(window_ft / sample_ft))
     width = min(max(width | 1, 1), len(values))     # odd, so the average is centred
@@ -187,15 +162,13 @@ def _thinned(stations: np.ndarray, gap_ft: float) -> np.ndarray:
 
     Two vertices a couple of inches apart are a hazard, not extra fidelity: the lateral
     correction at each is placed independently (place_in_measured_frame corrects per point),
-    so a hundredth of a foot of difference between them turns a 0.17 ft segment into a 34
-    degree turn - which is what louellen_st_west's alignment did, and a turn that sharp makes
-    the offset frame meaningless for every marking measured across it.
+    so a hundredth of a foot between them turns a 0.17 ft segment into a 34 degree turn, and a
+    turn that sharp makes the offset frame meaningless for every marking measured across it.
 
-    The alignment's own vertices are thinned along with the grid rather than held back as
-    required points. Keeping every one of them reshapes the corrected line enough that the
-    kerb-vertex claim window shifts underneath it and one to three surveyed vertices at each
-    of two junctions stop being claimable by any leg - tracing thrown away to protect a vertex
-    that carries no measurement of its own.
+    The alignment's own vertices are thinned along with the grid, not held back as required
+    points: keeping all of them reshapes the corrected line enough that the kerb-vertex claim
+    window shifts and surveyed vertices stop being claimable by any leg - tracing thrown away
+    to protect a vertex that carries no measurement of its own.
     """
     kept = [float(stations[0])]
     for station in stations[1:-1]:
@@ -211,24 +184,19 @@ def _thinned(stations: np.ndarray, gap_ft: float) -> np.ndarray:
 def _traced_centre_profile(leg) -> tuple[np.ndarray, np.ndarray] | None:
     """Where the kerbs' midpoint sits relative to the alignment, STATION BY STATION.
 
-    _traced_cross_section answers the same question for the width, over the 35-130 ft window
-    a width is a fact about (TRACED_SECTION_END_FT). The centre cannot borrow that window: a
-    width describes the approach and is reported as one number, while the centre positions
-    every offset in the proposal at every station of a leg that is DRAWN three times as far.
-    Measured over the window and applied beyond it, it stops being a measurement of the road
-    it is drawing - which is the whole defect this returns a profile to fix.
+    Unlike the width, this is not capped at TRACED_SECTION_END_FT: a width is one reported
+    number about the approach, while the centre positions every offset in the proposal at
+    every station of a leg drawn three times as far, so it runs to the end of the tracing.
 
-    Still MEASURED from TRACED_SECTION_START_FT out: nearer than that the kerbs are corner
-    returns flaring to the cross street, and their midpoint is a fact about the junction mouth
-    rather than the street. Outside the measured run the correction holds the nearest value it
-    has, so it is flat exactly where it has nothing to measure.
+    Still MEASURED from TRACED_SECTION_START_FT out - nearer than that the kerbs are corner
+    returns and their midpoint is a fact about the junction mouth, not the street. Outside the
+    measured run the correction holds its nearest value, flat where it has nothing to measure.
 
-    But the grid it is RETURNED on spans the whole centerline, including the original's own
-    vertices, and that is not a detail. The correction is a lateral shift applied to this
-    alignment, so the alignment can only survive it where there is a vertex to carry its
-    shape: returning the correction on the measured run alone replaced everything inboard of
-    station 35 with one straight chord, which cut the corner NJDOT rounds ~43 ft out and put
-    w_broad_st_northeast's lane edge line 0.16 ft into the travel lane at station 11.
+    The grid it is RETURNED on spans the WHOLE centerline including the original's own
+    vertices, which is not a detail: the correction is a lateral shift per vertex, so the
+    alignment only survives it where there is a vertex to carry its shape. Returned on the
+    measured run alone, everything inboard of station 35 became one straight chord that cut
+    the corner NJDOT rounds ~43 ft out.
     """
     if not {"left", "right"} <= leg.traced_sides:
         return None
@@ -246,12 +214,10 @@ def _traced_centre_profile(leg) -> tuple[np.ndarray, np.ndarray] | None:
     if left is None or right is None:
         return None
 
-    # Extended to the full leg BEFORE smoothing, not after. Smoothing the measured run alone
-    # and then holding its first value flat inboard leaves a corner in the correction where
-    # the two meet, and a corner in the correction is a kink in the alignment: 1.74 deg at
-    # station 35 on w_broad_st_northeast, which at an 11.4 ft offset throws the frame by
-    # 0.17 ft and put the lane edge line inside the travel lane. Smoothed across the join,
-    # the correction eases into the flat section instead.
+    # Extended to the full leg BEFORE smoothing, not after: smoothing the measured run alone
+    # and then holding its first value flat inboard leaves a corner in the correction, and a
+    # corner in the correction is a kink in the alignment. Smoothed across the join, the
+    # correction eases into the flat section instead.
     total = leg.centerline.length
     grid = np.append(np.arange(0.0, total, CENTRE_SAMPLE_FT), total)
     centres = _smoothed(np.interp(grid, measured, (left + right) / 2),
@@ -267,16 +233,13 @@ def _traced_centre_profile(leg) -> tuple[np.ndarray, np.ndarray] | None:
 def _resize_from_one_traced_kerb(legs: dict, name: str, legs_cfg: dict, quiet: bool) -> bool:
     """Width for a leg with only ONE kerb traced: that kerb's distance out, doubled.
 
-    This is a guess and is labelled as one, because there is no way to make it a
-    measurement - the other edge of the street was never mapped. It assumes the alignment
-    runs down the middle, which the legs that DO have both kerbs traced show is wrong by
-    0.2-10.3 ft. No leg at any of the four junctions needs it today; all twelve sides are
-    traced. It is here for the next site, and it says so loudly in the phase output rather
-    than presenting a doubled half-width as though it were a cross-section.
+    A guess, labelled as one in the phase output, because the other edge of the street was
+    never mapped. It assumes the alignment runs down the middle, which the legs that DO have
+    both kerbs traced show is wrong by 0.2-10.3 ft. No leg at the four junctions needs it
+    today - all twelve sides are traced - so it is here for the next site.
 
-    Better than the nearest-approach figure it replaces only in that it uses the MEDIAN
-    offset along the street rather than the single closest vertex, which lands on the
-    tightest point of a corner return and biases every such leg narrow.
+    Uses the MEDIAN offset along the street rather than the single closest vertex, which
+    lands on the tightest point of a corner return and biases every such leg narrow.
     """
     from src.provenance import field_measurement_governs_corner
 
@@ -309,24 +272,15 @@ def _resize_from_one_traced_kerb(legs: dict, name: str, legs_cfg: dict, quiet: b
 def _resize_and_centre_from_traced_kerbs(legs: dict, legs_cfg: dict, quiet: bool = False) -> bool:
     """Take each leg's width and its working centerline from its two traced kerbs.
 
-    This is the measurement _widths_from_traced_kerbs could only approximate, and it
-    replaces two separate approximations that were both wrong in the same direction:
+    The measurement _widths_from_traced_kerbs could only approximate. An SRI line is a
+    linear-referencing alignment, not a surveyed carriageway centre (see _snap_to_center), and
+    every width in a proposal is an offset from it, so off centre the paint comes out
+    symmetrical about the wrong line.
 
-      WIDTH. Doubling the nearer kerb's distance understates any leg whose alignment is off
-      centre, which is all of them. Measured properly: greenwood_ave_south 25.1 -> 31.2,
-      columbia_ave_west 21.8 -> 26.4, w_broad_st_northeast 30.3 -> 35.6. The last one is why
-      W Broad at Louellen rendered as a road too narrow to hold the lanes drawn on it, and
-      columbia_ave_west is why that leg looked like it had no room for a shoulder.
-
-      CENTRE. An SRI line is a linear-referencing alignment, not a surveyed carriageway
-      centre (see _snap_to_center), and every width in a proposal is an offset from it. Off
-      centre, the paint comes out symmetrical about the wrong line and the drawing looks
-      wrong even where it measures right.
-
-    The shift here is a single constant per leg, measured over the 35-130 ft window, and it
-    stays one because the fit's vertex assignment reads the frame this moves - see
-    _centre_legs_on_traced_kerbs, which bends the alignment onto the kerbs' midpoint over the
-    whole leg once the fit has settled and nothing is left to reassign.
+    The shift here is a single CONSTANT per leg over the 35-130 ft window, and stays one
+    because the fit's vertex assignment reads the frame this moves. _centre_legs_on_traced_kerbs
+    bends the alignment onto the midpoint over the whole leg once the fit has settled and
+    nothing is left to reassign.
 
     Mutates `legs` in place (replacing the Leg, so its derived curb lines are rebuilt) and
     returns whether anything moved materially; the caller re-reads the traced kerbs in the new
@@ -400,20 +354,17 @@ def _resize_and_centre_from_traced_kerbs(legs: dict, legs_cfg: dict, quiet: bool
 def _centre_legs_on_traced_kerbs(legs: dict, quiet: bool = False) -> None:
     """Bend each alignment onto its kerbs' midpoint, station by station. Runs LAST.
 
-    Not inside _fit_legs_to_traced_kerbs, and that placement is the whole point. The fit
-    decides which traced vertex belongs to which leg side by judging it against the side's
-    current half-width and offset, so anything that moves the frame mid-fit changes the
-    answer - and a correction that VARIES along the leg moves it differently at every
-    station. Tried there, it did exactly what the fit's monotonicity guard was written to
-    catch: louellen_st_west fell from 42.1 ft wide to 17.5 and w_broad_st_southwest from
-    43.9 to 22.3, the same runaway that guard exists to make impossible.
+    NOT inside _fit_legs_to_traced_kerbs, and that placement is the whole point. The fit
+    assigns each traced vertex by judging it against its side's current half-width and offset,
+    so a correction that VARIES along the leg moves that frame differently at every station.
+    Tried there it triggered the runaway the fit's monotonicity guard exists to catch
+    (louellen_st_west 42.1 -> 17.5 ft wide).
 
-    Here the widths are already settled and the traced kerbs are already assigned, so this
-    can only re-express them in a better frame. THE KERBS DO NOT MOVE - they are surveyed
-    world geometry, and their station/offset is recomputed against the new alignment - so
-    there is no vertex to reassign and no width to re-measure. Only the derived curb of an
-    UNTRACED side is rebuilt, which is right: it was never anything but an offset from this
-    line.
+    Here the widths are settled and the kerbs assigned, so this can only re-express them in a
+    better frame. THE KERBS DO NOT MOVE - they are surveyed world geometry, only their
+    station/offset is recomputed - so there is no vertex to reassign and no width to
+    re-measure. Only an UNTRACED side's derived curb is rebuilt; it was never anything but an
+    offset from this line.
     """
     for name in sorted(legs):
         leg = legs[name]
@@ -452,14 +403,12 @@ def _centre_legs_on_traced_kerbs(legs: dict, quiet: bool = False) -> None:
 def _through_leg_pairs(legs: dict) -> list[tuple[str, str]]:
     """The (leg, leg) pairs that are one street running through the junction.
 
-    Each leg is matched with whichever OTHER leg points most nearly back the way it came, and
-    the pair is kept only if is_through_street agrees they are one street. Deliberately not the
-    pairing through_street_sides uses: that one walks legs in bearing order and pairs each with
-    its angular NEIGHBOUR, which is right for the question it asks - which corner has no kerb
-    in it - and useless for this one, because at a four-way junction a leg's neighbours are the
-    two cross-street legs and its opposite number is never adjacent to it. Copying it found the
-    through pair at the two T-junctions and silently found nothing at Broad & Greenwood or
-    Columbia & Princeton.
+    Each leg is matched with whichever OTHER leg points most nearly back the way it came, kept
+    only if is_through_street agrees they are one street. Deliberately NOT the pairing
+    through_street_sides uses: that walks legs in bearing order and pairs each with its angular
+    NEIGHBOUR, which is right for the question it asks and useless here, because at a four-way
+    junction a leg's opposite number is never adjacent to it (so that pairing silently finds
+    nothing at any four-way).
     """
     from src.geometry.model import leg_bearing_deg, is_through_street
 
@@ -484,7 +433,7 @@ def _near_direction(leg, reach_ft: float) -> np.ndarray:
 
     The chord over the blend, not the first segment: louellen_st_west leaves the junction on a
     15 ft stub bearing 239 deg before settling onto 269, and a tangent read off that stub
-    describes nothing but the stub.
+    describes only the stub.
     """
     start = np.asarray(leg.centerline.coords[0], dtype=float)
     ahead = np.asarray(leg.centerline.interpolate(
@@ -495,24 +444,17 @@ def _near_direction(leg, reach_ft: float) -> np.ndarray:
 def _join_through_legs(legs: dict, quiet: bool = False) -> None:
     """Make the two halves of one street meet at a point and a tangent, not at a joint.
 
-    A through street is modelled as two legs, and nothing has ever required them to agree
-    where they meet. At W Broad & Louellen they do not: the halves come off two different
-    NJDOT routes - CR 518 turns west onto Louellen, CR 654 carries on southwest - so their
-    junction ends sit 3.1 ft apart and their tangents differ by 16 deg where the traced kerbs
-    say the street bends 13. Centring each half on its own carriageway (see
-    _centre_legs_on_traced_kerbs) cannot fix that, because the disagreement is BETWEEN the
-    halves and each is individually right.
+    A through street is modelled as two legs and nothing requires them to agree where they
+    meet. At W Broad & Louellen the halves come off two different NJDOT routes (CR 518 turns
+    west onto Louellen, CR 654 carries on southwest), so their junction ends sit 3.1 ft apart
+    and their tangents differ by 16 deg where the traced kerbs say the street bends 13.
+    Centring each half on its own carriageway cannot fix that: the disagreement is BETWEEN the
+    halves and each is individually right. Drawn, it is a dog-leg at the node.
 
-    Drawn, it reads as a dog-leg at the node with the centreline paint kinking and the
-    kerbside hatching fanning off it - which is not what is on the ground, where the paint
-    runs through in one line.
-
-    So the pair is given a shared junction point (the midpoint of the two ends) and one shared
-    axis, and each half eases back onto its own measured alignment over THROUGH_JOIN_BLEND_FT.
-    The REAL bend is untouched: it is still there, spread over the blend the way a striper
-    would lay it rather than folded into one vertex. What goes away is the part that is an
-    artefact of two route lines not meeting - up to half the 3.1 ft gap near the node, falling
-    to nothing by the end of the blend.
+    So the pair gets a shared junction point (midpoint of the two ends) and one shared axis,
+    and each half eases back onto its own measured alignment over THROUGH_JOIN_BLEND_FT. The
+    REAL bend survives, spread over the blend the way a striper would lay it; only the
+    artefact of two route lines not meeting goes away.
     """
     for name_a, name_b in _through_leg_pairs(legs):
         leg_a, leg_b = legs[name_a], legs[name_b]
@@ -545,10 +487,10 @@ def _join_through_legs(legs: dict, quiet: bool = False) -> None:
 def _blend_onto(leg, joint: np.ndarray, heading: np.ndarray, blend_ft: float):
     """`leg` re-laid to start at `joint` heading `heading`, easing back to itself by blend_ft.
 
-    The correction is a lateral offset profile, so it can carry both requirements at once: its
-    VALUE at station 0 moves the end onto the shared point and its SLOPE there turns the
-    tangent onto the shared axis. A cubic Hermite with both zero at the far end returns the
-    line to its own alignment with no kink to show for it.
+    A lateral offset profile carries both requirements at once: its VALUE at station 0 moves
+    the end onto the shared point, its SLOPE there turns the tangent onto the shared axis. A
+    cubic Hermite with both zero at the far end returns the line to its own alignment with no
+    kink.
     """
     centerline = leg.centerline
     _stations0, offsets0 = station_offset_many(centerline, np.asarray([joint], dtype=float))
@@ -590,23 +532,18 @@ def _extend_curbs_with_far_tracing(legs: dict, center_wgs84: Point, center_ft: P
                                     near_coverage: dict | None = None) -> None:
     """Rebuild the curb lines once more, this time including kerb traced further out.
 
-    KERB_NEAR_JUNCTION_FT keeps the fit's input to the ways around the junction, which is
-    right for it: those are the ways a corner radius is fitted from, and at the 120 m fetch
-    radius anything looser drags in neighbouring junctions. But a curb LINE wants kerb
-    anywhere along a 130 ft leg, and 14 traced ways across the four junctions sit at stations
-    76-127 with plausible kerb offsets and were being dropped for being >80 ft from the
-    junction CENTRE - both sides of greenwood_ave_south from ~90 ft out among them. It never
-    showed, because curb_line_from_points extrapolates to the working length: the outer half
-    of those legs was drawn from a bearing while the tracing sat unused.
+    KERB_NEAR_JUNCTION_FT keeps the FIT's input to ways around the junction, which is right
+    for fitting a corner radius. But a curb LINE wants kerb anywhere along a 130 ft leg, and
+    14 traced ways across the four junctions sit at stations 76-127 and were dropped for being
+    >80 ft from the junction centre. It never showed, because curb_line_from_points
+    extrapolates to the working length - so the outer half of those legs was drawn from a
+    bearing while the tracing sat unused.
 
-    Done AFTER the fit and with no re-measurement, which is the whole point. Feeding those
-    ways to the fit itself shifts w_broad_st_southwest's measured width by half a foot, that
-    reshuffles the vertex contest at the one junction with an acute Y and partial tracing, and
-    louellen_st_west drops from two traced kerbs to one - more data in, less data used. With
-    the widths already settled the extra ways can only lengthen a curb, never redefine one.
-
-    Guarded anyway, on the same rule the fit uses: if the wider set somehow builds FEWER leg
-    sides from tracing, the narrower result stands.
+    Done AFTER the fit and with no re-measurement, which is the whole point: feeding these
+    ways to the fit itself reshuffles the vertex contest and costs traced sides (more data in,
+    less data used). With the widths settled the extra ways can only lengthen a curb, never
+    redefine one. Guarded anyway on the fit's rule: if the wider set builds FEWER traced leg
+    sides, the narrower result stands.
     """
     wide = kerb_lines_with_tags_ft(center_wgs84, center_ft, legs)
     before = _traced_side_count(legs)
@@ -622,12 +559,9 @@ def _extend_curbs_with_far_tracing(legs: dict, center_wgs84: Point, center_ft: P
               f"{before - _traced_side_count(legs)} fewer leg side(s) here - not used.")
         return
 
-    # Correct the record. The fit reported each side's coverage from the NEAR set, because that
-    # is all it was allowed to see, and those numbers are what a reader takes as "how much of
-    # this curb is real". Left uncorrected they understate it - broad_st_east's left kerb reads
-    # as traced to 76 ft when the drawing actually follows tracing to 173.7 - and a curb that
-    # looks extrapolated but isn't is the same reporting failure as one that looks traced but
-    # isn't, pointed the other way.
+    # Correct the record. The fit reported each side's coverage from the NEAR set, and those
+    # numbers are what a reader takes as "how much of this curb is real". A curb that looks
+    # extrapolated but isn't is the same reporting failure as one that looks traced but isn't.
     grew = [(name, side, was, now_far)
             for (name, side), (_near, now_far) in sorted(coverage.items())
             for was in [near_coverage.get((name, side))]
@@ -642,24 +576,21 @@ def _fit_legs_to_traced_kerbs(legs: dict, kerb_ways: list, center_ft: Point, leg
                                ) -> dict[tuple[str, str], tuple[float, float]]:
     """Iterate assignment and measurement until they agree, then report the result.
 
-    These two steps each need the other's answer. A traced vertex is assigned to the leg
-    side whose half-width it best matches (assign_curb_points_to_legs), and the width is
-    measured from the vertices assigned - so a bad starting width throws away the kerbs
-    that would have corrected it, and keeps its own error. Both failure directions showed
-    up at W Broad & Louellen: seeded too narrow, Louellen St's south kerb (155 ft of it, at
-    a steady 34 ft offset) was 3.5x the assumed half-width and got discarded, leaving the
-    leg "19 ft wide"; seeded from one shared width instead, W Broad's northeast leg lost
+    These two steps each need the other's answer: a traced vertex is assigned to the leg side
+    whose half-width it best matches (assign_curb_points_to_legs), and the width is measured
+    from the vertices assigned - so a bad starting width discards the kerbs that would have
+    corrected it and keeps its own error. Both directions failed at W Broad & Louellen:
+    seeded too narrow a leg came out "19 ft wide", seeded from one shared width another lost
     its right kerb to the leg next door and came out at 56 ft.
 
-    Iterating to a fixed point removes the dependence on where it starts. The first pass
-    judges every leg against SEED_HALF_WIDTH_FT so no plausible kerb is excluded by a width
-    nobody has measured yet; after that each leg is judged against its own current width,
-    and the loop stops as soon as a round changes nothing material. It converges in 2-3
-    rounds at all four junctions - and if some junction ever fails to settle, the cap ends
-    it and the printed widths are still the ones actually used.
+    Iterating to a fixed point removes the dependence on where it starts. The first pass uses
+    SEED_RATIO_BOUNDS so no plausible kerb is excluded by a width nobody has measured yet;
+    after that each leg is judged against its own current width, and the loop stops when a
+    round changes nothing material. Converges in 2-3 rounds at all four junctions; if one
+    never settles, the cap ends it and the printed widths are still the ones used.
 
     Returns the {(leg, side): (near_ft, far_ft)} coverage it reported, so the far-tracing pass
-    that runs next can correct those figures where it extends a curb past them.
+    can correct those figures where it extends a curb past them.
     """
     started_at = {name: leg.centerline.coords[0] for name, leg in legs.items()}
     reported: dict[tuple[str, str], tuple[float, float]] = {}
@@ -685,17 +616,12 @@ def _fit_legs_to_traced_kerbs(legs: dict, kerb_ways: list, center_ft: Point, leg
     best, best_sides = snapshot(), _traced_side_count(legs)
     for _iteration in range(MAX_FIT_ITERATIONS):
         # THE FIT MAY NEVER USE LESS GROUND TRUTH THAN IT ALREADY HAD. A width feeds the
-        # window that decides which traced vertices the NEXT round may claim, so a round can
-        # talk itself out of a kerb it was already using - and the loss compounds. At W Broad
-        # & Louellen, admitting three more (correct) kerb ways made w_broad_st_southwest
-        # measure slightly differently, louellen_st_west lost its north kerb in the reshuffle,
-        # its width was then guessed by doubling the south kerb's 40 ft offset into an 80 ft
-        # "street", and at 80 ft its own north kerb fell below CURB_POINT_MIN_WIDTH_RATIO and
-        # could never be recovered. More data in, less data used, every step defensible.
-        #
-        # So a round is provisional until it proves it kept every traced side. That makes the
-        # fit monotone in the one quantity that matters, which is what makes the runaway
-        # impossible rather than merely unlikely.
+        # window deciding which vertices the NEXT round may claim, so a round can talk itself
+        # out of a kerb it was already using, and the loss compounds: lose one side, guess the
+        # width by doubling the other, and at that wrong width the lost kerb falls below
+        # CURB_POINT_MIN_WIDTH_RATIO and can never be recovered. So a round is provisional
+        # until it proves it kept every traced side, which makes the runaway impossible rather
+        # than merely unlikely.
         changed = _resize_and_centre_from_traced_kerbs(legs, legs_cfg, quiet=True)
         apply_curbs()
         sides = _traced_side_count(legs)
@@ -712,17 +638,15 @@ def _fit_legs_to_traced_kerbs(legs: dict, kerb_ways: list, center_ft: Point, leg
         print(f"  NOTE: the width fit's last round built {lost} fewer leg side(s) from traced "
               f"kerb than its best round did. Kept the better geometry.")
 
-    # Once more out loud, on the geometry that survived - the notes above describe the
-    # scaffold, and a note about a width superseded two rounds later is worse than none. The
-    # reporting resize replaces Legs, so the kerbs are re-read after it or every leg ends up
-    # claiming no traced sides at all.
+    # Once more out loud, on the geometry that survived: a note about a width superseded two
+    # rounds later is worse than none. The reporting resize replaces Legs, so the kerbs must
+    # be re-read after it or every leg ends up claiming no traced sides at all.
     apply_curbs(quiet=False)
     _resize_and_centre_from_traced_kerbs(legs, legs_cfg)
     apply_curbs()
 
-    # The per-round shifts were reported quietly and are individually meaningless; what a
-    # reader needs is how far the working centerline ended up from the alignment NJDOT
-    # published, because every dimension in the proposal is measured off it.
+    # What a reader needs is not the per-round shifts but how far the working centerline ended
+    # up from NJDOT's published alignment, since every dimension in the proposal is off it.
     for name, leg in sorted(legs.items()):
         (x0, y0), (x1, y1) = started_at[name], leg.centerline.coords[0]
         moved_ft = float(np.hypot(x1 - x0, y1 - y0))
@@ -747,25 +671,20 @@ def _apply_traced_curb_lines(legs: dict, kerb_ways: list, center_ft: Point,
     kerb actually covers, which is what the phase output reports as "how much of this curb is
     real" and what _extend_curbs_with_far_tracing corrects where it lengthens one.
 
-    This is the last place NJDOT's alignment was still leaking into the geometry. Position
-    was fixed earlier by snapping the centerline to the OSM junction node, but the BEARING
-    stayed NJDOT's - and it measured 4-8 deg off the real street at these junctions. An
-    offset curb inherits that error and splays ~10 ft away from the true kerb over a 100 ft
-    leg, however accurate the width is. Measured on the traced runs: greenwood_ave_north's
-    offset varies 11.9 ft along 105 ft while the curb itself bends only 1.3 ft.
-
-    So where a side is traced, the traced points ARE the curb. Untraced sides keep the
-    centerline offset. Mutates `legs` in place; curb_to_curb_ft is left as the reported
-    width, which no longer drives that side's geometry.
+    Snapping fixed the alignment's POSITION at the junction node, but its BEARING stays
+    NJDOT's and measures 4-8 deg off the real street here. An offset curb inherits that and
+    splays ~10 ft from the true kerb over a 100 ft leg however accurate the width is. So where
+    a side is traced, the traced points ARE the curb; untraced sides keep the centerline
+    offset. Mutates `legs` in place; curb_to_curb_ft stays as the reported width, which no
+    longer drives that side's geometry.
 
     Every traced kerb way counts, whatever its `kerb` value. A corner return is tagged
-    kerb=lowered because it's a ramp - that is a statement about its height, not about
-    whether it is the edge of the roadway, and filtering to kerb=raised dropped whole
-    traced corners (the SW corner of Broad & Greenwood) in favour of a fitted guess.
+    kerb=lowered because it's a ramp - a statement about its height, not about whether it is
+    the edge of the roadway - and filtering to kerb=raised dropped whole traced corners.
 
-    How far to carry a curb comes from the leg's OWN centerline, not from a site-wide working
-    length: legs may be different lengths (see load_intersection_model's leg_lengths), and a
-    global would draw every curb to the longest leg's end.
+    How far to carry a curb comes from the leg's OWN centerline, not a site-wide working
+    length: legs may differ in length (load_intersection_model's leg_lengths), and a global
+    would draw every curb to the longest leg's end.
     """
     lines = [line for line, *_ in kerb_ways]
     if not lines:
@@ -790,11 +709,10 @@ def _apply_traced_curb_lines(legs: dict, kerb_ways: list, center_ft: Point,
                 print(f"  NOTE: {name} {side} curb is the traced OSM kerb itself, {len(points)} points "
                       f"covering {near:.0f}-{far:.0f} ft out from the junction.")
 
-    # A side with nothing traced near the junction leaves its corner to be bridged across a
-    # gap (or, with nothing traced at all, fitted from a radius). Both are weaker than a
-    # traced corner, and a big enough gap is what stops the pavement ring closing - so name
-    # the sides. That's the difference between "this junction isn't representable" and
-    # "trace these two and it will be".
+    # A side with nothing traced near the junction has its corner bridged across a gap (or,
+    # with nothing traced at all, fitted from a radius) - both weaker than a traced corner,
+    # and a big enough gap is what stops the pavement ring closing. Naming the sides is the
+    # difference between "this junction isn't representable" and "trace these two and it is".
     gaps = []
     for name in legs:
         for side in ("left", "right"):

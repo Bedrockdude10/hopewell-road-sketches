@@ -100,29 +100,12 @@ def load_intersection_model(config: dict | None = None, site: str | None = None)
 
     working_len = config["intersection"]["leg_working_length_ft"]
     legs_cfg = config["legs"]
-    # How far to carry each leg, PER LEG. The site-wide value is the default; a leg may
-    # override it with legs.<name>.working_length_ft. Legs are not interchangeable in how far
-    # they can honestly be drawn - a curb is traced as far as somebody traced it, and past
-    # that curb_line_from_points extrapolates from a bearing. So the length that shows the
-    # most ground truth on an arterial is longer than the one that starts inventing kerb on
-    # the cross street. One global forces the shorter answer on both.
-    # What the SITE says each leg is worth drawing. Kept separately from the scaled figure below
-    # because it is the surveyed answer: it is what the frame is measured against (so a zoom-out
-    # does not compound), and what src/metrics.py splits measured from projected on.
     surveyed_leg_lengths = {name: float(cfg.get("working_length_ft", working_len))
                             for name, cfg in legs_cfg.items()}
-    # Carried out with the frame, so a treatment runs as far as the picture draws the street
-    # rather than stopping a third of the way along it. Three things make this safe rather than
-    # a licence to invent:
-    #   * the width fit is bounded at stations TRACED_SECTION_START_FT..TRACED_SECTION_END_FT
-    #     "whatever working_length_ft says", so no measured width moves;
-    #   * a leg is cut from the NJDOT alignment with substring(), so it simply stops where the
-    #     surveyed alignment stops - asking for more than exists yields what exists;
-    #   * past the traced kerb, curb_line_from_points already extrapolates from a bearing, and
-    #     that is drawn with the provenance it always was.
-    # What it does NOT make safe is the arithmetic downstream - a leg twice as long carries twice
-    # the kerb to mark parking along - so SceneMetrics reports the projected part separately
-    # rather than letting a stall count move with a camera setting.
+    # The frame-scaled length. Safe because the width fit is bounded at
+    # TRACED_SECTION_START_FT..END_FT, substring() stops where the alignment stops, and past
+    # the traced kerb curb_line_from_points already extrapolates from a bearing. SceneMetrics
+    # reports the projected part separately so a stall count does not move with a camera setting.
     scale = frame_scale()
     leg_lengths = {name: length * scale for name, length in surveyed_leg_lengths.items()}
     sri_to_leg_names: dict[str, list[str]] = {}
@@ -136,15 +119,6 @@ def load_intersection_model(config: dict | None = None, site: str | None = None)
             print(f"  WARNING: SRI {sri} not found in clipped network - skipping legs {leg_names}.")
             continue
         line = rows.iloc[0].geometry
-        # NJDOT digitization sometimes has sub-foot vertex noise near
-        # intersections; that noise creates enough local curvature to make
-        # offset_curve() self-intersect (returns a MultiLineString) at typical
-        # curb-to-curb widths. A few feet of simplification removes it without
-        # affecting real road geometry at this scale.
-        # Split to the LONGEST length wanted on this SRI - which leg a piece is cannot be
-        # known until _assign_leg_pieces has matched it by bearing, so cutting to a specific
-        # leg's length here would truncate the wrong one. Each piece is trimmed to its own
-        # leg's length below, after it has a name.
         split_len = max(leg_lengths[n] for n in leg_names)
         pieces = [p.simplify(3.0) for p in split_leg_centerlines(line, center_ft, split_len)]
         pieces = [_snap_to_center(p, center_ft) for p in pieces]
@@ -163,15 +137,11 @@ def load_intersection_model(config: dict | None = None, site: str | None = None)
     for name, width_ft in _widths_from_traced_kerbs(legs, kerb_lines, legs_cfg).items():
         legs[name] = Leg(name=name, centerline=legs[name].centerline, curb_to_curb_ft=width_ft)
 
-    # The NEAR set for the fit: the ways around the junction, which is what a width and a
-    # corner radius are measured from. _extend_curbs_with_far_tracing adds the rest afterwards,
-    # once the widths can no longer be moved by them.
+    # The NEAR set for the fit - ways around the junction, not the wide set that
+    # _extend_curbs_with_far_tracing adds afterwards.
     kerb_ways = kerb_lines_with_tags_ft(center, center_ft)
-    # Twice, deliberately. The first pass only has to be good enough to collect each leg's
-    # traced vertices; that gives _resize_and_centre_from_traced_kerbs a real cross-section
-    # to measure, and the corrected width and centre then change which vertices belong to
-    # which leg side, so the assignment is redone in the corrected frame. Silent the first
-    # time round - the coverage it reports is about the final geometry, not the scaffold.
+    # Twice: the first pass collects traced vertices with a rough assignment; the corrected
+    # width and centre then change which vertices belong to which leg side, so it is redone.
     near_coverage = _fit_legs_to_traced_kerbs(legs, kerb_ways, center_ft, legs_cfg)
     _extend_curbs_with_far_tracing(legs, center, center_ft, near_coverage)
     # Last, on the settled widths and the fullest tracing: the alignment is bent onto the
@@ -200,9 +170,6 @@ def load_intersection_model(config: dict | None = None, site: str | None = None)
               f"is read per span; whole-leg tags come from the longest.")
 
     radius_ft = config["treatments"]["existing_corner_radius_ft"]
-    # Traced OSM kerbs give a real measured radius per corner where they exist; the
-    # config value stays as the fallback for untraced corners. Nothing in OSM carries a
-    # corner radius as a tag, so a traced kerb line is the only way to source this.
     corner_radii = {}
     corner_fillets = {}
     if radius_ft:

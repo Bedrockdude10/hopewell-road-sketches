@@ -33,10 +33,6 @@ def to_state_plane(coords) -> list:
 def _context_roadways_ft(center_wgs84: Point, radius_m: float, exclude) -> tuple:
     """The streets AROUND the junction, widened from the kerb that was actually traced.
 
-    The wide render's road used to stop at the modelled legs because the exported kerbs were the
-    NEAR set - within 80 ft of the centre - and everything past that was dropped. These are what
-    fills the rest of the frame, and src/geometry/context_roads.py is where the reasoning lives.
-
     `exclude` is the modelled pavement (and the mapped lots): subtracted from every surface, so
     where this project has measured geometry that geometry wins, and no two asphalt polygons end
     up coplanar for Blender to z-fight over.

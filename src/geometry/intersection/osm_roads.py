@@ -44,34 +44,19 @@ def _snap_distance_ft(line, center_ft: Point) -> float:
 
 
 def _snap_to_center(piece, center_ft: Point):
-    """Translate a leg centerline piece so it starts exactly at the resolved intersection
-    node, instead of at the nearest point on the road network's own line.
+    """Translate a leg centerline so it starts at the resolved intersection node.
 
-    WHY: the intersection LOCATION comes from OSM (a real shared junction node,
-    cross-checked against the NJDOT SLD milepost - see data_loader.geocode_intersection),
-    and so does every piece of context placed against it: the surveyed pedestrian
-    crossings (src/render/crosswalks.py), buildings, and mapped footways. The leg
-    CENTERLINES come from NJDOT's SRI linear-referencing layer. Those two frames don't
-    agree, and on the state/county routes the disagreement is large and systematic:
+    The intersection LOCATION comes from OSM (a shared junction node, cross-checked against
+    the NJDOT SLD milepost - see data_loader.geocode_intersection), and so does every piece
+    of context placed against it: the surveyed pedestrian crossings, buildings, and mapped
+    footways. The leg CENTERLINES come from NJDOT's SRI linear-referencing layer. On state
+    and county routes the two disagree systematically (up to 16 ft): an SRI line is a
+    linear-referencing alignment, not a surveyed physical centerline.
 
-        Route 518 at Greenwood Ave    8.4 ft        Greenwood Ave (local)   0.3 ft
-        Route 518 at Princeton Ave    8.7 ft        Princeton Ave (CR 569)  1.4 ft
-        CR 654 at Louellen St        16.3 ft        Columbia Ave (local)    1.8 ft
-
-    ~8.5 ft on Route 518 at two independent junctions is a parallel offset in NJDOT's
-    route alignment, not noise - an SRI line is a linear-referencing alignment, not a
-    surveyed physical centerline, and some of these diagrams are 15 years old. Left
-    uncorrected it shifts the whole modelled roadway sideways relative to the OSM
-    crossings: at E Broad & Princeton it put 100% of the Princeton crosswalk inside the
-    E Broad roadway. Snapping the centerline onto the node drops that to 22%, and the
-    remainder is the leg's own (estimated) width.
-
-    TRADE-OFF: this translates the entire piece, so its far end moves off NJDOT's
-    alignment by the same amount (up to ~8 ft at 130 ft out). That's accepted
-    deliberately - accuracy at the intersection, which is the whole subject of this
-    project, beats accuracy at the far end of a leg that's only there for context. The
-    offset is reported above whenever it exceeds SNAP_REPORT_THRESHOLD_FT so it's never
-    silent. Bearings, lengths and widths are all unchanged; only position moves.
+    TRADE-OFF: the entire piece translates, so its far end moves off NJDOT's alignment by
+    the same amount. Accuracy at the intersection beats accuracy at the far end of a leg
+    that is only there for context. The offset is reported when it exceeds
+    SNAP_REPORT_THRESHOLD_FT. Bearings, lengths and widths are unchanged; only position moves.
     """
     x0, y0 = piece.coords[0]
     return affinity.translate(piece, xoff=center_ft.x - x0, yoff=center_ft.y - y0)
@@ -134,22 +119,11 @@ def _assign_leg_pieces(pieces: list, leg_names: list[str], legs_cfg: dict, cente
 
 
 # A leg is matched to the OSM way whose geometry it lies along: within this far of the
-# leg's own centerline, and pointing the same way. Both are needed - the cross street
-# passes just as close to the junction, and a parallel service road points the same way.
+# leg's own centerline, and pointing the same way.
 ROAD_MATCH_MAX_OFFSET_FT = 40.0
 ROAD_MATCH_MAX_ANGLE_DEG = 30.0
-# ...and it has to be a CARRIAGEWAY. Geometry alone is not enough to identify one: east of
-# Princeton Ave, OSM has a `highway=service, service=parking_aisle` way (772378208) running
-# 0.5 ft from East Broad Street's centerline at 0.2 deg to it - indistinguishable from the
-# street on distance and bearing, and it won the nearest-way tie. So the leg's operational
-# tags were read off a parking aisle, which carries none, and East Broad Street's own
-# `parking:both:restriction=no_stopping` (way 1546878992) was never seen: the proposal
-# hatched that kerb for having 7.5 ft spare and reported it as untagged, while the
-# restriction sat in the data the whole time.
-#
-# A driveway, a parking aisle, a footway and a cycleway all fail this; every leg at all four
-# sites is one of these classes. A leg that matches nothing keeps its defaults and says so,
-# which is the safe direction - it invents no restriction it cannot source.
+# ...and it has to be a CARRIAGEWAY. Geometry alone is not enough: a parking aisle running
+# 0.5 ft from a street at 0.2 deg to it wins the nearest-way tie and carries no tags.
 ROAD_MATCH_HIGHWAY_CLASSES = frozenset({
     "motorway", "trunk", "primary", "secondary", "tertiary", "unclassified", "residential",
     "living_street", "motorway_link", "trunk_link", "primary_link", "secondary_link",

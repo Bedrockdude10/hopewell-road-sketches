@@ -1,31 +1,18 @@
 """What the tax assessor says is standing on each parcel - MOD-IV, joined to OSM's footprints.
 
-OSM gives this project real building OUTLINES and almost nothing about the third dimension. In
-the borough snapshot, of 1150 building ways:
+OSM gives this project real building OUTLINES and almost nothing about the third dimension.
+So every building was extruded to one DEFAULT_BUILDING_HEIGHT_M and a render of a place where
+half the houses are a storey and a half came out as a field of identical 7 m boxes.
 
-    height              0
-    building:levels     7
-    roof:shape          0
-    building:material   0
-
-So every building was extruded to one DEFAULT_BUILDING_HEIGHT_M, and a render of a place where
-half the houses are a storey and a half came out as a field of identical 7 m boxes. That is the
-project's standing failure mode in a new costume: a plausible constant standing in for a fact
-nobody had gone to look up.
-
-The fact is on disk. New Jersey's MOD-IV property tax records carry a BLDG_DESC per parcel in the
-assessor's own shorthand - `2SF` is a two-storey frame house, `1.5SF 1G` a storey-and-a-half with
-a one-car garage, `B2S` a two-storey with a basement - and `data/MercerTaxList.dbf` has been in
-this repo since before any of the rendering work, listed in the README as "joinable by PIN, not
-currently used". For Hopewell Borough it parses to a storey count on 682 of the 697 parcels that
-carry a description: 2 storeys (435), 1 (140), 1.5 (94), 2.5 (8), 3 (5).
+The fact is on disk. New Jersey's MOD-IV property tax records carry a BLDG_DESC per parcel in
+the assessor's own shorthand - `2SF` is a two-storey frame house, `1.5SF 1G` a storey-and-a-
+half with a one-car garage, `B2S` a two-storey with a basement - and `data/MercerTaxList.dbf`
+has been in this repo since before any of the rendering work, listed in the README as "joinable
+by PIN, not currently used".
 
 THE JOIN IS GEOMETRIC, then by PIN: an OSM footprint sits in a parcel (`PAMS_PIN`), and that
-parcel's PIN keys the tax row (`GIS_PIN`). Measured at Broad & Greenwood, 59 of 80 footprints sit
-in exactly one parcel, 20 straddle two to four of them, and one lands in none - so the rule is
-LARGEST OVERLAP WINS, which is unambiguous here (the median building's best parcel covers 100% of
-it). Reading the three columns this needs out of all 131,631 county rows takes 0.2 s, and the
-parcel shapefile is spatially indexed, so this costs the pipeline nothing worth measuring.
+parcel's PIN keys the tax row (`GIS_PIN`). The rule is LARGEST OVERLAP WINS, which is
+unambiguous here (the median building's best parcel covers 100% of it).
 
 WHAT IT DOES NOT KNOW is said out loud rather than smoothed over. A building with no parcel, a
 parcel with no tax row, or a description with no storey in it (`2G` is a detached garage) keeps
@@ -85,10 +72,7 @@ def storeys_from_description(description) -> float | None:
 
 
 def storeys_by_pin(tax_list_path: str | Path) -> dict[str, float]:
-    """{PIN: storeys} for every parcel the assessor describes as having a storeyed building.
-
-    Three columns out of thirty-six, which is what keeps this cheap on a 65 MB county-wide file.
-    """
+    """{PIN: storeys} for every parcel the assessor describes as having a storeyed building."""
     path = Path(tax_list_path)
     if not path.exists():
         return {}
@@ -113,11 +97,10 @@ def _pin_field(parcels) -> str | None:
 def height_of(footprint, parcels, storeys: dict[str, float], osm_height=None) -> BuildingHeight:
     """How tall to build `footprint`, preferring what somebody actually recorded.
 
-    OSM first where a mapper gave a height or a floor count - they looked at this building, and
-    the assessor's record is about the parcel. Then the assessor. Then the default, flagged.
-
-    LARGEST OVERLAP WINS among the parcels a footprint touches: a building on a lot line
-    intersects its neighbour's parcel by a sliver, and that sliver must not decide its height.
+    OSM first where a mapper gave a height or floor count, then the assessor, then the
+    default, flagged. LARGEST OVERLAP WINS among the parcels a footprint touches: a building
+    on a lot line intersects its neighbour's parcel by a sliver, and that sliver must not
+    decide its height.
     """
     if osm_height is not None:
         return osm_height

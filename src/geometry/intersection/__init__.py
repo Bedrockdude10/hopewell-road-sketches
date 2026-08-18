@@ -1,10 +1,6 @@
 """Build an IntersectionModel - legs, curb lines, corner fillets, context parcels -
 from a site's config.yaml + the data sources it points to. Shared by every phase.
 
-WHY THIS IS A PACKAGE. It was one 1,760-line module in which the built thing and the building of
-it were the same file, so the 20 modules that import IntersectionModel to READ a junction pulled
-in OSM fetching, road matching and 780 lines of kerb fitting to get at it.
-
     junction      what a junction IS once built: the model and its value types. Loads nothing.
     kerb_sources  getting the traced kerb out of OSM and into state-plane feet
     paved         driveways, aisles and lots - the minor carriageways drawn as asphalt
@@ -12,11 +8,8 @@ in OSM fetching, road matching and 780 lines of kerb fitting to get at it.
     fitting       resizing, centring and joining the legs onto the traced kerbs
     load          load_intersection_model, which is the order those steps happen in
 
-The layering is junction <- kerb_sources <- {paved, fitting}, junction <- osm_roads, and load on
-top of all of it. The order inside load is itself load-bearing: each step measures against what
-the last one produced.
-
-EVERY PUBLIC NAME IS RE-EXPORTED HERE, so `from src.geometry.intersection import X` is unchanged.
+Layering: junction <- kerb_sources <- {paved, fitting}, junction <- osm_roads, load on top.
+The order inside load is load-bearing: each step measures against what the last one produced.
 """
 from src.geometry.intersection.junction import (DRAWN_WIDTH_FT, DRIVEWAY_DRAWN_WIDTH_FT,
                                                 IntersectionModel,

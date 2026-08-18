@@ -45,37 +45,32 @@ class IntersectionModel:
     # one leg can be drawn in opposite directions.
     leg_osm_aligned: dict = field(default_factory=dict)
     # [PavedSurface] - every mapped driveway, parking aisle and parking lot near this junction,
-    # projected once. Paved ground that is not carriageway: drawn as asphalt in both views, and in
-    # the driveways' case read as an opening signal too (src/geometry/kerbs.py). See PavedSurface
-    # for why they live on the model rather than being fetched per consumer, and why all three are
-    # one type.
+    # projected once. See PavedSurface for why they live on the model and are one type.
     paved_surfaces: tuple = ()
     # {leg name: the working length the SITE configured}, before the frame scale carried it out.
     # The surveyed answer, kept because two things must not move when the picture zooms: the
     # frame (src/render/frame.py:leg_reach_ft measures against this, so widening does not
     # compound) and the metrics (src/metrics.py reports anything past it as projected).
     surveyed_leg_lengths: dict = field(default_factory=dict)
-    # {leg name: [CrossStreet]} - every OTHER street these legs run across, resolved ONCE here.
-    # It was derived twice, for the kerb openings and for the DesignState, which is the failure
-    # PavedSurface's docstring is about: two consumers assembling the same geometry and free to
-    # diverge. R.S. 39:4-138(e) applies at every one of them - see src/geometry/cross_streets.py.
+    # {leg name: [CrossStreet]} - every OTHER street these legs run across, resolved ONCE here
+    # rather than separately by the kerb openings and the DesignState. R.S. 39:4-138(e) applies
+    # at every one of them - see src/geometry/cross_streets.py.
     cross_streets: dict = field(default_factory=dict)
 
     @property
     def site_roadways(self) -> tuple:
         """The LINEAR minor carriageways - what opens a kerb where one of them meets it.
 
-        MUTCD 11th ed. 1C.02(113)(b)'s own list is "an alley, driveway, or site roadway", which is
-        the same taxonomy OSM writes as `service=*`, so this is that list read off the tag: a
-        driveway and a parking aisle both open a kerb and neither is an intersection
+        MUTCD 11th ed. 1C.02(113)(b) lists "an alley, driveway, or site roadway" - the same
+        taxonomy OSM writes as `service=*`, so this is that list read off the tag. A driveway and
+        a parking aisle both open a kerb and neither is an intersection
         (src/geometry/kerbs.py:OpeningSource.is_an_intersection). A PARKING_LOT is an area behind
         a building and crosses no kerb of ours; a ROADWAY is a street, and a street meeting a leg
-        is resolved as a CrossStreet, which is the affirmative arm of the same clause.
+        is resolved as a CrossStreet, the affirmative arm of the same clause.
 
-        This was `driveways`, aisles excluded, on the grounds that "an aisle inside [a mapped lot]
-        reaches the street through a driveway that is mapped separately". True of the aisles
-        inside a lot - 6 of the borough's 20 - and it says nothing about one that meets the street
-        itself, whose mouth had no opening and whose markings ran straight across it.
+        Aisles are INCLUDED. Only 6 of the borough's 20 sit inside a mapped lot and reach the
+        street through a separately mapped driveway; excluding them left the others' mouths with
+        no opening and the markings running straight across.
         """
         return tuple(s for s in self.paved_surfaces
                      if s.kind in (PavedKind.DRIVEWAY, PavedKind.PARKING_AISLE))
@@ -128,25 +123,17 @@ DRAWN_WIDTH_FT = {PavedKind.DRIVEWAY: DRIVEWAY_DRAWN_WIDTH_FT,
 class PavedSurface:
     """One piece of paved ground beside the carriageway - a driveway, a parking aisle, a lot.
 
-    PART OF THE MODELLED STREET, and it took a correction to put it here. A driveway was added as
-    render dressing, fetched and projected independently by the plan view and by the export; then
-    it became a signal for where the kerbside markings open and got a THIRD independent fetch in
-    src/geometry/kerbs.py, each with its own radius constant. That is the exact shape of the bug
-    src/render/scene.py exists to prevent - three consumers each assembling the same geometry, free
-    to diverge - committed again one layer down.
+    PART OF THE MODELLED STREET. Resolved ONCE at load, beside corner_parcels and
+    leg_road_spans, never fetched per consumer: three consumers each assembling the same
+    geometry are free to diverge, which is the bug src/render/scene.py exists to prevent. A
+    driveway IS street geometry - it is where vehicles cross the kerb and the reason a marking
+    stops.
 
-    So it is resolved once, at load, beside corner_parcels and leg_road_spans: a surveyed fact
-    about this junction's street network, not something each renderer looks up for itself. A
-    driveway IS street geometry - it is where vehicles cross the kerb, and it is the reason a
-    marking stops.
-
-    ONE TYPE FOR ALL THREE, because they differ in exactly two ways and are otherwise the same
-    thing: paved ground that is not carriageway, drawn as asphalt in both views. What differs is
-    whether the extent was surveyed (a lot is mapped as an area; a driveway and an aisle are
-    centrelines this project widens) and whether it opens the kerb (a driveway does, and
-    src/geometry/kerbs.py reads only those - a lot behind a building crosses no kerb of ours).
-    Adding parking as its own parallel field, with its own fetch, its own export key and its own
-    branch in each renderer, is the same mistake the docstring above is about.
+    ONE TYPE FOR ALL THREE. They are all paved ground that is not carriageway, drawn as asphalt
+    in both views, and differ in exactly two ways: whether the extent was surveyed (a lot is
+    mapped as an area; a driveway and an aisle are centrelines this project widens) and whether
+    they open the kerb (src/geometry/kerbs.py reads only the ones that do). Adding a kind as its
+    own parallel field, with its own fetch, export key and renderer branch, is the same mistake.
     """
     kind: str = PavedKind.DRIVEWAY
     #: The centreline, for the kinds OSM maps as a way. None for a lot, which is mapped as an area.
@@ -168,15 +155,14 @@ class PavedSurface:
     def extent_is_surveyed(self) -> bool:
         """Whether somebody traced this outline, or this project widened a line into it.
 
-        A parking lot is mapped as an area and its extent is as surveyed as a building footprint.
+        A parking lot is mapped as an area, so its extent is as surveyed as a building footprint.
         A driveway and an aisle are centrelines with no width on them - 0 of the borough's 43
-        driveways and 0 of its 20 aisles carry a `width` tag - so their strips are as wide as
-        DRAWN_WIDTH_FT says, which is an assumption and is labelled as one in the legend.
+        driveways and 0 of its 20 aisles carry a `width` tag - so their strips are DRAWN_WIDTH_FT
+        wide, an assumption, labelled as one in the legend.
 
-        A ROADWAY is the one kind that can be either, which is the whole point of it: both of
-        Broad Street's kerbs are traced for the length of the corridor, so that surface is
-        measured on both edges and as surveyed as the lot. With one side traced or none, it is
-        not - half a measured outline is still a guess about where the street ends.
+        A ROADWAY can be either, and that is the point of it: with BOTH kerbs traced the surface
+        is measured on both edges and as surveyed as the lot. With one side or none it is not -
+        half a measured outline is still a guess about where the street ends.
         """
         if self.kind == PavedKind.ROADWAY:
             return self.traced_sides == frozenset({"left", "right"})

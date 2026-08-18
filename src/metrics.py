@@ -1,26 +1,13 @@
 """What a design ACHIEVES, measured off the geometry it actually drew.
 
-Every dimension this project puts on a drawing is an INPUT - the 55.5 ft street, the 8 ft
-stall, R=20 at the corner. Those say what was built. None of them says what it accomplished,
-and "the crossing is 14 ft shorter and a person is in the road for 4 fewer seconds" is the
-sentence a proposal is argued over. So the outcome numbers live here, and they are computed
-from the same resolved scene both renderers draw from (src/render/scene.py:SceneGeometry) -
-never from the config that scene was built out of.
+Every dimension this project puts on a drawing is an INPUT — the 55.5 ft street, the 8 ft
+stall, R=20 at the corner. The outcome numbers live here, computed from the same resolved
+scene both renderers draw from (src/render/scene.py:SceneGeometry), never from the config.
 
-That distinction is the whole reason this is a module rather than three f-strings in the plan
-view. A crossing's length is NOT the leg's configured width: crosswalk_reach_to_curbs_ft
-measures out to the traced kerbs, two passes, with adjoining crossings cut out of the roadway
-each one is allowed to occupy, and the answer is asymmetric (12 ft one way, 20 the other on a
-30 ft street). A curb extension changes it. Re-deriving "crossing distance" from
-`leg.curb_to_curb_ft` would produce a number that agrees with the drawing on a straight
-symmetric leg, disagrees quietly everywhere else, and keeps reporting the old width after a
-treatment moves the kerb - the exact failure this codebase keeps designing against.
-
-The same applies to parking. Stalls are counted off the PARKING_EDGE_LINE pieces the paint
-builder emitted, one run at a time, because that is what is marked on the road: a hydrant or
-a driveway splits a kerb into two runs, and the daylight zone at a corner shortens the run
-rather than the leg. Counting stalls from the leg's length would count spaces that the paint
-itself says are not there.
+A crossing's length is NOT the leg's configured width: crosswalk_reach_to_curbs_ft measures
+to the traced kerbs, asymmetrically (12 ft one way, 20 the other on a 30 ft street). Parking
+stalls are counted off the PARKING_EDGE_LINE pieces the paint builder emitted, because a
+hydrant or driveway splits a kerb into two runs and the paint says where the runs are.
 
 Nothing here decides anything. Every value comes from geometry some other module resolved;
 this module only measures it and says what changed.
@@ -90,20 +77,16 @@ def turn_speed_mph(radius_ft: float) -> float:
 def motor_lane_reach_ft(state, leg_name: str, reach: tuple) -> tuple[float, float]:
     """How far either side of the centerline a person is in front of MOTOR traffic.
 
-    The kerb, unless a treatment put something else against it. A bike lane, its buffer, a
-    parking lane, a hatched buffer: all of it is roadway a person walks across and none of it
-    is ground a car drives on, so counting it as exposure says a proposal achieved nothing when
-    it narrowed the part that matters.
+    The kerb, unless a treatment put something else against it — a bike lane, its buffer, a
+    parking lane, a hatched buffer. All of it is roadway a person walks across and none of it
+    is ground a car drives on, so counting it as exposure would wrongly credit a proposal
+    with nothing when it narrowed the part that matters.
 
-    Asked of src/render/crosswalks.py:travel_lane_edge_ft, which is the rule the STOP BAR
-    already stops at - a bar must not run across a bike lane either. One definition, so the bar
-    and this number cannot disagree about where the travel lane ends.
-
-    NOT measured off the paint at the crossing, and that is the subtle part. Every treatment is
-    held back from the crossing by the daylight setback and CROSSWALK_CLEARANCE_FT, so sampling
-    polygons at the crossing station finds bare asphalt on every leg - the bike lane on
-    broad_st_east is painted from station 26.4 and the crossing sits at 21.3. The cross-section
-    a person actually walks through is the leg's ALLOCATION, which is what the treatments say.
+    Asked of src/render/crosswalks.py:travel_lane_edge_ft (the same rule the STOP BAR
+    already stops at), but NOT measured off the paint at the cross-section. Treatments are
+    held back from the crossing by the daylight setback and CROSSWALK_CLEARANCE_FT, so the
+    cross-section a person walks through is the leg's allocation, which is what treatments
+    say.
     """
     from src.render.crosswalks import travel_lane_edge_ft
 
@@ -122,11 +105,8 @@ def crossing_stages_ft(leg, offset_ft: float, skew_deg: float, reach: tuple,
     """The unprotected walks a crossing is made of, in order across the road.
 
     One stage on an ordinary street; two where a refuge island splits it. Measured by cutting
-    the islands out of the crossing's own axis - the same axis crosswalk_band_ft builds the
-    painted band on (src/render/crosswalks.py:crosswalk_axes) - rather than by subtracting the
-    island's width from the total. The difference is that an island 60 ft down the leg cuts
-    nothing, which is what stops a refuge anywhere on a leg being credited to every crossing
-    on it.
+    islands out of the crossing's own axis rather than subtracting the island's width from the
+    total — an island 60 ft down the leg cuts nothing.
     """
     from src.render.crosswalks import crosswalk_axes
 
@@ -150,14 +130,9 @@ class Crossing:
     """One leg's crossing, as a person walks it."""
     leg: str
     stages_ft: tuple[float, ...]
-    #: The CrosswalkOffset source string - "osm_survey" or "geometric_estimate", possibly with
-    #: a scenario-shift suffix. Carried so a reported distance always says whether the position
-    #: it was measured at is surveyed, on the same terms the drawing says it.
+    #: The CrosswalkOffset source string ("osm_survey" or "geometric_estimate").
     source: str
-    #: The stages of the walk that are in front of MOTOR traffic, cut the same way but bounded
-    #: at the travel lane's own edge rather than at the kerb. Equal to stages_ft on a leg with
-    #: nothing against the kerb; shorter wherever a bike lane, parking or hatching holds the
-    #: cars off it. See motor_lane_reach_ft.
+    #: The stages cut at the travel lane edge rather than at the kerb (motor_lane_reach_ft).
     motor_stages_ft: tuple[float, ...] = ()
 
     @property
@@ -189,26 +164,12 @@ class Crossing:
     def exposure_s(self, speed_ft_s: float = MUTCD_WALKING_SPEED_FT_S) -> float:
         """Time in front of MOTOR traffic, worst stage.
 
-        The longest stage rather than the sum: a refuge island is somewhere to stand, so a
-        staged crossing exposes a person one stage at a time and the honest number for a
-        two-stage crossing is the worse of the two. Summing them would credit the island with
-        nothing at all, which is the opposite of what it does.
-
-        Measured across the TRAVEL LANES, not curb to curb. This used to be the crossing
-        distance divided by a walking speed, which made it the same measurement twice under two
-        headings and meant no paint-only proposal could ever move it: a bike lane takes 18 ft of
-        Broad St out of the part a car drives on and left the number unchanged. A person in a
-        bike lane or a parking lane is not standing in front of a car.
-
-        Bicycle traffic is a real conflict and this does not count it - which is why the panel
-        says MOTOR traffic rather than traffic. Naming what is measured is the point.
-
-        AND THE HONEST LIMIT: hatching is paint, not a kerb. A driver CAN cross a painted buffer,
-        so this is the exposure the design intends rather than one anything physically enforces.
-        It is the same edge the stop bar already stops at, so the drawing is at least consistent
-        with itself about where the travel lane ends - but a proposal that wants the number to be
-        true on the ground has to put something in the buffer, which is what a flex post is for
-        (ProtectDaylightZone) and why that treatment exists at all.
+        A refuge island is somewhere to stand, so the worst stage — not the sum — is the
+        honest exposure for a multi-stage crossing. Measured across TRAVEL LANES, not curb
+        to curb: a person in a bike lane or parking lane is not in front of a car. Bicycle
+        traffic is a real conflict and is not counted here (hence MOTOR, not traffic).
+        Hatching is paint, not a kerb — this is the exposure the design intends rather than
+        one anything physically enforces.
         """
         return self.longest_motor_stage_ft / speed_ft_s
 
@@ -220,15 +181,12 @@ class Crossing:
 def split_at_surveyed_end(geometry: LineString, leg, surveyed_length_ft: float | None) -> tuple:
     """(measured_ft, projected_ft) for a run, split where the SURVEYED leg ends.
 
-    The frame scale carries the legs out so a treatment runs the length of the drawn street
-    (src/geometry/intersection/). That is a drawing decision, and it must not become an
-    arithmetic one: the same proposal reported 8 stalls at 1x and 17 at 2.2x, which is a stall
-    count moving with a camera setting. So the part of a run past the length the site actually
-    configured is measured separately and reported as projected.
+    The frame scale carries legs out so a treatment runs the length of the drawn street — a
+    drawing decision that must not become an arithmetic one: the part of a run past the
+    length the site configured is measured separately and reported as projected.
 
-    Split by STATION along the leg rather than by distance from the junction, because a kerb run
-    is offset from the centerline and on a curved leg the two diverge. Walked segment by segment
-    and attributed on each segment's midpoint - a run crossing the boundary contributes to both.
+    Split by STATION along the leg rather than by distance from the junction, because a kerb
+    run is offset from the centerline and on a curved leg the two diverge.
     """
     if surveyed_length_ft is None or leg is None:
         return geometry.length, 0.0
@@ -293,9 +251,8 @@ class SceneMetrics:
         """Measure a design. Arguments are SceneGeometry's own fields - see its `metrics`.
 
         `marked` is the set of legs carrying a crossing; None measures every leg with a
-        resolved offset. Every leg has an offset (a proposal may mark a leg that has nothing
-        today), so measuring by offset alone would report a crossing distance for a leg the
-        drawing shows as an unmarked outline.
+        resolved offset — but every leg has one, so measuring by offset alone would report a
+        crossing distance for a leg the drawing shows as unmarked.
         """
         from src.geometry.treatments import MarkedParking, RefugeIsland
 
@@ -414,12 +371,8 @@ class CrossingChange:
 
 @dataclass(frozen=True)
 class Comparison:
-    """A before/after pair, which is what the figure is about.
-
-    The panel this produces is deliberately short. The plan view's own legend runs to forty
-    entries because it is a reconstruction anyone should be able to check line by line; a
-    reader looking at two drawings needs to know what moved.
-    """
+    """A before/after pair, which is what the figure is about. The panel is deliberately short —
+    a reader looking at two drawings needs to know what moved, not a reconstruction of every line."""
     before: SceneMetrics
     after: SceneMetrics
     speed_ft_s: float = MUTCD_WALKING_SPEED_FT_S
@@ -453,11 +406,8 @@ class Comparison:
         return self.stalls_after - self.stalls_before
 
     def panel_text(self) -> str:
-        """The summary block, as the plan view draws it.
-
-        Built as text here rather than laid out in the renderer so what it says is testable
-        without a figure - and so the same summary can be printed by a phase script.
-        """
+        """The summary block, as the plan view draws it — built here so what it says is
+        testable without a figure and printable by a phase script."""
         lines = [f"WHAT CHANGES   (walking speed {self.speed_ft_s:.1f} ft/s)", ""]
 
         if self.crossings:

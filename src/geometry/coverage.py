@@ -1,66 +1,24 @@
 """Does the drawing contain every surveyed feature inside its own frame?
 
-This project's worst failure is not a crash and not an ugly picture. It is a render that looks
-finished and quietly leaves out something a surveyor recorded. A marked crosswalk drawn as bare
-asphalt is a false statement about the street, made to an audience deciding whether to build
-something - and it is invisible by inspection, because a picture missing a crossing looks exactly
-like a picture of a street that has no crossing there. Nothing in src/checks.py can catch it:
-every invariant there asks whether the geometry we DID build is right, and a feature that was
-never built has no geometry to be wrong about.
-
-So this asks the other question, the one docs/network-renderer-plan.md states as the property the
-whole renderer is for:
+The property, from docs/network-renderer-plan.md:
 
     Every feature the surveyor recorded inside the drawn frame is either drawn from its own
     traced geometry, or named in the notes as deliberately not drawn. Nothing is silently
     dropped.
 
-WHAT IS MEASURED, at Broad & Greenwood with HOPEWELL_FRAME_SCALE=2.5 (a 431 ft frame):
+src/checks.py cannot ask this: every invariant there asks whether the geometry we DID build is
+right, and a feature that was never built has no geometry to be wrong about. Geometry is
+state-plane feet throughout.
 
-    layer          in frame   drawn   dropped
-    crossings            10       4         6    263-420 ft out, three of them saying zebra
-    kerbs                29      29         0    collected by DRAWING radius since cb9c8b6
-    kerb_ramps            7       4         3    the same three neighbouring junctions
-    traffic_control       3       1         2    two stop nodes 298 and 409 ft out
+THE COMPARISON IS GEOMETRIC - "is there a drawn footprint lying along this surveyed way?" - and
+must not become "which surveyed crossings did the render match to a leg". That shortcut re-derives
+the very leg-gating that drops features, so it would report the same number forever and stay red
+after a fix.
 
-And it is CLEAN on all four sites at 1x, where the neighbouring junctions are not in shot. Same
-code, same OSM: the gap is the render's leg-gating meeting a wider picture, not a crossing this
-project has always been failing to draw. Every other site at 2.5x reports gaps of the same shape -
-1 of 3 crossings at E Broad & Princeton, 2 of 6 at Columbia & Princeton, 3 of 4 at W Broad &
-Louellen, and one undrawn stop node apiece.
-
-The kerbs row is the reason this module can be believed. It is a layer that was already fixed -
-`cb9c8b6` moved kerbs off the corner-fit's 80 ft near set and onto the drawing radius, on the
-grounds that what a drawing contains is a question about the drawing - and it comes out CLEAN at
-every site and every frame scale. A check that reported every layer as broken would be telling
-you nothing; this one distinguishes the layer that was fixed from the three that were not.
-
-WHY THE COMPARISON IS GEOMETRIC. The tempting shortcut is to ask which surveyed crossings the
-render MATCHED to a leg, since that is how a band gets built today (src/render/crosswalks.py
-reduces a traced way to a station and a skew on a leg, then re-derives the band from the leg's
-frame). That number is 4, and it would be 4 forever: it re-derives the very leg-gating that is
-the bug, so the check would stay red after stream A of the plan draws all ten from their own
-traced geometry. Measuring the DRAWING instead - is there a drawn footprint lying along this
-surveyed way? - goes green exactly when the render starts being faithful, which is the only
-behaviour that makes a guard worth wiring into a build.
-
-WHAT THIS CANNOT SEE, both worth knowing before wiring it into a build.
-
-A layer with nothing surveyed in it reports no gap, so an empty fetch reads as a faithful drawing.
-That hole is closed upstream rather than here: osm_context.snapshot_for_site refuses a site whose
-window reaches outside the downloaded area instead of half-serving it, and fetch_kerbs raises
-OSMDataUnavailableError rather than returning [] on an outage. Both exist because this exact class
-of silence is what the project keeps getting caught by.
-
-And there is no channel for the plan's SECOND clause - "named in the notes as deliberately not
-drawn". Every surveyed feature is either drawn or reported, which is right for the six dropped
-crossings and wrong for one of them: the way 375 ft out carries no markings tag at all, and a
-crossing nobody recorded markings for is a crossing this project is entitled not to paint. So this
-will still report 1 of 10 at Greenwood after stream A draws the nine that are tagged, and the
-remaining 1 wants a declaration rather than a band. That belongs with whatever writes the notes,
-not here, and it is deliberately not papered over by quietly excusing untagged ways: an untagged
-crossing that goes missing from a drawing is exactly the thing a reviewer should have to look at
-once.
+WHAT THIS CANNOT SEE. A layer with nothing surveyed in it reports no gap, so an empty fetch reads
+as a faithful drawing. That hole is closed upstream rather than here:
+osm_context.snapshot_for_site refuses a site whose window reaches outside the downloaded area, and
+fetch_kerbs raises OSMDataUnavailableError rather than returning [] on an outage.
 """
 import math
 from dataclasses import dataclass
@@ -71,48 +29,39 @@ from shapely.ops import unary_union
 from src.render.coords import FT_TO_M
 
 # How much of a surveyed way's own length has to lie under drawn paint before the drawing counts
-# as containing it. Measured at all four sites: a crossing the render draws has 62-91% of its
-# traced length inside its band (the shortfall is the ends, which run to the SIDEWALK centreline
-# while the band stops at the kerb - see osm_context.fetch_sidewalks), and every crossing the
-# render drops measures exactly 0.00%. So the threshold is nowhere near either population.
+# as containing it. Measured: a drawn crossing has 62-91% of its traced length inside its band (the
+# shortfall is the ends, which run to the SIDEWALK centreline while the band stops at the kerb), and
+# a dropped one measures exactly 0.00%.
 #
-# It is a quarter rather than a hair above zero because the union below is every drawn area, not
-# only the crossing footprints, and a kerbside hatched zone genuinely does overlap a crossing that
-# runs into it - by its own 5-8 ft width out of a 40-80 ft way, i.e. 6-20%. Distinguishing a
-# hatched zone from a crossing band by type is not possible here and should not be: a crossing
-# arriving as a PaintPiece after stream A must still count as drawn.
+# Not a hair above zero, because the union below is every drawn area rather than only crossing
+# footprints, and a kerbside hatched zone genuinely overlaps a crossing running into it by 6-20%.
+# Excluding hatch by type is not an option: a crossing arriving as a PaintPiece must still count.
 CROSSING_DRAWN_FRACTION = 0.25
 
 # How far a tactile paving pad may stand from the kerb ramp it marks and still be that ramp's pad.
-# A drawn pad sits 1.5-2.7 ft from its own traced way (it is placed just clear of the roadway on
-# the footway side); the nearest pad to a ramp the render omits is 232-282 ft away, at another
-# junction entirely. Generous, because nothing lives in between.
+# A drawn pad sits 1.5-2.7 ft from its own traced way; the nearest pad to an omitted ramp is 232 ft
+# away, at another junction. Generous, because nothing lives in between.
 RAMP_PAD_NEAR_FT = 15.0
 
 # How far a control node may be from the hardware drawn for it. Big on purpose, and the size is a
-# fact about the source rather than slack: OSM puts a control node ON the carriageway and the
-# render draws the hardware where it physically stands. A stop node sits on the approach and its
-# sign goes on the kerb beside it - 15.4 and 18.0 ft at Columbia & Princeton. A traffic_signals
-# node sits on the junction node itself and its poles stand at the corners - 31.3 ft at E Broad &
-# Princeton, 34.6 at W Broad & Louellen, 43.4 at Broad & Greenwood. The prop TYPE is matched too,
-# so this only has to separate a node from ANOTHER JUNCTION's hardware of the same kind, and the
-# nearest junction to any of these is 250 ft away.
+# fact about the source rather than slack: OSM puts a control node ON the carriageway and the render
+# draws the hardware where it physically stands - a stop sign on the kerb beside its node (15-18 ft),
+# signal poles at the corners of the junction node (31-43 ft). The prop TYPE is matched too, so this
+# only has to separate a node from ANOTHER JUNCTION's hardware of the same kind, 250 ft away.
 CONTROL_NEAR_NODE_FT = 60.0
 
 # Which OSM control nodes are drawn as something. highway=crossing is deliberately not one of
 # them: it is a node on a crossing WAY carrying the pedestrian detail that lives on the node
 # rather than the way (tactile_paving, button_operated, crossing:island - see
-# osm_context.fetch_traffic_control), so it is an attribute of a feature the crossings layer
-# already counts, not a second feature. Counting it would report the same ten crossings twice and
-# make the traffic control row unreadable.
+# osm_context.fetch_traffic_control), so it is an attribute of a feature the crossings layer already
+# counts, not a second feature. Counting it would report the same crossings twice.
 CONTROL_KINDS = ("stop", "give_way", "traffic_signals")
 
 # The hardware a signalized junction is drawn with (src/render/props.py:_traffic_signal_props).
 SIGNAL_HARDWARE = ("traffic_signal_pole", "pedestrian_signal_head")
 
-# How many features a gap lists. Enough to see the pattern - all three of Greenwood's dropped
-# ramps, five of its six dropped crossings - without turning a build log into a data dump. The
-# count carries the rest.
+# How many features a gap lists. Enough to see the pattern without turning a build log into a data
+# dump; the count carries the rest.
 MAX_EXAMPLES = 5
 # How a drawn LINE is judged to be one of a crossing's own transverse lines rather than a lane line
 # that happens to cross it - see _Drawing.has_line_along. The angle does the real work: a crosswalk's

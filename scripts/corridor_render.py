@@ -32,7 +32,8 @@ from matplotlib.patches import Rectangle
 from src.geometry.corridor_paint import (CORRIDOR_SAMPLE_FT, JUNCTION_MOUTH,
                                          centred_on_its_kerbs, far_kerb_lane_edge,
                                          kerb_offset_ft, paint_facility, parking_bands,
-                                         stall_marks, stall_room_spans)
+                                         contraflow_centreline, green_extension_spans,
+                                         stall_marks, stall_room_spans, symbol_stations)
 from src.geometry.intersection import load_intersection_model
 from src.geometry.model import station_offset_many
 from src.geometry.network import (_complement_spans, _merged_spans, corridor_facts,
@@ -46,6 +47,8 @@ LANE_GREEN = "#57a773"
 BUFFER_GREY = "#9a9a9a"
 PAINT_WHITE = "#ffffff"
 POST = "#e8663c"
+GREEN_HOT = "#2f7d4f"
+YELLOW = "#e6c000"
 PARKING_BLUE = "#4b7fb5"
 OPENING = "#8a5a1f"
 GAP_RED = "#c1272d"
@@ -81,6 +84,17 @@ def _stalls_kept(corridor, facts, paint, far_side: str) -> int:
     return count
 
 
+def _band_across(corridor, side, lo_ft, hi_ft):
+    """A full-depth window over one station range, for intersecting a marking out of the lane."""
+    from src.geometry.model import Alignment, band_from_offsets
+
+    if hi_ft - lo_ft <= 0:
+        return None
+    stations = np.linspace(lo_ft, hi_ft, max(int((hi_ft - lo_ft) / 2.0) + 2, 3))
+    return band_from_offsets(Alignment(corridor.centerline), side, stations,
+                             np.zeros(len(stations)), np.full(len(stations), 60.0))
+
+
 def straighten(corridor, geometry):
     """One geometry's parts, each as (station, offset) in the corridor's frame.
 
@@ -103,7 +117,7 @@ def straighten(corridor, geometry):
 
 
 def draw_panel(ax, corridor, paint, parking, openings, lo_ft, hi_ft, half_ft,
-               marks=(), daylight=()):
+               marks=(), daylight=(), extras=None):
     grid = np.arange(lo_ft, hi_ft, CORRIDOR_SAMPLE_FT)
     left = np.array([kerb_offset_ft(corridor, "left", float(s)) or np.nan for s in grid])
     right = np.array([-(kerb_offset_ft(corridor, "right", float(s)) or np.nan) for s in grid])
@@ -159,6 +173,24 @@ def draw_panel(ax, corridor, paint, parking, openings, lo_ft, hi_ft, half_ft,
             inside = (st >= lo_ft) & (st <= hi_ft)
             ax.plot(st[inside], off[inside], linestyle="none", marker="o", markersize=1.6,
                     color=POST, zorder=5)
+
+    if extras:
+        # Conspicuity green either side of every opening the lane crosses, laid UNDER the lane's
+        # own colour so the two read as one surface with a hotter approach rather than two greens.
+        for geometry in extras.get("green", ()):
+            for xy in straighten(corridor, geometry):
+                ax.fill(xy[:, 0], xy[:, 1], color=GREEN_HOT, alpha=0.9, linewidth=0, zorder=4)
+        # The dotted YELLOW centreline - the one mark that carries across every crossbike, because
+        # it is what tells a driver there are riders coming both ways.
+        for line in extras.get("yellow", ()):
+            for xy in straighten(corridor, line):
+                if lo_ft <= xy[:, 0].mean() <= hi_ft:
+                    ax.plot(xy[:, 0], xy[:, 1], color=YELLOW, lw=1.1, zorder=6)
+        # BIKE LANE symbols, as a marker at each station the rule puts one.
+        for station, offset in extras.get("symbols", ()):
+            if lo_ft <= station <= hi_ft:
+                ax.plot([station], [offset], marker="^", markersize=3.4, color=PAINT_WHITE,
+                        markeredgecolor="#555555", markeredgewidth=0.3, zorder=7)
 
     # WHERE A VEHICLE CROSSES THE KERB. Drawn on the kerb it actually breaks, because that is the
     # asymmetry that matters here: a driveway on the north kerb interrupts the parking, and one on
@@ -343,11 +375,36 @@ def main() -> int:
     parking = parking_bands(corridor, facts, far_side)
     openings = tuple((side, opening.start_ft, opening.end_ft) for side, opening in facts.openings)
 
+    # The three markings NACTO asks for besides the lane itself (STANDARDS.md, 2026-08-18).
+    green = []
+    for lo, hi in green_extension_spans(paint):
+        for run in paint.runs:
+            if run.lane_surface is None or hi < run.start_ft or lo > run.end_ft:
+                continue
+            window = _band_across(corridor, paint.side, max(lo, run.start_ft),
+                                  min(hi, run.end_ft))
+            if window is not None:
+                piece = run.lane_surface.intersection(window)
+                if not piece.is_empty:
+                    green.append(piece)
+    sign = 1.0 if paint.side == "left" else -1.0
+    symbols = []
+    for station in symbol_stations(paint):
+        offset = kerb_offset_ft(corridor, paint.side, station)
+        if offset is not None:
+            symbols.append((station, sign * (offset - 5.0)))
+    extras = {"green": tuple(green), "yellow": tuple(contraflow_centreline(corridor, paint)),
+              "symbols": tuple(symbols)}
+    print(f"  markings besides the lane: {len(extras['yellow'])} yellow centreline dashes, "
+          f"{len(symbols)} BIKE LANE symbols, {len(green)} green conspicuity zones; the lane is "
+          f"DOTTED across {len(paint.dotted)} openings and cut at {len(paint.breaks)} crossings")
+
     half_ft = 38.0
     edges = np.linspace(0.0, corridor.length_ft, args.panels + 1)
     fig, axes = plt.subplots(args.panels, 1, figsize=(13, 2.0 * args.panels))
     for ax, lo, hi in zip(np.atleast_1d(axes), edges[:-1], edges[1:]):
-        draw_panel(ax, corridor, paint, parking, openings, float(lo), float(hi), half_ft)
+        draw_panel(ax, corridor, paint, parking, openings, float(lo), float(hi), half_ft,
+                   extras=extras)
     axes[0].set_title(
         f"{corridor.name} - existing kerbs (surveyed) and the proposed two-way protected bikeway "
         f"on the {paint.compass_side} kerb; blue = where the law leaves parking room on the "

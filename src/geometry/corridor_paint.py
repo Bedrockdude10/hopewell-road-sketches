@@ -95,8 +95,11 @@ class CorridorFacilityPaint:
     runs: list = field(default_factory=list)
     refusals: list = field(default_factory=list)
     untraced: list = field(default_factory=list)
-    #: (lo, hi) where the lane's markings break - a driveway mouth on its own kerb, or a crossing.
+    #: (lo, hi) where the lane is CUT - pedestrian crossings, which outrank it.
     breaks: tuple = ()
+    #: (lo, hi) where the lane CONTINUES but dotted - a driveway or side street on its own kerb.
+    #: The crossbike. See opening_spans for why these are not the same list.
+    dotted: tuple = ()
 
     @property
     def placed_ft(self) -> float:
@@ -190,25 +193,37 @@ def section_at(facility, near_half_ft: float, far_half_ft: float):
 CROSSING_BREAK_FT = 10.0
 
 
-def break_spans(corridor, facts, side: str) -> tuple:
-    """Where the facility's markings break: driveway mouths on its kerb, and every crossing.
+def opening_spans(corridor, facts, side: str) -> tuple:
+    """Driveway and side-street mouths on the facility's OWN kerb - where the lane goes DOTTED.
 
-    TWO DIFFERENT REASONS AND ONE CONSEQUENCE. A driveway mouth is a place vehicles cross the
-    lane, so the lane's lines and its colour go dotted over it (markings.AT_AN_OPENING). A
-    pedestrian crossing outranks whatever runs along the kerb, so the lane is cut around it - the
-    same rule the per-leg paint applies through PaintContext's crossing bands, which is not
-    reachable from a corridor.
+    IT DOES NOT BREAK HERE, and getting that wrong is the defect this function replaces. NACTO
+    (STANDARDS.md, verified 2026-08-18) requires a bidirectional lane to continue through every
+    intersection and driveway as a crossbike, and explicitly rejects the alternative because
+    merging riders into traffic would send the contraflow direction against its flow. This
+    project already knew that: `markings.AT_AN_OPENING` gives BIKE_LANE_SURFACE and the lane's
+    edge lines `DOTTED / DOTTED`, and the per-leg paint has always dotted them across.
 
-    THE OPENINGS ARE TAKEN FROM THIS KERB ONLY. A driveway on the far kerb does not touch this
-    lane, and counting it would break the facility at every mouth on the street rather than at the
-    ones a rider actually meets.
+    The corridor path invented a SECOND opinion - it deleted the lane at each mouth - which is the
+    "two records of one decision" failure this repo has now paid for four times. The spans come
+    back so the drawing can dot the lane over them; nothing is cut.
+
+    FROM THIS KERB ONLY. A mouth on the far kerb does not touch this lane.
     """
-    spans = [(opening.start_ft, opening.end_ft)
-             for opening_side, opening in facts.openings if opening_side == side]
-    spans += [(station_ft - CROSSING_BREAK_FT / 2, station_ft + CROSSING_BREAK_FT / 2)
-              for station_ft, _markings in facts.marked_crossings]
-    return tuple(sorted((max(lo, 0.0), min(hi, corridor.length_ft))
-                        for lo, hi in spans if hi > 0 and lo < corridor.length_ft))
+    return tuple(sorted((max(o.start_ft, 0.0), min(o.end_ft, corridor.length_ft))
+                        for opening_side, o in facts.openings
+                        if opening_side == side and o.end_ft > 0
+                        and o.start_ft < corridor.length_ft))
+
+
+def crossing_spans(corridor, facts) -> tuple:
+    """Pedestrian crossings - the ONE thing that does cut the lane.
+
+    A crossing outranks whatever runs along the kerb, which is the rule PaintContext's crossing
+    bands apply per leg and the one part of the old break_spans that was right.
+    """
+    return tuple(sorted((max(station_ft - CROSSING_BREAK_FT / 2, 0.0),
+                         min(station_ft + CROSSING_BREAK_FT / 2, corridor.length_ft))
+                        for station_ft, _markings in facts.marked_crossings))
 
 
 def _cut_around(geometry, corridor, side: str, spans, reach_ft: float = 60.0):
@@ -257,7 +272,9 @@ def paint_facility(corridor, facility, facts=None) -> CorridorFacilityPaint:
     # worth calling a facility; it has nothing to say about whether a GAP is worth admitting to.
     paint.untraced = [(lo, hi, _why_no_kerb(corridor, lo, hi))
                       for lo, hi in corridor.untraced_gaps_ft(min_ft=0.0)]
-    paint.breaks = break_spans(corridor, facts, side) if facts is not None else ()
+    if facts is not None:
+        paint.breaks = crossing_spans(corridor, facts)          # cut
+        paint.dotted = opening_spans(corridor, facts, side)     # carried across, dotted
 
     for span_lo, span_hi in corridor.both_traced_spans():
         if span_hi - span_lo < MIN_FACILITY_RUN_FT:
@@ -577,3 +594,78 @@ def stall_marks(corridor, side: str, spans, depth_ft: float | None = None,
                                            np.array([sign * offset]))
             marks.append(LineString([tuple(inner[0]), tuple(outer[0])]))
     return marks, stalls
+
+
+#: BIKE LANE symbol placement (MUTCD Fig 9E-1). NACTO: after every driveway and intersection, and
+#: at least every 500 ft along the lane. STANDARDS.md, verified 2026-08-18.
+SYMBOL_INTERVAL_FT = 500.0
+#: How far past an opening the reminder symbol sits - clear of the mouth itself, near enough to
+#: read as belonging to it.
+SYMBOL_AFTER_OPENING_FT = 15.0
+#: Green conspicuity surfacing approaching and departing an intersection or driveway. NACTO gives
+#: 20-50 ft; the low end is taken, because it is the figure that fits between the closely spaced
+#: mouths on this corridor without the extensions merging into one continuous green.
+GREEN_EXTENSION_FT = 20.0
+#: The contraflow centreline's cadence, imported rather than restated - NACTO requires a dotted
+#: YELLOW centreline along a bidirectional lane and in its crossbikes.
+def _contraflow_cadence():
+    from src.geometry.treatments.bikeways import CONTRAFLOW_DASH_FT, CONTRAFLOW_GAP_FT
+
+    return CONTRAFLOW_DASH_FT, CONTRAFLOW_GAP_FT
+
+
+def symbol_stations(paint: CorridorFacilityPaint) -> tuple:
+    """Stations for the BIKE LANE symbol: after each opening, and every SYMBOL_INTERVAL_FT.
+
+    Both rules, not either - NACTO asks for the reminder after every mouth AND a floor on the
+    interval, and on a corridor with 19 junctions the interval alone would leave long stretches
+    unmarked while the mouths alone would cluster them.
+    """
+    at = []
+    for run in paint.runs:
+        at.append(run.start_ft + SYMBOL_AFTER_OPENING_FT)
+        station = run.start_ft + SYMBOL_INTERVAL_FT
+        while station < run.end_ft:
+            at.append(station)
+            station += SYMBOL_INTERVAL_FT
+        for _lo, hi in paint.dotted:
+            if run.start_ft < hi < run.end_ft:
+                at.append(hi + SYMBOL_AFTER_OPENING_FT)
+    return tuple(sorted(s for s in at
+                        if any(r.start_ft <= s <= r.end_ft for r in paint.runs)))
+
+
+def green_extension_spans(paint: CorridorFacilityPaint, reach_ft: float | None = None) -> tuple:
+    """Where the lane gets conspicuity green: reach_ft either side of every opening it crosses."""
+    reach_ft = GREEN_EXTENSION_FT if reach_ft is None else reach_ft
+    spans = [(lo - reach_ft, hi + reach_ft) for lo, hi in paint.dotted]
+    spans += [(lo - reach_ft, hi + reach_ft) for lo, hi in paint.breaks]
+    return tuple(sorted(spans))
+
+
+def contraflow_centreline(corridor, paint: CorridorFacilityPaint):
+    """The dotted yellow centreline down each run, CONTINUING across every opening.
+
+    Continuing is the point: NACTO asks for the dotted yellow both along a bidirectional lane and
+    in its crossbikes, so the mark that tells a driver two directions of riders are present is the
+    one mark that must not stop where they cross.
+    """
+    dash_ft, gap_ft = _contraflow_cadence()
+    on = Alignment(corridor.centerline)
+    sign = 1.0 if paint.side == "left" else -1.0
+    out = []
+    for run in paint.runs:
+        if run.section is None:
+            continue
+        kerb = run.section.offsets_from_kerb_ft()
+        middle = (kerb["bike_outer_ft"] + kerb["bike_inner_ft"]) / 2
+        station = run.start_ft
+        while station + dash_ft <= run.end_ft:
+            offs = [kerb_offset_ft(corridor, paint.side, s) for s in (station, station + dash_ft)]
+            if all(o is not None for o in offs):
+                pts = place_in_measured_frame(
+                    on.centerline, np.array([station, station + dash_ft]),
+                    np.array([sign * (offs[0] - middle), sign * (offs[1] - middle)]))
+                out.append(LineString([tuple(pts[0]), tuple(pts[1])]))
+            station += dash_ft + gap_ft
+    return out

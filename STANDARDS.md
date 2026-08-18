@@ -335,13 +335,20 @@ authority may be stricter than NACTO; it may not be stricter and pretend NACTO r
 
 | marking | rule | drawn? |
 |---|---|---|
-| **Crossbikes** through **all** intersections **and driveways** - alleys, minor and major cross-streets alike | required; the lane *"must continue through intersections and driveways"* and cannot merge into traffic | **NO - and the corridor render currently does the OPPOSITE** |
-| Dotted **yellow** centreline along the lane **and in the crossbikes** | required | lane only |
-| BIKE LANE symbol / word marking (MUTCD Fig 9E-1) | after every driveway and intersection, and at least every 500 ft | no |
-| Green surfacing | optional full length; or 20-50 ft approaching/departing each intersection and driveway | no |
+| **Crossbikes** through **all** intersections **and driveways** - alleys, minor and major cross-streets alike | required; the lane *"must continue through intersections and driveways"* and cannot merge into traffic | **yes** - `corridor_paint.opening_spans`, dotted per `markings.AT_AN_OPENING` |
+| Dotted **yellow** centreline along the lane **and in the crossbikes** | required | **yes** - `contraflow_centreline`, carried across every opening |
+| BIKE LANE symbol / word marking (MUTCD Fig 9E-1) | after every driveway and intersection, and at least every 500 ft | **yes** - `symbol_stations`, both rules |
+| Green surfacing | optional full length; or 20-50 ft approaching/departing each intersection and driveway | **yes** - `green_extension_spans`, 20 ft |
 | Solid white line along **both** buffer edges | required for street-level lanes | yes |
-| Diagonals or chevrons in the buffer | **required** at ≥3 ft buffer, spacing ≥10 ft; diagonals slant away from adjacent traffic's direction | partly |
+| Diagonals or chevrons in the buffer | **required** at ≥3 ft buffer; diagonals slant away from adjacent traffic's direction | partly |
 | Warning signage for two-way bike traffic (modified MUTCD W6-3) | at any T intersection or major driveway | n/a (signs) |
+
+**BUFFER MARKING SPACING IS LEFT ALONE, DELIBERATELY.** The guide's sentence gives it as "10 ft
+(2 m)", and those two figures disagree - 2 m is 6.6 ft - so one of them is a typo and it is not
+knowable from this text which. Our hatching is at 2 ft. Danny's read is that the 10 ft figure
+describes something other than stroke pitch, and on an internally inconsistent sentence that is the
+safer conclusion: nothing changes until the printed guide is checked. Recorded rather than dropped,
+because a 5x discrepancy in a required marking is worth someone's eyes.
 
 **THE CROSSBIKE ROW IS A DEFECT IN OUR DRAWING, not a missing nicety.** `081e990` broke the lane at
 all 33 crossings and driveway mouths, on the reasoning that a crossing outranks what runs along the

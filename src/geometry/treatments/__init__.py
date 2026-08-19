@@ -93,7 +93,8 @@ from src.geometry.treatments.crossings import (CROSSING_CONTEXT_RADIUS_M, RaiseC
                                                resolved_crossing_stations)
 from src.geometry.treatments.corridor import (BROAD_ST_TWO_WAY_BIKEWAY, CorridorFacility,
                                              Section)
-from src.geometry.treatments.parking import (MIN_USABLE_STALL_FT, MarkedParking,
+from src.geometry.treatments.parking import (MIN_HATCHED_ZONE_FT, MIN_USABLE_STALL_FT,
+                                            MarkedParking,
                                              narrow_lanes_and_recover_parking,
                                              osm_derived_baseline,
                                              ParkingBufferBollards,
@@ -129,6 +130,7 @@ __all__ = [
                                           "LANE_WIDTH_SLACK_FT",
                                           "LEGAL_PARKING_SETBACK_FT",
                                           "MIN_BIKE_LANE_FT",
+                                          "MIN_HATCHED_ZONE_FT",
                                           "MIN_MARKED_PARKING_DEPTH_FT",
                                           "MIN_TRAVEL_LANE_BESIDE_TWO_WAY_FT",
                                           "MIN_TWO_WAY_BIKE_LANE_FT",

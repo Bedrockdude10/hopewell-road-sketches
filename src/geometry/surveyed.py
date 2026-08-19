@@ -248,7 +248,33 @@ def crossing_bars_ft(crossing: SurveyedCrossing, kerb_lines=None, style: str | N
     bars = [_band_along(line, at_ft - CONTINENTAL_BAR_WIDTH_FT / 2,
                         at_ft + CONTINENTAL_BAR_WIDTH_FT / 2)
             for at_ft in (first_ft + index * pitch_ft for index in range(count))]
-    return [bar for bar in bars if not bar.is_empty]
+    return _kept_apart(bar for bar in bars if not bar.is_empty)
+
+
+def _kept_apart(bars) -> list[Polygon]:
+    """The bars with any overlap taken off the later one, so no ground is painted twice.
+
+    THE PITCH IS ALONG THE ARC AND A BENT WAY TURNS BETWEEN TWO BARS, so on the inside of the turn
+    their ends converge and the flat caps cross even though the gap measured along the way is a
+    healthy 1.64 ft. Greenwood's third zebra bends 4 times in 38.2 ft and its first pair overlapped
+    by 0.05 sq ft. Small, and still paint laid over paint - the same defect as the round-cap bug
+    _band_along documents, arriving from the other direction.
+
+    Clipped rather than re-pitched: widening the pitch at a bend would move every bar off the arc
+    length the count was built from, and the end bars off the ends of the way, to fix a sliver.
+    A bar reduced to nothing is dropped - it was entirely inside its neighbour.
+    """
+    kept: list[Polygon] = []
+    for bar in bars:
+        for earlier in kept:
+            if bar.intersects(earlier):
+                bar = bar.difference(earlier)
+        # A difference can split a bar in two round a bend; the larger piece is the bar.
+        if bar.geom_type == "MultiPolygon":
+            bar = max(bar.geoms, key=lambda piece: piece.area)
+        if not bar.is_empty and bar.area > 1e-6:
+            kept.append(bar)
+    return kept
 
 
 def crossing_lines_ft(crossing: SurveyedCrossing, kerb_lines=None, style: str | None = None

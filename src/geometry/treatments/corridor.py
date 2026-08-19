@@ -146,8 +146,21 @@ class CorridorFacility:
                       f"two riders cannot pass an oncoming pair - a real cost, accepted because "
                       f"the alternative is a gap in the route. The full {section.buffer_ft:.0f} ft "
                       f"buffer is kept, so it stays a protected lane.")
-            state = state.apply(AddBikeLaneBollards(LegSide(leg_name, side),
-                                                    spacing_ft=self.bollard_spacing_ft))
+            # POSTS NEED A BUFFER TO STAND IN. On an unbuffered rung there is nowhere to put one
+            # that is not in the bike lane or the travel lane, so the lane is painted rather than
+            # protected here - said out loud, because "protected bikeway" is the claim the whole
+            # facility makes and this is the one place it does not hold.
+            from src.geometry.treatments.bikeways import min_bike_lane_buffer_ft
+
+            if section.buffer_ft >= min_bike_lane_buffer_ft():
+                state = state.apply(AddBikeLaneBollards(LegSide(leg_name, side),
+                                                        spacing_ft=self.bollard_spacing_ft))
+            elif not quiet:
+                print(f"  NOTE: {leg_name} {side} takes the full {section.width_ft:.0f} ft lane "
+                      f"with a {section.buffer_ft:.1f} ft buffer - too narrow for a flex post, so "
+                      f"there are NO posts here and the lane is PAINTED, not protected. The kerb "
+                      f"is still alongside it. Width was kept over the buffer deliberately - see "
+                      f"BROAD_ST_TWO_WAY_BIKEWAY.")
             # THE FAR KERB GETS THE SURPLUS: the kerb that loses its parking to the bike lane is
             # not the kerb that gains this. Single home: hold_travel_lane_at_target in parking.py.
             return hold_travel_lane_at_target(state, leg_name, str(Side(side).other))
@@ -162,10 +175,23 @@ class CorridorFacility:
 
 #: THE BOROUGH'S TWO-WAY PROTECTED BIKEWAY, declared once; no site file restates any part of it.
 #:
-#: THE BUFFER NEVER GIVES - narrowing it spends the protection to buy nothing. At W Broad &
-#: Louellen (32.10 ft between traced kerbs) the 10 + 3 section leaves 9.14 ft travel lanes and
-#: 10 + 2 leaves 9.64, both under the 10 ft floor; the 8 ft lane with the full 3 ft buffer leaves
-#: 10.14 ft, so the pinch keeps its posts and the corridor stays continuous.
+#: WIDTH BEFORE BUFFER, and the ladder is ordered to say so. A two-way lane under 10 ft cannot give
+#: 5 ft per direction, which is the width a rider meeting an oncoming rider actually needs; a buffer
+#: is separation from traffic, which the KERB already provides on the protected side. So the rungs
+#: spend the buffer first and the lane's width last.
+#:
+#: This reverses an earlier ordering that spent the width and kept the buffer ("the buffer never
+#: gives"), on the grounds that a narrow buffered lane is still protected. It bought protection
+#: with the thing the facility exists to provide: at W Broad & Louellen that ordering landed the
+#: 8 ft constrained rung - 4 ft per direction - where the street will carry a 10 ft lane if the
+#: buffer goes. The cost is stated where it lands rather than in a comment: an unbuffered rung
+#: takes no flex posts (there is nowhere to stand one that is not in a lane), so _place_on skips
+#: them and prints that the lane is painted rather than protected there.
+#:
+#: THE OBJECTION THAT REMOVED THE UNBUFFERED RUNG BEFORE WAS THE FAR LANE, not the near one: it
+#: "leaves the opposing lane 13.02 ft with no room to narrow (TravelLanesHoldTheTarget fails the
+#: build)". That was the far kerb's surplus going unhatched, which hold_travel_lane_at_target now
+#: absorbs on both kerbs - so the objection is spent, and the rung is back.
 #:
 #: TEN FEET ON THE FIRST RUNG, AND PARKING IS WHY. Hopewell Borough is car-dependent, so a plan
 #: that removes a kerb of parking and returns none is not viable here. broad_st_east has 43.26 ft
@@ -176,13 +202,17 @@ class CorridorFacility:
 #: is the absolute floor being spent (STANDARDS.md §4). The alternative on the table was narrowing
 #: the travel lanes to 10 ft to keep 12 ft of bikeway; it was not taken - see TARGET_LANE_WIDTH_FT.
 #:
-#: An unbuffered rung was tried and removed: it fits the kerb but leaves the opposing lane 13.02 ft
-#: with no room to narrow (TravelLanesHoldTheTarget fails the build), and an unbuffered two-way
-#: lane is paint beside 25 mph traffic rather than protection.
 BROAD_ST_TWO_WAY_BIKEWAY = CorridorFacility(
     road="Broad Street",
     side=CORRIDOR_SIDE,
+    # Buffer first, width last - see above. The unbuffered 10 ft rung sits ahead of the constrained
+    # 8 ft one because 5 ft per direction with the kerb alongside beats 4 ft per direction with
+    # posts.
+    # No intermediate part-buffer rung: nothing on this route has room for one. The legs either
+    # take the full 3 ft (five of six) or have under 10 ft for the whole bikeway, where any buffer
+    # at all costs lane width.
     sections=(Section(MIN_TWO_WAY_BIKE_LANE_FT, TWO_WAY_BIKE_LANE_BUFFER_FT),
+              Section(MIN_TWO_WAY_BIKE_LANE_FT, 0.0),
               Section(CONSTRAINED_TWO_WAY_BIKE_LANE_FT, TWO_WAY_BIKE_LANE_BUFFER_FT,
                       constrained=True)),
 )

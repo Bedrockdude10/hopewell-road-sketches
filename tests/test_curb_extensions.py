@@ -23,7 +23,16 @@ from src.geometry.treatments import (AASHTO_MIN_BIKE_LANE_FT, MIN_BIKE_LANE_FT,
                                    AddCurbExtension, BikeLane, CornerApron,
                                    DesignState, LaneNarrowing, LaneNarrowingBollards,
                                    SetCornerRadius, TARGET_LANE_WIDTH_FT, find_corner)
-from src.geometry.markings import BOLLARD, BUFFER_EDGE_LINE, BUFFER_FILL
+from src.geometry.markings import (BIKE_BUFFER_FILL, BIKE_LANE_EDGE_LINE, BOLLARD,
+                                   BUFFER_EDGE_LINE, BUFFER_FILL)
+
+#: The two channels a kerbside zone beside a bike lane can be drawn in. Which one it is
+#: is a fact about what ELSE is on that kerb, not about the zone: with parking outside the
+#: lane the leftover is the parking buffer's, and with nothing out there it is the
+#: bikeway's own separation from the kerb and is drawn as such (bikeways.AddBikeLane.paint).
+#: These tests are about the zone being drawn and reaching the kerb, which is true either way.
+KERBSIDE_ZONE_KINDS = (BUFFER_FILL, BIKE_BUFFER_FILL)
+KERBSIDE_ZONE_EDGES = (BUFFER_EDGE_LINE, BIKE_LANE_EDGE_LINE)
 from src.geometry.paint import LANE_EDGE_LINE_WIDTH_FT
 from src.render.scene import SceneGeometry
 from src.site import load_site_scenarios, run_scenario
@@ -44,7 +53,11 @@ SCHEDULE_I_NO_PARKING_FT = 100.0
 # corner returns, 39.4 and 31.6 ft off the centerline on broad_st_east against a 26.0 ft
 # nominal half-width. Being clear about which number is which is the point: an 8 ft extension
 # per side reads as "52 -> 36" on the cross-section and is really 65.0 -> 35.5 on the ground.
-BROAD_ST_TODAY = {"broad_st_east": 65.00, "broad_st_west": 69.50}
+# broad_st_west was 69.50 until the corner-return fix (model.corner_return_scale) let the fit keep
+# traced vertices it had been discarding as driveway aprons, moving the measured reach one 0.25 ft
+# step. A measured figure moving when the measurement improves is the system working; it is
+# recorded here rather than loosened so the next move still has to be explained.
+BROAD_ST_TODAY = {"broad_st_east": 65.00, "broad_st_west": 69.25}
 BROAD_ST_AFTER_8FT = {"broad_st_east": 36.0, "broad_st_west": 39.5}
 
 
@@ -687,18 +700,23 @@ def test_the_kerb_hatching_beside_a_bike_lane_is_actually_drawn(site_models):
     for treatment in state.treatments_of(AddBikeLane):
         leg_name, side, lane = treatment.target.leg, str(treatment.target.side), treatment.lane
         fills = [p for p in paint if p.leg == leg_name and p.side == side
-                 and p.kind is BUFFER_FILL]
+                 and p.kind in KERBSIDE_ZONE_KINDS]
         assert fills, f"{leg_name} {side} has no hatching between its bike lane and the kerb"
         outer_ft = lane.offsets_from_centerline_ft()["outer_ft"]
         leg = state.legs[leg_name]
+        # SOME zone reaches the kerb, and NO zone crosses it. Not "every zone reaches it": a
+        # buffered lane has separation on both sides, and the inner one stops at the lane by
+        # definition - it was only ever the outer one this is about.
+        reached = []
         for piece in fills:
             points = np.asarray(piece.geometry.exterior.coords, dtype=float)
             stations, offsets = station_offset_many(leg.centerline, points)
-            # Inside the lane's outer stripe is the lane, not hatching.
-            assert np.abs(offsets).max() >= outer_ft - 0.1, (
-                f"{leg_name} {side}'s hatching only reaches {np.abs(offsets).max():.2f} ft")
+            reached.append(float(np.abs(offsets).max()))
             kerb = curb_offsets_at_stations(leg, side, stations)
             assert np.all(np.abs(offsets) <= np.abs(kerb) + 0.25), "hatching crosses the kerb"
+        assert max(reached) >= outer_ft - 0.1, (
+            f"{leg_name} {side}'s kerbside hatching only reaches {max(reached):.2f} ft of "
+            f"{outer_ft:.2f}")
 
 
 @needs_source_data
@@ -771,12 +789,12 @@ def test_the_kerb_hatching_beside_a_bike_lane_is_trimmed_where_the_crossing_cuts
     for treatment in state.treatments_of(AddBikeLane):
         leg_name, side, lane = treatment.target.leg, str(treatment.target.side), treatment.lane
         hatching = [p for p in paint if p.leg == leg_name and p.side == side
-                    and p.kind is BUFFER_FILL]
+                    and p.kind in KERBSIDE_ZONE_KINDS]
         assert hatching, f"{leg_name} {side} has no kerb hatching to trim"
         # A rim is the zone's own edge line continued around the cut (no dedicated kind any more
         # - see PaintContext.rim), and PaintPiece.rim is what distinguishes the two.
         rims = [p for p in paint if p.leg == leg_name and p.side == side
-                and p.kind is BUFFER_EDGE_LINE and p.rim]
+                and p.kind in KERBSIDE_ZONE_EDGES and p.rim]
         outer_ft = lane.offsets_from_centerline_ft()["outer_ft"]
         # The buffer between the lane and the traffic has a rim of its own, and it is the
         # INNER one - so this looks for a rim out where the kerb hatching is, not just any.

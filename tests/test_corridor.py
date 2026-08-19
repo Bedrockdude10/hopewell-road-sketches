@@ -155,11 +155,22 @@ def test_the_corridor_axis_runs_one_way_over_its_whole_length(corridors):
 
 @needs_source_data
 def test_a_leg_station_of_zero_is_its_own_junction_node(corridors):
-    """Both of a junction's legs start at its node, so both map to that node's station."""
+    """Each of a junction's legs starts where it actually meets the corridor.
+
+    Both start at the node in the model; the two NJDOT alignments behind them do not meet, and
+    JunctionOnRoad.leg_joint_ft carries what the blend could not close. So a leg maps to the node
+    plus its own joint - zero for one leg, the open gap for the other (2.79 ft at W Broad &
+    Louellen) - and the network-level twin of this test,
+    tests/test_network.py:test_a_leg_station_maps_to_the_node_at_zero, says the same thing about
+    the per-junction Road. Asserting a flat node_ft for both is what put every far-leg station up
+    the street.
+    """
     for corridor in corridors:
         for junction in corridor.junctions:
-            for leg_name, _sign in junction.legs:
-                assert corridor.station_of(leg_name, 0.0) == pytest.approx(junction.node_ft)
+            joints = dict(junction.leg_joint_ft)
+            for leg_name, sign in junction.legs:
+                assert corridor.station_of(leg_name, 0.0) == pytest.approx(
+                    junction.node_ft + sign * joints.get(leg_name, 0.0), abs=1e-6)
             assert junction.start_ft < junction.node_ft < junction.end_ft
 
 

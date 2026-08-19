@@ -626,6 +626,7 @@ class PaintContext:
                         part = part.difference(
                             unary_union(painted).buffer(COLLINEAR_PAINT_TOLERANCE_FT))
                     for got in getattr(part, "geoms", [part]):
+                        got = _held_inside_the_kerb(self.state.legs.get(piece.leg), piece.side, got)
                         if got.geom_type == "LineString" and got.length >= MIN_RIM_LENGTH_FT:
                             self.pieces.append(PaintPiece(kind, got, piece.leg, piece.side,
                                                           rim=cause))
@@ -806,6 +807,37 @@ def _dash_spans(lo_ft: float, hi_ft: float) -> list[tuple[float, float]]:
 KERB_HOLD_SAMPLE_FT = 0.5
 
 
+def _held_inside_the_kerb(leg, side: str, line):
+    """`line` with every vertex pulled back to the traced kerb, measured as the CHECK measures it.
+
+    The band intersection above holds a rim inside the kerb as a REGION, and a region has to pick
+    a representation: it follows the kerb's own coordinates, straight from vertex to vertex in
+    world space. checks.PaintInsideTheTracedKerb instead reads each drawn vertex's own station and
+    interpolates the kerb's OFFSET there. The two are the same curve only where the centreline is
+    straight, and on louellen_st_west's bend they differ by 0.34 ft - enough to fail a 0.25 ft
+    tolerance on paint the region clamp thought it had already held.
+
+    So the last word goes to the frame the invariant is stated in. Vertex by vertex, no region: a
+    marking may meet the kerb, never cross it, and "cross it" means what the check means by it.
+    """
+    from src.geometry.model import place_in_measured_frame
+
+    if leg is None or side is None or line.is_empty or line.geom_type != "LineString":
+        return line
+    points = np.asarray(line.coords, dtype=float)
+    stations, offsets = station_offset_many(leg.centerline, points)
+    curb = curb_offsets_at_stations(leg, side, stations)
+    if curb is None:
+        return line
+    sign = 1.0 if str(side) == "left" else -1.0
+    room = np.maximum(np.abs(curb) - LANE_EDGE_LINE_WIDTH_FT / 2, 0.0)
+    over = np.abs(offsets) > room
+    if not over.any():
+        return line
+    offsets[over] = sign * room[over]
+    return LineString(place_in_measured_frame(leg.centerline, stations, offsets))
+
+
 def _inside_the_traced_kerb(leg, side: str, near):
     """The strip from the centreline out to the TRACED kerb, over `near`'s own extent.
 
@@ -813,8 +845,15 @@ def _inside_the_traced_kerb(leg, side: str, near):
     STRIP_SAMPLE_FT, which is right for a marking running the length of a leg but wrong for holding
     a line against a kerb bending through a corner return. Sampled here at KERB_HOLD_SAMPLE_FT
     over just the span being held, so the chord error is a sixteenth of what it was.
+
+    THE OUTER EDGE IS THE KERB'S OWN COORDINATES, not that sampling of them - the same rule
+    model.curbside_strip_polygon states for the same reason. Resampled, the chord between two grid
+    stations lies OUTSIDE a kerb that curves inward between them, so the band leaked exactly where
+    it is needed most: at a driveway opening's fillet, where the kerb turns hardest. That let an
+    opening rim stand 0.4 ft past the traced kerb on louellen_st_west at 2.5x and
+    checks.PaintInsideTheTracedKerb refuse the export.
     """
-    from src.geometry.model import band_from_offsets
+    from src.geometry.model import curb_edge_by_station, point_at
 
     coords = [xy for part in getattr(near, "geoms", [near])
               if not part.is_empty and part.geom_type in ("LineString", "Polygon")
@@ -827,11 +866,14 @@ def _inside_the_traced_kerb(leg, side: str, near):
     if hi - lo < KERB_HOLD_SAMPLE_FT:
         return None
     grid = np.linspace(lo, hi, max(int((hi - lo) / KERB_HOLD_SAMPLE_FT) + 1, 2))
-    kerb = curb_offsets_at_stations(leg, side, grid)
-    if kerb is None:
+    outer = curb_edge_by_station(leg, side, lo, hi)
+    if outer is None:
         return None
-    kerb = np.abs(kerb)
-    return band_from_offsets(leg, side, grid, np.zeros_like(kerb), kerb)
+    inner = [point_at(leg.centerline, float(station), 0.0) for station in grid]
+    band = Polygon(list(outer) + list(reversed(inner)))
+    if not band.is_valid:
+        band = band.buffer(0)
+    return None if band.is_empty else band
 
 
 def junction_mouths_ft(state, crosswalk_bands: dict | None = None,

@@ -854,8 +854,24 @@ class AddBikeLane(Treatment):
                 lane_narrowing_polygons_ft(leg, leg.curb_to_curb_ft / 2 - bounds["outer_ft"],
                                             start_left_ft=start_ft, start_right_ft=start_ft,
                                             sides=(side,)))
-            ctx.rim(ctx.add(BUFFER_FILL, hatch, leg_name, side, beyond_ft,
-                             shares_a_kerb=through), BUFFER_EDGE_LINE)
+            # WHICH BUFFER IT IS. On a kerb with nothing outside the lane this leftover is the
+            # bikeway's own separation from the kerb, so it is drawn in the BIKE buffer's channel
+            # and reads as one protected corridor - lane with separation either side - instead of
+            # a lane that stops short of the kerb beside an unexplained hatch. Where the section
+            # puts parking out there, or the leg carries MarkedParking on this kerb, the leftover
+            # belongs to THAT marking and keeps the parking buffer's channel; routing it to the
+            # bike buffer painted 100 sq ft of broad_st_west's parking buffer twice, which
+            # markings_collide reported.
+            from src.geometry.targets import LegSide
+            from src.geometry.treatments.parking import MarkedParking
+
+            kerbside_is_the_bikeway_s = (
+                not lane.parking_ft
+                and ctx.state.treatment_for(MarkedParking, LegSide(leg_name, side)) is None)
+            kind, edge = ((BIKE_BUFFER_FILL, BIKE_LANE_EDGE_LINE) if kerbside_is_the_bikeway_s
+                          else (BUFFER_FILL, BUFFER_EDGE_LINE))
+            ctx.rim(ctx.add(kind, hatch, leg_name, side, beyond_ft,
+                             shares_a_kerb=through), edge)
 
 
 @dataclass(frozen=True)

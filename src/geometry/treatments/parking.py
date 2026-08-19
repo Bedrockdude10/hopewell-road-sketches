@@ -489,6 +489,16 @@ def _merged_length_ft(intervals: list[tuple[float, float]]) -> float:
 # lane, so it is not a stall; MIN_MARKED_PARKING_DEPTH_FT (8 ft) is the width to mark when the
 # street can spare it, not the floor for whether parking exists at all.
 MIN_USABLE_STALL_FT = 7.0
+#: The narrowest hatched zone worth painting - and, more to the point, the narrowest one that can
+#: be painted WITHOUT TAKING FROM THE TRAVEL LANE. Both callers below used to floor the stripe at
+#: this figure (`max(spare, 0.5)`), which is the opposite rule: where the street spared 0.37 ft it
+#: painted 0.5 and the missing 0.13 came out of the lane. At E Broad & Princeton that turned a
+#: two-way bikeway that FIT - 11.00 ft lanes, 0.14 ft spare - into three invariant failures and a
+#: refused 3D export, over a sliver of asphalt nobody would stripe.
+#:
+#: So it is a FLOOR ON WHETHER, not on how wide: below this the spare is left unpainted, which is
+#: what it is on the ground.
+MIN_HATCHED_ZONE_FT = 0.5
 
 
 def osm_derived_baseline(state: DesignState, model, legs: tuple | None = None) -> DesignState:
@@ -548,7 +558,13 @@ def narrow_lanes_and_recover_parking(state: DesignState) -> DesignState:
     for leg_name, leg in state.legs.items():
         recovered_ft = leg.curb_to_curb_ft / 2 - TARGET_LANE_WIDTH_FT
         if recovered_ft < MIN_USABLE_STALL_FT:
-            state = state.apply(LaneNarrowing(LegTarget(leg_name), max(recovered_ft, 0.5)))
+            if recovered_ft < MIN_HATCHED_ZONE_FT:
+                print(f"  NOTE: {leg_name} ({leg.curb_to_curb_ft:.0f} ft) recovers only "
+                      f"{recovered_ft:.1f} ft per side at {TARGET_LANE_WIDTH_FT:.0f} ft lanes - "
+                      f"under {MIN_HATCHED_ZONE_FT} ft, so nothing is painted here rather than a "
+                      f"stripe the lane would have to pay for.")
+                continue
+            state = state.apply(LaneNarrowing(LegTarget(leg_name), recovered_ft))
             print(f"  NOTE: {leg_name} ({leg.curb_to_curb_ft:.0f} ft) recovers only "
                   f"{recovered_ft:.1f} ft per side at {TARGET_LANE_WIDTH_FT:.0f} ft lanes - too "
                   f"narrow for a stall, so paint-only narrowing here, no parking.")
@@ -603,8 +619,12 @@ def hold_travel_lane_at_target(state: DesignState, leg_name: str, side: str) -> 
         depth_ft = min(surplus_ft, PARKING_STALL_DEPTH_DEFAULT_FT)
         return state.apply(MarkedParking(LegSide(leg_name, side), depth_ft=depth_ft,
                                           curb_offset_ft=max(zone_from_nominal_ft - depth_ft, 0.0)))
+    if zone_from_nominal_ft < MIN_HATCHED_ZONE_FT:
+        # Sized from what the road can spare, which is checks.PaintClearOfTheTravelLane's own
+        # wording. See MIN_HATCHED_ZONE_FT.
+        return state
     return state.apply(LaneNarrowing(LegTarget(leg_name),
-                                      stripe_width_ft=max(zone_from_nominal_ft, 0.5),
+                                      stripe_width_ft=zone_from_nominal_ft,
                                       sides=(side,)))
 
 

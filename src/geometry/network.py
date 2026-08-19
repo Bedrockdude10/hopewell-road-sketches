@@ -57,6 +57,13 @@ class Road:
     #: datum off the leg becomes a change of caller rather than a rewrite of the frame.
     left_curb: LineString | None = None
     right_curb: LineString | None = None
+    #: Where the FAR leg's own station 0 sits on this road, which is `node_ft` plus whatever of the
+    #: joint _joined_centerline could not close. Both legs start at the node, so in principle the
+    #: two are equal; at W Broad & Louellen 2.79 ft of the gap between the two NJDOT alignments is
+    #: longitudinal and survives the lateral blend, and the joined line carries it as real length.
+    #: Translating a far-leg station arithmetically then landed 2.79 ft up the street and read the
+    #: road 2.9 ft wider than the leg it was built from.
+    far_node_ft: float | None = None
 
     @property
     def length_ft(self) -> float:
@@ -93,7 +100,16 @@ def _kerb_offset_at(centerline: LineString, kerb: LineString | None, side: str,
     return abs(float(at[0]))
 
 
-def _joined_centerline(near, far) -> LineString:
+#: Two vertices this close are one point. A hair, in feet: the shared junction node is written by
+#: the same code into both legs, so a real duplicate is exact and anything larger is a gap.
+SAME_POINT_FT = 1e-6
+
+
+def _same_point(a, b) -> bool:
+    return bool(np.hypot(*(np.asarray(a, dtype=float) - np.asarray(b, dtype=float))) <= SAME_POINT_FT)
+
+
+def _joined_centerline(near, far) -> tuple[LineString, float]:
     """`near`'s centreline reversed, then `far`'s - one line running through the junction.
 
     Both legs start AT the node and run outward, so the near one is reversed to run inward. The
@@ -109,9 +125,19 @@ def _joined_centerline(near, far) -> LineString:
     """
     back = list(near.centerline.coords)[::-1]
     ahead = list(far.centerline.coords)
-    if back and ahead and np.allclose(back[-1], ahead[0]):
+    joint_ft = 0.0
+    # BY DISTANCE, NOT np.allclose. These are state-plane feet around 420,000, and allclose's
+    # default rtol of 1e-5 is 4.2 ft there - so it called the two starts "the same point" across a
+    # 2.79 ft gap and dropped one, and the joined line quietly lost that length. Every far-leg
+    # station past the node was then 2.79 ft out, which read the road 2.9 ft wider than the leg it
+    # was built from at W Broad & Louellen.
+    if back and ahead and _same_point(back[-1], ahead[0]):
         ahead = ahead[1:]
-    return LineString(back + ahead)
+    elif back and ahead:
+        # What the blend could not close, carried as real length by the line below. Returned so a
+        # caller can put the far leg's station 0 where it actually lands - see Road.far_node_ft.
+        joint_ft = float(np.hypot(*(np.asarray(ahead[0]) - np.asarray(back[-1]))))
+    return LineString(back + ahead), near.centerline.length + joint_ft
 
 
 def _joined_kerb(near, near_side: str, far, far_side: str) -> LineString | None:
@@ -157,9 +183,10 @@ def roads_from_model(model) -> list[Road]:
         street = (model.config["legs"].get(far_name, {}).get("street_name")
                   or model.config["legs"].get(near_name, {}).get("street_name")
                   or f"{near_name}/{far_name}")
+        joined, far_node_ft = _joined_centerline(near, far)
         roads.append(Road(
             name=street,
-            centerline=_joined_centerline(near, far),
+            centerline=joined,
             # The NEAR leg's own station 0, which is exact for it and out by the whole unclosed
             # gap for the far one - see _joined_centerline (task: retire _join_through_legs).
             node_ft=near.centerline.length,
@@ -169,6 +196,11 @@ def roads_from_model(model) -> list[Road]:
             # its sides.
             left_curb=_joined_kerb(near, "right", far, "left"),
             right_curb=_joined_kerb(near, "left", far, "right"),
+            # From _joined_centerline, which is the only thing that knows whether the shared point
+            # was dropped: where the two legs really do start together this is exactly node_ft, and
+            # only an open joint makes it larger. Projecting the far leg's start onto the joined
+            # line instead was right in principle and 4e-4 ft noisy in the closed case.
+            far_node_ft=far_node_ft,
         ))
     return roads
 
@@ -257,7 +289,8 @@ class Approach:
 
 def approaches_of(road: Road) -> tuple[Approach, ...]:
     """A road's two approaches at its node, named by the legs it was built from."""
-    return (Approach(road.far_leg, road, road.node_ft, forward=True),
+    return (Approach(road.far_leg, road, road.far_node_ft if road.far_node_ft is not None
+                     else road.node_ft, forward=True),
             Approach(road.near_leg, road, road.node_ft, forward=False))
 
 
@@ -353,20 +386,28 @@ class JunctionOnRoad:
     """One modelled junction's stretch of a corridor, and the two legs it contributed.
 
     `legs` carries a SIGN per leg because a leg's own station 0 is at the node and it runs
-    outward, so one of the two runs backwards along the corridor. That sign is the whole of the
-    leg-to-corridor station translation, and it is exact: the corridor's centreline contains this
-    junction Road's vertices verbatim, so arc length along one is arc length along the other.
+    outward, so one of the two runs backwards along the corridor. Arc length along the corridor is
+    arc length along this junction Road, whose vertices it contains verbatim.
+
+    THE SIGN IS NOT QUITE THE WHOLE TRANSLATION. Both legs start at the node in the model, but
+    they come from two NJDOT alignments that do not meet, and the joined centreline carries what
+    the blend could not close as real length (Road.far_node_ft). `leg_joint_ft` is that offset per
+    leg - zero for the leg the road's stations are measured from, and the open joint for the other.
+    Left out, W Broad & Louellen's far leg was translated 2.79 ft up the street and the corridor
+    read 2.9 ft wider there than the leg it was built from.
     """
     site: str
     node_ft: float
     start_ft: float
     end_ft: float
     legs: tuple[tuple[str, float], ...]
+    leg_joint_ft: tuple[tuple[str, float], ...] = ()
 
     def station_of(self, leg_name: str, leg_station_ft: float) -> float:
+        joints = dict(self.leg_joint_ft)
         for name, sign in self.legs:
             if name == leg_name:
-                return self.node_ft + sign * leg_station_ft
+                return self.node_ft + sign * leg_station_ft + sign * joints.get(name, 0.0)
         raise KeyError(f"{leg_name} is not one of {self.site}'s legs on this road "
                        f"({', '.join(name for name, _ in self.legs)})")
 
@@ -784,23 +825,35 @@ def _seam(align: LineString, point) -> tuple[float, float]:
 
 
 def _tracing_reach_ft(align: LineString, seam_ft: float, forward: bool, kerb_ways,
-                      max_ft: float) -> float:
+                      max_ft: float, centre_xy=None) -> float:
     """How far past a seam the traced kerb continues along the alignment, capped at max_ft.
 
     Measured against NJDOT's alignment rather than the finished corridor, because the corridor
     cannot be built until its length is known. The reach only ever shortens the road, so an error
     here cannot invent street.
+
+    THE CAP IS A RADIUS, SO IT IS APPLIED AS ONE. `max_ft` is CORRIDOR_KERB_RADIUS_M - the distance
+    past which no kerb was FETCHED, and the fetch is a circle round the junction. Capping the
+    arc length instead let the road run past its own fetch window wherever the street bends, since
+    an arc is always longer than its chord: Broad St came out 4,655 ft with only 4,531 inside a
+    window, and an opening count over the last 124 ft would have been counting where nothing was
+    looked for. So a kerb point earns reach only if it is inside the circle as well as along the
+    road.
     """
     from src.geometry.intersection import KERB_PLAUSIBLE_HALF_WIDTH_FT
 
     near, far = KERB_PLAUSIBLE_HALF_WIDTH_FT
     lo = seam_ft if forward else max(seam_ft - max_ft, 0.0)
     hi = min(seam_ft + max_ft, align.length) if forward else seam_ft
+    centre = (np.asarray(align.interpolate(seam_ft).coords[0]) if centre_xy is None
+              else np.asarray(centre_xy, dtype=float))
     reach = 0.0
     for line, _tags in kerb_ways.values():
-        stations, offsets = station_offset_many(align, _dense_kerb_points(line))
+        points = _dense_kerb_points(line)
+        stations, offsets = station_offset_many(align, points)
         beside = (np.abs(offsets) >= near) & (np.abs(offsets) <= far)
-        inside = beside & (stations >= lo) & (stations <= hi)
+        within_radius = np.hypot(*(points - centre).T) <= max_ft
+        inside = beside & within_radius & (stations >= lo) & (stations <= hi)
         if inside.any():
             beyond = stations[inside] - seam_ft if forward else seam_ft - stations[inside]
             reach = max(reach, float(beyond.max()))
@@ -818,6 +871,11 @@ def _dense_kerb_points(line: LineString) -> np.ndarray:
     return kerb_points([line])
 
 
+def _road_joint_ft(road: Road) -> float:
+    """How far past the node the FAR leg's own station 0 sits - see Road.far_node_ft."""
+    return 0.0 if road.far_node_ft is None else road.far_node_ft - road.node_ft
+
+
 def _oriented_piece(road: Road, first_leg: str) -> dict:
     """One junction Road turned to run the corridor's way, with its sides renamed to match.
 
@@ -827,14 +885,16 @@ def _oriented_piece(road: Road, first_leg: str) -> dict:
     if road.near_leg == first_leg:
         return {"centerline": road.centerline, "left": road.left_curb, "right": road.right_curb,
                 "node_from_start_ft": road.node_ft,
-                "legs": ((road.near_leg, -1.0), (road.far_leg, 1.0))}
+                "legs": ((road.near_leg, -1.0), (road.far_leg, 1.0)),
+                "leg_joint_ft": ((road.far_leg, _road_joint_ft(road)),)}
     def flip(line):
         return None if line is None else LineString(list(line.coords)[::-1])
 
     return {"centerline": flip(road.centerline), "left": flip(road.right_curb),
             "right": flip(road.left_curb),
             "node_from_start_ft": road.length_ft - road.node_ft,
-            "legs": ((road.far_leg, -1.0), (road.near_leg, 1.0))}
+            "legs": ((road.far_leg, -1.0), (road.near_leg, 1.0)),
+            "leg_joint_ft": ((road.far_leg, _road_joint_ft(road)),)}
 
 
 def _cumulative_ft(coords) -> np.ndarray:
@@ -930,8 +990,12 @@ def _build_corridor(models, chain: list[tuple], roads_by_key: dict) -> Corridor 
         node_ft=float(stations[piece["index"][0]]) + piece["node_from_start_ft"],
         start_ft=float(stations[piece["index"][0]]),
         end_ft=float(stations[piece["index"][1]]),
-        legs=piece["legs"]) for piece in pieces)
-    junction_ft = tuple(j.node_ft for j in junctions)
+        legs=piece["legs"], leg_joint_ft=piece.get("leg_joint_ft", ()))
+        for piece in pieces)
+    # Each modelled junction carries its OWN corner reach; an unmodelled cross street keeps the
+    # square-corner default, because nothing here knows its angle.
+    junction_ft = tuple((junction.node_ft, junction_corner_reach_ft(models[piece["site"]]))
+                        for piece, junction in zip(pieces, junctions))
     junction_runs = _junction_kerb_runs(pieces, stations)
 
     def corridor_with(runs, cross_street_ft=()) -> Corridor:
@@ -976,7 +1040,12 @@ def _extension(models, kerb_ways, seam_point, away, sri: str,
     seam_ft, offset_ft = _seam(align, seam_point)
     _origin, tangent = frame_at(align, seam_ft)
     forward = bool(np.dot(tangent, np.asarray(away, dtype=float)) > 0)
-    reach = _tracing_reach_ft(align, seam_ft, forward, kerb_ways, CORRIDOR_EXTENSION_FT)
+    # The nearest modelled junction is the one whose fetch reaches out here, so its centre is the
+    # circle the cap belongs to - see _tracing_reach_ft.
+    centre = min((model.center_ft for model in models.values()),
+                 key=lambda point: point.distance(Point(seam_point)), default=None)
+    reach = _tracing_reach_ft(align, seam_ft, forward, kerb_ways, CORRIDOR_EXTENSION_FT,
+                              centre_xy=None if centre is None else (centre.x, centre.y))
     lo = max(seam_ft, 0.0) if forward else max(seam_ft - reach, 0.0)
     hi = min(seam_ft + reach, align.length) if forward else min(seam_ft, align.length)
     if hi - lo <= blend_ft:
@@ -1064,6 +1133,19 @@ def _junction_kerb_runs(pieces: list[dict], stations: np.ndarray) -> list[KerbRu
     return runs
 
 
+def junction_corner_reach_ft(model) -> float:
+    """How far this junction's corner returns sweep along the roads meeting in it.
+
+    One number per junction - the most generous of its legs - because the corridor reads kerb
+    along a ROAD and cannot ask which leg a sample belongs to. See model.corner_return_scale for
+    why a flat distance is wrong at an acute junction.
+    """
+    from src.geometry.model import CURB_POINT_CORNER_ZONE_FT, corner_return_scale
+
+    return CURB_POINT_CORNER_ZONE_FT * max(
+        (corner_return_scale(leg, model.legs) for leg in model.legs.values()), default=1.0)
+
+
 def _kerb_samples_on(centerline: LineString, node_stations, line: LineString) -> tuple:
     """(stations, offsets, points, keep) for one traced way read as THIS road's kerb.
 
@@ -1073,7 +1155,10 @@ def _kerb_samples_on(centerline: LineString, node_stations, line: LineString) ->
       * IN THE ROAD - station inside [0, length].
       * BESIDE IT - |offset| inside KERB_PLAUSIBLE_HALF_WIDTH_FT (8-45 ft).
       * ALONG IT - the kerb's own heading within CURB_POINT_MAX_SKEW_DEG of the road's, SUSPENDED
-        within CURB_POINT_CORNER_ZONE_FT of a modelled node (corner returns sweep 90 degrees).
+        near a node (corner returns sweep 90 degrees). Each entry in `node_stations` may carry its
+        own reach as (station, reach_ft); a bare station takes the square-corner default. A flat
+        distance here against a scaled one in the per-leg fit is the two paths reading different
+        kerb, which test_the_road_reproduces_each_legs_measured_width catches.
     """
     from src.geometry.intersection import KERB_PLAUSIBLE_HALF_WIDTH_FT
     from src.geometry.model import CURB_POINT_CORNER_ZONE_FT, CURB_POINT_MAX_SKEW_DEG
@@ -1087,9 +1172,14 @@ def _kerb_samples_on(centerline: LineString, node_stations, line: LineString) ->
     road_dirs = np.asarray([frame_at(centerline, float(station))[1] for station in stations])
     along = (np.abs(np.einsum("ij,ij->i", tangents, road_dirs))
              >= np.cos(np.radians(CURB_POINT_MAX_SKEW_DEG)))
-    nodes = np.asarray(node_stations, dtype=float)
-    in_corner = (np.abs(stations[:, None] - nodes[None, :]).min(axis=1)
-                 <= CURB_POINT_CORNER_ZONE_FT) if len(nodes) else np.zeros(len(stations), bool)
+    pairs = [entry if isinstance(entry, tuple) else (entry, CURB_POINT_CORNER_ZONE_FT)
+             for entry in node_stations]
+    if pairs:
+        nodes = np.asarray([station for station, _reach in pairs], dtype=float)
+        reaches = np.asarray([reach for _station, reach in pairs], dtype=float)
+        in_corner = (np.abs(stations[:, None] - nodes[None, :]) <= reaches[None, :]).any(axis=1)
+    else:
+        in_corner = np.zeros(len(stations), bool)
     keep = ((stations >= 0.0) & (stations <= centerline.length)
             & (np.abs(offsets) >= near) & (np.abs(offsets) <= far) & (along | in_corner))
     return stations, offsets, points, keep

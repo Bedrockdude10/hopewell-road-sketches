@@ -500,6 +500,21 @@ def far_kerb_lane_edge(paint: CorridorFacilityPaint, default_ft: float | None = 
     return at
 
 
+def stalls_per_span(spans, stall_ft: float | None = None):
+    """((lo, hi, stalls), ...) - how many whole cars each span holds, and where.
+
+    The per-span split exists so a drawing can LABEL each run with its own number: a boro reading
+    a total has to be able to find that total on the page, run by run, or it is being asked to
+    take it on trust. `stall_marks` counts through this, so the labels sum to the headline.
+    """
+    from src.geometry.treatments import PARKING_STALL_LENGTH_DEFAULT_FT
+
+    stall_ft = PARKING_STALL_LENGTH_DEFAULT_FT if stall_ft is None else stall_ft
+    # A span shorter than one car holds none, and gets no label pretending otherwise.
+    return tuple((lo, hi, int((hi - lo) // stall_ft)) for lo, hi in spans
+                 if int((hi - lo) // stall_ft) >= 1)
+
+
 def stall_marks(corridor, side: str, spans, depth_ft: float | None = None,
                 stall_ft: float | None = None):
     """(divider lines, stall count) - the stalls DRAWN, one mark per boundary between two cars.
@@ -518,10 +533,7 @@ def stall_marks(corridor, side: str, spans, depth_ft: float | None = None,
     stall_ft = PARKING_STALL_LENGTH_DEFAULT_FT if stall_ft is None else stall_ft
     sign = 1.0 if side == "left" else -1.0
     marks, stalls = [], 0
-    for lo, hi in spans:
-        whole = int((hi - lo) // stall_ft)
-        if whole < 1:
-            continue          # not one car's length: no stall, and no mark pretending there is
+    for lo, _hi, whole in stalls_per_span(spans, stall_ft):
         stalls += whole
         for index in range(whole + 1):
             station = lo + index * stall_ft

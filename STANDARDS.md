@@ -325,6 +325,18 @@ which it is not. The 8 ft constrained rung IS the absolute minimum and NACTO say
 except on short segments - W Broad & Louellen is a short pinch, so using it there is defensible,
 but it has to be described as the absolute minimum being spent, not as a NACTO width.
 
+**THE LADDER NOW SPENDS THE BUFFER BEFORE THE LANE'S WIDTH, so one rung is UNBUFFERED — a design
+departure with no NACTO standing, recorded here because it is the kind of number this register
+exists for.** NACTO requires a solid white line along both buffer edges and diagonals in any
+buffer of 3 ft or more; an unbuffered two-way lane has no buffer to mark and takes no flex posts,
+so it is a PAINTED lane beside live traffic with only the kerb alongside it. It is reached at
+exactly one place on this route: `w_broad_st_northeast`, which has 9.99 ft for the whole bikeway
+once two 11 ft travel lanes are held, against the 10 ft the lane alone needs. The rung above it
+(10 ft + 3 ft) does not fit there and the rung below it (8 ft + 3 ft) gives 4 ft per direction.
+Ordered this way on the client's instruction that 5 ft per direction is the requirement; the cost
+is 0.82 ft off each travel lane there (10.18 ft, still above NACTO's 10 ft truck floor) and no
+posts. Every other leg on the route takes 10 ft + 3 ft with 11 ft travel lanes.
+
 **Travel lanes: NACTO says 10 ft supports trucks at ≤35 mph** and asks that motor lanes be
 narrowed to widen the bikeway. Broad St is posted 25. This is evidence AGAINST holding 11 ft, and
 it is recorded rather than acted on: 11 ft is Danny's standing requirement for Broad St as a rural

@@ -242,7 +242,13 @@ def test_a_zebra_crossing_is_striped_along_its_own_traced_way(site_models, monke
         # with round caps instead of flat ones grows 3 ft at each end against a 1.64 ft gap, so
         # every bar overlaps its neighbours and the end pair overhangs the way - paint drawn where
         # nothing was traced, which is the same error as the drop this stream exists to fix.
-        assert all(before.disjoint(after) for before, after in itertools.pairwise(bars))
+        #
+        # NO SHARED AREA rather than disjoint: the pitch is along the arc, so where the way bends
+        # between two bars their ends converge on the inside of the turn, and surveyed.py:_kept_apart
+        # clips the later one back. Clipped bars TOUCH along that edge, which paints no ground twice
+        # and is what this is about; requiring disjointness failed on the one zebra here that bends.
+        assert all(before.intersection(after).area == pytest.approx(0.0, abs=1e-6)
+                   for before, after in itertools.pairwise(bars))
         # Continental is bars only. The two transverse lines are the other style, not a frame
         # around this one - that would be a ladder, and no way in this snapshot is tagged one.
         assert crossing_lines_ft(crossing) == []

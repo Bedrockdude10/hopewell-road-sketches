@@ -13426,8 +13426,8 @@
         419161.22208,
         566735.119391
       ],
-      "heading_deg": 32.596016,
-      "arm_heading_deg": 122.596016,
+      "heading_deg": 32.654471,
+      "arm_heading_deg": 122.654471,
       "arm_length_ft": 27.75,
       "source": "confirmed (broad_st_west/greenwood_ave_south corner - Corrected 2026-07-02 (Rollo): the earlier street-view photo review (2026-07-02) misread this hardware as a short davit arm - the signals are actually mast-arm held. Still a direct visual observation, not a field survey.\n): full-width mast-arm signal, pole at the real corner-fillet arc midpoint; the arm extends at a right angle to broad_st_west (parallel to its crosswalk, perpendicular to its travel direction), reaching roughly to mid-roadway (arm_length_ft=27.8, half of broad_st_west's real curb-to-curb width) - confirmed via street-view against a real example (NW corner's arm over West Broad St), not a diagonal reach toward the intersection center. Exactly which lane the head hangs over isn't surveyed.",
       "position_m": [
@@ -13486,15 +13486,15 @@
         419149.724326,
         566836.676736
       ],
-      "heading_deg": -146.03556,
-      "arm_heading_deg": -56.03556,
-      "arm_length_ft": 26.006339,
+      "heading_deg": -145.791986,
+      "arm_heading_deg": -55.791986,
+      "arm_length_ft": 25.968731,
       "source": "confirmed (broad_st_east/greenwood_ave_north corner - Corrected 2026-07-02 (Rollo): the earlier street-view photo review (2026-07-02) misread this hardware as a short davit arm - the signals are actually mast-arm held. Still a direct visual observation, not a field survey.\n): full-width mast-arm signal, pole at the real corner-fillet arc midpoint; the arm extends at a right angle to broad_st_east (parallel to its crosswalk, perpendicular to its travel direction), reaching roughly to mid-roadway (arm_length_ft=26.0, half of broad_st_east's real curb-to-curb width) - confirmed via street-view against a real example (NW corner's arm over West Broad St), not a diagonal reach toward the intersection center. Exactly which lane the head hangs over isn't surveyed.",
       "position_m": [
         -2.875,
         15.329959
       ],
-      "arm_length_m": 7.926732
+      "arm_length_m": 7.915269
     },
     {
       "type": "pedestrian_signal_head",
@@ -13543,27 +13543,27 @@
     {
       "type": "no_turn_on_red_sign",
       "position_ft": [
-        419148.674455,
-        566741.59932
+        419148.680659,
+        566741.602973
       ],
-      "heading_deg": 124.947914,
+      "heading_deg": 124.923503,
       "source": "confirmed (street-view photo review, site config.yaml signals.no_turn_on_red_legs) that no-turn-on-red signage exists on this approach; placement approximation: same near-corner curb-line pattern as _stop_sign_props (not a real traffic-engineering placement study).",
       "position_m": [
-        -3.195001,
-        -13.649637
+        -3.19311,
+        -13.648524
       ]
     },
     {
       "type": "no_turn_on_red_sign",
       "position_ft": [
-        419165.756611,
-        566829.287186
+        419166.337211,
+        566829.565606
       ],
-      "heading_deg": -58.233974,
+      "heading_deg": -58.818458,
       "source": "confirmed (street-view photo review, site config.yaml signals.no_turn_on_red_legs) that no-turn-on-red signage exists on this approach; placement approximation: same near-corner curb-line pattern as _stop_sign_props (not a real traffic-engineering placement study).",
       "position_m": [
-        2.01164,
-        13.077624
+        2.188607,
+        13.162487
       ]
     }
   ],
@@ -13571,183 +13571,167 @@
     {
       "name": "broad_st_west",
       "near_m": [
-        0.081649,
-        -0.117242
+        0.03386,
+        -0.049163
       ],
       "far_m": [
-        -32.679251,
-        -22.408378
+        -32.67927,
+        -22.40835
       ],
       "width_m": 16.9164,
       "confirmed": true,
-      "crosswalk_offset_m": 6.326543,
+      "crosswalk_offset_m": 6.325013,
       "crosswalk_offset_source": "osm_survey",
-      "crosswalk_skew_deg": -7.188778,
-      "crosswalk_reach_left_m": 11.2014,
-      "crosswalk_reach_right_m": 9.9822,
+      "crosswalk_skew_deg": -7.136164,
+      "crosswalk_reach_left_m": 11.2776,
+      "crosswalk_reach_right_m": 9.8298,
       "crosswalk_centre_m": [
-        -5.196966,
-        -3.603989
+        -5.242524,
+        -3.536524
       ],
       "crosswalk_axis": [
-        -0.824396,
-        -0.566014
+        -0.824915,
+        -0.565257
       ],
       "stop_bar_centre_m": [
-        -9.217053,
-        -6.394155
+        -9.266872,
+        -6.324989
       ],
       "stop_bar_axis": [
-        -0.819271,
-        -0.573407
+        -0.819109,
+        -0.573638
       ],
       "crosswalk_style": "lines",
       "crosswalk_bar_count": 21,
-      "stop_bar_offset_m": 11.220049,
+      "stop_bar_offset_m": 11.221056,
       "stop_bar_width_m": 16.9164,
       "stop_bar_span_m": 7.9582,
       "stop_bar_lateral_offset_m": 3.9791,
       "centerline_style": "double_yellow",
-      "centerline_start_m": 11.220049,
+      "centerline_start_m": 11.221056,
       "centerline_paint_m": [
         [
           [
-            -9.188383,
-            -6.435119
+            -9.23819,
+            -6.365945
           ],
           [
-            -9.985063,
-            -6.992714
+            -10.034701,
+            -6.923757
           ],
           [
-            -9.985108,
-            -6.992746
+            -11.282809,
+            -7.798388
           ],
           [
-            -11.23487,
-            -7.865405
+            -12.531824,
+            -8.671806
           ],
           [
-            -11.234996,
-            -7.865493
+            -12.531929,
+            -8.671879
           ],
           [
-            -12.487361,
-            -8.734273
+            -13.783099,
+            -9.54207
           ],
           [
-            -12.487574,
-            -8.73442
+            -13.783256,
+            -9.542178
           ],
           [
-            -13.744337,
-            -9.596632
+            -15.037714,
+            -10.407582
           ],
           [
-            -13.744629,
-            -9.596831
+            -15.037827,
+            -10.407661
           ],
           [
-            -15.007388,
-            -10.450094
+            -17.551528,
+            -12.131544
           ],
           [
-            -15.007579,
-            -10.450223
+            -20.066399,
+            -13.853753
           ],
           [
-            -17.542174,
-            -12.145898
+            -22.581442,
+            -15.575664
           ],
           [
-            -20.066192,
-            -13.854298
+            -25.097039,
+            -17.296787
           ],
           [
-            -22.581098,
-            -15.576161
+            -27.613506,
+            -19.01666
           ],
           [
-            -25.097125,
-            -17.296684
+            -30.129751,
+            -20.736811
           ],
           [
-            -27.613444,
-            -19.016747
+            -30.129871,
+            -20.736893
           ],
           [
-            -30.12969,
-            -20.736899
-          ],
-          [
-            -30.129812,
-            -20.736982
-          ],
-          [
-            -32.651155,
-            -22.449737
+            -32.651173,
+            -22.449709
           ]
         ],
         [
           [
-            -9.245723,
-            -6.353192
+            -9.295554,
+            -6.284034
           ],
           [
-            -10.042381,
-            -6.910771
+            -10.092083,
+            -6.841859
           ],
           [
-            -11.292058,
-            -7.783371
+            -11.340177,
+            -7.71648
           ],
           [
-            -12.544253,
-            -8.652034
+            -12.589079,
+            -8.589819
           ],
           [
-            -13.800763,
-            -9.514073
+            -13.840119,
+            -9.459919
           ],
           [
-            -15.06328,
-            -10.367172
+            -15.094442,
+            -10.32523
           ],
           [
-            -17.597891,
-            -12.062858
+            -17.608072,
+            -12.049065
           ],
           [
-            -17.598115,
-            -12.063009
+            -20.122899,
+            -13.771244
           ],
           [
-            -20.122355,
-            -13.77156
+            -22.637928,
+            -15.493146
           ],
           [
-            -20.122575,
-            -13.77171
+            -25.153496,
+            -17.214248
           ],
           [
-            -22.63758,
-            -15.49364
+            -27.669939,
+            -18.934105
           ],
           [
-            -25.153568,
-            -17.214136
+            -30.186125,
+            -20.654216
           ],
           [
-            -27.669878,
-            -18.934193
-          ],
-          [
-            -30.186064,
-            -20.654304
-          ],
-          [
-            -32.707347,
-            -22.367018
+            -32.707367,
+            -22.366991
           ]
         ]
       ]
@@ -13755,251 +13739,251 @@
     {
       "name": "broad_st_east",
       "near_m": [
-        0.076237,
-        -0.120695
+        0.032506,
+        -0.050097
       ],
       "far_m": [
-        46.034069,
-        23.680034
+        46.03485,
+        23.680252
       ],
-      "width_m": 15.853464,
+      "width_m": 15.830538,
       "confirmed": true,
-      "crosswalk_offset_m": 6.500896,
+      "crosswalk_offset_m": 6.508863,
       "crosswalk_offset_source": "osm_survey",
-      "crosswalk_skew_deg": -4.060655,
-      "crosswalk_reach_left_m": 10.2108,
-      "crosswalk_reach_right_m": 9.6012,
+      "crosswalk_skew_deg": -3.543593,
+      "crosswalk_reach_left_m": 10.1346,
+      "crosswalk_reach_right_m": 9.6774,
       "crosswalk_centre_m": [
-        5.52737,
-        3.420497
+        5.49871,
+        3.481677
       ],
       "crosswalk_axis": [
-        0.848157,
-        0.529745
+        0.852903,
+        0.52207
       ],
       "stop_bar_centre_m": [
-        8.79046,
-        5.445061
+        8.737242,
+        5.446768
       ],
       "stop_bar_axis": [
-        0.850606,
-        0.525804
+        0.856065,
+        0.516868
       ],
       "crosswalk_style": "lines",
       "crosswalk_bar_count": 20,
-      "stop_bar_offset_m": 10.341036,
-      "stop_bar_width_m": 15.853464,
-      "stop_bar_span_m": 7.426732,
-      "stop_bar_lateral_offset_m": 3.713366,
+      "stop_bar_offset_m": 10.296971,
+      "stop_bar_width_m": 15.830538,
+      "stop_bar_span_m": 7.415269,
+      "stop_bar_lateral_offset_m": 3.707635,
       "centerline_style": "double_yellow",
-      "centerline_start_m": 10.341036,
+      "centerline_start_m": 10.296971,
       "centerline_paint_m": [
         [
           [
-            8.76417,
-            5.487592
+            8.711399,
+            5.489571
           ],
           [
-            9.04324,
-            5.660099
+            9.031024,
+            5.682553
           ],
           [
-            9.043325,
-            5.660152
+            9.031085,
+            5.682589
           ],
           [
-            10.341231,
-            6.458874
+            10.336958,
+            6.468539
           ],
           [
-            11.159284,
-            6.963387
+            11.156977,
+            6.964396
           ],
           [
-            11.164766,
-            6.966314
+            11.162373,
+            6.967226
           ],
           [
-            13.064705,
-            7.833644
+            13.074409,
+            7.825493
           ],
           [
-            14.449242,
-            8.470258
+            14.460576,
+            8.45819
           ],
           [
-            15.832656,
-            9.109315
+            15.84299,
+            9.099043
           ],
           [
-            18.603951,
-            10.398963
+            18.605601,
+            10.397138
           ],
           [
-            21.352552,
-            11.715029
+            21.353856,
+            11.714113
           ],
           [
-            24.085849,
-            13.063557
+            24.086563,
+            13.063887
           ],
           [
-            26.817536,
-            14.416121
+            26.81823,
+            14.416517
           ],
           [
-            26.817587,
-            14.416146
+            26.818284,
+            14.416543
           ],
           [
-            29.550796,
-            15.765619
+            29.551553,
+            15.765891
           ],
           [
-            29.550912,
-            15.765676
+            29.551668,
+            15.765948
           ],
           [
-            32.287545,
-            17.108011
+            32.288311,
+            17.108261
           ],
           [
-            32.287664,
-            17.108069
+            32.288429,
+            17.108319
           ],
           [
-            35.02778,
-            18.443141
+            35.028546,
+            18.44339
           ],
           [
-            35.027897,
-            18.443198
+            35.028664,
+            18.443447
           ],
           [
-            37.771447,
-            19.771111
+            37.772215,
+            19.771358
           ],
           [
-            37.771521,
-            19.771146
+            37.772289,
+            19.771393
           ],
           [
-            40.51722,
-            21.09458
+            40.517999,
+            21.094802
           ],
           [
-            40.5173,
-            21.094618
+            40.518079,
+            21.094841
           ],
           [
-            43.265342,
-            22.413165
+            43.266122,
+            22.413386
           ],
           [
-            43.265424,
-            22.413205
+            43.266204,
+            22.413425
           ],
           [
-            46.012521,
-            23.725152
+            46.013302,
+            23.725371
           ]
         ],
         [
           [
-            8.816751,
-            5.402531
+            8.763086,
+            5.403965
           ],
           [
-            9.095777,
-            5.575012
+            9.082681,
+            5.596928
           ],
           [
-            10.393703,
-            6.373746
+            10.38857,
+            6.382887
           ],
           [
-            11.209126,
-            6.876638
+            10.388658,
+            6.38294
           ],
           [
-            13.106295,
-            7.742703
+            11.206109,
+            6.877245
           ],
           [
-            13.106419,
-            7.74276
+            13.115504,
+            7.734327
           ],
           [
-            14.491058,
-            8.379421
+            13.115789,
+            7.734456
           ],
           [
-            14.491138,
-            8.379458
+            14.502233,
+            8.367279
           ],
           [
-            15.874656,
-            9.018563
+            14.5025,
+            8.367402
           ],
           [
-            15.874784,
-            9.018622
+            15.885166,
+            9.008372
           ],
           [
-            18.646392,
-            10.308415
+            15.8854,
+            9.008481
           ],
           [
-            18.646889,
-            10.30865
+            18.6483,
+            10.306713
           ],
           [
-            21.396004,
-            11.624962
+            18.648644,
+            10.306876
           ],
           [
-            21.396533,
-            11.62522
+            21.397339,
+            11.624061
           ],
           [
-            24.130126,
-            12.973893
+            21.397875,
+            11.624322
           ],
           [
-            24.130189,
-            12.973925
+            24.130915,
+            12.974261
           ],
           [
-            26.861883,
-            14.326492
+            26.862578,
+            14.326888
           ],
           [
-            29.595009,
-            15.675924
+            29.595763,
+            15.676194
           ],
           [
-            32.331524,
-            17.018201
+            32.332289,
+            17.018451
           ],
           [
-            35.071522,
-            18.353216
+            35.072289,
+            18.353464
           ],
           [
-            37.814977,
-            19.681082
+            37.815744,
+            19.681329
           ],
           [
-            40.560599,
-            21.004479
+            40.561378,
+            21.004701
           ],
           [
-            43.308561,
-            22.322987
+            43.309341,
+            22.323207
           ],
           [
-            46.055617,
-            23.634915
+            46.056398,
+            23.635134
           ]
         ]
       ]

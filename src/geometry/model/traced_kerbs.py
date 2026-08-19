@@ -288,7 +288,67 @@ CURB_POINT_BEHIND_PENALTY = 10.0
 # street's edge. Inside the corner zone the test is suspended, because a corner return
 # sweeps through 90 degrees by definition and is still curb.
 CURB_POINT_MAX_SKEW_DEG = 30.0
+# How far out the skew test is suspended at a SQUARE corner. Not a distance along the street so
+# much as a statement about how far a corner return reaches, which is why it is not used raw -
+# see _corner_zone_ft.
 CURB_POINT_CORNER_ZONE_FT = 40.0
+# The widest a sharp corner may stretch that zone. A leg meeting another at a few degrees would
+# otherwise exempt its whole length from the skew test, which would readmit exactly the driveway
+# aprons CURB_POINT_MAX_SKEW_DEG exists to reject.
+CURB_POINT_CORNER_ZONE_MAX_SCALE = 3.0
+# What a skewed vertex outside the corner zone costs, instead of being thrown away outright.
+# DISQUALIFYING IT WAS THE BUG. The skew test cannot tell a corner return still sweeping from a
+# driveway apron, and at a 48 degree junction the return is still sweeping at 66 ft - so at W
+# Broad & Louellen it discarded 6 of the 8 traced vertices on louellen_st_west's left kerb, the
+# corner was bridged with an invented line, and the hatching was drawn against that line.
+# Exempting a longer zone instead let one leg outbid its neighbour for the SHARED return and cost
+# w_broad_st_southwest its right kerb entirely - more data in, less data used. A penalty does
+# neither: a skewed vertex is claimable, but any leg that has it unskewed takes it first. Same
+# construction and the same reasoning as CURB_POINT_BEHIND_PENALTY, and larger than any ratio the
+# window admits so the two orderings never interleave.
+CURB_POINT_SKEW_PENALTY = 20.0
+
+
+def corner_return_scale(leg, legs) -> float:
+    """How much longer this leg's corner returns are than a square junction's. 1.0 at 90 degrees.
+
+    THE FLAT 40 FT WAS FITTED TO SQUARE JUNCTIONS AND THEN APPLIED TO AN ACUTE ONE. A fillet of
+    radius R tangent to two lines meeting at interior angle theta runs R/tan(theta/2) along each
+    of them: at 90 degrees that is R, and at W Broad & Louellen's 48 degrees it is 2.25 R. So a
+    return that is still curving at 66 ft out is ordinary geometry at that junction, and the
+    skew test - which cannot tell a sweeping return from a driveway apron - was discarding it as
+    an apron. `louellen_st_west` left kept 2 traced vertices of 8 and was reported "traced only
+    from 60 ft out", so the corner was bridged with an invented line and the hatching drawn
+    against it.
+
+    Scaled by the SHARPEST corner this leg is part of, because the leg only needs one acute
+    neighbour to have one long return. A straight-through pair (E Broad's legs are 179.9 degrees
+    apart) has no corner between them and would scale to nothing, so the minimum over the other
+    legs is what carries that leg's real corner with the third one.
+
+    Floored at 1.0, so no junction gets a SHORTER reach than it has today and a widening cannot
+    silently drop a vertex some site currently keeps.
+
+    A SCALE rather than a distance because two constants encode this same fact against different
+    bases - the skew test's CURB_POINT_CORNER_ZONE_FT and the width fit's
+    fitting.TRACED_SECTION_START_FT - and they must stretch together. Widening only the first
+    admitted return vertices to the curb LINE while the width fit still measured its
+    cross-section from 35 ft, straight through the flare: louellen_st_west came out 66.5 ft wide
+    against a real 42.1.
+    """
+    direction = line_direction(leg.centerline)
+    sharpest_deg = 180.0
+    for other in legs.values():
+        if other is leg:
+            continue
+        # Both centerlines run OUTWARD from the junction, so the angle between them is the
+        # interior angle at the corner - no folding, and the sign carries no information here.
+        cosine = float(np.clip(direction @ line_direction(other.centerline), -1.0, 1.0))
+        sharpest_deg = min(sharpest_deg, float(np.degrees(np.arccos(cosine))))
+    if sharpest_deg >= 180.0:
+        return 1.0
+    scale = 1.0 / max(np.tan(np.radians(sharpest_deg / 2)), 1e-6)
+    return float(np.clip(scale, 1.0, CURB_POINT_CORNER_ZONE_MAX_SCALE))
 
 
 def assign_curb_points_to_legs(legs: dict, kerb_lines: list[LineString],
@@ -329,12 +389,26 @@ def assign_curb_points_to_legs(legs: dict, kerb_lines: list[LineString],
         # abs: a kerb traced against the leg's outward direction is still parallel to it.
         skewed = np.abs(tangents @ line_direction(leg.centerline)) < min_cosine
         # np.inf marks "this leg can't claim this vertex", so it never wins the argmin.
+        # THE SKEW TEST HAS THREE TIERS, and collapsing any two of them broke a junction:
+        #   * inside CURB_POINT_CORNER_ZONE_FT it is suspended - a return sweeps through 90
+        #     degrees by definition and is still curb;
+        #   * out to where THIS junction's returns actually reach (corner_return_scale) a
+        #     skewed vertex is doubted, not rejected: claimable, but any leg that has it
+        #     unskewed takes it first;
+        #   * past that it is an apron and disqualified, as before.
+        # Suspending it outright across the whole scaled reach - the obvious two-tier version -
+        # let louellen_st_west claim 13 vertices at its seed width and strip
+        # w_broad_st_southwest's right kerb to one, because inside a suspended zone the two legs
+        # were judged on ratio alone and a badly seeded width won the contest.
+        reach_ft = CURB_POINT_CORNER_ZONE_FT * corner_return_scale(leg, legs)
+        doubted = skewed & (leg_stations > CURB_POINT_CORNER_ZONE_FT)
         disqualified = ((leg_stations < -CURB_POINT_BEHIND_TOLERANCE_FT)
                         | (ratio < low) | (ratio > high)
-                        | (skewed & (leg_stations > CURB_POINT_CORNER_ZONE_FT)))
+                        | (skewed & (leg_stations > reach_ft)))
         # Still claimable behind the node, but only if nobody has it in front - see
         # CURB_POINT_BEHIND_PENALTY.
-        score = ratio + np.where(leg_stations < 0, CURB_POINT_BEHIND_PENALTY, 0.0)
+        score = (ratio + np.where(leg_stations < 0, CURB_POINT_BEHIND_PENALTY, 0.0)
+                 + np.where(doubted, CURB_POINT_SKEW_PENALTY, 0.0))
         names.append(name)
         stations.append(leg_stations)
         offsets.append(leg_offsets)

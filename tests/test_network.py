@@ -10,6 +10,7 @@ it re-runs on every change to either model rather than being taken on faith from
 """
 import numpy as np
 import pytest
+from shapely.geometry import Point
 
 from src.geometry.model import (curb_offsets_at_stations, curb_station_span,
                                 narrowest_half_width_ft)
@@ -125,10 +126,26 @@ def test_the_road_axis_runs_one_way_through_the_junction(site, site_models):
 @needs_source_data
 @pytest.mark.parametrize("site", SITES)
 def test_a_leg_station_maps_to_the_node_at_zero(site, site_models):
-    """Both legs' station 0 is the junction, so both map to the road's node station."""
-    for road in roads_from_model(site_models[site]):
-        for leg_name in (road.near_leg, road.far_leg):
-            assert road_station_of_leg_station(road, leg_name, 0.0) == pytest.approx(road.node_ft)
+    """Each leg's station 0 maps to where that leg actually meets the road.
+
+    NOT "both map to node_ft". Both legs start AT the junction in the model, but they are built
+    from two NJDOT alignments that do not quite meet, and network.py:_joined_centerline can only
+    close that laterally - what is left is longitudinal and the joined line carries it as real
+    length. So the far leg's station 0 lands that much past the node, and saying otherwise put
+    every far-leg station up the street: at W Broad & Louellen the gap is 2.79 ft and the road
+    read 2.9 ft wider than the leg it was built from (test_the_road_reproduces_each_legs_measured_width).
+
+    The gap is asserted against the two legs' own start points, so this pins the translation
+    without inventing a tolerance - and it stays honest if the joint is ever closed properly,
+    where it collapses to node_ft for both.
+    """
+    model = site_models[site]
+    for road in roads_from_model(model):
+        assert road_station_of_leg_station(road, road.near_leg, 0.0) == pytest.approx(road.node_ft)
+        joint_ft = Point(model.legs[road.near_leg].centerline.coords[0]).distance(
+            Point(model.legs[road.far_leg].centerline.coords[0]))
+        assert road_station_of_leg_station(road, road.far_leg, 0.0) == pytest.approx(
+            road.node_ft + joint_ft, abs=1e-6)
 
 
 @needs_source_data

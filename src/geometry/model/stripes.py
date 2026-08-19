@@ -135,12 +135,19 @@ def _taper_arc_points(leg: "Leg", role: str, sign: int, inner_half_ft: float,
     THE ONE HOME for that arc: lane_narrowing_taper_ft draws it as the line and
     lane_narrowing_taper_polygons_ft fills inside it, so they must not solve it separately.
 
-    Held out of the travel lane at the end, because the arc is solved in WORLD space while the
-    lane edge it leaves from is a fixed offset in the LEG's frame - the same line only while
-    the centerline is straight. Once the alignment bends onto the carriageway
-    (intersection._centre_legs_on_traced_kerbs) the arc can cut inside the lane edge. Clamping
-    the offset is the move inset_line_ft makes against the kerb: the arc keeps its shape
-    everywhere it was already outside the line.
+    Held BOTH WAYS at the end, because the arc is solved in WORLD space while the lane edge it
+    leaves from and the kerb it lands on are offsets in the LEG's frame - the same lines only
+    while the centerline is straight. Once the alignment bends onto the carriageway
+    (intersection._centre_legs_on_traced_kerbs):
+
+      * inward, the arc can cut inside the lane edge, so the offset is floored at inner_half_ft;
+      * outward, it can cross the traced kerb between its two endpoints even though both of them
+        sit on it - a chord of a circle solved in world space against a kerb that curves. At 2.5x
+        on louellen_st_west it stood 0.41 ft past the kerb and check_paint_over_the_curb refused
+        the export, which is the check doing its job on paint sized off a nominal half-width.
+
+    Both clamps are the move inset_line_ft makes; the arc keeps its shape everywhere it was
+    already between the two.
     """
     p1 = inset_point_at_station(leg, anchor_ft, sign * inner_half_ft)
     p2 = curb_point_at_station(leg, role, target_ft)
@@ -160,10 +167,15 @@ def _taper_arc_points(leg: "Leg", role: str, sign: int, inner_half_ft: float,
     arc = np.array([(center[0] + radius_ft * np.cos(t), center[1] + radius_ft * np.sin(t))
                     for t in angles])
     stations, offsets = station_offset_many(leg.centerline, arc)
+    curb_offsets = curb_offsets_at_stations(leg, role, stations)
     inside = np.abs(offsets) < inner_half_ft
-    if not inside.any():
+    outside = (np.abs(offsets) > np.abs(curb_offsets)) if curb_offsets is not None else np.zeros(
+        len(offsets), bool)
+    if not inside.any() and not outside.any():
         return [tuple(p) for p in arc]
     offsets[inside] = sign * inner_half_ft
+    if curb_offsets is not None:
+        offsets[outside] = sign * np.abs(curb_offsets)[outside]
     return place_in_measured_frame(leg.centerline, stations, offsets)
 
 

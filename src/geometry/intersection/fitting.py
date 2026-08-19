@@ -116,7 +116,28 @@ MATERIAL_SHIFT_FT = 0.1
 MAX_FIT_ITERATIONS = 6
 
 
-def _traced_cross_section(leg) -> tuple[np.ndarray, np.ndarray] | None:
+def _section_start_ft(leg, legs, end_ft: float) -> float:
+    """How far out a cross-section of THIS leg must start to be clear of its corner returns.
+
+    TRACED_SECTION_START_FT is the square-corner answer; model.corner_return_scale stretches it
+    for an acute junction, where the return is still flaring well past 35 ft and a "width"
+    measured there is a width of the junction mouth. At W Broad & Louellen the scale is 2.14.
+
+    IT BACKS OFF RATHER THAN STARVING THE FIT. The scaled start only helps if measurable street
+    remains beyond it, and w_broad_st_southwest is traced on both sides over 57-99 ft only:
+    starting at 75 ft left a 1 ft window, so the cross-section returned None, the leg fell through
+    to the one-kerb fallback and came out 21.6 ft wide instead of 44.0 - which then put every
+    vertex on its right kerb outside the ratio window and lost that side entirely. So the start
+    gives way to keep MIN_TRACED_SECTION_FT of measurable street, and never comes nearer than the
+    square-corner cutoff that was always trusted here.
+    """
+    from src.geometry.model import corner_return_scale
+
+    scaled_ft = TRACED_SECTION_START_FT * (corner_return_scale(leg, legs) if legs else 1.0)
+    return float(max(TRACED_SECTION_START_FT, min(scaled_ft, end_ft - MIN_TRACED_SECTION_FT)))
+
+
+def _traced_cross_section(leg, legs=None) -> tuple[np.ndarray, np.ndarray] | None:
     """(width, centre-offset) sampled along the run where BOTH of a leg's kerbs are traced.
 
     Both kerbs are read at the SAME station, so the width is left minus right and the centre
@@ -130,8 +151,8 @@ def _traced_cross_section(leg) -> tuple[np.ndarray, np.ndarray] | None:
     spans = [curb_station_span(leg, side) for side in ("left", "right")]
     if any(span is None for span in spans):
         return None
-    lo = max(max(span[0] for span in spans), TRACED_SECTION_START_FT)
     hi = min(min(span[1] for span in spans), TRACED_SECTION_END_FT)
+    lo = max(max(span[0] for span in spans), _section_start_ft(leg, legs, hi))
     if hi - lo < MIN_TRACED_SECTION_FT:
         return None
     stations = np.linspace(lo, hi, TRACED_SECTION_SAMPLES)
@@ -181,7 +202,7 @@ def _thinned(stations: np.ndarray, gap_ft: float) -> np.ndarray:
     return np.asarray(kept)
 
 
-def _traced_centre_profile(leg) -> tuple[np.ndarray, np.ndarray] | None:
+def _traced_centre_profile(leg, legs=None) -> tuple[np.ndarray, np.ndarray] | None:
     """Where the kerbs' midpoint sits relative to the alignment, STATION BY STATION.
 
     Unlike the width, this is not capped at TRACED_SECTION_END_FT: a width is one reported
@@ -203,8 +224,8 @@ def _traced_centre_profile(leg) -> tuple[np.ndarray, np.ndarray] | None:
     spans = [curb_station_span(leg, side) for side in ("left", "right")]
     if any(span is None for span in spans):
         return None
-    lo = max(max(span[0] for span in spans), TRACED_SECTION_START_FT)
     hi = min(min(span[1] for span in spans), leg.centerline.length)
+    lo = max(max(span[0] for span in spans), _section_start_ft(leg, legs, hi))
     if hi - lo < MIN_TRACED_SECTION_FT:
         return None
     n = max(int(np.ceil((hi - lo) / CENTRE_SAMPLE_FT)) + 1, 2)
@@ -292,7 +313,7 @@ def _resize_and_centre_from_traced_kerbs(legs: dict, legs_cfg: dict, quiet: bool
     changed = False
     for name in sorted(legs):
         leg = legs[name]
-        section = _traced_cross_section(leg)
+        section = _traced_cross_section(leg, legs)
         if section is None:
             if _resize_from_one_traced_kerb(legs, name, legs_cfg, quiet):
                 changed = True
@@ -368,7 +389,7 @@ def _centre_legs_on_traced_kerbs(legs: dict, quiet: bool = False) -> None:
     """
     for name in sorted(legs):
         leg = legs[name]
-        profile = _traced_centre_profile(leg)
+        profile = _traced_centre_profile(leg, legs)
         if profile is None:
             continue
         stations, offsets = profile

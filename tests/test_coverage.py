@@ -264,9 +264,13 @@ def test_the_kerb_ramps_layer_is_clean_at_1x_and_dirty_at_2_5x(site_models, monk
 
     Measured against the drawing both renderers actually build (build_props): a drawn pad sits
     1.5-2.7 ft from its own traced ramp way, and the nearest pad to a ramp the render omits is
-    232-282 ft off, at another junction. So the same code is faithful at 1x - all four of
-    Greenwood's ramps drawn - and drops 3 of the 7 in the 2.5x frame, which are the ramps of the
-    same neighbouring junctions whose crossings go missing. One cause, two layers.
+    288-309 ft off, at another junction. So the same code is faithful at 1x - all of Greenwood's
+    own ramps drawn - and drops 7 of the 11 in the 2.5x frame, which are the ramps of the same
+    neighbouring junctions whose crossings go missing. One cause, two layers.
+
+    The counts are facts about the committed OSM snapshot and moved with it (3 of 7 -> 7 of 11 when
+    the fixture was refreshed onto tracing that added ramps); the PROPERTY - clean at 1x, dirty at
+    2.5x, for one reason - is what this pins.
     """
     model = site_models["broad_st_greenwood"]
 
@@ -278,7 +282,7 @@ def test_the_kerb_ramps_layer_is_clean_at_1x_and_dirty_at_2_5x(site_models, monk
     monkeypatch.setenv(FRAME_SCALE_ENV, WIDE_FRAME_SCALE)
     _scene, wide = a_full_drawing(model, junction_frame(model).radius_ft)
     gap = gap_for(coverage_gaps(model, wide), "kerb_ramps")
-    assert gap is not None and (gap.count, gap.total) == (3, 7)
+    assert gap is not None and (gap.count, gap.total) == (7, 11)
     assert all("tactile_paving=yes" in example for example in gap.examples), (
         "an example has to name the tag that says the ramp is there")
 

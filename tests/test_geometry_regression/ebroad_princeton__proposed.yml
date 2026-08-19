@@ -41,17 +41,17 @@ channels:
       - -74.099
     points: 26
   kerbs:
-    count: 33
+    count: 56
     extent:
       max:
-      - 77.762
-      - 33.438
+      - 136.792
+      - 51.387
       min:
       - -142.259
       - -116.73
-    points: 106
+    points: 177
   lane_narrowing_edge_lines:
-    count: 24
+    count: 26
     extent:
       max:
       - 38.746
@@ -59,17 +59,17 @@ channels:
       min:
       - -39.345
       - -38.139
-    points: 928
+    points: 957
   lane_narrowing_hatch_lines:
-    count: 41
+    count: 39
     extent:
       max:
-      - 39.23
-      - 17.386
+      - 39.231
+      - 17.384
       min:
-      - -36.002
-      - -36.35
-    points: 82
+      - -30.535
+      - -36.185
+    points: 78
   lane_narrowing_taper_lines:
     count: 0
     extent: null
@@ -79,7 +79,7 @@ channels:
     extent:
       max:
       - 11.088
-      - -0.416
+      - -0.415
       min:
       - 10.434
       - -2.371
@@ -101,15 +101,15 @@ channels:
     extent: null
     points: 0
   paved_surfaces:
-    count: 28
+    count: 48
     extent:
       max:
       - 145.456
       - 146.288
       min:
-      - -115.458
+      - -141.9
       - -146.87
-    points: 453
+    points: 697
   pavement_far:
     count: 3
     extent:
@@ -119,16 +119,16 @@ channels:
       min:
       - -121.049
       - -56.998
-    points: 113
+    points: 116
   pavement_near:
     count: 1
     extent:
       max:
-      - 11.554
-      - 8.505
+      - 11.552
+      - 8.504
       min:
-      - -11.554
-      - -11.554
+      - -11.552
+      - -11.552
     points: 668
   raised_crossings:
     count: 0
@@ -147,16 +147,16 @@ channels:
       min:
       - -121.632
       - -57.71
-    points: 404
+    points: 410
   sidewalks_near:
     count: 8
     extent:
       max:
-      - 11.323
-      - 9.844
+      - 11.32
+      - 9.843
       min:
-      - -11.334
-      - -11.51
+      - -11.332
+      - -11.508
     points: 838
   tree_points:
     count: 0
@@ -173,16 +173,16 @@ frame:
 legs:
   e_broad_st_east:
     centerline_paint_m:
-    - - - 15.303
+    - - - 15.302
         - 5.056
       - - 15.918
         - 5.259
       - - 15.918
         - 5.259
       - - 17.365
-        - 5.736
+        - 5.737
       - - 17.365
-        - 5.736
+        - 5.737
       - - 20.261
         - 6.686
       - - 20.261
@@ -206,7 +206,7 @@ legs:
       - - 15.949
         - 5.164
       - - 17.396
-        - 5.641
+        - 5.642
       - - 20.292
         - 6.591
       - - 23.19
@@ -230,7 +230,7 @@ legs:
     crosswalk_bar_count: 12
     crosswalk_centre_m:
     - 6.797
-    - 2.166
+    - 2.167
     crosswalk_offset_m: 7.134
     crosswalk_offset_source: geometric_estimate
     crosswalk_reach_left_m: 5.639
@@ -242,7 +242,7 @@ legs:
     - 12.286
     near_m:
     - 0.029
-    - -0.089
+    - -0.088
     stop_bar_axis:
     - 0.949
     - 0.314
@@ -253,7 +253,7 @@ legs:
     stop_bar_offset_m: 16.116
     stop_bar_span_m: 3.353
     stop_bar_width_m: 6.706
-    width_m: 11.253
+    width_m: 11.248
   e_broad_st_west:
     centerline_paint_m:
     - - - -11.004
@@ -287,17 +287,17 @@ legs:
       - - -34.662
         - -11.678
       - - -37.557
-        - -12.631
-    - - - -11.035
+        - -12.63
+    - - - -11.036
         - -3.744
-      - - -11.546
+      - - -11.547
         - -3.916
       - - -12.991
         - -4.402
       - - -14.436
-        - -4.887
+        - -4.886
       - - -15.881
-        - -5.371
+        - -5.37
       - - -17.327
         - -5.853
       - - -20.22
@@ -306,14 +306,14 @@ legs:
         - -7.766
       - - -26.01
         - -8.719
-      - - -28.904
+      - - -28.905
         - -9.673
       - - -31.799
         - -10.628
       - - -34.694
         - -11.583
       - - -37.589
-        - -12.536
+        - -12.535
     centerline_start_m: 11.653
     centerline_style: double_yellow
     confirmed: false
@@ -323,24 +323,24 @@ legs:
     crosswalk_bar_count: 12
     crosswalk_centre_m:
     - -6.508
-    - -2.273
+    - -2.272
     crosswalk_offset_m: 6.893
     crosswalk_offset_source: osm_survey
     crosswalk_reach_left_m: 5.791
     crosswalk_reach_right_m: 5.715
-    crosswalk_skew_deg: 0.853
+    crosswalk_skew_deg: 0.849
     crosswalk_style: continental
     far_m:
     - -37.573
     - -12.583
     near_m:
     - 0.029
-    - -0.089
+    - -0.088
     stop_bar_axis:
     - -0.948
     - -0.319
     stop_bar_centre_m:
-    - -11.019
+    - -11.02
     - -3.792
     stop_bar_lateral_offset_m: 1.676
     stop_bar_offset_m: 11.653
@@ -349,16 +349,16 @@ legs:
     width_m: 11.654
   princeton_ave_south:
     centerline_paint_m:
-    - - - 5.267
-        - -13.621
-      - - 5.5
-        - -14.218
-      - - 6.61
-        - -17.056
-      - - 7.724
-        - -19.893
-      - - 8.865
-        - -22.719
+    - - - 5.226
+        - -13.653
+      - - 5.457
+        - -14.234
+      - - 6.586
+        - -17.066
+      - - 7.719
+        - -19.896
+      - - 8.863
+        - -22.72
       - - 10.035
         - -25.534
       - - 11.213
@@ -371,24 +371,24 @@ legs:
         - -33.967
       - - 14.743
         - -36.78
-    - - - 5.174
-        - -13.658
-      - - 5.406
-        - -14.254
-      - - 5.406
-        - -14.254
-      - - 6.517
-        - -17.093
-      - - 6.517
-        - -17.093
-      - - 7.631
-        - -19.93
-      - - 7.632
-        - -19.931
-      - - 8.773
-        - -22.757
-      - - 8.773
+    - - - 5.133
+        - -13.69
+      - - 5.364
+        - -14.271
+      - - 5.364
+        - -14.271
+      - - 6.493
+        - -17.103
+      - - 6.493
+        - -17.103
+      - - 7.626
+        - -19.933
+      - - 7.626
+        - -19.933
+      - - 8.77
         - -22.758
+      - - 8.771
+        - -22.759
       - - 9.943
         - -25.572
       - - 9.943
@@ -401,36 +401,36 @@ legs:
         - -34.006
       - - 14.651
         - -36.819
-    centerline_start_m: 14.602
+    centerline_start_m: 14.615
     centerline_style: double_yellow
     confirmed: false
     crosswalk_axis:
-    - 0.363
-    - -0.932
+    - 0.369
+    - -0.929
     crosswalk_bar_count: 10
     crosswalk_centre_m:
-    - 3.008
-    - -7.959
-    crosswalk_offset_m: 8.506
+    - 2.925
+    - -7.991
+    crosswalk_offset_m: 8.504
     crosswalk_offset_source: osm_survey
-    crosswalk_reach_left_m: 5.563
-    crosswalk_reach_right_m: 4.877
-    crosswalk_skew_deg: -6.631
+    crosswalk_reach_left_m: 5.639
+    crosswalk_reach_right_m: 4.801
+    crosswalk_skew_deg: -7.0
     crosswalk_style: continental
     far_m:
     - 14.697
     - -36.8
     near_m:
-    - -0.113
-    - -0.046
+    - -0.239
+    - -0.098
     stop_bar_axis:
-    - 0.363
-    - -0.932
+    - 0.369
+    - -0.929
     stop_bar_centre_m:
-    - 5.221
-    - -13.64
+    - 5.18
+    - -13.671
     stop_bar_lateral_offset_m: 1.676
-    stop_bar_offset_m: 14.602
+    stop_bar_offset_m: 14.615
     stop_bar_span_m: 3.353
     stop_bar_width_m: 6.706
     width_m: 9.208

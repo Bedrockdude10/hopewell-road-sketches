@@ -653,7 +653,8 @@ class TravelLanesHoldTheTarget(SceneCheck):
         from src.geometry.targets import LegSide, LegTarget
         from src.geometry.model import narrowest_half_width_ft
         from src.geometry.treatments import (TARGET_LANE_WIDTH_FT, AddBikeLane, LaneNarrowing,
-                                              MarkedParking, travel_lane_width_ft)
+                                              MIN_HATCHED_ZONE_FT, MarkedParking,
+                                              travel_lane_width_ft)
 
         state = scene.state
         violations = []
@@ -689,12 +690,22 @@ class TravelLanesHoldTheTarget(SceneCheck):
                     traced_ft = narrowest_half_width_ft(leg, side)
                     lane_ft = min(lane_ft, traced_ft - _divider_shift_toward_ft(state, leg_name,
                                                                                 side))
-                if lane_ft > TARGET_LANE_WIDTH_FT + LANE_WIDTH_TOLERANCE_FT:
+                # THE BOUND IS WHAT CAN BE PAINTED, not float noise. A surplus narrower than
+                # treatments.MIN_HATCHED_ZONE_FT cannot be taken off the lane, because there is no
+                # zone that narrow to take it into - hold_travel_lane_at_target declines it for
+                # exactly that reason. Reported at LANE_WIDTH_TOLERANCE_FT instead, this check
+                # demanded a 0.5 ft stripe be laid over 0.37 ft of spare and 0.13 ft of travel
+                # lane, which is the thing PaintClearOfTheTravelLane fails the build for: two
+                # checks, one of them necessarily violated, on a leg where the section fits.
+                over_ft = max(LANE_WIDTH_TOLERANCE_FT, MIN_HATCHED_ZONE_FT)
+                if lane_ft > TARGET_LANE_WIDTH_FT + over_ft:
                     violations.append(Violation(
                         "travel_lane_over_target",
                         f"{leg_name} {side} is left {lane_ft:.2f} ft wide on a leg this design has "
                         f"already restriped - {lane_ft - TARGET_LANE_WIDTH_FT:.2f} ft over the "
-                        f"{TARGET_LANE_WIDTH_FT:.0f} ft target. Spare width beside a travel lane "
+                        f"{TARGET_LANE_WIDTH_FT:.0f} ft target, and more than the "
+                        f"{over_ft:.2f} ft that is too narrow to stripe. Spare width beside a "
+                        f"travel lane "
                         f"is parking or hatching, never lane; call "
                         f"treatments.hold_travel_lane_at_target for this kerb",
                         tuple(leg.centerline.interpolate(leg.centerline.length / 2).coords[0])))

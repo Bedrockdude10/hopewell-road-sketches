@@ -13,7 +13,7 @@ channels:
       - -23.286
     points: 96
   bike_lane_edge_lines:
-    count: 16
+    count: 58
     extent:
       max:
       - 30.977
@@ -21,7 +21,7 @@ channels:
       min:
       - -33.994
       - -26.008
-    points: 389
+    points: 473
   bike_lane_hatch_lines:
     count: 14
     extent:

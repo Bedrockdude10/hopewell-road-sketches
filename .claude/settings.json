@@ -1,0 +1,50 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-settings.json",
+
+  "permissions": {
+    "allow": [
+      "Bash(ls:*)", "Bash(cat:*)", "Bash(head:*)", "Bash(tail:*)", "Bash(sed -n:*)",
+      "Bash(wc:*)", "Bash(file:*)", "Bash(du:*)", "Bash(find:*)", "Bash(which:*)",
+      "Bash(grep:*)", "Bash(rg:*)", "Bash(jq:*)", "Bash(sort:*)", "Bash(uniq:*)",
+      "Bash(diff:*)", "Bash(realpath:*)", "Bash(basename:*)", "Bash(dirname:*)",
+
+      "Bash(git status:*)", "Bash(git diff:*)", "Bash(git log:*)", "Bash(git show:*)",
+      "Bash(git blame:*)", "Bash(git branch:*)", "Bash(git stash:*)",
+      "Bash(git merge-base:*)", "Bash(git ls-files:*)", "Bash(git rev-parse:*)",
+
+      "Bash(./scripts/test.sh:*)",
+      "Bash(.venv/bin/python:*)",
+      "Bash(.venv/bin/ruff:*)",
+      "Bash(.venv/bin/pytest:*)",
+      "Bash(.venv/bin/lint-imports:*)",
+      "Bash(python scripts/:*)",
+      "Bash(mkdir:*)"
+    ],
+    "ask": [
+      "Bash(git commit:*)",
+      "Bash(git push:*)",
+      "Bash(git reset:*)",
+      "Bash(git checkout:*)",
+      "Bash(git restore:*)",
+      "Bash(git clean:*)",
+      "Bash(rm:*)",
+      "Bash(pip install:*)",
+      "Bash(.venv/bin/pip:*)"
+    ]
+  },
+
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write|MultiEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "$CLAUDE_PROJECT_DIR/.claude/hooks/ruff_on_edit.sh",
+            "timeout": 20
+          }
+        ]
+      }
+    ]
+  }
+}

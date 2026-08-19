@@ -10,7 +10,12 @@ never emits them into the AST), and dumps the normalised tree. Identical dumps m
 thing that changed was prose, whatever the diff looks like.
 
     scripts/check_prose_only.py                # working tree vs HEAD
-    scripts/check_prose_only.py --base main    # working tree vs another ref
+    scripts/check_prose_only.py --base main    # working tree vs where this branch left main
+
+--base RESOLVES THROUGH THE MERGE BASE. `--base main` compares against the commit this
+branch forked from, not main's current tip, so commits someone else landed on main after the
+fork are not reported as this branch's code changes. For the default HEAD the merge base IS
+HEAD, so plain uncommitted-vs-HEAD is unchanged.
 
 EXIT 0 means prose-only: no behaviour can have changed, and a full test run is not required
 to establish that. EXIT 1 names the files whose code moved, and those DO need the suite.
@@ -47,6 +52,25 @@ def code_shape(source: str) -> str:
     ast.fix_missing_locations(tree)
     return ast.dump(tree, annotate_fields=True, include_attributes=False)
 
+def fork_point(ref: str) -> str:
+    """The commit `ref` and HEAD diverged at, or `ref` itself if they do not share one.
+
+    Comparing to a ref's TIP charges this branch with every commit that landed on that ref
+    since the fork - which for a day-old branch off main is most of the report. The merge
+    base is the question actually being asked: what did THIS work change.
+    """
+    r = subprocess.run(["git", "merge-base", ref, "HEAD"], capture_output=True, text=True)
+    return r.stdout.strip() if r.returncode == 0 and r.stdout.strip() else ref
+
+
+def same_commit(a: str, b: str) -> bool:
+    """Whether two refs name the same commit, compared by resolved sha rather than by string."""
+    def sha(ref):
+        r = subprocess.run(["git", "rev-parse", ref], capture_output=True, text=True)
+        return r.stdout.strip() if r.returncode == 0 else ref
+    return sha(a) == sha(b)
+
+
 def git_show(ref: str, path: str) -> str | None:
     r = subprocess.run(["git", "show", f"{ref}:{path}"], capture_output=True, text=True)
     return r.stdout if r.returncode == 0 else None
@@ -55,9 +79,14 @@ def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--base", default="HEAD", help="ref to compare against (default HEAD)")
     args = ap.parse_args()
+    base = fork_point(args.base)
+    # Say so only when the merge base is a DIFFERENT commit from the ref asked for - for the
+    # default HEAD it always resolves to HEAD, and announcing that is noise.
+    if not same_commit(base, args.base):
+        print(f"comparing against merge base of {args.base} and HEAD: {base[:12]}")
 
     changed = subprocess.run(
-        ["git", "diff", "--name-only", args.base, "--", "*.py"],
+        ["git", "diff", "--name-only", base, "--", "*.py"],
         capture_output=True, text=True, check=True).stdout.split()
     if not changed:
         print("no changed .py files vs", args.base); return 0
@@ -66,7 +95,7 @@ def main() -> int:
     for path in changed:
         p = pathlib.Path(path)
         after = p.read_text(encoding="utf-8") if p.exists() else None
-        before = git_show(args.base, path)
+        before = git_show(base, path)
         if before is None or after is None:
             code_moved.append(f"{path} (added or deleted)"); continue
         try:

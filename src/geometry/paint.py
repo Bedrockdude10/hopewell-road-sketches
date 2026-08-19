@@ -7,7 +7,7 @@ module rather than rebuilding the paint for the same reason.
 Returns shapely in state-plane feet; each renderer converts.
 """
 import math
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from enum import StrEnum
 
 import numpy as np
@@ -17,7 +17,8 @@ from shapely.ops import unary_union
 from src.geometry.model import (point_at, clip_paint_clear_of, corner_apron_annulus,
                                 corner_overlay_polygon, curb_offsets_at_stations,
                                 leg_clearance_ft, station_offset_many, through_street_sides)
-from src.geometry.markings import PaintKind
+from src.geometry.markings import (PaintKind, lies_legitimately_on,
+                                   yields_the_ground_to)
 from src.geometry.daylighting import parkable_runs_ft
 from src.render.coords import FT_TO_M
 from src.render.crosswalks import (CROSSWALK_CLEARANCE_FT, CROSSWALK_DEPTH_FT,
@@ -407,6 +408,9 @@ class PaintContext:
             geometry = geometry.difference(unary_union(self.through_painted))
             if geometry.is_empty:
                 return added
+        geometry = self._clear_of_the_paint_already_down(kind, geometry)
+        if geometry.is_empty:
+            return added
         # Cut clear of the mountable surfaces, then of the crossings, then of the kerb
         # openings - each may fragment a piece, so every stage runs over whatever the last left.
         # WHICH openings, and how much of each, is markings.AT_AN_OPENING's answer and no longer
@@ -432,6 +436,59 @@ class PaintContext:
         # the cut just made, so a treatment cannot paint the solid part and forget the broken one.
         added.extend(self._dashes_across_openings(kind, geometry, leg, side))
         return added
+
+    def _clear_of_the_paint_already_down(self, kind, geometry):
+        """Hold a new area fill out of ground an earlier one already covers.
+
+        checks.MarkingsDoNotCollide is the invariant this serves, and it is not a rendering
+        nicety: real paint is opaque and laid once, so two zones over one patch assert two
+        different things about it. `shares_a_kerb` above is the same rule for the narrow case it
+        was written for - two zones on one through-running kerb - and the case it misses is the
+        CORNER, where the two zones belong to DIFFERENT leg-sides and meet only because a kerb
+        ends at the junction mouth and the hatching carries on over the open throat (see
+        leg_frame.paint_stations). At W Broad & Louellen that is W Broad's lane-narrowing buffer
+        against Louellen's daylight zone, 1.0 sq ft, and only on a wide sheet - a corner sliver
+        whose size is a function of the frame, which is exactly the class of defect that should
+        not be left to whoever notices it in a render.
+
+        Whoever is down first keeps the ground. Which zone that is, is insertion order and so
+        arbitrary; it is also immaterial at a sliver, and any overlap big enough for the choice to
+        matter is a design fault that MIN_ZONE_AREA_SQ_FT and the invariants should surface rather
+        than this quietly resolving. Layers are exempt in either direction - markings.MAY_LIE_ON,
+        the same predicate the check consults, so the two cannot drift apart.
+        """
+        if not kind.covers_area:
+            return geometry
+        yielding = []
+        cut = {}
+        for i, piece in enumerate(self.pieces):
+            if not piece.covers_area or lies_legitimately_on(kind, piece.kind):
+                continue
+            if not piece.geometry.intersects(geometry):
+                continue
+            if yields_the_ground_to(piece.kind, kind):
+                # The zone already down is the one that gives way, so cut IT and leave the
+                # incoming geometry whole. Rewritten in place: this runs while the list is being
+                # built, and a piece nobody has read yet is still a decision, not a drawing.
+                cut[i] = piece.geometry.difference(geometry)
+            else:
+                yielding.append(piece.geometry)
+        if cut:
+            # ONE POLYGON PER PIECE, because that is what add() guarantees everywhere else and
+            # what the hatchers and the digest read. A cut can sever a zone in two, and two
+            # separate zones are two pieces - a MultiPolygon smuggled into one would hatch as a
+            # single run across the gap. Offcuts below MIN_ZONE_AREA_SQ_FT go the same way they
+            # would have if the zone had arrived at that size.
+            rebuilt = []
+            for i, piece in enumerate(self.pieces):
+                if i not in cut:
+                    rebuilt.append(piece)
+                    continue
+                for part in getattr(cut[i], "geoms", [cut[i]]):
+                    if part.geom_type == "Polygon" and part.area >= MIN_ZONE_AREA_SQ_FT:
+                        rebuilt.append(replace(piece, geometry=part))
+            self.pieces[:] = rebuilt
+        return geometry.difference(unary_union(yielding)) if yielding else geometry
 
     def dash_phase(self, leg: str, side: str, geometry) -> None:
         """Register the footprint a kerb's dotted extensions take their phase from.

@@ -434,6 +434,28 @@ def lies_legitimately_on(a: PaintKind, b: PaintKind) -> bool:
     return (a, b) in MAY_LIE_ON or (b, a) in MAY_LIE_ON
 
 
+# Which zone keeps the asphalt when two would cover it - (yields, keeps), read one way only.
+# checks.MarkingsDoNotCollide forbids the overlap; this says who gives way, and it is a
+# STATUTORY-BEFORE-DISCRETIONARY ordering, not a drawing preference. R.S. 39:4-138 either
+# prohibits parking on that ground or it does not, so a corner's daylight zone cannot be the
+# thing that shrinks; a lane-narrowing buffer is this project's own proposal about width and can
+# be the narrower for it. The pairs that need a rule are the ones that meet at a CORNER, where
+# the two zones belong to different legs and overlap only because those legs' frames do - see
+# paint.PaintContext._clear_of_the_paint_already_down.
+YIELDS_THE_GROUND: frozenset = frozenset({
+    (LANE_NARROWING_FILL, DAYLIGHT_FILL),
+    (TAPER_FILL, DAYLIGHT_FILL),
+    (BUFFER_FILL, DAYLIGHT_FILL),
+    (CORNER_HATCH_FILL, DAYLIGHT_FILL),
+    (BIKE_BUFFER_FILL, DAYLIGHT_FILL),
+})
+
+
+def yields_the_ground_to(a: PaintKind, b: PaintKind) -> bool:
+    """Whether `a` gives way to `b` where both would cover one patch of road."""
+    return (a, b) in YIELDS_THE_GROUND
+
+
 # Every declared marking has a row, checked at import rather than by a test that has to remember
 # to look. A marking with no row is one drawn across an entrance with nothing able to notice.
 require_every_kind(AT_AN_OPENING, "markings.AT_AN_OPENING", skip=())

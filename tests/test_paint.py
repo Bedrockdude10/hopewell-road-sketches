@@ -1133,3 +1133,55 @@ def _mouth_polygon(state, leg_name, side, opening):
     inner_ft = divider_shift_toward_ft(state, leg_name, side) + TARGET_LANE_WIDTH_FT
     return offset_band_polygon(leg, side, inner_ft, leg.curb_to_curb_ft,
                                 opening.start_ft, opening.end_ft)
+
+
+def _fill_areas(ctx, kind):
+    return sorted(round(p.geometry.area, 2) for p in ctx.pieces if p.kind is kind)
+
+
+def test_a_statutory_zone_keeps_the_ground_a_lane_narrowing_buffer_would_take():
+    """Two zones may not cover one patch of road, and the corner zone is not the one that gives.
+
+    They meet at a CORNER, where the two fills belong to different legs and overlap only because
+    those legs' frames do - so neither is wrong about its own kerb and something has to arbitrate.
+    R.S. 39:4-138 either prohibits parking on that ground or it does not; the buffer is this
+    project's own proposal about width, so the buffer is the narrower for it. This ran the other
+    way round once, and insertion order was doing the arbitrating: the corner zone was cut at its
+    NECK, every remaining part then read as lying behind the crossing, and a 359 sq ft statutory
+    zone vanished while its edge line stayed - a rim around nothing.
+    """
+    from src.geometry.paint import PaintContext
+
+    ctx = PaintContext(state=None, crosswalk_offsets={}, center_ft=None)
+    buffer_zone = Polygon([(0, 0), (20, 0), (20, 10), (0, 10)])
+    ctx.add(LANE_NARROWING_FILL, buffer_zone)
+    assert _fill_areas(ctx, LANE_NARROWING_FILL) == [200.0]
+
+    # Lands second, over the buffer's right-hand end.
+    ctx.add(DAYLIGHT_FILL, Polygon([(15, 0), (25, 0), (25, 10), (15, 10)]))
+    assert _fill_areas(ctx, DAYLIGHT_FILL) == [100.0], "the statutory zone was cut"
+    assert _fill_areas(ctx, LANE_NARROWING_FILL) == [150.0], "the buffer did not give way"
+
+    # ...and the same outcome with the two placed the other way round.
+    other = PaintContext(state=None, crosswalk_offsets={}, center_ft=None)
+    other.add(DAYLIGHT_FILL, Polygon([(15, 0), (25, 0), (25, 10), (15, 10)]))
+    other.add(LANE_NARROWING_FILL, buffer_zone)
+    assert _fill_areas(other, DAYLIGHT_FILL) == [100.0]
+    assert _fill_areas(other, LANE_NARROWING_FILL) == [150.0]
+
+
+def test_a_severed_zone_becomes_two_pieces_and_not_one_multipolygon():
+    """One polygon per piece, because the hatchers and the digest read it that way.
+
+    A cut through the middle of a zone leaves two separate zones, and a MultiPolygon smuggled into
+    one piece would hatch as a single run straight across the gap between them.
+    """
+    from src.geometry.paint import PaintContext
+
+    ctx = PaintContext(state=None, crosswalk_offsets={}, center_ft=None)
+    ctx.add(LANE_NARROWING_FILL, Polygon([(0, 0), (40, 0), (40, 10), (0, 10)]))
+    ctx.add(DAYLIGHT_FILL, Polygon([(18, -1), (22, -1), (22, 11), (18, 11)]))
+    kept = [p for p in ctx.pieces if p.kind is LANE_NARROWING_FILL]
+    assert len(kept) == 2, "the severed zone stayed as one piece"
+    assert all(p.geometry.geom_type == "Polygon" for p in kept)
+    assert sorted(round(p.geometry.area) for p in kept) == [180, 180]

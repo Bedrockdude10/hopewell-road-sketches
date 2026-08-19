@@ -279,9 +279,10 @@ def test_every_restriped_lane_holds_the_target_everywhere(site_models):
     scenario left 11.68 ft and 13.21 ft lanes, because the far-kerb rule was written inline in
     one site's scenarios.py and never reached the other's.
 
-    The bound is MIN_HATCHED_ZONE_FT, matching checks.TravelLanesHoldTheTarget: a surplus too
-    narrow to stripe cannot be taken off the lane, and demanding it be taken anyway is what put a
-    0.5 ft stripe over 0.37 ft of spare at E Broad. See that constant.
+    The bound comes from treatments.lane_surplus_that_cannot_be_striped_ft, the same call
+    checks.TravelLanesHoldTheTarget makes - a surplus too narrow to stripe cannot be taken off the
+    lane, and demanding it be taken anyway is what put a 0.5 ft stripe over 0.37 ft of spare at E
+    Broad. Imported rather than restated: this test and that check briefly held two copies.
     """
     import contextlib
     import io
@@ -289,9 +290,10 @@ def test_every_restriped_lane_holds_the_target_everywhere(site_models):
     from scripts.build_all import scenarios_for
     from src.geometry.targets import LegSide, LegTarget
     from src.geometry.model import narrowest_half_width_ft
-    from src.geometry.treatments import (MIN_HATCHED_ZONE_FT, TARGET_LANE_WIDTH_FT, AddBikeLane,
-                                          DesignState, LaneNarrowing, MarkedParking,
-                                          divider_shift_toward_ft, travel_lane_width_ft)
+    from src.geometry.treatments import (TARGET_LANE_WIDTH_FT, AddBikeLane, DesignState,
+                                          LaneNarrowing, MarkedParking, divider_shift_toward_ft,
+                                          lane_surplus_that_cannot_be_striped_ft,
+                                          travel_lane_width_ft)
     from src.site import load_site_scenarios, run_scenario
 
     over, checked = [], 0
@@ -330,7 +332,8 @@ def test_every_restriped_lane_holds_the_target_everywhere(site_models):
                         lane_ft = min(lane_ft,
                                        narrowest_half_width_ft(leg, side)
                                        - divider_shift_toward_ft(state, leg_name, side))
-                    if lane_ft > TARGET_LANE_WIDTH_FT + max(0.05, MIN_HATCHED_ZONE_FT):
+                    if lane_ft > (TARGET_LANE_WIDTH_FT
+                                  + lane_surplus_that_cannot_be_striped_ft()):
                         over.append(f"{site}/{name} {leg_name} {side}: {lane_ft:.2f} ft")
     assert checked > 20, f"only {checked} lanes swept - the sweep stopped finding scenarios"
     assert not over, "travel lanes left over target on legs the design restriped:\n  " + \

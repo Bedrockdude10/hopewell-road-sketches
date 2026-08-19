@@ -501,6 +501,24 @@ MIN_USABLE_STALL_FT = 7.0
 MIN_HATCHED_ZONE_FT = 0.5
 
 
+def lane_surplus_that_cannot_be_striped_ft() -> float:
+    """How far over TARGET_LANE_WIDTH_FT a travel lane may be left, and why it is not a tolerance.
+
+    A surplus is taken off a lane by painting a zone beside it, so a surplus narrower than the
+    narrowest paintable zone cannot be taken off at all - see MIN_HATCHED_ZONE_FT. That is a fact
+    about paint, not slack for float noise, and it is bigger than the noise allowance by an order
+    of magnitude.
+
+    ONE HOME because it was briefly two: checks.TravelLanesHoldTheTarget and
+    tests/test_two_way_bike_lane.py each wrote `max(<their own tolerance>, MIN_HATCHED_ZONE_FT)`,
+    and the test's copy hardcoded 0.05 rather than importing it. Two copies of one rule is the
+    defect this repo has the most history with.
+    """
+    from src.geometry.treatments.base import LANE_WIDTH_SLACK_FT
+
+    return max(LANE_WIDTH_SLACK_FT, MIN_HATCHED_ZONE_FT)
+
+
 def osm_derived_baseline(state: DesignState, model, legs: tuple | None = None) -> DesignState:
     """Paint every kerb the way OSM says it is used, complete the centrelines, upgrade the
     crossings - the design that proposes nothing.

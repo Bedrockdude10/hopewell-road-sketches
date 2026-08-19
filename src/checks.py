@@ -653,7 +653,8 @@ class TravelLanesHoldTheTarget(SceneCheck):
         from src.geometry.targets import LegSide, LegTarget
         from src.geometry.model import narrowest_half_width_ft
         from src.geometry.treatments import (TARGET_LANE_WIDTH_FT, AddBikeLane, LaneNarrowing,
-                                              MIN_HATCHED_ZONE_FT, MarkedParking,
+                                              MarkedParking,
+                                              lane_surplus_that_cannot_be_striped_ft,
                                               travel_lane_width_ft)
 
         state = scene.state
@@ -690,14 +691,13 @@ class TravelLanesHoldTheTarget(SceneCheck):
                     traced_ft = narrowest_half_width_ft(leg, side)
                     lane_ft = min(lane_ft, traced_ft - _divider_shift_toward_ft(state, leg_name,
                                                                                 side))
-                # THE BOUND IS WHAT CAN BE PAINTED, not float noise. A surplus narrower than
-                # treatments.MIN_HATCHED_ZONE_FT cannot be taken off the lane, because there is no
-                # zone that narrow to take it into - hold_travel_lane_at_target declines it for
-                # exactly that reason. Reported at LANE_WIDTH_TOLERANCE_FT instead, this check
-                # demanded a 0.5 ft stripe be laid over 0.37 ft of spare and 0.13 ft of travel
-                # lane, which is the thing PaintClearOfTheTravelLane fails the build for: two
-                # checks, one of them necessarily violated, on a leg where the section fits.
-                over_ft = max(LANE_WIDTH_TOLERANCE_FT, MIN_HATCHED_ZONE_FT)
+                # THE BOUND IS WHAT CAN BE PAINTED, not float noise - see
+                # treatments.lane_surplus_that_cannot_be_striped_ft. Reported at
+                # LANE_WIDTH_TOLERANCE_FT instead, this check demanded a 0.5 ft stripe be laid over
+                # 0.37 ft of spare and 0.13 ft of travel lane, which is the thing
+                # PaintClearOfTheTravelLane fails the build for: two checks, one of them
+                # necessarily violated, on a leg where the section fits.
+                over_ft = lane_surplus_that_cannot_be_striped_ft()
                 if lane_ft > TARGET_LANE_WIDTH_FT + over_ft:
                     violations.append(Violation(
                         "travel_lane_over_target",

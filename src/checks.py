@@ -934,13 +934,12 @@ class NoPaintInsideTheJunction(SceneCheck):
         from src.geometry.markings import carries_across_an_intersection
         from src.geometry.paint import junction_mouths_ft
 
-        # THE SAME RESOLUTION THE PAINT WAS CUT AGAINST - the mouth ends at the leg's crosswalk
-        # where one is painted, and at the corner return only where none is. Asked of the shared
+        # THE SAME RESOLUTION THE PAINT WAS CUT AGAINST - the mouth ends at the leg's crosswalk,
+        # painted or not, and at the corner return only where none resolves. Asked of the shared
         # resolver rather than recomputed from the corner alone, because a check measuring against
         # a different boundary from the cut is a check that passes on paint nobody drew.
         legs = scene.legs
-        mouths = junction_mouths_ft(scene.state, scene.crosswalk_bands,
-                                     scene.marked_crosswalks)
+        mouths = junction_mouths_ft(scene.state, scene.crosswalk_bands)
         violations = []
         for piece in scene.paint:
             if not piece.leg or not piece.side or piece.rim is not None:

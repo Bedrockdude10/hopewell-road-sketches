@@ -3,17 +3,17 @@ buildings:
   vertices: 1263
 channels:
   bike_lane_contraflow_lines:
-    count: 33
+    count: 34
     extent:
       max:
-      - 28.887
-      - 26.83
+      - 27.976
+      - 26.213
       min:
-      - -31.222
-      - -22.306
-    points: 99
+      - -32.712
+      - -23.816
+    points: 90
   bike_lane_edge_lines:
-    count: 49
+    count: 51
     extent:
       max:
       - 31.03
@@ -21,7 +21,7 @@ channels:
       min:
       - -33.989
       - -26.061
-    points: 310
+    points: 309
   bike_lane_hatch_lines:
     count: 6
     extent:
@@ -33,7 +33,7 @@ channels:
       - -25.903
     points: 12
   bike_lane_surface_polygons:
-    count: 26
+    count: 25
     extent:
       max:
       - 30.383
@@ -41,17 +41,17 @@ channels:
       min:
       - -33.896
       - -24.902
-    points: 305
+    points: 295
   bike_lane_symbol_polygons:
-    count: 6
+    count: 5
     extent:
       max:
-      - 8.392
-      - 13.064
+      - 9.764
+      - 14.04
       min:
-      - -22.721
-      - -13.735
-    points: 48
+      - -22.104
+      - -13.114
+    points: 40
   corner_apron_polygons:
     count: 0
     extent: null
@@ -717,15 +717,16 @@ legs:
     width_m: 13.424
 name: Two-Way Bike Lane
 props:
-- bollard@417947.99,565927.76
-- bollard@417953.42,565933.72
-- bollard@417958.86,565939.58
-- bollard@417964.32,565945.45
-- bollard@417969.77,565951.31
-- bollard@417975.16,565957.13
-- bollard@417980.51,565962.98
-- bollard@417985.86,565968.93
-- bollard@417991.13,565974.86
+- bollard@417948.85,565928.71
+- bollard@417954.29,565934.65
+- bollard@417959.73,565940.52
+- bollard@417965.19,565946.39
+- bollard@417970.64,565952.24
+- bollard@417976.02,565958.07
+- bollard@417981.37,565963.93
+- bollard@417986.72,565969.88
+- bollard@417991.97,565975.82
+- bollard@417997.12,565981.75
 - fire_hydrant@418080.91,566067.60
 - pedestrian_signal_head@417978.75,565993.31
 - pedestrian_signal_head@418029.05,566040.40

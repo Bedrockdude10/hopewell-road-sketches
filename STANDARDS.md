@@ -225,6 +225,15 @@ binds at Blackwell exactly as it binds at Greenwood. See
 [`src/geometry/daylighting.py`](src/geometry/daylighting.py); the crossing's position comes from
 the surveyed way where one is traced and from `CROSSWALK_OFFSET_FROM_KERB_FT` where none is.
 
+**A SECOND CONSUMER of that same unmarked crosswalk, added 2026-08-19:**
+[`paint.junction_mouths_ft`](src/geometry/paint.py) ends this junction's own mouth at the leg's
+crosswalk *painted or not*, on the strength of the sentence above — the mouth is where the
+intersection stops on a kerb, and the statute says the crosswalk is there either way. It matters
+because the alternative was the corner fillet's tangent point, which is `R/tan(theta/2)` back
+from the corner and so **diverges as a corner sharpens**: 1.0 R at a square junction, 2.5 R at
+W Broad & Louellen's 44° Y. That held the hatching 63.7 ft out on a kerb whose crossing reaches
+32.1 ft and whose statutory no-parking zone runs 0–85.7 ft.
+
 **MUTCD 11th ed. §1C.02(50)** draws the same two cases: (a) the unmarked connection of the
 sidewalk lines at an intersection, (b) "any portion of a roadway at an intersection **or
 elsewhere** distinctly indicated as a pedestrian crossing by pavement marking lines."

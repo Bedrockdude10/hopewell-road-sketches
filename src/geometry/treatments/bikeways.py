@@ -1090,12 +1090,21 @@ class AddBikeLaneBollards(Treatment):
         one. target_ft is the first station clear of where the crossing actually reaches on this
         side.
 
+        AND THE GAP HAS TO BE ADDED BACK ON A LEG WITH NO PAINTED CROSSING. There, target_ft is
+        the junction mouth's own end with no striper's gap in it, which is right for paint - the
+        mouth CUTS paint, so starting level with it leaves no bare stretch - and wrong here for
+        the same reason the paragraph above gives. Left level, the first post of the row landed
+        exactly on the mouth's lip (station 26.404 against a mouth ending at 26.404 on E Broad's
+        south kerb) and whether PaintContext.emit dropped it came down to float noise in the
+        band's own vertices. A post either stands in the intersection or it does not.
+
         The lane's cross-section belongs to the AddBikeLane underneath, so it is read from the
         design rather than restated - the same reason this treatment requires one.
         """
         from src.geometry.markings import BOLLARD
         from src.geometry.model import points_at_offset_ft
-        from src.geometry.paint import PaintPiece, _dot, end_against_crossing
+        from src.geometry.paint import (CROSSWALK_CLEARANCE_FT, PaintPiece, _dot,
+                                        end_against_crossing)
 
         leg_name, side = self.target.leg, str(self.target.side)
         leg = ctx.state.legs[leg_name]
@@ -1111,13 +1120,14 @@ class AddBikeLaneBollards(Treatment):
         at = ctx.anchors(leg_name, side, inner_offset_ft=(
             leg.curb_to_curb_ft / 2 - lane.total_ft + TARGET_LANE_WIDTH_FT))
         if (leg_name, side) in ctx.straight_through:
-            start_ft = 0.0
+            start_ft = clear_ft = 0.0
         elif leg_name in ctx.marked:
             start_ft, _beyond_ft = end_against_crossing(at)
+            clear_ft = at.target_ft
         else:
-            start_ft = at.target_ft
+            start_ft = clear_ft = at.target_ft + CROSSWALK_CLEARANCE_FT
         centre_ft = (bounds["travel_lane_edge_ft"] + bounds["bike_inner_ft"]) / 2
-        for point in points_at_offset_ft(leg, side, centre_ft, max(start_ft, at.target_ft),
+        for point in points_at_offset_ft(leg, side, centre_ft, max(start_ft, clear_ft),
                                           spacing_ft=self.spacing_ft):
             ctx.emit(PaintPiece(BOLLARD, _dot(point), leg_name, side))
 

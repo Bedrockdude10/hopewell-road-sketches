@@ -101,7 +101,8 @@ class LegAnchors:
 
 def leg_anchors(state, leg_name: str, side: str, crosswalk_offsets: dict,
                  keep_clear=None, inner_offset_ft: float = 0.0,
-                 crosswalk_is_marked: bool = True) -> LegAnchors:
+                 crosswalk_is_marked: bool = True,
+                 mouth_end_ft: float | None = None) -> LegAnchors:
     """This leg-side's LegAnchors.
 
     inner_offset_ft is how far from the centerline this treatment's paint starts - the lane
@@ -111,17 +112,29 @@ def leg_anchors(state, leg_name: str, side: str, crosswalk_offsets: dict,
     to one side of each leg it touches, so a per-leg maximum holds the paint back for a curve
     that may be on the opposite kerb. See leg_clearance_ft.
 
-    With no painted crossing on this leg there is nothing to keep clear OF, so the only limit
-    is that same corner return. The nominal crossing station an unmarked leg carries is only a
-    geometric estimate - itself the per-leg corner clearance - and reserving room around it
-    holds paint out for a crossing that is not painted.
+    With no painted crossing on this leg there is nothing to keep clear OF, so no striper's gap
+    is reserved - `mouth_end_ft`, where this junction's mouth ends on this kerb, IS the target.
+    The zone begins where the intersection stops, which is the same rule the painted case gets;
+    what it does NOT get is CROSSWALK_CLEARANCE_FT, because holding paint off a crossing that is
+    not painted leaves a bare stretch for nothing.
+
+    WHY NOT THE CORNER RETURN, WHICH IS WHAT THIS USED TO ANSWER. It is the same holdback the
+    mouth already applies, said a second time and less well: the tangent point scales as
+    1/tan(theta/2), so on an acute Y it runs far past the crossing and the treatment starved the
+    corner it exists to protect - 31.7 ft of bare kerb inside a statutory no-parking zone on
+    W Broad & Louellen's northwest kerb, 14.6 ft at Princeton & E Prospect, 5.7 ft at E Broad.
+    Every one of those legs had `paint@ == clearance_ft` exactly. junction_mouths_ft is where
+    "where does the intersection end on this kerb" lives now, for the cut AND for the aim; the
+    clearance stays the fallback for a caller with no scene behind it, and stays on the returned
+    LegAnchors because a treatment may still want to know.
     """
     clearance_ft = leg_clearance_ft(leg_name, state.legs, state.corner_fillets, side=side)
     reach_ft = crosswalk_reach_on_leg_side_ft(state.legs[leg_name], side, keep_clear,
                                                inner_offset_ft)
     if not crosswalk_is_marked:
-        return LegAnchors(anchor_ft=clearance_ft, target_ft=clearance_ft,
-                           crossing_ft=reach_ft or 0.0, clearance_ft=clearance_ft)
+        start_ft = clearance_ft if mouth_end_ft is None else mouth_end_ft
+        return LegAnchors(anchor_ft=start_ft, target_ft=start_ft,
+                           crossing_ft=reach_ft or start_ft, clearance_ft=clearance_ft)
     if not reach_ft:
         # Marked, but no band geometry to measure against - fall back to this leg's crossing
         # centre offset. Half the crossing depth is inside CROSSWALK_CLEARANCE_FT, so this is
@@ -312,6 +325,12 @@ class PaintContext:
     straight_through: set = field(default_factory=set)
     props: list | None = None
     openings: object = None            # dropped kerbs a vehicle crosses: paint breaks over them
+    # (leg, side) -> (0.0, end_ft): where THIS junction's own mouth ends on each kerb, as
+    # junction_mouths_ft resolved it for `openings`. Held as the numbers and not only as the
+    # opening polygon because a treatment has to AIM at the mouth's end as well as be cut by it -
+    # see anchors(). One resolution, two uses; recomputing it here is how the aim and the cut
+    # drifted apart in the first place.
+    junction_mouths: dict = field(default_factory=dict)
     surfaces: object = None            # the mountable aprons: paint stops at them
     surface_polygons: list = field(default_factory=list)
     pieces: list = field(default_factory=list)
@@ -641,9 +660,11 @@ class PaintContext:
         220 ft down the block. Handed the full set, broad_st_east's taper would aim at station 322
         (Blackwell's far crossing) instead of 26, and the leg's whole treatment would vanish.
         """
+        mouth = self.junction_mouths.get((leg_name, side))
         return leg_anchors(self.state, leg_name, side, self.crosswalk_offsets,
                             self.junction_crossings, inner_offset_ft=inner_offset_ft,
-                            crosswalk_is_marked=leg_name in self.marked)
+                            crosswalk_is_marked=leg_name in self.marked,
+                            mouth_end_ft=None if mouth is None else mouth[1])
 
 
 def curbside_paint_ft(state, crosswalk_offsets: dict, center_ft,
@@ -693,7 +714,12 @@ def curbside_paint_ft(state, crosswalk_offsets: dict, center_ft,
                  if band is not None and not band.is_empty]
     all_bands = list(bands.values()) + elsewhere
     keep_clear = (unary_union(all_bands).buffer(PAINT_TO_CROSSWALK_GAP_FT) if all_bands else None)
-    openings = kerb_opening_bands(state, junction_mouths_ft(state, bands, marked))
+    # EVERY leg's band, not just the painted ones. What paint has to keep clear of is a fact
+    # about paint, so `bands` above is filtered to the marked legs; where the JUNCTION ends is a
+    # fact about the street, and a leg without a painted crossing still has one - see
+    # junction_mouths_ft.
+    mouths = junction_mouths_ft(state, crosswalk_bands)
+    openings = kerb_opening_bands(state, mouths)
     # --- and now the treatments paint themselves. Each one that has markings owns them
     # (Treatment.paint), so a marking's geometry lives beside the validation and the provenance
     # of the thing that calls for it, rather than in a block of this function keyed off one of
@@ -704,7 +730,7 @@ def curbside_paint_ft(state, crosswalk_offsets: dict, center_ft,
     # marked lane and not two painted on top of each other.
     ctx = PaintContext(state=state, crosswalk_offsets=crosswalk_offsets, center_ft=center_ft,
                         keep_clear=keep_clear, junction_crossings=junction_crossings,
-                        marked=marked, openings=openings,
+                        marked=marked, openings=openings, junction_mouths=mouths,
                         straight_through=straight_through, props=props)
     current = {}
     for treatment in getattr(state, "treatments", []):
@@ -876,22 +902,37 @@ def _inside_the_traced_kerb(leg, side: str, near):
     return None if band.is_empty else band
 
 
-def junction_mouths_ft(state, crosswalk_bands: dict | None = None,
-                        marked: set | None = None) -> dict:
+def junction_mouths_ft(state, crosswalk_bands: dict | None = None) -> dict:
     """{(leg, side): (0.0, end_ft)} - where THIS junction opens each kerb.
 
     THE INTERSECTION ENDS AT THE CROSSWALK, and that is the whole rule. A person reads a junction
     by its crosswalks: the box between them is the intersection, and the corner OUTSIDE a crosswalk
-    is approach - the ground a painted curb extension is put on. So on a leg whose crossing is
-    painted, the mouth ends at that crossing's reach along this kerb; only where no crossing is
-    painted does it fall back to the corner return's tangent point, which is the same side line
-    R.S. 39:4-138(e) measures its setback from on exactly those legs.
+    is approach - the ground a painted curb extension is put on. So the mouth ends at that
+    crossing's reach along this kerb, and only a leg with no crossing resolved at all falls back
+    to the corner return's tangent point.
+
+    PAINTED OR NOT, and that distinction has no business here. Whether a crossing is MARKED is a
+    fact about paint - it decides what other paint has to keep clear of, which is `keep_clear`'s
+    job. Where the junction ends is a fact about the street, and an unmarked approach still has a
+    crosswalk on it: N.J.S.A. 39:1-1's, the one daylighting.py already measures R.S. 39:4-138(e)
+    from by name on exactly these legs. Its position is context.crosswalk_estimate_ft, which
+    reproduces all 11 surveyed crossings here to a standard deviation of 2.4 ft - and which
+    rejected the fillet tangent point for this very job, at -31.5 to +41.7 ft of scatter. So the
+    estimate is not the weaker answer being used for want of a survey; on this question it is the
+    stronger of the two, and the corner return is the fallback.
 
     WHY NOT THE CORNER RETURN EVERYWHERE. The tangent point is where the KERB starts, and a
     hatched no-parking zone held back to it stops short of the crossing - which undoes the
     treatment, because the bare stretch beside a crossing is the parking space daylighting exists
     to remove, and because filling that corner IS the painted curb extension. It costs 15.3 ft of
     hatching on W Broad & Louellen's south kerb and 13.2 ft on Greenwood Ave north's.
+
+    AND THE TANGENT POINT DIVERGES AS A CORNER SHARPENS, which is why holding paint back to it is
+    not merely conservative. A fillet of radius R meets its kerbs R/tan(theta/2) back from the
+    corner, so the same corner radius reads as 1.0 R at a square junction and 2.5 R at W Broad &
+    Louellen's 44 deg Y: 63.7 ft along W Broad's northwest kerb, against a crossing that reaches
+    32.1 ft. That left 31.7 ft of the statutory zone bare on the sharpest corner at any of these
+    sites - the one where a parked car blocks the most sight line.
 
     IT CAN ALSO MOVE THE MOUTH OUTWARD, which is the same rule and not a separate one: at
     W Broad & Louellen the crossing is surveyed 43.7 deg off square, so on Louellen's NORTH kerb
@@ -905,11 +946,10 @@ def junction_mouths_ft(state, crosswalk_bands: dict | None = None,
     from src.geometry.model import junction_mouth_ft
     from src.geometry.treatments import TARGET_LANE_WIDTH_FT, divider_shift_toward_ft
 
-    marked = set(marked or ())
     bands = crosswalk_bands or {}
     out = {}
     for leg_name, leg in state.legs.items():
-        band = bands.get(leg_name) if leg_name in marked else None
+        band = bands.get(leg_name)
         for side in ("left", "right"):
             reach_ft = None
             if band is not None and not band.is_empty and leg.curb_to_curb_ft is not None:

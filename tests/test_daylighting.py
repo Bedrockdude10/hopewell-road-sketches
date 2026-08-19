@@ -577,3 +577,95 @@ def test_the_daylight_hatching_reaches_the_crossing_it_daylights(site_models):
                         f"stretch beside a crossing is the parking space daylighting exists to "
                         f"remove")
     assert checked, "no marked crossing had a daylight zone beside it, so this asserted nothing"
+
+
+@needs_source_data
+def test_kerbside_hatching_reaches_the_crossing_on_an_UNMARKED_leg_too(site_models):
+    """The sibling of the test above, for the legs it does not look at.
+
+    That one sweeps `scene.marked_crosswalks`, which is every leg whose crossing is PAINTED - so
+    the two W Broad legs at Louellen, both unmarked, were outside every assertion in the suite.
+    Those are the legs the arrows landed on. An unmarked approach still has a crosswalk (N.J.S.A.
+    39:1-1) and still has a statutory setback measured from it (R.S. 39:4-138(e), which
+    no_parking_zones_ft cites by that name here), so the hatching beside it has the same job and
+    the same failure mode: a bare stretch beside a crossing is where a car parks and blocks the
+    sight line.
+
+    MEASURED FROM max(crossing reach, where the kerb is TRACED), and the second term is not a
+    let-off. leg_frame.paint_stations refuses to draw a design-choice marking on ground nobody
+    surveyed, deliberately and with its reasons; every kerb at all five sites is traced only from
+    station 12-58, because OSM traces the block and not the corner. So this pins the part of the
+    rule the code owns - the corner return must not hold the hatching back - and reports the
+    tracing separately rather than blaming the geometry for missing data.
+
+    Before the mouth was resolved for unpainted crossings, `w_broad_st_southwest right` started
+    its hatching at 63.71 ft: the corner clearance to the foot, 31.7 ft outside a crossing
+    reaching 32.06, on a kerb the statute closes from 0 to 85.7.
+    """
+    import contextlib
+    import io
+
+    import numpy as np
+
+    from src.geometry.model import curb_station_span, station_offset_many
+    from src.geometry.paint import PAINT_TO_CROSSWALK_GAP_FT
+    from src.render.crosswalks import crosswalk_reach_on_leg_side_ft
+    from src.site import load_site_scenarios, run_scenario
+    from tests.test_sites import resolved_scene, scene_props
+
+    # The striper's gap, plus the sample step the kerbside strip is built on: a zone cut against
+    # the mouth lands on that grid, so a fraction of a step is the cut and not a shortfall.
+    allowed_ft = PAINT_TO_CROSSWALK_GAP_FT + 2.5
+    checked, unmarked_seen = 0, 0
+    for site, model in site_models.items():
+        scenarios = load_site_scenarios(site)
+        for name in sorted(n for n in dir(scenarios) if n.startswith("build_")):
+            with contextlib.redirect_stdout(io.StringIO()):
+                state = run_scenario(getattr(scenarios, name),
+                                      DesignState.from_model(model), model)
+                scene = resolved_scene(model, state)
+                paint = scene.build_paint(scene_props(model, state, scene))
+
+            for leg_name, leg in sorted(model.legs.items()):
+                if leg_name in scene.marked_crosswalks:
+                    continue            # the test above owns these
+                band = scene.crosswalk_bands.get(leg_name)
+                if band is None or band.is_empty:
+                    continue
+                unmarked_seen += 1
+                for side in ("left", "right"):
+                    reach_ft = crosswalk_reach_on_leg_side_ft(leg, side, band,
+                                                               beyond_the_tracing=True)
+                    if not reach_ft:
+                        continue
+                    span = curb_station_span(leg, side)
+                    # Where a marking may begin at all: past the crossing, and not on ground
+                    # nobody traced.
+                    floor_ft = max(reach_ft, span[0] if span else 0.0)
+                    sign = 1 if side == "left" else -1
+                    starts = []
+                    for piece in paint:
+                        if piece.leg != leg_name or str(piece.side) != side:
+                            continue
+                        if not piece.covers_area:
+                            continue
+                        geometry = piece.geometry
+                        coords = np.asarray(
+                            geometry.exterior.coords if geometry.geom_type == "Polygon"
+                            else geometry.coords, dtype=float)
+                        stations, offsets = station_offset_many(leg.centerline, coords)
+                        on_this_side = (offsets * sign) > 0
+                        if on_this_side.any():
+                            starts.append(float(stations[on_this_side].min()))
+                    if not starts:
+                        continue        # nothing hatched on this kerb in this scenario
+                    checked += 1
+                    bare_ft = min(starts) - floor_ft
+                    assert bare_ft <= allowed_ft, (
+                        f"{site}/{name}: the kerbside hatching on {leg_name}/{side} starts "
+                        f"{min(starts):.2f} ft out, leaving {bare_ft:.2f} ft bare past the "
+                        f"furthest thing entitled to hold it back (crossing reach "
+                        f"{reach_ft:.2f}, tracing starts "
+                        f"{span[0]:.2f} ft" f") - the corner return is not one of them")
+    assert unmarked_seen, "no unmarked approach was reached, so this asserted nothing"
+    assert checked, "no unmarked approach had hatching beside it, so this asserted nothing"

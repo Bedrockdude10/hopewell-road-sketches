@@ -67,6 +67,26 @@ janky" into "bare from station 0 to 63.7, then 1.4 ft widening to 2.6 ft by stat
 names the mechanism on its own. `scripts/measure_drawn.py` is where that belongs; extend it rather
 than writing another throwaway script, and NEVER answer a geometry question by cropping a PNG.
 
+**AND WHEN A MARKING DOES NOT REACH, PRINT EVERY LIMITER, NOT THE FIRST ONE.** Four separate
+things decide where a kerbside marking starts, they disagree, and the answer is whichever sits
+furthest out — so measuring one, finding it innocent, and moving on proves nothing:
+
+| limiter | where it lives |
+|---|---|
+| the corner return | `leg_clearance_ft` |
+| this junction's mouth | `junction_mouths_ft`, with `corner_tangent_station_ft` as its fallback |
+| the crossing band | `crosswalk_reach_on_leg_side_ft` — the **BAND**, never `crosswalk_offsets[leg].offset_ft`, which is the crossing's CENTRE and reads 32.3 where the skewed band reaches 53.8 |
+| whether the kerb is traced there | `curb_station_span` — every kerb at all five sites starts 12–58 ft out, because OSM traces the block and not the corner |
+
+One session found each of those binding on a different leg of ONE junction, and reported a 21.5 ft
+defect that did not exist by measuring the third one wrong. The tell that you have the right
+limiter is arithmetic identity: `paint@` equalling `clearance_ft` to two decimals on five
+leg-sides at four sites is a mechanism, and "roughly similar" is a coincidence.
+
+Note also that a length derived from the corner fillet **diverges as a corner sharpens** —
+a tangent point sits `R/tan(θ/2)` back, so 1.0 R at a square junction and 2.5 R at a 44° Y. That
+is §0b's lesson in a second disguise: the quantity is local, but it is not the quantity you meant.
+
 ### 0b. MEASURE AT THE FRAME THE READER IS LOOKING AT — legs are longer on a wide sheet
 
 `--frame-scale` does not just crop wider. It scales `leg_lengths`, so a 130 ft leg is 325 ft on a

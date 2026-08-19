@@ -450,6 +450,62 @@ def test_the_taper_also_clears_the_cross_streets_crossing():
     assert both.target_ft >= 45.0, "it has to clear the far edge of the cross crossing"
 
 
+def test_an_unmarked_leg_aims_at_the_junction_mouth_and_not_at_the_corner_return():
+    """The corner return is not where a kerbside zone may begin, and on an acute corner it is
+    nowhere near it.
+
+    A fillet of radius R meets its kerbs R/tan(theta/2) back from the corner, so the tangent
+    point is 1.0 R at a square junction and 2.5 R at W Broad & Louellen's 44 deg Y - 63.7 ft
+    along W Broad's northwest kerb, against a crossing reaching 32.1. Holding the hatching back
+    to it left 31.7 ft of a statutory no-parking zone bare on the sharpest corner at any of these
+    sites, and the same rule cost 14.6 ft at Princeton & E Prospect and 5.7 ft at E Broad. Every
+    starved leg had its paint starting at `clearance_ft` to the foot.
+
+    So the anchor is the junction MOUTH's end - one resolution of "where does the intersection
+    stop on this kerb", used for the cut and for the aim. The clearance survives only as the
+    fallback for a caller with no scene behind it, which is the second assertion.
+    """
+    from src.geometry.paint import leg_anchors
+
+    leg = traced(a_leg(), "left", [(10, 15), (130, 15)])
+    state = a_state({"east": leg})
+    aimed = leg_anchors(state, "east", "left", crossing_at(29.0), None,
+                        crosswalk_is_marked=False, mouth_end_ft=32.1)
+    assert aimed.target_ft == pytest.approx(32.1)
+    assert aimed.anchor_ft == pytest.approx(32.1)
+    # NO striper's gap: the mouth CUTS the zone, so starting level with it leaves nothing bare.
+    # A marked leg's target carries CROSSWALK_CLEARANCE_FT because there is paint to keep off.
+    assert aimed.target_ft == pytest.approx(aimed.crossing_ft)
+
+    no_scene = leg_anchors(state, "east", "left", crossing_at(29.0), None,
+                           crosswalk_is_marked=False)
+    assert no_scene.target_ft == pytest.approx(no_scene.clearance_ft)
+
+
+def test_the_junction_mouth_ends_at_an_unmarked_legs_crossing_too():
+    """Whether a crossing is MARKED is a fact about paint; where the junction ends is a fact
+    about the street.
+
+    An unmarked approach still has a crosswalk on it - N.J.S.A. 39:1-1's, the one daylighting.py
+    already measures R.S. 39:4-138(e) from by name on exactly these legs - so the mouth ends
+    there rather than at the corner return. Both W Broad legs at Louellen are unmarked, which is
+    why the arrows landed on them.
+    """
+    from shapely.geometry import Polygon
+
+    from src.geometry.paint import junction_mouths_ft
+
+    leg = traced(a_leg(), "left", [(10, 15), (130, 15)])
+    leg = traced(leg, "right", [(10, 15), (130, 15)])
+    state = a_state({"east": leg})
+    band = Polygon([(24, 15), (32, 15), (32, -15), (24, -15)])
+
+    mouths = junction_mouths_ft(state, {"east": band})
+    assert mouths[("east", "left")][1] == pytest.approx(32.0, abs=1.0)
+    # And with no band at all it is the corner return that answers - here no fillets, so 0.
+    assert ("east", "left") not in junction_mouths_ft(state, {})
+
+
 def test_no_crossing_geometry_falls_back_to_the_offset():
     from src.geometry.paint import leg_anchors
     from src.render.crosswalks import CROSSWALK_CLEARANCE_FT

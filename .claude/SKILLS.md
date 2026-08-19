@@ -27,6 +27,46 @@ So: after any change to geometry, **build the thing and measure the drawn coordi
 `station_offset_many(leg.centerline, np.asarray(drawn.coords))` — and open the PNG. A check that
 reads the same function the renderer reads is not a check.
 
+### 0a. Diagnose from the quantitative layer, not from the picture
+
+The PNG is where you NOTICE a problem. It is never where you diagnose one. Everything this project
+draws exists first as numbers — the resolved `DesignState`, the `PaintPiece` list, the traced kerb,
+`output/*/geometry_*.json` — and that is the layer the whole design is kept in so a defect can be
+*measured* instead of guessed at.
+
+Cropping and squinting at renders cost most of one session and produced **three wrong diagnoses in
+a row** on a single complaint ("the bike lane doesn't reach the kerb on W Broad"):
+
+| guessed from the picture | what the numbers said |
+|---|---|
+| the hatch spills over the kerb | it reaches the kerb exactly; the kerb wanders 3 ft |
+| the wrong channel removed the hatching | both channels hatch; only the colour changed |
+| the unbuffered rung skips the kerbside zone | the zone is built and added, on the *other* leg |
+| — | the two lanes' green is **80.3 ft apart** and the extension between them has **0.0 sq ft** of surface: dotted lines only |
+
+Only the last line is the defect, and it took one query to find once the question was asked of the
+data. The reader also cannot tell you which leg they mean from a render, and neither can you: two of
+those wrong answers were about `w_broad_st_northeast` when the complaint was about
+`w_broad_st_southwest`.
+
+**So: before proposing a cause, print the numbers.** The four that answer most questions:
+
+```python
+# what is actually drawn on this leg-side, stationed in its own frame
+[(p.kind.name, *np.abs(station_offset_many(leg.centerline, coords)[1])[[0, -1]]) for p in paint]
+# where the traced kerb is, at the same stations
+curb_offsets_at_stations(leg, side, stations)      # and curb_station_span(leg, side)
+# what the treatment THINKS it placed
+treatment.section(state).offsets_from_centerline_ft()
+# whether a facility is continuous: distance between the pieces that should meet
+unary_union(a).distance(unary_union(b))
+```
+
+A gap profile — kerb offset minus outermost drawn offset, station by station — turns "it looks
+janky" into "bare from station 0 to 63.7, then 1.4 ft widening to 2.6 ft by station 118", which
+names the mechanism on its own. `scripts/measure_drawn.py` is where that belongs; extend it rather
+than writing another throwaway script, and NEVER answer a geometry question by cropping a PNG.
+
 ---
 
 ## 1. Before you write a number, look for it

@@ -33,12 +33,14 @@ from src.geometry.corridor_paint import (CORRIDOR_SAMPLE_FT, JUNCTION_MOUTH,
                                          centred_on_its_kerbs, far_kerb_lane_edge,
                                          kerb_offset_ft, paint_facility, parking_bands,
                                          contraflow_centreline, green_extension_spans,
-                                         stall_marks, stall_room_spans, symbol_stations)
+                                         stall_marks, stall_room_spans, stalls_per_span,
+                                         symbol_stations)
 from src.geometry.intersection import load_intersection_model
 from src.geometry.model import station_offset_many
 from src.geometry.network import (_complement_spans, _merged_spans, corridor_facts,
-                                  corridors_from_models, marked_parking_capacity)
+                                  corridors_from_models)
 from src.geometry.treatments import BROAD_ST_TWO_WAY_BIKEWAY
+from src.geometry.treatments.parking import PARKING_STALL_DEPTH_DEFAULT_FT
 from src.site import list_sites
 
 ASPHALT = "#d9d9d9"
@@ -67,21 +69,22 @@ def _intersect(a, b):
     return tuple(sorted(out))
 
 
-def _stalls_kept(corridor, facts, paint, far_side: str) -> int:
-    """Width-tested stalls left on the FAR kerb once this facility is placed on the near one.
+def _far_kerb_stall_spans(corridor, facts, paint, far_side: str):
+    """Where a stall may actually be marked on the FAR kerb once this facility is placed.
 
     Legal room AND street room, because a length the statute permits and four feet wide holds no
     car - the distinction that took the honest figure from 108 to 32 on the south-kerb option. The
     far kerb is measured against the divider the section pushes toward it, per run, so a
     constrained stretch and a standard one are not given the same allowance.
+
+    Returns the SPANS, not a count, so the number in the title and the boxes on the page come out
+    of one call to `stall_marks` rather than out of two counters that can drift apart.
     """
     mouths = _merged_spans([(o.start_ft, o.end_ft)
                             for side, o in facts.openings if side == far_side])
     clear = _complement_spans(mouths, 0.0, corridor.length_ft)
     room = stall_room_spans(corridor, far_side, far_kerb_lane_edge(paint))
-    count, _over_ft = marked_parking_capacity(corridor, facts, far_side,
-                                             within=_intersect(clear, room))
-    return count
+    return _intersect(_intersect(facts.by_side("parkable", far_side), clear), room)
 
 
 def _band_across(corridor, side, lo_ft, hi_ft):
@@ -117,7 +120,7 @@ def straighten(corridor, geometry):
 
 
 def draw_panel(ax, corridor, paint, parking, openings, lo_ft, hi_ft, half_ft,
-               marks=(), daylight=(), extras=None):
+               marks=(), daylight=(), stall_labels=(), extras=None):
     grid = np.arange(lo_ft, hi_ft, CORRIDOR_SAMPLE_FT)
     left = np.array([kerb_offset_ft(corridor, "left", float(s)) or np.nan for s in grid])
     right = np.array([-(kerb_offset_ft(corridor, "right", float(s)) or np.nan) for s in grid])
@@ -156,6 +159,23 @@ def draw_panel(ax, corridor, paint, parking, openings, lo_ft, hi_ft, half_ft,
         for xy in straighten(corridor, line):
             if lo_ft <= xy[:, 0].mean() <= hi_ft:
                 ax.plot(xy[:, 0], xy[:, 1], color=PAINT_WHITE, lw=0.8, zorder=5)
+
+    # EACH RUN LABELLED WITH ITS OWN COUNT, so the headline total can be found on the page rather
+    # than taken on trust - and so THE LABELS SUM TO IT. That is why the test is the run's own
+    # midpoint and not an overlap: a run straddling a panel edge is drawn on both panels, and
+    # labelling it wherever it is visible printed its count twice and made the sheet contradict
+    # its own title. Labelled once, on the panel holding its middle.
+    for side, lo, hi, stalls in stall_labels:
+        mid = (lo + hi) / 2
+        if not lo_ft <= mid < hi_ft:
+            continue
+        sign = 1.0 if side == "left" else -1.0
+        offset = kerb_offset_ft(corridor, side, mid)
+        if offset is None:
+            continue
+        ax.text(mid, sign * (offset - PARKING_STALL_DEPTH_DEFAULT_FT / 2), str(stalls),
+                color="#10314f", fontsize=5.5, fontweight="bold", ha="center", va="center",
+                zorder=10)
 
     for run in paint.runs:
         if run.end_ft < lo_ft or run.start_ft > hi_ft:
@@ -238,6 +258,28 @@ def draw_panel(ax, corridor, paint, parking, openings, lo_ft, hi_ft, half_ft,
         ax.spines[spine].set_visible(False)
 
 
+def _decision_table(fig, outcomes, drawn: str) -> None:
+    """The which-kerb comparison, ON THE DRAWING.
+
+    It was printed to a terminal, which is no use to anyone in a council chamber holding the
+    sheet: the picture shows one kerb's proposal and the reason for choosing it lived somewhere
+    the reader cannot see. Every row's parking figure belongs to the OTHER kerb - the lane and
+    the parking are never on the same side - so the column says so in words.
+    """
+    lines = ["WHICH KERB CARRIES THE LANE - both measured, same survey",
+             f"{'lane on':>9s}  {'placed':>9s}  {'breaks':>7s}  {'mouths':>7s}  "
+             f"{'parking kept, other kerb':>25s}"]
+    for compass, out in outcomes.items():
+        mark = "<- drawn" if compass == drawn else ""
+        lines.append(f"{compass:>9s}  {out['paint'].placed_ft:6,.0f} ft  "
+                     f"{out['breaks']:7d}  {out['openings_on_lane']:7d}  "
+                     f"{out['kept']:6d} on the {out['far_compass']:<5s} {mark}")
+    fig.text(0.012, -0.004, "\n".join(lines), fontsize=6, family="monospace", va="top",
+             ha="left", zorder=20,
+             bbox={"facecolor": "white", "edgecolor": "#3b6ea5", "alpha": 0.92,
+                   "boxstyle": "round,pad=0.5"})
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--road", default="Broad Street")
@@ -286,7 +328,8 @@ def main() -> int:
             "paint": paint, "far": far, "far_compass": far_compass,
             "breaks": len(paint.breaks),
             "openings_on_lane": sum(1 for side, opening in facts.openings if side == near),
-            "kept": _stalls_kept(corridor, facts, paint, far),
+            "kept": stall_marks(corridor, far,
+                                _far_kerb_stall_spans(corridor, facts, paint, far))[1],
         }
 
     print(f"{corridor.name}: {corridor.length_ft:,.0f} ft, "
@@ -325,7 +368,7 @@ def main() -> int:
         empty = dataclasses.replace(BROAD_ST_TWO_WAY_BIKEWAY, side="south")
         paint = paint_facility(corridor, empty, facts=facts)
         paint.runs, paint.refusals = [], []
-        total, all_marks, daylight_spans = 0, [], []
+        total, all_marks, daylight_spans, labels = 0, [], [], []
         for side, compass in (("left", "north"), ("right", "south")):
             mouths = _merged_spans([(o.start_ft, o.end_ft)
                                    for s2, o in facts.openings if s2 == side])
@@ -334,6 +377,7 @@ def main() -> int:
             spans = _intersect(_intersect(facts.by_side("parkable", side), clear), room)
             lines, count = stall_marks(corridor, side, spans)
             all_marks += lines
+            labels += [(side, lo, hi, n) for lo, hi, n in stalls_per_span(spans)]
             total += count
             print(f"  {compass:5s} kerb: {count:3d} stalls DRAWN over "
                   f"{sum(hi - lo for lo, hi in spans):,.0f} ft")
@@ -350,7 +394,7 @@ def main() -> int:
         fig, axes = plt.subplots(args.panels, 1, figsize=(13, 2.0 * args.panels))
         for ax, lo, hi in zip(np.atleast_1d(axes), edges[:-1], edges[1:]):
             draw_panel(ax, corridor, paint, parking, openings, float(lo), float(hi), half_ft,
-                       marks=marks, daylight=daylight)
+                       marks=marks, daylight=daylight, stall_labels=tuple(labels))
         axes[0].set_title(
             f"{corridor.name} - daylighting and crossing upgrades ONLY, no bike facility\n"
             f"{total} parking stalls marked on both kerbs, counted by drawing each one; "
@@ -373,6 +417,12 @@ def main() -> int:
     print(f"\n  DRAWN: the {drawn} kerb.")
     print(paint.summary(corridor.length_ft))
     parking = parking_bands(corridor, facts, far_side)
+    # The stalls themselves, drawn as boxes over the room band - a reader asked to weigh a stall
+    # count against a bikeway cannot see that count anywhere in a shaded strip. Off the same spans
+    # and the same call the headline number came from, so the boxes ARE the count.
+    stall_spans = _far_kerb_stall_spans(corridor, facts, paint, far_side)
+    marks = stall_marks(corridor, far_side, stall_spans)[0]
+    stall_labels = tuple((far_side, lo, hi, n) for lo, hi, n in stalls_per_span(stall_spans))
     openings = tuple((side, opening.start_ft, opening.end_ft) for side, opening in facts.openings)
 
     # The three markings NACTO asks for besides the lane itself (STANDARDS.md, 2026-08-18).
@@ -404,7 +454,7 @@ def main() -> int:
     fig, axes = plt.subplots(args.panels, 1, figsize=(13, 2.0 * args.panels))
     for ax, lo, hi in zip(np.atleast_1d(axes), edges[:-1], edges[1:]):
         draw_panel(ax, corridor, paint, parking, openings, float(lo), float(hi), half_ft,
-                   extras=extras)
+                   marks=tuple(marks), stall_labels=stall_labels, extras=extras)
     axes[0].set_title(
         f"{corridor.name} - existing kerbs (surveyed) and the proposed two-way protected bikeway "
         f"on the {paint.compass_side} kerb; blue = where the law leaves parking room on the "
@@ -413,10 +463,11 @@ def main() -> int:
         f"({paint.placed_ft / corridor.length_ft:.0%}); straightened into the corridor's own frame "
         f"- lengths and widths true, curvature removed\n"
         f"parking, width-tested against an 11 ft travel lane: "
-        f"{chosen['kept']} stalls kept on the {far_compass} kerb; "
+        f"{chosen['kept']} stalls kept on the {far_compass} kerb, drawn as boxes; "
         f"{paint.breaks and len(paint.breaks)} interruptions along the lane", fontsize=8)
     axes[-1].set_xlabel("station along the corridor (ft)", fontsize=7)
     fig.tight_layout()
+    _decision_table(fig, outcomes, drawn)
 
     out_dir = Path(args.out)
     out_dir.mkdir(parents=True, exist_ok=True)

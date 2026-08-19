@@ -283,14 +283,10 @@ class BikeLane:
         that followed it would swing 14 ft and read as snaking; drawn against the narrowest point it
         stays straight and the leftover is hatched, which is what a striper would do beside a bay.
 
-        TwoWayBikeLane overrides it to True, because there the kerb IS the design: a two-way
-        protected lane exists to be shielded by that kerb along a corridor, and W Broad's 8 ft
-        convergence over 39 ft is the street widening, not a bay. Following it there reads as the
-        road opening out; ignoring it left the wedge this whole split exists to remove.
-
-        The honest limit: neither behaviour is right for a kerb that BOTH converges a long way and
-        oscillates. Distinguishing those needs the kerb described as a course plus excursions from
-        it, which is docs/network-model.md's job, not this flag's.
+        TwoWayBikeLane also returns False: the lane stays straight, like the car lane and like a
+        one-way bike lane. The kerb provides physical protection (the vertical element), but the
+        paint does not need to follow every wiggle. The buffer between the lane and the kerb absorbs
+        the variation, just like hatching does for a one-way lane.
         """
         return False
 
@@ -427,8 +423,20 @@ class TwoWayBikeLane(BikeLane):
 
     @property
     def hugs_kerb(self) -> bool:
-        """True: the kerb this lane is protected by is the line it follows. See BikeLane.hugs_kerb."""
-        return True
+        """False: the lane stays straight, like the car lane and like a one-way bike lane.
+
+        The kerb provides physical protection (the vertical element), but the paint does not need
+        to follow every wiggle. A 20 ft kerb swing on broad_st_east includes a bay and corner
+        flare; a two-way lane that followed it would "read as snaking" — the same problem the
+        one-way lane avoids by staying straight. The buffer between the lane and the kerb absorbs
+        the variation, just like hatching does for a one-way lane.
+
+        The old rationale was "the kerb IS the design: a two-way protected lane exists to be
+        shielded by that kerb along a corridor." But that conflates two things: the kerb provides
+        physical protection, and the lane alignment is where the paint goes. These are independent.
+        A protected bike lane can be straight while still being protected by a kerb that varies.
+        """
+        return False
 
     @property
     def section_ft(self) -> float:

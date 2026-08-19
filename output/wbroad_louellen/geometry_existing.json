@@ -5179,6 +5179,7 @@
   "bike_lane_hatch_lines": [],
   "bike_lane_surface_polygons": [],
   "bike_lane_contraflow_lines": [],
+  "bike_lane_symbol_polygons": [],
   "corner_apron_polygons": [],
   "props": [
     {

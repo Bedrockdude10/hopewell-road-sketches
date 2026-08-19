@@ -3,17 +3,17 @@ buildings:
   vertices: 1497
 channels:
   bike_lane_contraflow_lines:
-    count: 37
+    count: 36
     extent:
       max:
-      - 41.983
-      - 27.181
+      - 43.062
+      - 27.586
       min:
-      - -35.931
-      - -17.071
-    points: 132
+      - -34.49
+      - -16.098
+    points: 118
   bike_lane_edge_lines:
-    count: 43
+    count: 41
     extent:
       max:
       - 44.96
@@ -21,19 +21,19 @@ channels:
       min:
       - -37.11
       - -19.161
-    points: 569
+    points: 545
   bike_lane_hatch_lines:
-    count: 19
+    count: 18
     extent:
       max:
-      - 42.21
-      - 25.354
+      - 42.18
+      - 25.199
       min:
       - -34.011
       - -18.417
-    points: 38
+    points: 36
   bike_lane_surface_polygons:
-    count: 16
+    count: 15
     extent:
       max:
       - 44.62
@@ -41,16 +41,16 @@ channels:
       min:
       - -37.04
       - -18.508
-    points: 323
+    points: 319
   bike_lane_symbol_polygons:
     count: 6
     extent:
       max:
-      - 22.77
-      - 19.485
+      - 23.292
+      - 18.43
       min:
-      - -12.993
-      - -0.999
+      - -12.688
+      - -1.435
     points: 48
   corner_apron_polygons:
     count: 0
@@ -105,25 +105,25 @@ channels:
     extent: null
     points: 0
   parking_buffer_edge_lines:
-    count: 3
+    count: 7
     extent:
       max:
       - 48.827
-      - 17.833
+      - 18.42
       min:
-      - 8.593
+      - -10.923
       - -4.393
-    points: 113
+    points: 202
   parking_buffer_hatch_lines:
-    count: 11
+    count: 27
     extent:
       max:
-      - 37.074
-      - 11.759
+      - 37.606
+      - 27.227
       min:
-      - 9.61
-      - -2.904
-    points: 22
+      - -23.955
+      - -6.753
+    points: 54
   parking_buffer_taper_lines:
     count: 0
     extent: null

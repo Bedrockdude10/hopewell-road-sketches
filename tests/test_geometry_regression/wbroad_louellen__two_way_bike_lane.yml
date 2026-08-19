@@ -6,28 +6,28 @@ channels:
     count: 34
     extent:
       max:
-      - 28.703
-      - 27.096
+      - 29.21
+      - 26.324
       min:
-      - -32.203
-      - -23.286
+      - -31.603
+      - -23.858
     points: 96
   bike_lane_edge_lines:
-    count: 58
+    count: 59
     extent:
       max:
       - 30.977
-      - 28.649
+      - 27.876
       min:
-      - -33.994
+      - -33.36
       - -26.008
-    points: 473
+    points: 471
   bike_lane_hatch_lines:
     count: 14
     extent:
       max:
-      - 29.619
-      - 25.941
+      - 29.497
+      - 24.749
       min:
       - -30.369
       - -25.753
@@ -36,21 +36,21 @@ channels:
     count: 27
     extent:
       max:
-      - 30.022
-      - 28.545
+      - 30.538
+      - 27.773
       min:
-      - -33.902
-      - -24.897
+      - -33.267
+      - -25.476
     points: 304
   bike_lane_symbol_polygons:
     count: 6
     extent:
       max:
-      - 8.234
-      - 13.316
+      - 8.516
+      - 12.832
       min:
-      - -23.696
-      - -14.715
+      - -23.442
+      - -14.95
     points: 48
   corner_apron_polygons:
     count: 0
@@ -115,15 +115,15 @@ channels:
       - -4.514
     points: 98
   parking_buffer_hatch_lines:
-    count: 7
+    count: 12
     extent:
       max:
       - -20.464
       - -0.94
       min:
       - -36.023
-      - -4.234
-    points: 14
+      - -22.394
+    points: 24
   parking_buffer_taper_lines:
     count: 0
     extent: null

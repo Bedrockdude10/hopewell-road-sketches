@@ -57,7 +57,7 @@ channels:
       - 18.346
       - 37.93
       min:
-      - -18.354
+      - -18.359
       - -36.692
     points: 450
   lane_narrowing_hatch_lines:

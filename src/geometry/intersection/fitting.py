@@ -743,7 +743,15 @@ def _apply_traced_curb_lines(legs: dict, kerb_ways: list, center_ft: Point,
             elif min(p[0] for p in points) > UNTRACED_CORNER_THRESHOLD_FT:
                 gaps.append(f"{name} {side} (traced only from {min(p[0] for p in points):.0f} ft out)")
     if gaps and not quiet:
+        # NOT "go and trace this". A kerb line STOPS where the carriageway opens into the
+        # junction, so no tracing within 35 ft of the node is the normal case here - it is true
+        # of every kerb at all five sites - and at W Broad & Louellen the southern kerb is traced
+        # complete and simply ends at the island's nose 63 ft out. This message used to advise
+        # tracing the corner and was read as evidence the survey was incomplete, twice. It says
+        # what is missing from the MODEL (a traced arc to fit a radius to) and nothing about the
+        # survey, because it cannot tell the two apart.
         print(f"  NOTE: no traced kerb within {UNTRACED_CORNER_THRESHOLD_FT:.0f} ft of the junction on: "
-              f"{'; '.join(gaps)}. Those corners are bridged, not traced - tracing the kerb up to "
-              f"the corner return would fix them.")
+              f"{'; '.join(gaps)}. Those corners are bridged from the fitted radius rather than "
+              f"taken from an arc - which is what a kerb that ends at the junction mouth, or one "
+              f"nobody traced, both look like from here.")
     return coverage

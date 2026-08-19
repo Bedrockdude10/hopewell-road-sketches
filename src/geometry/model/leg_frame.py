@@ -387,13 +387,28 @@ def paint_stations(leg: "Leg", side: str, start_ft: float,
     as far as the kerb is actually traced there - see curb_station_span's behind_ft. Callers that
     start at 0 or beyond are unaffected, which is all of them except a through-running kerb.
 
-    `beyond_the_tracing` LIFTS THAT BOUND, and almost nothing may ask for it. The bound is right
-    for a marking that is a DESIGN CHOICE - a stall, a bike lane, a buffer - because drawing one
-    where the kerb is unmapped is proposing something on ground nobody has measured. It is wrong
-    for a marking that is a STATEMENT OF LAW. R.S. 39:4-138 forbids parking within 25 ft of a
+    `beyond_the_tracing` LIFTS THAT BOUND. The bound is right where a side's kerb is unmapped
+    because nobody has surveyed it: drawing a marking there proposes something on ground nobody
+    has measured. It is wrong in the two cases below, and both were once refused here.
+
+    A MARKING THAT IS A STATEMENT OF LAW. R.S. 39:4-138 forbids parking within 25 ft of a
     crosswalk whether or not a surveyor traced the kerb there, and a daylight zone that stops
     where the tracing starts is not a shorter zone, it is the same zone drawn incompletely -
     which is worse than not drawing it, because a gap in hatching reads as permission.
+
+    AND THE JUNCTION END OF ANY KERBSIDE ZONE, because there "no kerb traced" usually does not
+    mean "not surveyed" - it means THERE IS NO KERB. Every kerb at all five sites begins 12-58 ft
+    out, and that is not a gap in anybody's survey: a kerb line stops where the carriageway opens
+    into the junction. At W Broad & Louellen the southern kerb is traced complete, and it ends in
+    a hairpin 63 ft west of the node - the tip of the island between Louellen and W Broad - with
+    open pavement between that nose and the crossing. Reading that absence as "unmeasured" and
+    declining to hatch it inverted the rule: open pavement with no kerb to define an edge is the
+    STRONGEST case for a hatched zone, not a reason to abstain.
+
+    So the bound is a statement about the SURVEY and the junction end is not evidence about the
+    survey. What keeps this honest is that the outer edge beyond the tracing is the kerb held at
+    its first traced offset - the nominal cross-section - so the zone can only be drawn as deep as
+    the street is already known to be, and checks.PaintInsideTheCurb still has to pass.
 
     Measured at W Broad & Louellen, whose south kerb is traced only from station 60.3: the
     statutory zone runs 0-93.3 ft and the hatching was drawn 60.3-93.3, stopping 7.5 ft short of

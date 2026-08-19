@@ -84,14 +84,15 @@ class LaneNarrowing(Treatment):
             line_ft, fill_ft = lane_edge_stripes(stripe_width_ft)
             ctx.add(LANE_EDGE_LINE, _one(lane_narrowing_edge_lines_ft(
                 leg, line_ft, start_left_ft=start_ft, start_right_ft=start_ft, sides=(side,),
-                keep_inside_ft=LANE_EDGE_LINE_WIDTH_FT / 2)), leg_name, side, beyond_ft)
+                keep_inside_ft=LANE_EDGE_LINE_WIDTH_FT / 2,
+                beyond_the_tracing=True)), leg_name, side, beyond_ft)
             if curved:
                 ctx.add(TAPER_LINE, _one(lane_narrowing_taper_ft(
                     leg, line_ft, at.anchor_ft, at.target_ft, sides=(side,))), leg_name, side)
             if fill:
                 ctx.rim(ctx.add(LANE_NARROWING_FILL, _one(lane_narrowing_polygons_ft(
                     leg, fill_ft, start_left_ft=start_ft, start_right_ft=start_ft,
-                    sides=(side,))), leg_name, side, beyond_ft,
+                    sides=(side,), beyond_the_tracing=True)), leg_name, side, beyond_ft,
                     shares_a_kerb=(leg_name, side) in ctx.straight_through), LANE_EDGE_LINE)
                 if curved:
                     ctx.add(TAPER_FILL, _one(lane_narrowing_taper_polygons_ft(

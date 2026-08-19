@@ -669,3 +669,82 @@ def test_kerbside_hatching_reaches_the_crossing_on_an_UNMARKED_leg_too(site_mode
                         f"{span[0]:.2f} ft" f") - the corner return is not one of them")
     assert unmarked_seen, "no unmarked approach was reached, so this asserted nothing"
     assert checked, "no unmarked approach had hatching beside it, so this asserted nothing"
+
+
+@needs_source_data
+def test_a_hatched_buffer_reaches_the_crossing_where_the_kerb_ENDS_before_it(site_models):
+    """The other half of the test above: a kerb that stops before the crossing must not stop the
+    hatching.
+
+    A kerb line ends where the carriageway opens into the junction. Every kerb at all five sites
+    begins 12-58 ft out, and at W Broad & Louellen the southern kerb is traced complete and ends
+    in a hairpin 63 ft west of the node - the nose of the island between Louellen and W Broad.
+    So "no kerb traced here" is not evidence that nobody surveyed it, and leg_frame.paint_stations
+    treating it that way left the hatching short of the crossing on three leg-sides at three
+    junctions: greenwood_ave_north/right by 5.8 ft, princeton_ave_north/left by 3.6 ft, and
+    w_broad_st_southwest/right by 22.4 ft on a wide sheet.
+
+    Measured from the crossing ALONE this time - no tracing term. That is the whole difference
+    from the sibling test, and the reason this one is separate rather than a widened version of
+    it: allowing the tracing to excuse a shortfall is what hid these three.
+    """
+    import contextlib
+    import io
+
+    import numpy as np
+
+    from src.geometry.markings import LANE_NARROWING_FILL
+    from src.geometry.model import curb_station_span, station_offset_many
+    from src.geometry.paint import PAINT_TO_CROSSWALK_GAP_FT
+    from src.render.crosswalks import crosswalk_reach_on_leg_side_ft
+    from src.site import load_site_scenarios, run_scenario
+    from tests.test_sites import resolved_scene, scene_props
+
+    allowed_ft = PAINT_TO_CROSSWALK_GAP_FT + 2.5
+    checked = late = 0
+    for site, model in site_models.items():
+        scenarios = load_site_scenarios(site)
+        for name in sorted(n for n in dir(scenarios) if n.startswith("build_")):
+            with contextlib.redirect_stdout(io.StringIO()):
+                state = run_scenario(getattr(scenarios, name),
+                                      DesignState.from_model(model), model)
+                scene = resolved_scene(model, state)
+                paint = scene.build_paint(scene_props(model, state, scene))
+
+            for leg_name, leg in sorted(model.legs.items()):
+                band = scene.crosswalk_bands.get(leg_name)
+                if band is None or band.is_empty:
+                    continue
+                for side in ("left", "right"):
+                    fills = [p for p in paint if p.kind is LANE_NARROWING_FILL
+                             and p.leg == leg_name and str(p.side) == side]
+                    if not fills:
+                        continue
+                    reach_ft = crosswalk_reach_on_leg_side_ft(leg, side, band,
+                                                               beyond_the_tracing=True)
+                    if not reach_ft:
+                        continue
+                    span = curb_station_span(leg, side)
+                    if span and span[0] > reach_ft:
+                        late += 1       # the case this test exists for
+                    sign = 1 if side == "left" else -1
+                    starts = []
+                    for piece in fills:
+                        coords = np.asarray(piece.geometry.exterior.coords, dtype=float)
+                        stations, offsets = station_offset_many(leg.centerline, coords)
+                        on_this_side = (offsets * sign) > 0
+                        if on_this_side.any():
+                            starts.append(float(stations[on_this_side].min()))
+                    if not starts:
+                        continue
+                    checked += 1
+                    bare_ft = min(starts) - reach_ft
+                    assert bare_ft <= allowed_ft, (
+                        f"{site}/{name}: the lane-narrowing hatching on {leg_name}/{side} starts "
+                        f"{min(starts):.2f} ft out against a crossing reaching {reach_ft:.2f} - "
+                        f"{bare_ft:.2f} ft bare. Its kerb is traced from "
+                        f"{span[0]:.2f} ft, which is where the kerb ENDS at the junction mouth "
+                        f"and not a gap in the survey")
+    assert checked, "no lane-narrowing hatching was measured, so this asserted nothing"
+    assert late, ("no leg-side had its kerb traced only from beyond its crossing, so the case "
+                  "this test exists for was never exercised")

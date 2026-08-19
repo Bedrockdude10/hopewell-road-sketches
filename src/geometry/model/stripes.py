@@ -92,21 +92,25 @@ def lane_narrowing_polygons_ft(leg: "Leg", stripe_width_ft: float,
 def lane_narrowing_edge_lines_ft(leg: "Leg", stripe_width_ft: float,
                                   start_left_ft: float = 0.0, start_right_ft: float = 0.0,
                                   sides: tuple = ("left", "right"),
-                                  keep_inside_ft: float = 0.0) -> list[LineString]:
+                                  keep_inside_ft: float = 0.0,
+                                  beyond_the_tracing: bool = False) -> list[LineString]:
     """The solid line marking the narrowed travel lane's outer edge on each side - the same
     inner boundary lane_narrowing_polygons_ft's buffer starts from (TARGET_LANE_WIDTH_FT in
     sites/broad_st_greenwood/scenarios.py), drawn explicitly so the lane width reads on the
     render rather than being implied by where the hatching starts.
 
     start_left_ft/start_right_ft/sides - see lane_narrowing_polygons_ft. Matching them keeps
-    this line, the hatch fill and the corner taper starting at the same point with no gap."""
+    this line, the hatch fill and the corner taper starting at the same point with no gap.
+    beyond_the_tracing likewise - it has to match the fill's, or the zone gets an edge line over
+    part of its length and a bare hatch boundary over the rest."""
     half = leg.curb_to_curb_ft / 2
     inner_half = max(half - stripe_width_ft, 0.5)
     lines = []
     for start_ft, side in ((start_left_ft, "left"), (start_right_ft, "right")):
         if side not in sides:
             continue
-        line = inset_line_ft(leg, side, inner_half, start_ft, keep_inside_ft=keep_inside_ft)
+        line = inset_line_ft(leg, side, inner_half, start_ft, keep_inside_ft=keep_inside_ft,
+                              beyond_the_tracing=beyond_the_tracing)
         if line is not None:
             lines.append(line)
     return lines

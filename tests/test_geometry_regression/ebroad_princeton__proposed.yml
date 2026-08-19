@@ -59,7 +59,7 @@ channels:
       min:
       - -39.345
       - -38.139
-    points: 984
+    points: 983
   lane_narrowing_hatch_lines:
     count: 38
     extent:

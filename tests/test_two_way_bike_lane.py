@@ -359,3 +359,54 @@ def test_a_two_way_design_carries_the_njdot_objection(site_models):
         assert NJDOT_TWO_WAY_OBJECTION in note, (
             f"a two-way lane's note omits the NJDOT objection, so the render ships without it:\n"
             f"  {note}")
+
+
+@needs_source_data
+def test_a_two_way_lane_stays_against_the_kerb_that_protects_it(site_models):
+    """The gap Danny pointed at, swept over every leg that carries a two-way lane.
+
+    A protected lane's whole claim is the kerb beside it, and the lane used to be pinned to the
+    leg's NARROWEST traced half-width - so wherever the street widened, the lane stayed put and the
+    kerb walked away from it. On w_broad_st_southwest that left the lane 4.8 ft off the kerb at
+    station 67 and 8.4 ft off at station 222: bare pavement down the outside of the bikeway for
+    270 ft, on a drawing captioned "protected".
+
+    THE MEDIAN, not the worst vertex, because the complaint was "for almost the whole length" and
+    because one local excursion is the taper limiter working: broad_st_east's kerb flares 4.3 ft
+    out over 20 ft at the corner and a lane is right not to follow that. What must not happen is
+    the gap tracking the street's width down the whole leg. Measured on the DRAWN surface rather
+    than on the section arithmetic, because the section was right both times and the picture
+    was not.
+    """
+    import numpy as np
+    from src.geometry.markings import BIKE_LANE_SURFACE
+    from src.geometry.model import curb_offsets_at_stations, station_offset_many
+
+    WORST_TYPICAL_FT = 1.5     # the lane's own outer stripe is 0.82 ft wide
+
+    by_side, far = {}, []
+    for site in ("wbroad_louellen", "broad_st_greenwood", "ebroad_princeton"):
+        model, _state, paint = _two_way_scene(site_models, site)
+        lanes = [p for p in paint if p.kind is BIKE_LANE_SURFACE and p.leg in model.legs]
+        assert lanes, f"{site} should paint a two-way lane surface"
+        for piece in lanes:
+            leg = model.legs[piece.leg]
+            coords = np.asarray(piece.geometry.exterior.coords, dtype=float)
+            stations, offsets = station_offset_many(leg.centerline, coords)
+            kerb = curb_offsets_at_stations(leg, piece.side, stations)
+            if kerb is None:
+                continue
+            gap = np.abs(kerb) - np.abs(offsets)
+            # Only the vertices on the OUTER edge: the inner edge is a lane width further in, and
+            # how far THAT sits from the kerb is not this test's question.
+            outer = gap < gap.max() * 0.5 + 1.0
+            if outer.any():
+                by_side.setdefault(f"{site} {piece.leg} {piece.side}", []).append(gap[outer])
+
+    assert len(by_side) >= 6, f"only {len(by_side)} lane sides swept - the sweep lost scenarios"
+    for where, pieces in sorted(by_side.items()):
+        typical = float(np.median(np.concatenate(pieces)))
+        if typical > WORST_TYPICAL_FT:
+            far.append(f"{where}: typically {typical:.2f} ft off the kerb")
+    assert not far, ("a two-way lane is drawn away from the kerb that is supposed to protect it:\n"
+                     "  " + "\n  ".join(far))

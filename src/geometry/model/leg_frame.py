@@ -145,6 +145,48 @@ def leg_clearance_ft(leg_name: str, legs: dict, corner_fillets: dict, buffer_ft:
 # the strip stays a strip rather than a wedge.
 STRIP_SAMPLE_FT = 2.0
 
+# The steepest lateral shift a marking will follow the kerb through: 1 ft across per 10 along.
+#
+# A kerb-referenced marking must not inherit every kink in the tracing, and the question of WHICH
+# kinks is a rate, not a total. Measured over these three sites, the two kinds of kerb movement
+# separate cleanly by rate and not at all by amount: the legs where the street genuinely bends run
+# at 1:6 or gentler, and the two whose tracing takes in a corner flare or a parking apron kink at
+# 1:2. Sizing the decision off the TOTAL swing instead made it depend on how long the leg was, so
+# the same street followed its kerb at a 130 ft frame and abandoned it at a 325 ft one - see
+# tests/test_two_way_bike_lane.py::test_kerb_follow_does_not_depend_on_the_frame.
+#
+# At 1:10 a marking gives up a mean 0.11-0.28 ft of the drift on the legs that drift, and refuses
+# up to 12.2 ft of the kink on broad_st_east. Both figures hold at either frame scale, because a
+# rate limit is a local property of the kerb and total swing is not.
+MAX_KERB_FOLLOW_TAPER = 0.10
+
+
+@lru_cache(maxsize=256)
+def _tapered_curb_frame(centerline: LineString, curb: LineString, max_taper: float):
+    """A kerb profile with its steep kinks flattened - see MAX_KERB_FOLLOW_TAPER.
+
+    The largest profile lying at or inside the traced kerb whose lateral slope never exceeds
+    `max_taper`, which is a cone erosion: at each station, the lowest any cone of that slope
+    rising from another station's kerb offset reaches. So a drift gentler than the limit comes
+    back unchanged, while a kink is cut back to the limit from both directions.
+
+    Computed once over the WHOLE traced span, not over each caller's window, because otherwise
+    two markings on one kerb get different profiles from asking about different stretches of it -
+    and a bike lane's outer stripe disagreeing with its own surface by a few inches is exactly
+    what MarkingsDoNotCollide reports.
+
+    Inside the kerb, never outside: erosion can only reduce an offset, so a marking built off
+    this cannot cross a kerb it did not already cross.
+    """
+    stations, offsets = _curb_in_leg_frame(centerline, curb)
+    lo, hi = float(stations[0]), float(stations[-1])
+    grid = np.linspace(lo, hi, max(int(np.ceil((hi - lo) / STRIP_SAMPLE_FT)) + 1, 2))
+    sampled = np.abs(np.interp(grid, stations, offsets))
+    eroded = (sampled[None, :] + max_taper * np.abs(grid[:, None] - grid[None, :])).min(axis=1)
+    grid.flags.writeable = False
+    eroded.flags.writeable = False
+    return grid, eroded
+
 
 @lru_cache(maxsize=256)
 def _curb_in_leg_frame(centerline: LineString, curb: LineString):
@@ -187,6 +229,22 @@ def curb_offsets_at_stations(leg: "Leg", side: str, stations: np.ndarray) -> np.
         return None
     curb_stations, curb_offsets = frame
     return np.interp(stations, curb_stations, curb_offsets)
+
+
+def tapered_curb_offsets(leg: "Leg", side: str, stations: np.ndarray,
+                          max_taper: float = MAX_KERB_FOLLOW_TAPER) -> np.ndarray | None:
+    """UNSIGNED offsets of a side's kerb with its steep kinks flattened, at the given stations.
+
+    What a marking that FOLLOWS the kerb should follow. curb_offsets_at_stations answers where the
+    kerb is, which is the right question for "is there room" and the wrong one for "where does the
+    paint go": paint that tracked the tracing exactly inherited a 1:2 corner flare and read as
+    snaking. See MAX_KERB_FOLLOW_TAPER for why the limit is a rate.
+    """
+    curb = getattr(leg, f"{side}_curb", None)
+    if curb is None or curb.is_empty:
+        return None
+    grid, eroded = _tapered_curb_frame(leg.centerline, curb, max_taper)
+    return np.interp(stations, grid, eroded)
 
 
 def curb_station_span(leg: "Leg", side: str,
@@ -370,7 +428,8 @@ def kerb_inset_offsets(leg: "Leg", side: str, stations, inset_ft: float,
                         keep_inside_ft: float = 0.0,
                         floor_ft: float = 0.0) -> np.ndarray | None:
     """Offsets that sit `inset_ft` in from the TRACED KERB at each station - a line that follows
-    the kerb rather than the alignment.
+    the kerb rather than the alignment, through tapered_curb_offsets so it follows the street
+    bending without following a kink in the tracing.
 
     THE DIFFERENCE THIS EXISTS FOR. A centreline offset is a constant; the kerb is not. On
     w_broad_st_northeast's south-east side the kerb runs 25.13 ft out at the junction throat and
@@ -396,10 +455,10 @@ def kerb_inset_offsets(leg: "Leg", side: str, stations, inset_ft: float,
 
     Returns absolute distances, unsigned - see line_from_offsets for the side convention.
     """
-    curb_offsets = curb_offsets_at_stations(leg, side, stations)
+    curb_offsets = tapered_curb_offsets(leg, side, stations)
     if curb_offsets is None:
         return None
-    return np.maximum(np.abs(curb_offsets) - inset_ft - keep_inside_ft, floor_ft)
+    return np.maximum(curb_offsets - inset_ft - keep_inside_ft, floor_ft)
 
 
 def _advancing(centerline: LineString, points) -> np.ndarray:

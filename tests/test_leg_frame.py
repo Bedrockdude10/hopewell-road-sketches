@@ -386,3 +386,96 @@ def test_a_stripe_placed_at_a_large_offset_does_not_double_back():
         f"{len(backwards)} vertex/vertices double back along the leg, e.g. "
         f"{backwards[0][0]:.2f} -> {backwards[0][1]:.2f} ft - a station-based clip will fragment "
         f"this stripe into pieces that overlap, which reads as paint applied twice")
+
+
+# A kerb that FOLLOWS the street: 42 ft wide at the junction, drifting out to 52 ft over 300 ft.
+# 1:60 - gentler than anything a rider would read as a shift, and the shape of every W Broad leg.
+def _drifting_kerb(length_ft=300.0, from_half=21.0, rate=1 / 60, step=10.0):
+    """Parametrised by RATE, not by end offset, so a 130 ft leg and a 325 ft one share the same
+    kerb over the stretch they both cover - which is what the frame-invariance test needs."""
+    from src.geometry.model import Alignment
+    stations = np.arange(0.0, length_ft + step, step)
+    halves = from_half + rate * stations
+    return Alignment(LineString([(0, 0), (length_ft + 50, 0)]),
+                      right_curb=LineString(np.column_stack([stations, -halves])))
+
+
+def _kinked_kerb(length_ft=300.0, half=21.0, kink_at=120.0, kink_ft=10.0, over_ft=20.0):
+    """The other kind: a flare that throws the kerb 10 ft out over 20 ft, at 1:2."""
+    from src.geometry.model import Alignment
+    stations = np.array([0.0, kink_at, kink_at + over_ft, kink_at + 2 * over_ft, length_ft])
+    halves = np.array([half, half, half + kink_ft, half, half])
+    return Alignment(LineString([(0, 0), (length_ft + 50, 0)]),
+                      right_curb=LineString(np.column_stack([stations, -halves])))
+
+
+def test_a_followed_kerb_never_ends_up_outside_the_traced_one():
+    """The taper limiter may only pull paint IN. Anything else would put a marking over the kerb,
+    which PaintClearOfTheKerb reports and which no amount of smoothing justifies."""
+    from src.geometry.model import curb_offsets_at_stations, tapered_curb_offsets
+
+    for kerb in (_drifting_kerb(), _kinked_kerb()):
+        stations = np.arange(0.0, 300.0, 2.0)
+        traced = np.abs(curb_offsets_at_stations(kerb, "right", stations))
+        followed = tapered_curb_offsets(kerb, "right", stations)
+        assert np.all(followed <= traced + 1e-6), (
+            f"the followed profile leaves the kerb by up to "
+            f"{(followed - traced).max():.3f} ft")
+
+
+def test_a_gentle_drift_is_followed_and_a_sharp_kink_is_not():
+    """The one distinction the limiter exists to make, and it is a RATE.
+
+    Both kerbs below move by about the same total amount. The drifting one does it over 300 ft and
+    is the street genuinely bending, so the paint should track it; the kinked one does it over
+    20 ft and is a corner flare in the tracing, so the paint should ride straight past.
+    """
+    from src.geometry.model import curb_offsets_at_stations, tapered_curb_offsets
+
+    stations = np.arange(0.0, 300.0, 2.0)
+    drift = _drifting_kerb()
+    kept = np.abs(curb_offsets_at_stations(drift, "right", stations)) \
+        - tapered_curb_offsets(drift, "right", stations)
+    assert kept.max() < 0.05, (
+        f"a 1:60 drift is the street bending and must be followed; the limiter gave up "
+        f"{kept.max():.2f} ft of it")
+
+    kink = _kinked_kerb()
+    refused = np.abs(curb_offsets_at_stations(kink, "right", stations)) \
+        - tapered_curb_offsets(kink, "right", stations)
+    # The apex is 20 ft from the kerb either side of it, so at 1:10 the followed profile may
+    # rise 2 ft to meet a 10 ft kink and no more: 8 ft of it is refused, by arithmetic.
+    assert refused.max() == pytest.approx(8.0, abs=0.05), (
+        f"a 1:2 flare must not be followed; the limiter held back {refused.max():.2f} ft "
+        f"of a 10 ft kink, where 8.00 is the taper's own answer")
+
+
+def test_the_followed_profile_never_exceeds_the_taper_rate():
+    from src.geometry.model import MAX_KERB_FOLLOW_TAPER, tapered_curb_offsets
+
+    stations = np.arange(0.0, 300.0, 2.0)
+    followed = tapered_curb_offsets(_kinked_kerb(), "right", stations)
+    rate = np.abs(np.diff(followed)) / np.diff(stations)
+    assert rate.max() <= MAX_KERB_FOLLOW_TAPER + 1e-6, (
+        f"the followed profile shifts at 1:{1 / rate.max():.1f}, steeper than the "
+        f"1:{1 / MAX_KERB_FOLLOW_TAPER:.0f} limit")
+
+
+def test_how_far_a_lane_follows_its_kerb_does_not_depend_on_how_long_the_leg_is():
+    """THE DEFECT THIS REPLACED. The decision used to be a threshold on the kerb's TOTAL swing,
+    so it depended on leg length - and leg length is set by the render frame. The same W Broad
+    kerb swung 5.4 ft over a 130 ft leg and 9.0 ft over the 325 ft one the wide sheet draws, so
+    the lane followed the kerb at one frame scale and abandoned it, by up to 8.4 ft, at the other.
+    A design that changes when you widen the picture is not a design.
+
+    A rate limit cannot do that, because it is local: the profile at a station depends on the kerb
+    within (how far it moves) / (the rate) of that station and on nothing beyond it.
+    """
+    from src.geometry.model import tapered_curb_offsets
+
+    shared = np.arange(0.0, 120.0, 2.0)
+    short = tapered_curb_offsets(_drifting_kerb(length_ft=130.0), "right", shared)
+    long = tapered_curb_offsets(_drifting_kerb(length_ft=325.0), "right", shared)
+    assert np.allclose(short, long, atol=0.01), (
+        f"extending the leg moved the followed profile by up to "
+        f"{np.abs(short - long).max():.2f} ft over the stretch both cover")

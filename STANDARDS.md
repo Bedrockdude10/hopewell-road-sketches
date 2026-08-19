@@ -378,6 +378,26 @@ separation, corner islands, turn wedges, medians to slow turning vehicles, and v
 turn conflicts. **All three of Broad St's modelled junctions are signalized** (Greenwood, E Broad &
 Princeton, and Louellen - corrected 2026-08-18), so phase separation is available at each.
 
+#### How closely a kerbside marking follows the kerb — **Modelled, 2026-08-19**
+
+| figure | value | constant | where |
+|---|---|---|---|
+| Steepest lateral shift a marking will follow a traced kerb through | 1:10 | `MAX_KERB_FOLLOW_TAPER` | `src/geometry/model/` |
+
+**Modelled, not cited.** No guide consulted here gives a taper for tracking a kerb that wanders, so
+this is our own figure and it is marked as such. What it is calibrated on: across the three corridor
+junctions, the legs where the traced kerb records the street genuinely bending move at 1:6 or
+gentler, and the two whose tracing takes in a corner flare kink at 1:2. At 1:10 a marking gives up a
+mean 0.11–0.28 ft of the drift on the legs that drift and refuses up to 12.2 ft of the flare on
+`broad_st_east`.
+
+**Why it is a rate and not an amount.** The first version of this rule compared the kerb's TOTAL
+swing over a leg against a 6 ft threshold, which made the answer depend on leg length — and leg
+length is set by the render frame. The same `w_broad_st_southwest` kerb swings 5.4 ft over the 130 ft
+leg of a 1× sheet and 9.0 ft over the 325 ft leg of a 2.5× one, so the bikeway followed its kerb on
+one drawing and stood up to 8.4 ft clear of it on the other. A rate limit cannot do that: it is a
+local property of the kerb. `tests/test_leg_frame.py` pins the invariance directly.
+
 ### WHICH KERB a two-way bikeway belongs on — **NOT ESTABLISHED, 2026-08-18**
 
 The `CORRIDOR_SIDE` decision (south) was made on one count - side streets cutting each kerb, 10

@@ -423,20 +423,22 @@ class TwoWayBikeLane(BikeLane):
 
     @property
     def hugs_kerb(self) -> bool:
-        """False: the lane stays straight, like the car lane and like a one-way bike lane.
+        """True: a lane that exists to be shielded by a kerb is measured from that kerb.
 
-        The kerb provides physical protection (the vertical element), but the paint does not need
-        to follow every wiggle. A 20 ft kerb swing on broad_st_east includes a bay and corner
-        flare; a two-way lane that followed it would "read as snaking" — the same problem the
-        one-way lane avoids by staying straight. The buffer between the lane and the kerb absorbs
-        the variation, just like hatching does for a one-way lane.
+        Held straight instead, it falls away from its own protection. On W Broad the kerb walks
+        outward the whole length of both legs, so a lane pinned to the narrowest traced point sat
+        4.8 ft off the kerb at station 67 and 8.4 ft off at station 222 - a few feet of bare
+        pavement between the bikeway and the kerb protecting it, for 270 ft, on every leg.
 
-        The old rationale was "the kerb IS the design: a two-way protected lane exists to be
-        shielded by that kerb along a corridor." But that conflates two things: the kerb provides
-        physical protection, and the lane alignment is where the paint goes. These are independent.
-        A protected bike lane can be straight while still being protected by a kerb that varies.
+        The reason this used to be False was the other failure: broad_st_east's kerb moves 20.4 ft,
+        because the tracing takes in a corner flare, and a lane following THAT reads as snaking.
+        Both are real, and neither is a reason to choose per leg - the two differ by how sharply
+        the kerb moves, not by how far, so the limit belongs on the rate and applies everywhere.
+        tapered_curb_offsets is where that lives, and MAX_KERB_FOLLOW_TAPER is the rate; a drift
+        gentler than 1:10 is followed to within a few inches and a 1:2 kink is refused by up to
+        12 ft, at any frame scale.
         """
-        return False
+        return True
 
     @property
     def section_ft(self) -> float:

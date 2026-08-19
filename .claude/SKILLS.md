@@ -67,6 +67,27 @@ janky" into "bare from station 0 to 63.7, then 1.4 ft widening to 2.6 ft by stat
 names the mechanism on its own. `scripts/measure_drawn.py` is where that belongs; extend it rather
 than writing another throwaway script, and NEVER answer a geometry question by cropping a PNG.
 
+### 0b. MEASURE AT THE FRAME THE READER IS LOOKING AT — legs are longer on a wide sheet
+
+`--frame-scale` does not just crop wider. It scales `leg_lengths`, so a 130 ft leg is 325 ft on a
+2.5× sheet and every function that measures "over the leg" gets a different answer. Measuring the 1×
+build while the reader is looking at a 2.5× sheet reports a defect fixed that is not:
+
+```bash
+HOPEWELL_FRAME_SCALE=2.5 .venv/bin/python scripts/measure_drawn.py wbroad_louellen --scenario ...
+```
+
+Worse than a measuring mistake, it is a *design* mistake waiting to happen. A rule sized off a
+TOTAL over the leg — total kerb swing, total anything — silently becomes a function of the render
+frame, so the drawing changes when you widen the picture. The bikeway followed its kerb at 1× and
+stood 8.4 ft clear of it at 2.5×, from one `<= 6.0 ft` threshold. **Anything compared against a
+threshold has to be a rate, a curvature, or something else local**; if it is an amount accumulated
+over a leg, the leg's length is an input and the leg's length is a rendering decision. `git grep`
+for a new constant's units before you add it.
+
+Note also that `tests/conftest.py` builds `site_models` at `WIDE_FRAME_SCALE = 2.2`, so the fixture
+is *already* not 1× — a test can agree with the goldens and disagree with every render.
+
 ---
 
 ## 1. Before you write a number, look for it

@@ -6,51 +6,51 @@ channels:
     count: 31
     extent:
       max:
-      - 34.496
-      - 15.114
+      - 34.487
+      - 15.13
       min:
-      - -36.804
-      - -8.123
+      - -36.814
+      - -8.085
     points: 109
   bike_lane_edge_lines:
-    count: 68
+    count: 70
     extent:
       max:
       - 37.252
-      - 17.345
+      - 17.369
       min:
-      - -34.333
+      - -34.351
       - -9.341
-    points: 453
+    points: 510
   bike_lane_hatch_lines:
-    count: 3
+    count: 9
     extent:
       max:
-      - -24.87
-      - -6.057
+      - 37.087
+      - 14.085
       min:
       - -31.672
       - -8.735
-    points: 6
+    points: 18
   bike_lane_surface_polygons:
     count: 22
     extent:
       max:
-      - 37.008
-      - 17.226
+      - 37.0
+      - 17.251
       min:
-      - -34.294
-      - -8.585
+      - -34.312
+      - -8.529
     points: 286
   bike_lane_symbol_polygons:
     count: 10
     extent:
       max:
-      - 31.983
-      - 14.846
+      - 31.955
+      - 14.93
       min:
-      - -24.619
-      - -4.741
+      - -24.625
+      - -4.724
     points: 80
   corner_apron_polygons:
     count: 0

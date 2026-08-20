@@ -264,7 +264,7 @@ legs:
     stop_bar_centre_m:
     - -18.775
     - 2.27
-    stop_bar_lateral_offset_m: 1.676
+    stop_bar_lateral_offset_m: 2.332
     stop_bar_offset_m: 16.965
     stop_bar_span_m: 3.353
     stop_bar_width_m: 6.706

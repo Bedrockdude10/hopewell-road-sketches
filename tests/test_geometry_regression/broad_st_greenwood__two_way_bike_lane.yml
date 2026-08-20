@@ -49,8 +49,8 @@ channels:
       - 22.772
       - 19.487
       min:
-      - -12.992
-      - -0.998
+      - -12.993
+      - -0.995
     points: 48
   corner_apron_polygons:
     count: 0
@@ -517,7 +517,7 @@ legs:
     stop_bar_centre_m:
     - 8.737
     - 5.447
-    stop_bar_lateral_offset_m: 0.691
+    stop_bar_lateral_offset_m: 0.693
     stop_bar_offset_m: 10.297
     stop_bar_span_m: 3.353
     stop_bar_width_m: 4.736
@@ -744,7 +744,7 @@ legs:
     stop_bar_centre_m:
     - -9.267
     - -6.325
-    stop_bar_lateral_offset_m: 1.229
+    stop_bar_lateral_offset_m: 1.239
     stop_bar_offset_m: 11.221
     stop_bar_span_m: 3.353
     stop_bar_width_m: 5.811
@@ -827,7 +827,7 @@ legs:
     stop_bar_centre_m:
     - -7.915
     - 13.647
-    stop_bar_lateral_offset_m: 1.676
+    stop_bar_lateral_offset_m: 1.682
     stop_bar_offset_m: 15.781
     stop_bar_span_m: 3.353
     stop_bar_width_m: 6.706
@@ -916,7 +916,7 @@ legs:
     stop_bar_centre_m:
     - 6.873
     - -13.926
-    stop_bar_lateral_offset_m: 1.676
+    stop_bar_lateral_offset_m: 1.679
     stop_bar_offset_m: 15.508
     stop_bar_span_m: 3.353
     stop_bar_width_m: 6.706

@@ -16,6 +16,11 @@ from src.geometry.treatments.base import (BOLLARD_DEFAULT_SPACING_FT, LANE_WIDTH
                                           PARKING_STALL_LENGTH_DEFAULT_FT,
                                           TARGET_LANE_WIDTH_FT, Treatment)
 from src.geometry.treatments.state import DesignState
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:    # annotation-only: these types are layered above this module,
+    # so importing them for real would close a cycle.
+    from src.geometry.intersection.junction import IntersectionModel
 
 
 
@@ -248,7 +253,7 @@ class BikeLane:
         """Everything this side needs, travel lane and stripes included."""
         return self.offsets_from_centerline_ft()["outer_ft"] + self.shy_ft
 
-    def offsets_from_centerline_ft(self) -> dict:
+    def offsets_from_centerline_ft(self) -> dict[str, float]:
         """Where each boundary sits, as a distance from the centerline.
 
         One place, so the plan view, the 3D export and the checks cannot disagree about which
@@ -290,7 +295,7 @@ class BikeLane:
         """
         return False
 
-    def offsets_from_kerb_ft(self) -> dict:
+    def offsets_from_kerb_ft(self) -> dict[str, float]:
         """The same section read from the KERB INWARD, as insets from the traced kerb.
 
         WHY BOTH DIRECTIONS EXIST, and which boundary belongs to which. The offsets above are
@@ -451,7 +456,7 @@ class TwoWayBikeLane(BikeLane):
         line_ft = _lane_line_ft()
         return self.width_ft + (self.buffer_ft if self.buffer_ft else line_ft) + line_ft
 
-    def offsets_from_centerline_ft(self) -> dict:
+    def offsets_from_centerline_ft(self) -> dict[str, float]:
         """The one-way section's own arithmetic, re-anchored to where this section starts.
 
         BikeLane already lays out every stripe from `travel_edge_ft` outward, so the two-way
@@ -607,7 +612,7 @@ class AddBikeLane(Treatment):
                    if self.parking_ft
                    else f", {self.shy_ft:.1f} ft shy of the kerb" if self.shy_ft else ""))
 
-    def apply_to(self, state: "DesignState", model=None) -> str:
+    def apply_to(self, state: "DesignState", model: "IntersectionModel" = None) -> str:
         leg = state.legs[self.target.leg]
         if leg.curb_to_curb_ft is None:
             raise ValueError(f"Leg {self.target.leg!r} has no width - nothing to fit a bike lane into.")
@@ -633,8 +638,7 @@ class AddBikeLane(Treatment):
         from src.geometry.markings import (BIKE_BUFFER_FILL, BIKE_LANE_EDGE_LINE,
                                            BIKE_LANE_SURFACE, BIKE_LANE_SYMBOL, BUFFER_EDGE_LINE,
                                            BUFFER_FILL, STALL_DIVIDER)
-        from src.geometry.model import (band_from_offsets, curb_offsets_at_stations,
-                                        curbside_strip_polygon, inset_line_ft,
+        from src.geometry.model import (band_from_offsets, curbside_strip_polygon, inset_line_ft,
                                         kerb_inset_offsets, kerb_parallel_line_ft,
                                         kerb_referenced_band_polygon, lane_narrowing_polygons_ft,
                                         offset_band_polygon, paint_stations, parking_stall_lines_ft,
@@ -770,12 +774,22 @@ class AddBikeLane(Treatment):
         # which at Broad & Greenwood was 5 sq ft inside bike_buffer_fill, and the collision check
         # said so. Centreline-referenced only for the sections that are.
         def lane_centre_at(station_ft: float) -> float | None:
+            centre_ft = (bounds["bike_inner_ft"] + bounds["bike_outer_ft"]) / 2
             if not lane.hugs_kerb:
-                return (bounds["bike_inner_ft"] + bounds["bike_outer_ft"]) / 2
-            at = curb_offsets_at_stations(leg, side, np.array([station_ft]))
+                return centre_ft
+            # THROUGH kerb_inset_offsets, which is the one home for "this many feet in from the
+            # traced kerb" - and the same call the contraflow divider's axis is built from, with
+            # the same floor. Rebuilt here as abs(raw kerb) - half instead, it read the RAW
+            # tracing where the divider reads the TAPERED one, and the two disagreed by 0.87 ft
+            # on broad_st_east: the divider ran 0.20 sq ft through the corner of a stencil that
+            # was supposed to sit clear of it. Two derivations of the lane's centre, in agreement
+            # with each other nowhere.
+            at = kerb_inset_offsets(
+                leg, side, np.array([station_ft]),
+                (kerb["bike_inner_ft"] + kerb["bike_outer_ft"]) / 2, floor_ft=centre_ft)
             if at is None or not np.isfinite(at[0]):
                 return None
-            return abs(float(at[0])) - (kerb["bike_inner_ft"] + kerb["bike_outer_ft"]) / 2
+            return abs(float(at[0]))
         # The leg's own drawn length, NOT beyond_ft. beyond_ft is a clipping THRESHOLD - the
         # station past which a piece is discarded for lying behind a crossing - and reading it as
         # the run's end gave 6 ft "runs" at Broad & Greenwood, inside which no symbol interval
@@ -955,7 +969,7 @@ class AddTwoWayBikeLane(AddBikeLane):
                 f"{_feet(self.width_ft)} ft two-way lane"
                 + (f", {_feet(self.buffer_ft)} ft buffer" if self.buffer_ft else ""))
 
-    def apply_to(self, state: "DesignState", model=None) -> str:
+    def apply_to(self, state: "DesignState", model: "IntersectionModel" = None) -> str:
         leg = state.legs[self.target.leg]
         if leg.curb_to_curb_ft is None:
             raise ValueError(f"Leg {self.target.leg!r} has no width - nothing to fit a lane into.")
@@ -1090,7 +1104,7 @@ class AddBikeLaneBollards(Treatment):
     def describe(self) -> str:
         return f"AddBikeLaneBollards({self.target.leg}, {self.target.side}): "
 
-    def apply_to(self, state: "DesignState", model=None) -> str:
+    def apply_to(self, state: "DesignState", model: "IntersectionModel" = None) -> str:
         bike_lane = state.treatment_for(AddBikeLane, self.target)
         if bike_lane is None:
             raise KeyError(f"{self.target} has no bike lane - apply AddBikeLane first.")
@@ -1350,10 +1364,11 @@ class ExtendBikeLaneThroughJunction(Treatment):
     own 12 ft - and the alternative, a marking that curves through a junction because the street
     either side of it does, is exactly the wobble a striper does not paint.
 
-    GREEN ONLY, for now. NACTO's crossbike also carries the lane's dotted edge lines and its
-    dotted yellow centreline through the box, and both are the same construction as this one
-    against a different pair of offsets. They are not drawn yet, and STANDARDS.md records that
-    rather than leaving it to be inferred from a render that already looks continuous.
+    GREEN, THE TWO EDGE LINES AND THE CONTRAFLOW STRIPE - the whole crossbike NACTO asks for.
+    The edge lines are the same construction as the green against a different pair of offsets:
+    half a stripe outside each face, which is where BikeLane puts every other `*_line_ft` and
+    the one thing that has to be got right here, because a line ruled along the face it marks
+    paints half its body over the colour it bounds. See `rules` in paint.
     """
     paint_group: ClassVar[int] = 40
     target: AcrossTheJunction
@@ -1362,7 +1377,7 @@ class ExtendBikeLaneThroughJunction(Treatment):
         return (f"ExtendBikeLaneThroughJunction({self.target}): the bike lane's green carried "
                 f"across the junction as a dotted lane extension")
 
-    def apply_to(self, state: "DesignState", model=None) -> str:
+    def apply_to(self, state: "DesignState", model: "IntersectionModel" = None) -> str:
         from src.geometry.model.corners import through_street_sides
 
         through = through_street_sides(state.legs)
@@ -1398,9 +1413,9 @@ class ExtendBikeLaneThroughJunction(Treatment):
 
         from src.geometry.markings import BIKE_LANE_DOTTED_EXTENSION, BIKE_LANE_SURFACE
         from src.geometry.model import point_at
-        from src.geometry.paint import _dash_spans
+        from src.geometry.paint import LANE_EDGE_LINE_WIDTH_FT, _dash_spans
 
-        ends = []
+        ends, rules = [], []
         for leg_name, side in self.target.ends:
             face = lane_end_face(ctx, leg_name, side)
             if face is None:
@@ -1409,17 +1424,56 @@ class ExtendBikeLaneThroughJunction(Treatment):
             centerline = ctx.state.legs[leg_name].centerline
             ends.append((point_at(centerline, station_ft, inner_ft),
                           point_at(centerline, station_ft, outer_ft)))
+            # HALF A STRIPE OUTSIDE THE GREEN, WHICH IS WHERE AN EDGE LINE GOES. lane_end_face
+            # reports the lane's two FACES - the green's own edges - and a line ruled along a
+            # face lies half its body on the green: 0.41 ft of white over colour on every mark
+            # of every crossbike, 38.0 sq ft at W Broad & Louellen. It is invisible in the plan
+            # view, which strokes a line at a cosmetic 1.6 pt from its axis and has no width to
+            # overlap with, and MarkingsDoNotCollide could not see it either until it learned to
+            # stroke a line (see checks.py). BikeLane states the convention both its datums
+            # encode - "each `*_line_ft` is the stripe's CENTRE, offset half a stripe outward
+            # from the face it marks" - and it is exactly half a stripe in both, measured, on
+            # every leg-side of every site. So this is that same step, not a second derivation
+            # of it: the extension's rules land on the per-leg lines they continue instead of
+            # stepping 0.41 ft in from them.
+            #
+            # SIGNED, and the sign is the SIDE's. Offsets come out of lane_end_face in the leg's
+            # own frame, so on a right-hand kerb both are negative and "outward" is more
+            # negative; taking the step off the magnitude would move the outer rule inward on
+            # half the legs. outer_ft carries the side because it is the larger magnitude.
+            outward_ft = float(np.copysign(LANE_EDGE_LINE_WIDTH_FT / 2, outer_ft))
+            rules.append((point_at(centerline, station_ft, inner_ft - outward_ft),
+                           point_at(centerline, station_ft, outer_ft + outward_ft)))
         (a_inner, a_outer), (b_inner, b_outer) = ends
+        (a_rule_inner, a_rule_outer), (b_rule_inner, b_rule_outer) = rules
         # INNER TO INNER. Both ends are the same physical kerb seen from two approaches, so the
         # edge against the kerb on one leg is the edge against the kerb on the other; pairing
         # inner to OUTER would draw the extension as a bow tie crossing itself in the middle.
         length_ft = float(np.hypot(a_inner[0] - b_inner[0], a_inner[1] - b_inner[1]))
         if length_ft < MIN_EXTENSION_GAP_FT:
             return
+        def _lerp(p, q, fraction: float):
+            return (p[0] + (q[0] - p[0]) * fraction, p[1] + (q[1] - p[1]) * fraction)
         def across(fraction: float):
-            def lerp(p, q):
-                return (p[0] + (q[0] - p[0]) * fraction, p[1] + (q[1] - p[1]) * fraction)
-            return lerp(a_inner, b_inner), lerp(a_outer, b_outer)
+            return _lerp(a_inner, b_inner, fraction), _lerp(a_outer, b_outer, fraction)
+        def rules_across(fraction: float):
+            """The same parameter, on the two RULE lines rather than the two faces.
+
+            Interpolated between the two ends' own rule points rather than stepped outward from
+            the interpolated face, so each end lands exactly on the per-leg line it continues
+            and the join has no step in it. The cost is a slight tilt: the two outward steps are
+            the same length but not the same direction - each is normal to its own leg, and the
+            legs at Louellen are 170.9 deg apart - so the rule is not quite parallel to the face
+            chord and the clearance dips from 0.4101 ft to 0.4031 in the middle. That is 0.007 ft
+            of stroke over the green, 0.08 in, against 0.410 ft before the rules existed.
+
+            Stepping normal to the CHORD instead would hold the clearance exactly and put the
+            same 0.007 ft into a kink at each join instead. Continuity wins: continuing the
+            facility is what this marking is FOR, and checks.STROKE_ON_COLOUR_FRACTION is set
+            knowing this 0.008 of a stripe is the largest such residual the design contains.
+            """
+            return (_lerp(a_rule_inner, b_rule_inner, fraction),
+                     _lerp(a_rule_outer, b_rule_outer, fraction))
         # The lane's own green, so a mark meeting the end face is trimmed to butt against it
         # rather than lie over it. The face is where the paint stops, and where the paint stops is
         # a diagonal wherever a skewed crossing cut it - so the two touch along a slanted edge
@@ -1451,7 +1505,13 @@ class ExtendBikeLaneThroughJunction(Treatment):
             # broken line is a different instruction from the solid one it continues". So the
             # marks here are the same kind the per-leg paint already lays across every driveway,
             # and both renderers draw them without being told anything new.
-            for near, far in ((near_inner, far_inner), (near_outer, far_outer)):
+            #
+            # ON THE RULES, NOT THE FACES - see where `rules` is built. A line drawn along the
+            # face it marks lies half on the green.
+            near_rule_inner, near_rule_outer = rules_across(start_ft / length_ft)
+            far_rule_inner, far_rule_outer = rules_across(end_ft / length_ft)
+            for near, far in ((near_rule_inner, far_rule_inner),
+                               (near_rule_outer, far_rule_outer)):
                 ctx.add_across_the_junction(
                     BIKE_LANE_DOTTED_EXTENSION, LineString([near, far]),
                     min_length_ft=(end_ft - start_ft) * MIN_MARK_FRACTION)

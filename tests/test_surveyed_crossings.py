@@ -509,3 +509,53 @@ def test_existing_conditions_still_draw_each_crossing_as_surveyed(wide_site_mode
                 f"{site}: existing conditions redrew a crossing in something other than the style "
                 f"it was surveyed in")
     assert checked, "no surveyed crossing in any frame"
+
+
+def test_a_skewed_stop_bar_starts_on_the_centreline_in_both_views():
+    """The bar's near end lands on the line it is measured to, at any skew, from one function.
+
+    THE TWO NUMBERS ARE IN DIFFERENT FRAMES, deliberately: the span is perpendicular to the leg
+    and every renderer stretches it by 1/cos(skew) itself, the lateral offset is already along the
+    rotated across-axis because neither renderer stretches that one. Splitting that stretch across
+    the callers is what went wrong - the plan view applied its own 1/cos to the offset and
+    src/render/export.py exported the raw figure, so on louellen_st_west's -44 deg crossing the 3D
+    bar stood 2.15 ft the wrong side of the centreline, straight through the opposing lanes, while
+    the plan view was correct. Nothing compared the two, which is why this test exists and not
+    just the fix.
+
+    Checked as geometry rather than as arithmetic: project the near end back onto the alignment's
+    own perpendicular and it must be exactly `inner_ft` out. That holds in both views because both
+    now read the same function.
+    """
+    import math
+
+    from src.render.crosswalks import stop_bar_band_geometry_ft
+    from src.render.export import _stop_bar_span_m
+    from src.render.coords import FT_TO_M
+
+    for skew_deg in (0.0, -44.03, 12.5, 60.0):
+        for inner_ft in (0.0, 2.4):
+            span_ft, lateral_ft = stop_bar_band_geometry_ft(
+                34.0, edge_is_kerb=True, inner_ft=inner_ft, skew_deg=skew_deg)
+            # As a renderer builds it: the span is the figure that gets stretched by 1/cos,
+            # then the whole thing is projected back onto the leg's own perpendicular.
+            cos_s = math.cos(math.radians(abs(skew_deg)))
+            near_ft = (lateral_ft - span_ft / (2 * cos_s)) * cos_s
+            assert near_ft == pytest.approx(inner_ft, abs=1e-9), (
+                f"at {skew_deg:+.1f} deg skew the bar's near end sits {near_ft - inner_ft:+.2f} ft "
+                f"off the line it is measured to")
+
+    # And the 3D path is the same figure, not a parallel derivation - the whole defect was two
+    # callers stretching differently. Compared in metres, which is the frame the export writes.
+    class _Fake:
+        """Only what _stop_bar_span_m reads, so this stays a unit test."""
+
+    span_ft, lateral_ft = stop_bar_band_geometry_ft(34.0, edge_is_kerb=True, inner_ft=0.0,
+                                                   skew_deg=-44.03)
+    from unittest.mock import patch
+    with patch("src.render.export.stop_bar_width_ft", return_value=34.0), \
+         patch("src.render.export.entering_lane_width_ft", return_value=None), \
+         patch("src.render.export.divider_shift_toward_ft", return_value=0.0):
+        exported = _stop_bar_span_m(None, "leg", True, skew_deg=-44.03)
+    assert exported["stop_bar_lateral_offset_m"] == pytest.approx(lateral_ft * FT_TO_M)
+    assert exported["stop_bar_span_m"] == pytest.approx(span_ft * FT_TO_M)

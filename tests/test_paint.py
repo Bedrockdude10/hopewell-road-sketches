@@ -1185,3 +1185,53 @@ def test_a_severed_zone_becomes_two_pieces_and_not_one_multipolygon():
     assert len(kept) == 2, "the severed zone stayed as one piece"
     assert all(p.geometry.geom_type == "Polygon" for p in kept)
     assert sorted(round(p.geometry.area) for p in kept) == [180, 180]
+
+
+def test_blender_stroke_widths_match_the_channels():
+    """The 3D renderer's stripe widths and markings.CHANNELS' are one set of figures.
+
+    blender_scene.py declares its own table because it CANNOT import this package - it runs in
+    Blender's own interpreter (see .importlinter) - so the two are a copy by necessity. That makes
+    them exactly the kind of pair that drifts silently: a width changed on one side is a stripe
+    laid at one width in the render and checked at another by checks.MarkingsDoNotCollide, which
+    is how a line came to be checked with no width at all.
+
+    Reads the declaration by AST, like the guard above, so a rewrite that keeps the property
+    passes.
+    """
+    import ast
+    from pathlib import Path
+
+    from src.geometry.markings import CHANNELS
+
+    source = (Path(__file__).resolve().parent.parent
+              / "scripts" / "blender" / "blender_scene.py").read_text()
+    declared = {}
+    for node in ast.parse(source).body:
+        if isinstance(node, ast.Assign) and isinstance(node.targets[0], ast.Name):
+            declared[node.targets[0].id] = ast.literal_eval(node.value)
+    wanted = {"SAMPLED_POLYLINE_CHANNELS", "TWO_POINT_CHANNELS", "TWO_POINT_WIDTH_M",
+              "CENTERLINE_WIDTH_M"}
+    assert wanted <= set(declared), (
+        f"blender_scene.py no longer declares {sorted(wanted - set(declared))} - the guard has "
+        f"nothing to read, which is not the same as the widths agreeing")
+
+    in_3d = dict(declared["SAMPLED_POLYLINE_CHANNELS"])
+    for key in declared["TWO_POINT_CHANNELS"]:
+        in_3d[key] = declared["TWO_POINT_WIDTH_M"]
+    by_key = {c.key: c for c in CHANNELS}
+    for key, width_m in sorted(in_3d.items()):
+        channel = by_key.get(key)
+        assert channel is not None, f"blender_scene.py draws {key}, which is not a declared channel"
+        assert channel.stroke_width_m == pytest.approx(width_m), (
+            f"{key} is laid at {width_m} m in 3D and declared {channel.stroke_width_m} m in "
+            f"markings.py - the render draws one width and MarkingsDoNotCollide checks another")
+
+    # And the other direction: a stroked channel with no width here is a stripe nothing can check.
+    for channel in CHANNELS:
+        if channel.key in in_3d or channel.stroke_width_m is None:
+            continue
+        assert channel.key == "bike_lane_contraflow_lines", (
+            f"{channel.key} declares a stroke width that no 3D table accounts for")
+        assert channel.stroke_width_m == pytest.approx(declared["CENTERLINE_WIDTH_M"]), (
+            "the contraflow stripe is drawn through the centreline path, at CENTERLINE_WIDTH_M")

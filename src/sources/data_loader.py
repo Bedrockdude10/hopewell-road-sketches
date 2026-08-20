@@ -1,4 +1,5 @@
 """Data loading: NJDOT roadway network, Mercer County parcels, and intersection geocoding."""
+import json
 import os
 from pathlib import Path
 
@@ -14,7 +15,33 @@ from src.sources.schemas import ParcelsSchema, RoadNetworkSchema, validate_layer
 class OfflineCacheMiss(RuntimeError):
     """HOPEWELL_OFFLINE is set and a fetch wasn't satisfied from the fixture cache."""
 
+
+class MissingSourceData(FileNotFoundError):
+    """A file named in a site's `data_sources:` isn't on disk.
+
+    Raised at the boundary on purpose. Without it the first symptom is a pyogrio
+    DataSourceError twenty-five frames down, naming `NJ_Roadway_Network.geojson` -
+    which is not even the file the loader prefers when the indexed sibling exists, so
+    the traceback misdirects as well as buries. "data/ is absent" is a known state;
+    a driver-level traceback reads as a broken repo.
+    """
+
+class FixtureExtentExceeded(RuntimeError):
+    """A read reached outside the clipped fixture in HOPEWELL_DATA_DIR.
+
+    The reason this is fatal rather than a warning: a bbox read that runs off the edge of a
+    clip SUCCEEDS, with fewer features. Nothing downstream can tell "this junction has three
+    legs" from "this junction's fourth leg was clipped away" - it just draws three, which is
+    the silent wrong answer the whole fixture idea has to be defended against.
+    """
+
+
 DATA_DIR = Path(__file__).resolve().parent.parent.parent / "data"  # src/sources/data_loader.py -> repo root
+DATA_DIR_ENV = "HOPEWELL_DATA_DIR"
+# Written by scripts/make_data_fixture.py beside the clipped layers; its presence is what marks
+# a directory as a clip rather than the real download, and it records how far the clip reaches.
+FIXTURE_MANIFEST_NAME = "FIXTURE.json"
+_manifests: dict[Path, dict | None] = {}
 # Defaults only - a site's config.yaml (data_sources:) can point at different
 # files entirely (e.g. a different county's parcels/road network), since
 # nothing else in this module is specific to Mercer County or NJDOT's statewide file.
@@ -228,6 +255,98 @@ def _resolve_indexed_path(path: Path | str) -> Path:
     return path
 
 
+def data_dir() -> Path:
+    """Where the source layers are read from: data/, or HOPEWELL_DATA_DIR if that is set.
+
+    Read at CALL time on purpose. An env var latched into a module constant at import is the
+    failure conftest.py's docstring is about, and it would make the override depend on whether
+    something imported this module before the test session set it.
+    """
+    override = os.environ.get(DATA_DIR_ENV)
+    return Path(override).expanduser().resolve() if override else DATA_DIR
+
+
+def resolve_data_path(path: Path | str) -> Path:
+    """Re-root a path under data/ at data_dir(); anything else is returned unchanged.
+
+    Site configs go on naming `data/NJ_Roadway_Network.geojson` canonically - they are checked
+    in and they describe the real download. The override moves only where those names are
+    looked up, so a clip is read through the SAME loaders, schemas and CRS checks as the full
+    file. A second code path for test data would be a second datum for the same fact.
+    """
+    path = Path(path)
+    root = data_dir()
+    if root == DATA_DIR:
+        return path
+    try:
+        return root / Path(os.path.abspath(path)).relative_to(DATA_DIR)
+    except ValueError:
+        return path      # not one of the data/ layers - somebody's explicit choice, left alone
+
+
+def _manifest_for(resolved: Path) -> dict | None:
+    """The fixture manifest governing `resolved`, or None if it is not in a clip."""
+    directory = resolved.parent
+    if directory not in _manifests:
+        candidate = directory / FIXTURE_MANIFEST_NAME
+        _manifests[directory] = json.loads(candidate.read_text()) if candidate.exists() else None
+    return _manifests[directory]
+
+
+def _require_within_fixture(resolved: Path, bbox, layer: str) -> None:
+    """Fail if this read would reach past the edge of a clipped fixture. See FixtureExtentExceeded."""
+    manifest = _manifest_for(resolved)
+    if manifest is None:
+        return
+    extent = manifest["extents"].get(layer)
+    if extent is None:
+        return
+    how_to_fix = (f"Rebuild the clip to cover it: scripts/make_data_fixture.py --pad-ft <more> "
+                  f"(the current clip was built with pad_ft={manifest.get('pad_ft')} around "
+                  f"{len(manifest.get('sites', []))} site(s)), or unset {DATA_DIR_ENV} to read "
+                  f"the full download in data/.")
+    if bbox is None:
+        raise FixtureExtentExceeded(
+            f"unbounded read of the {layer} layer from the clipped fixture {resolved.parent}. "
+            f"The whole file is only what was clipped, so this would quietly return a subset of "
+            f"the county. {how_to_fix}")
+    bounds = (tuple(bbox.total_bounds) if hasattr(bbox, "total_bounds")
+              else tuple(float(v) for v in bbox))
+    if (bounds[0] < extent[0] or bounds[1] < extent[1]
+            or bounds[2] > extent[2] or bounds[3] > extent[3]):
+        raise FixtureExtentExceeded(
+            f"this read reaches outside the clipped {layer} fixture in {resolved.parent}.\n"
+            f"  wanted: {tuple(round(v, 6) for v in bounds)}\n"
+            f"  clip:   {tuple(round(v, 6) for v in extent)}\n"
+            f"{how_to_fix}")
+
+
+def require_source_data(path: Path | str, what: str) -> Path:
+    """Return `path` if it exists, else raise MissingSourceData naming what was wanted.
+
+    Takes the already-resolved path so the message names the file the loader actually
+    wanted, and lists the indexed siblings too - the path in a site's config.yaml is not
+    necessarily the one that would have been read.
+    """
+    path = Path(path)
+    if path.exists():
+        return path
+    if not DATA_DIR.exists() and DATA_DIR in path.parents:
+        detail = f"{DATA_DIR} does not exist"
+    else:
+        candidates = dict.fromkeys(
+            [str(path)] + [str(path.with_suffix(s)) for s in INDEXED_SUFFIXES
+                           if path.suffix.lower() not in INDEXED_SUFFIXES]
+        )
+        detail = "looked for " + ", ".join(candidates)
+    raise MissingSourceData(
+        f"{what} is missing - {detail}.\n"
+        "data/ is a large third-party download kept out of git; see README.md, section "
+        "\"Data\", for what belongs there. Tests and CI read the committed clip instead - "
+        "point HOPEWELL_DATA_DIR at it, or rebuild it with scripts/make_data_fixture.py."
+    )
+
+
 def _unpack_single_part(geometry):
     """Collapse single-part Multi* geometries back to their simple counterpart.
 
@@ -251,7 +370,8 @@ def load_road_network(
     built (see _resolve_indexed_path / scripts/convert_road_network.py) - same data,
     dramatically faster bbox reads.
     """
-    resolved = _resolve_indexed_path(path)
+    resolved = require_source_data(_resolve_indexed_path(resolve_data_path(path)), "the roadway network")
+    _require_within_fixture(resolved, bbox, "roads")
     network = gpd.read_file(resolved, bbox=bbox)
     if not network.empty:
         network = network.set_geometry(network.geometry.map(_unpack_single_part))
@@ -266,9 +386,11 @@ def load_parcels(
     """Load a parcels/MOD-IV shapefile (Mercer County by default; pass `path` for a
     different one), optionally filtered to a bbox (in the shapefile's native CRS -
     reproject the bbox first if querying in WGS84)."""
+    resolved = require_source_data(resolve_data_path(path), "the parcel polygons")
+    _require_within_fixture(resolved, bbox, "parcels")
     # The CRS check here is the one that has actually bitten: a WGS84 bbox against this
     # State-Plane shapefile returns zero rows, which reads as "no parcels here".
-    return validate_layer(gpd.read_file(path, bbox=bbox), ParcelsSchema, path,
+    return validate_layer(gpd.read_file(resolved, bbox=bbox), ParcelsSchema, resolved,
                            expect_crs=NJ_STATE_PLANE_FT)
 
 

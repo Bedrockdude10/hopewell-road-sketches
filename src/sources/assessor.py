@@ -31,6 +31,11 @@ from src.sources.schemas import TaxListSchema, validate_layer
 # read with (osm_context.METERS_PER_LEVEL), because they are counting the same thing and a house
 # should not change height depending on which source described it.
 from src.sources.osm_context import DEFAULT_BUILDING_HEIGHT_M, METERS_PER_LEVEL
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:    # annotation-only: these types are layered above this module,
+    # so importing them for real would close a cycle.
+    from src.geometry.intersection.junction import IntersectionModel
 
 # How far out to load parcels for the join. Matches export.BUILDING_CONTEXT_RADIUS_M (130 m), the
 # radius buildings themselves are fetched at, so every building has a parcel to be found in.
@@ -73,7 +78,11 @@ def storeys_from_description(description) -> float | None:
 
 def storeys_by_pin(tax_list_path: str | Path) -> dict[str, float]:
     """{PIN: storeys} for every parcel the assessor describes as having a storeyed building."""
-    path = Path(tax_list_path)
+    from src.sources.data_loader import resolve_data_path   # local, like parcels_near_buildings below
+
+    # Through the same re-rooting as every other layer, so HOPEWELL_DATA_DIR does not leave the
+    # heights reading the county file while the geometry reads the clip.
+    path = resolve_data_path(tax_list_path)
     if not path.exists():
         return {}
     rows = gpd.read_file(path, columns=["GIS_PIN", "BLDG_DESC"])
@@ -118,7 +127,7 @@ def height_of(footprint, parcels, storeys: dict[str, float], osm_height=None) ->
     return BuildingHeight(DEFAULT_BUILDING_HEIGHT_M, SOURCE_ASSUMED)
 
 
-def assessor_path(model) -> Path:
+def assessor_path(model: "IntersectionModel") -> Path:
     """Where this site's MOD-IV tax list is, from its own config.
 
     A path per site like the road network and the parcels, because a site in another county
@@ -131,7 +140,7 @@ def assessor_path(model) -> Path:
     return ROOT_DIR / configured if configured else Path("")
 
 
-def parcels_near_buildings(model, radius_ft: float = BUILDING_JOIN_RADIUS_FT):
+def parcels_near_buildings(model: "IntersectionModel", radius_ft: float = BUILDING_JOIN_RADIUS_FT):
     """The parcels an OSM footprint could sit in, out to the radius buildings are fetched at.
 
     Not model.parcels: those are loaded to 300 ft for the corner/ROW context, and buildings come

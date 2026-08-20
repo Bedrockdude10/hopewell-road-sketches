@@ -196,10 +196,13 @@ def test_a_compound_crs_with_the_right_horizontal_datum_is_accepted():
     """
     from pyproj import CRS
 
+    from src.sources.data_loader import resolve_data_path
     from src.sources.schemas import _same_horizontal_crs
 
+    # Through resolve_data_path, so this reads whatever the run is reading - the committed clip
+    # keeps the county's .prj bytes verbatim precisely so this check means the same thing there.
     compound = CRS.from_wkt(gpd.read_file(
-        "data/MercerCountyParcels.shp", rows=1).crs.to_wkt())
+        resolve_data_path("data/MercerCountyParcels.shp"), rows=1).crs.to_wkt())
     assert compound.is_compound, "this test is about the compound case; the file changed"
     assert _same_horizontal_crs(compound, "EPSG:3424")
     # And it still rejects a genuinely different projection.

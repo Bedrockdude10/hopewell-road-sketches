@@ -186,6 +186,11 @@ cython_debug/
 # fragile and had already let 22.5 MB of ad-hoc screenshots into the repo. A directory
 # rule can't miss a new file the way a filename list does.
 data/
+# ...except the committed clip of it. `data/` above matches a directory of that name at ANY
+# depth, so it swallowed tests/fixtures/data too - and that clip is the only reason CI can build
+# a real junction at all (scripts/make_data_fixture.py, ~5 MB, kilobytes per site plus parcel
+# polygons). Re-including the directory is enough; nothing else here matches its contents.
+!tests/fixtures/data/
 
 # Downloaded/derived caches under output/. .textures is 138 MB of Poly Haven CC0
 # textures and glTF models fetched by src/render/theme.py:build_default_theme(), and
@@ -208,3 +213,7 @@ output/**/phase4_render_*.png
 output/.DS_Store
 output/.DS_Store
 .DS_Store
+
+# The before/after export trees and the known-failure baseline scripts/verify.py keeps.
+# Derived, per-machine, and rewritten on every run - like .cache and .textures above.
+output/.verify/

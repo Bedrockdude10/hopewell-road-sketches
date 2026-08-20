@@ -1,0 +1,152 @@
+{
+  "generated_by": "scripts/make_data_fixture.py",
+  "why": "data/ is a large third-party download kept out of git; these are the features the configured sites actually read. Read through HOPEWELL_DATA_DIR.",
+  "pad_ft": 1320.0,
+  "sites": [
+    "broad_st_greenwood",
+    "columbia_princeton",
+    "ebroad_princeton",
+    "nj31_wdelaware",
+    "princeton_eprospect",
+    "wbroad_louellen"
+  ],
+  "extents": {
+    "roads": [
+      -74.80489460688626,
+      40.32190932498773,
+      -74.75132193225353,
+      40.3956160504734
+    ],
+    "parcels": [
+      407026.9181854869,
+      542528.9851686566,
+      422217.70327911194,
+      568913.8334253287
+    ]
+  },
+  "extent_crs": {
+    "roads": "EPSG:4326",
+    "parcels": "EPSG:3424"
+  },
+  "per_site_reads": {
+    "broad_st_greenwood": {
+      "clip_radius_m": 150,
+      "roads_wgs84": [
+        -74.76425732732831,
+        40.38742222182985,
+        -74.75966227321602,
+        40.390935777633956
+      ],
+      "parcels_nj_ft": [
+        418732.6475555384,
+        566359.8724075845,
+        419585.66592824185,
+        567212.8907802878
+      ]
+    },
+    "columbia_princeton": {
+      "clip_radius_m": 150,
+      "roads_wgs84": [
+        -74.76005762628246,
+        40.38741212236769,
+        -74.75546257427148,
+        40.39092567709609
+      ],
+      "parcels_nj_ft": [
+        419902.4155163725,
+        566352.7554174465,
+        420755.43388907594,
+        567205.7737901498
+      ]
+    },
+    "ebroad_princeton": {
+      "clip_radius_m": 150,
+      "roads_wgs84": [
+        -74.76063726253729,
+        40.38847612261673,
+        -74.75604213801536,
+        40.391989676847025
+      ],
+      "parcels_nj_ft": [
+        419742.10692174925,
+        566740.8150526254,
+        420595.1252944527,
+        567593.8334253287
+      ]
+    },
+    "nj31_wdelaware": {
+      "clip_radius_m": 150,
+      "roads_wgs84": [
+        -74.80126823325989,
+        40.325535698614104,
+        -74.79667736719864,
+        40.32904930085009
+      ],
+      "parcels_nj_ft": [
+        408346.9181854869,
+        543848.9851686566,
+        409199.9365581904,
+        544702.0035413599
+      ]
+    },
+    "princeton_eprospect": {
+      "clip_radius_m": 150,
+      "roads_wgs84": [
+        -74.75954329467523,
+        40.386484522151875,
+        -74.7549483058799,
+        40.3899980773119
+      ],
+      "parcels_nj_ft": [
+        420044.6849064085,
+        566014.436908293,
+        420897.70327911194,
+        566867.4552809964
+      ]
+    },
+    "wbroad_louellen": {
+      "clip_radius_m": 150,
+      "roads_wgs84": [
+        -74.76824225532509,
+        40.385283920673665,
+        -74.76364734521009,
+        40.38879747879018
+      ],
+      "parcels_nj_ft": [
+        417620.3283406848,
+        565584.2569747611,
+        418473.3467133883,
+        566437.2753474645
+      ]
+    }
+  },
+  "layers": {
+    "roads": {
+      "file": "NJ_Roadway_Network.fgb",
+      "clipped_from": "NJ_Roadway_Network.fgb",
+      "source_sha256": "79f7a2140610eee3bf867bb3710d233f187d0b6cde1124bc559ffac8d43aa6c3",
+      "columns": "all"
+    },
+    "parcels": {
+      "file": "MercerCountyParcels.shp",
+      "clipped_from": "MercerCountyParcels.shp",
+      "source_sha256": "8859d0f2957f5d8d7793b4e3af2afb5d0253eb7ff90e5f52084e5aa0b129198c",
+      "columns": [
+        "PAMS_PIN",
+        "MUN",
+        "BLOCK",
+        "LOT",
+        "QCODE"
+      ]
+    },
+    "tax": {
+      "file": "MercerTaxList.dbf",
+      "clipped_from": "MercerTaxList.dbf",
+      "source_sha256": "ea4aa498ab97788e7e1c613c01b2640b7c6b098ae1a814a06677a5748811485e",
+      "columns": [
+        "GIS_PIN",
+        "BLDG_DESC"
+      ]
+    }
+  }
+}

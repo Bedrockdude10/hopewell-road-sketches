@@ -42,6 +42,22 @@ class Role(Enum):
     OBJECT = "object"
 
 
+# The painted width of a stroke, in METRES, because that is the unit the 3D renderer lays it in
+# and metres keep this module a leaf (it imports nothing from src, so the FT_TO_M in
+# src/render/coords.py is not reachable from here). Two figures, both drawn-scale choices rather
+# than standards: a solid edge line reads at 0.25 m here, a hatch stroke and a taper at 0.15 m.
+#
+# DECLARED HERE BECAUSE A LINE WITH NO WIDTH CANNOT BE CHECKED. These lived only in
+# scripts/blender/blender_scene.py, which meant the 3D render was the sole thing in the project
+# that knew paint is not infinitely thin - so an axis put half a stripe wrong was invisible to
+# the plan view (a cosmetic 1.6 pt stroke about its axis) AND to checks.MarkingsDoNotCollide,
+# which compared only things that cover area. The crossbike's edge lines were ruled along the
+# green's own faces for exactly that long. Blender still declares its own table because it
+# cannot import this package; test_blender_stroke_widths_match_the_channels pins the two.
+EDGE_LINE_WIDTH_M = 0.25
+NARROW_LINE_WIDTH_M = 0.15
+
+
 @dataclass(frozen=True)
 class Channel:
     """One list in the exported geometry JSON, read by name in scripts/blender/blender_scene.py.
@@ -49,9 +65,15 @@ class Channel:
     A channel carries one role, so everything in it is drawn the same way at the far end: a
     LINE channel becomes add_paint_polyline calls, a FILL channel becomes the hatch strokes
     inside the zone, a SURFACE channel becomes an extruded polygon.
+
+    `stroke_width_m` is how wide the paint in it is actually laid. Set on every channel that is
+    STROKED - the LINE channels, and the FILL channels whose hatch strokes are lines too - and
+    None on the ones that travel as polygons (COLOUR, SURFACE), where the geometry already has
+    its own extent. See EDGE_LINE_WIDTH_M for why it lives here.
     """
     key: str
     role: Role
+    stroke_width_m: float | None = None
 
     def __str__(self) -> str:
         return self.key
@@ -95,29 +117,29 @@ class PaintKind:
 # --------------------------------------------------------------------------------------
 # The channels, in the order they appear in the exported JSON.
 # --------------------------------------------------------------------------------------
-LANE_NARROWING_EDGE_LINES = Channel("lane_narrowing_edge_lines", Role.LINE)
-LANE_NARROWING_TAPER_LINES = Channel("lane_narrowing_taper_lines", Role.LINE)
-LANE_NARROWING_HATCH_LINES = Channel("lane_narrowing_hatch_lines", Role.FILL)
-CORNER_HATCHING_LINES = Channel("corner_hatching_lines", Role.FILL)
-PARKING_EDGE_LINES = Channel("parking_edge_lines", Role.LINE)
-PARKING_STALL_DIVIDER_LINES = Channel("parking_stall_divider_lines", Role.LINE)
+LANE_NARROWING_EDGE_LINES = Channel("lane_narrowing_edge_lines", Role.LINE, EDGE_LINE_WIDTH_M)
+LANE_NARROWING_TAPER_LINES = Channel("lane_narrowing_taper_lines", Role.LINE, NARROW_LINE_WIDTH_M)
+LANE_NARROWING_HATCH_LINES = Channel("lane_narrowing_hatch_lines", Role.FILL, NARROW_LINE_WIDTH_M)
+CORNER_HATCHING_LINES = Channel("corner_hatching_lines", Role.FILL, NARROW_LINE_WIDTH_M)
+PARKING_EDGE_LINES = Channel("parking_edge_lines", Role.LINE, EDGE_LINE_WIDTH_M)
+PARKING_STALL_DIVIDER_LINES = Channel("parking_stall_divider_lines", Role.LINE, NARROW_LINE_WIDTH_M)
 # The daylight zones (R.S. 39:4-138 - see src/geometry/daylighting.py) share the parking
 # buffer's channels, because on a real street they are the same white hatching and the same
 # white lines. The plan view distinguishes them by colour; asphalt does not.
-PARKING_BUFFER_HATCH_LINES = Channel("parking_buffer_hatch_lines", Role.FILL)
-PARKING_BUFFER_EDGE_LINES = Channel("parking_buffer_edge_lines", Role.LINE)
+PARKING_BUFFER_HATCH_LINES = Channel("parking_buffer_hatch_lines", Role.FILL, NARROW_LINE_WIDTH_M)
+PARKING_BUFFER_EDGE_LINES = Channel("parking_buffer_edge_lines", Role.LINE, EDGE_LINE_WIDTH_M)
 # Empty today, and deliberately kept: a curved line needs Blender's add_paint_polyline rather
 # than add_paint_line, so tapers travel in their own channel. blender_scene.py reads the key.
-PARKING_BUFFER_TAPER_LINES = Channel("parking_buffer_taper_lines", Role.LINE)
-BIKE_LANE_EDGE_LINES = Channel("bike_lane_edge_lines", Role.LINE)
-BIKE_LANE_HATCH_LINES = Channel("bike_lane_hatch_lines", Role.FILL)
+PARKING_BUFFER_TAPER_LINES = Channel("parking_buffer_taper_lines", Role.LINE, NARROW_LINE_WIDTH_M)
+BIKE_LANE_EDGE_LINES = Channel("bike_lane_edge_lines", Role.LINE, EDGE_LINE_WIDTH_M)
+BIKE_LANE_HATCH_LINES = Channel("bike_lane_hatch_lines", Role.FILL, NARROW_LINE_WIDTH_M)
 # The lane's own asphalt, painted green. Travels to the render as the polygon it is, so both
 # views agree about what the proposal looks like.
 BIKE_LANE_SURFACE_POLYGONS = Channel("bike_lane_surface_polygons", Role.COLOUR)
 # The YELLOW centre stripe of a two-way bike lane, separating opposing riders. Its own channel
 # rather than more BIKE_LANE_EDGE_LINES, because the channel decides the colour at the far end:
 # blender_scene.py draws every edge-line channel in the white marking material.
-BIKE_LANE_CONTRAFLOW_LINES = Channel("bike_lane_contraflow_lines", Role.LINE)
+BIKE_LANE_CONTRAFLOW_LINES = Channel("bike_lane_contraflow_lines", Role.LINE, NARROW_LINE_WIDTH_M)
 # The BIKE LANE symbol (MUTCD Fig 9E-1). A COLOUR channel and not a LINE one, because a symbol is
 # a painted AREA - it reaches the render as its footprint, reusing the coloured-polygon path.
 # The footprint is a schematic arrow, not a drawn bicycle: this pipeline positions paint, it does
@@ -426,7 +448,19 @@ def require_every_kind(table: dict, what: str, skip: tuple = (Role.OBJECT,)) -> 
     return table
 
 
-MAY_LIE_ON = frozenset({(BIKE_LANE_SYMBOL, BIKE_LANE_SURFACE)})
+# A stripe painted on a coloured surface, declared rather than tolerated. checks'
+# MarkingsDoNotCollide forbids a stroke from lying on a COLOUR or a SURFACE at all - a hatched
+# FILL is defined BETWEEN its own bounding lines, so a line straddling its edge is the
+# convention, but green asphalt under white or yellow paint is paint over paint - so anything
+# that genuinely is a layer has to say so here.
+MAY_LIE_ON = frozenset({
+    (BIKE_LANE_SYMBOL, BIKE_LANE_SURFACE),
+    # The two-way lane's yellow centre stripe runs the length of the green BY DESIGN: the green
+    # is the facility and the stripe divides the two directions inside it. Every other line on
+    # the green bounds it from outside, half a stripe clear - which is what makes this one worth
+    # declaring rather than inferring from the fact that it currently overlaps.
+    (BIKE_CONTRAFLOW_DIVIDER, BIKE_LANE_SURFACE),
+})
 
 
 def lies_legitimately_on(a: PaintKind, b: PaintKind) -> bool:

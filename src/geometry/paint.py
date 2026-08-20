@@ -17,12 +17,18 @@ from shapely.ops import unary_union
 from src.geometry.model import (point_at, clip_paint_clear_of, corner_apron_annulus,
                                 corner_overlay_polygon, curb_offsets_at_stations,
                                 leg_clearance_ft, station_offset_many, through_street_sides)
-from src.geometry.markings import (PaintKind, lies_legitimately_on,
+from src.geometry.markings import (EDGE_LINE_WIDTH_M, PaintKind, lies_legitimately_on,
                                    yields_the_ground_to)
 from src.geometry.daylighting import parkable_runs_ft
 from src.render.coords import FT_TO_M
 from src.render.crosswalks import (CROSSWALK_CLEARANCE_FT, CROSSWALK_DEPTH_FT,
                                    crosswalk_reach_on_leg_side_ft)
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:    # annotation-only: these types are layered above this module,
+    # so importing them for real would close a cycle.
+    from shapely.geometry import Point
+    from src.geometry.treatments.state import DesignState
 
 
 class RimCause(StrEnum):
@@ -100,7 +106,7 @@ class LegAnchors:
     clearance_ft: float = 0.0    # past THIS SIDE's corner return, if it has one
 
 
-def leg_anchors(state, leg_name: str, side: str, crosswalk_offsets: dict,
+def leg_anchors(state: "DesignState", leg_name: str, side: str, crosswalk_offsets: dict,
                  keep_clear=None, inner_offset_ft: float = 0.0,
                  crosswalk_is_marked: bool = True,
                  mouth_end_ft: float | None = None) -> LegAnchors:
@@ -206,13 +212,31 @@ MIN_ZONE_AREA_SQ_FT = 1.0
 # shortest real line here, a few feet), so it cannot reach a marking anyone meant to draw.
 MIN_LINE_LENGTH_FT = 0.25
 
-# The painted width of a lane-edge line, in FEET (0.25 m, matching
-# scripts/blender/blender_scene.py's add_paint_polyline(..., 0.25, ...)). Paint has width, and
+# The painted width of a lane-edge line, in FEET. DERIVED from the figure the channels carry
+# (markings.EDGE_LINE_WIDTH_M), because that is now the single home for how wide paint is laid
+# and every LINE channel is declared against it. Paint has width, and
 # where it goes decides whether the lane behind it is really the width it claims: an edge line
 # CENTRED on the 11 ft mark puts half its own body inside the lane, leaving 10.59 ft. So the line
 # is placed OUTSIDE the mark - its inner edge lands on 11 ft - and the hatching starts outside the
 # line. The width comes out of the treatment, not out of the travel lane.
-LANE_EDGE_LINE_WIDTH_FT = 0.25 / FT_TO_M
+LANE_EDGE_LINE_WIDTH_FT = EDGE_LINE_WIDTH_M / FT_TO_M
+
+
+def stroke_width_ft(kind: PaintKind) -> float | None:
+    """How wide `kind` is actually painted, in feet, or None if it is not a stroke.
+
+    The one place metres become feet for a stripe width. A LINE and a FILL's hatch strokes are
+    both laid at a real width by the 3D renderer, so both have one; a COLOUR or a SURFACE
+    travels as its polygon and its extent is already in the geometry.
+
+    This exists so a check can give a line the body it has. checks.MarkingsDoNotCollide
+    compared only markings that cover area, and a line covered none - which is how the
+    crossbike's edge lines came to be ruled along the green's own faces, painting 0.41 ft of
+    white over colour on every mark, invisible in a plan view that strokes 1.6 pt about an axis.
+    """
+    if kind.channel is None or kind.channel.stroke_width_m is None:
+        return None
+    return kind.channel.stroke_width_m / FT_TO_M
 
 
 def lane_edge_stripes(depth_ft: float) -> tuple[float, float]:
@@ -297,7 +321,7 @@ def _lies_wholly_behind(leg, geometry, station_ft: float) -> bool:
     return float(stations.max()) <= station_ft
 
 
-def parking_runs(state, leg_name: str, side: str, crosswalk_offsets: dict,
+def parking_runs(state: "DesignState", leg_name: str, side: str, crosswalk_offsets: dict,
                   props: list[dict] | None = None) -> list[tuple[float, float]]:
     """The station spans of this kerb where stalls may legally be marked."""
     return parkable_runs_ft(
@@ -385,7 +409,8 @@ class PaintContext:
         self.pieces.append(piece)
         return piece
 
-    def add(self, kind, geometry, leg=None, side=None, beyond_ft=None, shares_a_kerb=False):
+    def add(self, kind, geometry, leg=None, side: str | None = None, beyond_ft=None,
+            shares_a_kerb=False):
         """Clip `geometry` clear of the crossings, keep what survives, return those pieces.
 
         beyond_ft drops any surviving piece that fell WHOLLY on the JUNCTION side of the
@@ -505,7 +530,7 @@ class PaintContext:
         if geometry is not None and not geometry.is_empty:
             self.dash_phases[(leg, side)] = geometry
 
-    def _dashes_across_openings(self, kind, geometry, leg, side) -> list:
+    def _dashes_across_openings(self, kind, geometry, leg, side: str) -> list:
         """The marks of `kind`'s dotted extension, laid IN the openings its row says it crosses.
 
         THE PARENT MARKING, CLIPPED - not rebuilt over the dash stations. The dashes have to lie
@@ -724,7 +749,7 @@ class PaintContext:
                             mouth_end_ft=None if mouth is None else mouth[1])
 
 
-def curbside_paint_ft(state, crosswalk_offsets: dict, center_ft,
+def curbside_paint_ft(state: "DesignState", crosswalk_offsets: dict, center_ft: "Point",
                        crosswalk_bands: dict | None = None,
                        props: list[dict] | None = None,
                        marked_crosswalks: set | None = None,
@@ -890,7 +915,7 @@ def _dash_spans(lo_ft: float, hi_ft: float) -> list[tuple[float, float]]:
 KERB_HOLD_SAMPLE_FT = 0.5
 
 
-def _held_inside_the_kerb(leg, side: str, line):
+def _held_inside_the_kerb(leg, side: str, line: LineString):
     """`line` with every vertex pulled back to the traced kerb, measured as the CHECK measures it.
 
     The band intersection above holds a rim inside the kerb as a REGION, and a region has to pick
@@ -959,7 +984,7 @@ def _inside_the_traced_kerb(leg, side: str, near):
     return None if band.is_empty else band
 
 
-def junction_mouths_ft(state, crosswalk_bands: dict | None = None) -> dict:
+def junction_mouths_ft(state: "DesignState", crosswalk_bands: dict | None = None) -> dict[tuple[str, str], tuple[float, float]]:
     """{(leg, side): (0.0, end_ft)} - where THIS junction opens each kerb.
 
     THE INTERSECTION ENDS AT THE CROSSWALK, and that is the whole rule. A person reads a junction
@@ -1132,7 +1157,7 @@ class KerbOpenings:
             driveway_tapered=_union([o.driveway_tapered for o in self.by_kerb.values()]),
             intersection_mouths=_union([o.intersection_mouths for o in self.by_kerb.values()]))
 
-    def on(self, leg, side) -> KerbSideOpenings:
+    def on(self, leg, side: str) -> KerbSideOpenings:
         if leg is None or side is None:
             return self.everywhere
         return self.by_kerb.get((leg, str(side)), KerbSideOpenings())
@@ -1147,10 +1172,10 @@ class KerbOpenings:
     def tapered(self) -> object:
         return self.everywhere.tapered
 
-    def against(self, kind, leg=None, side=None) -> object:
+    def against(self, kind, leg=None, side: str | None = None) -> object:
         return self.on(leg, side).against(kind)
 
-    def dotted(self, kind, leg=None, side=None) -> object:
+    def dotted(self, kind, leg=None, side: str | None = None) -> object:
         return self.on(leg, side).dotted(kind)
 
     def __bool__(self) -> bool:
@@ -1192,7 +1217,7 @@ def stands_in_an_opening(openings, geometry) -> bool:
 FILLET_ARC_POINTS = 28
 
 
-def _opening_run_out(leg, side, inner_ft, outer_ft, start_ft, end_ft):
+def _opening_run_out(leg, side: str, inner_ft, outer_ft, start_ft, end_ft):
     """The fillet a hatched zone ends on at an opening: one polygon per end, or [].
 
     An arc of radius = the strip's own depth, TANGENT TO THE ZONE'S EDGE LINE at the travel lane
@@ -1241,7 +1266,7 @@ def _opening_run_out(leg, side, inner_ft, outer_ft, start_ft, end_ft):
     return out
 
 
-def kerb_opening_bands(state, junction_mouths: dict | None = None) -> KerbOpenings:
+def kerb_opening_bands(state: "DesignState", junction_mouths: dict | None = None) -> KerbOpenings:
     """Where the kerbside markings open for a vehicle, in the two shapes KerbOpenings holds.
 
     WHERE A VEHICLE CROSSES THE KERB, the markings it drives over open for it. A driveway is not
@@ -1369,7 +1394,7 @@ def kerb_opening_bands(state, junction_mouths: dict | None = None) -> KerbOpenin
         for key, shapes in by_kerb.items()})
 
 
-def apron_polygon(state, corner: tuple[str, str], apron, center_ft):
+def apron_polygon(state: "DesignState", corner: tuple[str, str], apron, center_ft: "Point"):
     """The ground one CornerApron covers - a fixed-depth kite, or the swept-path annulus.
 
     Two shapes because there are two reasons for an apron; see

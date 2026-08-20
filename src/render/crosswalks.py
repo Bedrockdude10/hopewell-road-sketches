@@ -68,10 +68,31 @@ STOP_BAR_CURB_CLEARANCE_M = 0.5
 # give it an area to test and draw, never to size the 3D stripe.
 STOP_BAR_PLAN_DEPTH_FT = 1.5
 
+# The floor under cos(skew) wherever a span or an offset is stretched by 1/cos to cross a
+# rotated band. A crossing surveyed near-parallel to its own leg sends 1/cos to infinity and
+# the band to the horizon; clamped, an 78 deg skew stretches by 5 and stops there. One home
+# because a stretch applied against a DIFFERENT floor is a stretch that disagrees, which is
+# the whole failure stop_bar_band_geometry_ft was rewritten to close.
+MIN_SKEW_COSINE = 0.2
+
 
 def stop_bar_band_geometry_ft(width_ft: float, edge_is_kerb: bool = True,
-                               inner_ft: float = 0.0) -> tuple[float, float]:
+                               inner_ft: float = 0.0,
+                               skew_deg: float = 0.0) -> tuple[float, float]:
     """(span_ft, lateral_offset_ft) for a stop bar on a roadway `width_ft` wide.
+
+    THE TWO NUMBERS ARE IN DIFFERENT FRAMES AND THAT IS DELIBERATE, so read this before using
+    either. `span_ft` is measured PERPENDICULAR to the leg; every renderer stretches it by
+    1/cos(skew) itself while building its own rotated rectangle - crosswalk_band_ft divides by
+    cos, blender_crosswalks.add_stop_bar multiplies by its span_factor. `lateral_offset_ft` is
+    already ALONG THE SKEWED ACROSS-AXIS, because neither renderer stretches that one.
+
+    Splitting the stretch across the two callers is what went wrong: each grew the span and
+    neither grew the offset, so the near end landed at offset - span/(2 cos) instead of on the
+    centreline, and each side carried a comment asserting the other's behaviour. At zero skew
+    the two are equal and it never showed; on louellen_st_west's -44 deg crossing the 3D bar
+    stood 2.15 ft the wrong side of the centreline, straight through the opposing lanes. Both
+    ends live in one rotated frame, so one function resolves both.
 
     The bar spans the entering half, from the road centerline out to the edge of the lane the
     stopped vehicle is in, toward the leg's own 'left' side (see
@@ -93,10 +114,14 @@ def stop_bar_band_geometry_ft(width_ft: float, edge_is_kerb: bool = True,
     # treatments.divider_shift_toward_ft). Starting at the alignment regardless paints the stop
     # line across the opposing lanes.
     span_ft = max(outer_ft - inner_ft, clearance_ft)
-    return span_ft, inner_ft + span_ft / 2
+    # The offset carries the same 1/cos the span gets downstream - see the docstring. Reaching a
+    # line `inner_ft` perpendicular from the alignment means travelling inner_ft/cos along the
+    # rotated axis, so the near end lands on that line at any skew.
+    stretch = 1.0 / max(math.cos(math.radians(abs(skew_deg))), MIN_SKEW_COSINE)
+    return span_ft, (inner_ft + span_ft / 2) * stretch
 
 
-def travel_lane_edge_ft(state: DesignState, leg_name: str, side) -> float | None:
+def travel_lane_edge_ft(state: DesignState, leg_name: str, side: str) -> float | None:
     """How far from the centerline the MOTOR travel lane reaches on `side`, or None for the
     full curb-to-curb half where no treatment has narrowed it.
 
@@ -613,7 +638,7 @@ def crosswalk_axes(leg, offset_ft: float, skew_deg: float = 0.0):
     return centre, (ux, uy), (nx, ny), cos_s
 
 
-def crosswalk_reaches_ft(state, offsets: dict, skews: dict, roadway=None,
+def crosswalk_reaches_ft(state: DesignState, offsets: dict, skews: dict, roadway=None,
                           marked: set | None = None) -> dict:
     """{leg_name: (left_ft, right_ft)} - how far each crossing runs to reach its kerbs.
 
@@ -678,7 +703,7 @@ def crosswalk_band_ft(leg, offset_ft: float, depth_ft: float, skew_deg: float = 
     else:
         # An explicit span is a stop bar, which is sized from the entering lane rather than
         # from the kerbs - see stop_bar_band_geometry_ft.
-        half = span_ft / (2 * max(cos_s, 0.2))
+        half = span_ft / (2 * max(cos_s, MIN_SKEW_COSINE))
         left_ft = right_ft = half
     cx += nx * lateral_offset_ft
     cy += ny * lateral_offset_ft
@@ -835,7 +860,7 @@ def crosswalk_reach_on_leg_side_ft(leg, side: str, crossings, inner_offset_ft: f
     return float(stations.max())
 
 
-def crosswalk_bands_ft(state, offsets: dict, skews: dict, depth_ft: float, roadway=None,
+def crosswalk_bands_ft(state: DesignState, offsets: dict, skews: dict, depth_ft: float, roadway=None,
                         reaches: dict | None = None) -> dict:
     """{leg_name: band polygon} for every leg - the footprints the 2D view draws, the 3D
     render stripes, and src/checks.py validates. One definition, so a check that passes in
@@ -846,28 +871,23 @@ def crosswalk_bands_ft(state, offsets: dict, skews: dict, depth_ft: float, roadw
             for name, leg in state.legs.items() if name in offsets}
 
 
-def stop_bar_bands_ft(state, stop_bar_offsets: dict, skews: dict) -> dict:
+def stop_bar_bands_ft(state: DesignState, stop_bar_offsets: dict, skews: dict) -> dict:
     """{leg_name: stop bar polygon}, on the same shared terms as crosswalk_bands_ft."""
     bands = {}
     for name, offset_ft in stop_bar_offsets.items():
         leg = state.legs.get(name)
         if leg is None:
             continue
+        # The skew goes IN, so the offset comes back in the rotated frame the band is built in.
+        # This used to apply its own 1/cos here while export.py applied none, which is the
+        # 2D/3D split stop_bar_band_geometry_ft now owns - see its docstring. crosswalk_band_ft
+        # still stretches the SPAN, which is why span_ft is handed over unstretched.
         span_ft, lateral_ft = stop_bar_band_geometry_ft(
             stop_bar_width_ft(state, name), entering_lane_width_ft(state, name) is None,
-            inner_ft=divider_shift_toward_ft(state, name, Side.LEFT))
-        # The band runs from lateral_offset - half to lateral_offset + half along the SKEWED
-        # across-axis, and crosswalk_band_ft already stretches the half-span by 1/cos(skew) so
-        # a rotated bar still reaches the lane edge. It does not stretch the offset, so the two
-        # stop agreeing the moment the skew is non-zero: the near end lands at
-        # lateral_offset - span/(2 cos) instead of on the centerline. At zero skew they are
-        # equal and it never showed. Honouring Louellen's -44 deg crossing put the bar 2.1 ft
-        # off the centerline - the exact gap-with-nothing-behind-it that
-        # stop_bar_band_geometry_ft exists to prevent. Both ends live in the same rotated
-        # frame, so the offset takes the same stretch the span already got.
-        stretch = 1.0 / max(math.cos(math.radians(abs(skews.get(name, 0.0)))), 0.2)
+            inner_ft=divider_shift_toward_ft(state, name, Side.LEFT),
+            skew_deg=skews.get(name, 0.0))
         band = crosswalk_band_ft(leg, offset_ft, STOP_BAR_PLAN_DEPTH_FT, skews.get(name, 0.0),
-                                  span_ft=span_ft, lateral_offset_ft=lateral_ft * stretch)
+                                  span_ft=span_ft, lateral_offset_ft=lateral_ft)
         bands[name] = _trim_to_the_entering_side(
             leg, band, divider_shift_toward_ft(state, name, Side.LEFT))
     return bands

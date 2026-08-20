@@ -23,6 +23,7 @@ from shapely.geometry import Point
 
 from src.geometry.markings import (PARKING_EDGE_LINE, STALL_DIVIDER,
                                    lies_legitimately_on)
+from src.geometry.paint import stroke_width_ft
 from src.geometry.targets import Side
 from src.geometry.model import curb_offsets_at_stations, station_offset_many
 
@@ -69,6 +70,27 @@ COLLINEAR_PAINT_TOLERANCE_FT = 0.1
 # And how far they must run together before it is a collision rather than a shared endpoint
 # or a crossing - a stall divider meets the lane edge at right angles by design.
 MIN_COLLINEAR_OVERLAP_FT = 1.0
+# How much of a STROKE'S OWN BODY may lie on a marking that covers ground. A fraction of the
+# stripe, not an area and not a depth: an area over a 200 ft seam is many square feet of pure
+# rounding error, and a depth cannot tell the two cases below apart - a bounding line straddling
+# a hatch edge and a line ruled down the middle of the colour it was supposed to bound are BOTH
+# half a stripe, 0.4101 ft, to four decimals. Two figures that agree exactly are one figure, so
+# the frame has to change rather than the tolerance: what differs is WHAT IS UNDERNEATH.
+#
+# ON A COLOUR OR A SURFACE, essentially nothing. Green asphalt under a white stripe is paint
+# over paint; a line bounds it from outside, half a stripe clear. The float noise this has to
+# absorb is 0.008 - the crossbike's outward step is normal to its own leg at each end and the
+# legs at W Broad & Louellen are 170.9 deg apart, so the step tilts and 0.007 ft of stroke
+# crosses back over the green mid-extension (see ExtendBikeLaneThroughJunction.paint's
+# `rules_across`, which explains why that is preferred to a kink at the join). 25x under the
+# 0.5 this pass was written to catch.
+STROKE_ON_COLOUR_FRACTION = 0.02
+# ON A HATCHED FILL, most of it. A hatch zone is defined between its own two bounding lines, so
+# those lines straddle its edge and half of each is legitimately inside - and a taper crossed
+# obliquely reaches 0.25. What this still catches is a line that is not bounding anything: a
+# stripe lying wholly WITHIN the zone, which is how a buffer edge line reads when it is measured
+# from the wrong datum.
+STROKE_INSIDE_FILL_FRACTION = 0.75
 
 # A post is one object, and the paint dot and the prop are that one object placed once - the
 # prop is read off the paint. This absorbs float noise, nothing more.
@@ -531,6 +553,65 @@ class MarkingsDoNotCollide(SceneCheck):
                     + (f" on {a.leg} {a.side}" if a.leg else "")
                     + " - two lines painted down the same stretch of road",
                     (shared.centroid.x, shared.centroid.y)))
+
+        # AND LINES AGAINST GROUND, WHICH NEEDED A LINE TO HAVE A WIDTH. The two passes above
+        # between them miss the whole class: the first compares only markings that cover area and
+        # a line covered none, the second compares lines to other lines. So a stripe laid straight
+        # down the edge of the green it bounds was invisible to both - and to the plan view, which
+        # strokes a cosmetic 1.6 pt about the axis, ~4 ft of ground on a 630 ft sheet, so half a
+        # stripe of error looks identical to none. Only the 3D render, which extrudes the stripe
+        # at its real width, showed it, and nothing in the project could say so. The crossbike's
+        # two edge lines were ruled along the lane's own faces for exactly that long: 46 marks,
+        # 38.0 sq ft of white over green at W Broad & Louellen.
+        #
+        # paint.stroke_width_ft is what closed it - every stroked channel declares the width it is
+        # laid at, so a line can be given the body it has and compared like anything else.
+        for line in lines:
+            width_ft = stroke_width_ft(line.kind)
+            if width_ft is None or line.geometry.is_empty:
+                continue
+            # Flat caps and mitred joins, matching blender_geometry's extrusion: a stripe is a
+            # ribbon of rectangles, not a rounded sausage, and a round cap would invent paint past
+            # the end of every dash and report an overlap the render does not draw.
+            stroke = line.geometry.buffer(width_ft / 2, cap_style=2, join_style=2)
+            if stroke.area <= 0:
+                continue
+            for fill in fills:
+                if _boxes_apart(stroke.bounds, fill.geometry.bounds):
+                    continue
+                if lies_legitimately_on(line.kind, fill.kind):
+                    continue
+                # THE ROLE DECIDES THE TOLERANCE, which is the whole content of this pass - see
+                # STROKE_ON_COLOUR_FRACTION. Hatching is drawn between its bounding lines; colour
+                # is drawn under nothing.
+                on_colour = not fill.kind.is_fill
+                # AND THE FILL HALF ASKS ABOUT ONE LEG-SIDE ONLY, because "a bounding line lying
+                # inside its zone" is a statement about the zone it bounds. At a corner two legs'
+                # white zones overlap - their frames do - so a stub of louellen_st_west's daylight
+                # edge line sits 1.0 sq ft inside w_broad_st_southwest's daylight fill, white on
+                # white, with each line correctly along its OWN zone's edge. That overlap is
+                # fill-on-fill business: the area pass above and markings.YIELDS_THE_GROUND. The
+                # colour half stays leg-agnostic, and has to - the crossbike's dashes belong to
+                # the junction (leg is None) and the green they were painted over belongs to a leg.
+                if not on_colour and (line.leg is None
+                                      or (line.leg, line.side) != (fill.leg, fill.side)):
+                    continue
+                allowed = (STROKE_ON_COLOUR_FRACTION if on_colour
+                           else STROKE_INSIDE_FILL_FRACTION)
+                shared = stroke.intersection(fill.geometry)
+                fraction = shared.area / stroke.area
+                if fraction <= allowed:
+                    continue
+                violations.append(Violation(
+                    "markings_collide",
+                    f"{fraction:.0%} of a {line.kind} stripe is painted over {fill.kind}"
+                    + (f" on {line.leg} {line.side}" if line.leg else "")
+                    + f" ({shared.area:.1f} sq ft of a {width_ft:.2f} ft stroke) - "
+                    + ("a stripe on coloured ground it is meant to bound from outside; the plan "
+                       "view strokes a line about its axis and cannot show this, the 3D render "
+                       "lays it at width and does" if on_colour else
+                       "a bounding line lying inside the zone instead of along its edge"),
+                    (shared.centroid.x, shared.centroid.y)))
         return violations
 
 
@@ -539,7 +620,7 @@ def _boxes_apart(a: tuple, b: tuple) -> bool:
     return a[2] < b[0] or b[2] < a[0] or a[3] < b[1] or b[3] < a[1]
 
 
-def _divider_shift_toward_ft(state, leg_name: str, side: str) -> float:
+def _divider_shift_toward_ft(state: "DesignState", leg_name: str, side: str) -> float:
     """Signed divider offset toward `side`. Delegates to src/geometry/treatments/, which is
     where the one definition lives - see divider_shift_toward_ft for why there is only one."""
     from src.geometry.treatments import divider_shift_toward_ft
@@ -547,7 +628,7 @@ def _divider_shift_toward_ft(state, leg_name: str, side: str) -> float:
     return divider_shift_toward_ft(state, leg_name, side)
 
 
-def _travel_lane_target_ft(state, leg_name: str, side: str) -> float:
+def _travel_lane_target_ft(state: "DesignState", leg_name: str, side: str) -> float:
     """How far from the alignment this kerb's travel lane reaches, for the paint checks.
 
     TARGET_LANE_WIDTH_FT everywhere the travel lanes straddle the alignment, which is every leg
@@ -665,7 +746,7 @@ class TravelLanesHoldTheTarget(SceneCheck):
             narrowing = state.treatment_for(LaneNarrowing, LegTarget(leg_name))
             sides = ("left", "right")
 
-            def painted_ft(side, narrowing=narrowing, leg_name=leg_name):
+            def painted_ft(side: str, narrowing=narrowing, leg_name=leg_name):
                 parking = state.treatment_for(MarkedParking, LegSide(leg_name, side))
                 if parking is not None:
                     return parking.depth_ft + parking.curb_offset_ft

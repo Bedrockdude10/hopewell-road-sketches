@@ -287,7 +287,7 @@ legs:
     stop_bar_centre_m:
     - 8.737
     - 5.447
-    stop_bar_lateral_offset_m: 3.708
+    stop_bar_lateral_offset_m: 3.715
     stop_bar_offset_m: 10.297
     stop_bar_span_m: 7.415
     stop_bar_width_m: 15.831
@@ -382,7 +382,7 @@ legs:
     stop_bar_centre_m:
     - -9.267
     - -6.325
-    stop_bar_lateral_offset_m: 3.979
+    stop_bar_lateral_offset_m: 4.01
     stop_bar_offset_m: 11.221
     stop_bar_span_m: 7.958
     stop_bar_width_m: 16.916
@@ -465,7 +465,7 @@ legs:
     stop_bar_centre_m:
     - -7.915
     - 13.647
-    stop_bar_lateral_offset_m: 1.774
+    stop_bar_lateral_offset_m: 1.78
     stop_bar_offset_m: 15.781
     stop_bar_span_m: 3.547
     stop_bar_width_m: 8.095
@@ -500,7 +500,7 @@ legs:
     stop_bar_centre_m:
     - 6.873
     - -13.926
-    stop_bar_lateral_offset_m: 2.129
+    stop_bar_lateral_offset_m: 2.133
     stop_bar_offset_m: 15.508
     stop_bar_span_m: 4.259
     stop_bar_width_m: 9.518

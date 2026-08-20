@@ -5,7 +5,8 @@ import geopandas as gpd
 import numpy as np
 from matplotlib.lines import Line2D
 from matplotlib.patches import Patch
-from shapely.geometry import LineString
+from shapely.geometry import LineString, Point
+from shapely.ops import unary_union
 
 from src.metrics import Comparison, SceneMetrics, stalls_in_run
 from src.geometry.model import inset_point_at_station, trimmed_curb_lines
@@ -21,6 +22,7 @@ from src.render.props import (DRAWN_BY_PAINT, TACTILE_PAD_DEPTH_FT, TACTILE_PAD_
 from src.render.coords import wgs84_to_state_plane
 from src.render.crosswalks import centerline_paint_ft, centerline_start_ft
 from src.render.frame import junction_frame
+from src.render.labels import LabelPlacer, ft_per_point
 from src.render.scene import SceneGeometry
 from src.sources.osm_context import (fetch_crossings, fetch_kerbs, fetch_sidewalks,
                                      fetch_street_furniture, fetch_traffic_control)
@@ -42,6 +44,31 @@ def sidewalk_lines_ft(sidewalks: list[dict] | None) -> list[LineString]:
         xs, ys = wgs84_to_state_plane.transform([c[0] for c in coords], [c[1] for c in coords])
         lines.append(LineString(zip(xs, ys)))
     return lines
+
+
+def _leg_heading(leg, along_ft: float | None = None) -> tuple[float, float]:
+    """The direction this leg runs AWAY from the junction, at `along_ft` along it.
+
+    A label's escape direction, and local on purpose: a leg that bends would send a label off
+    the road in one place and into the opposing lane in another if one heading served the whole
+    leg. See .claude/SKILLS.md 0b on quantities taken over a whole leg.
+    """
+    line = leg.centerline
+    at = line.length * 0.5 if along_ft is None else along_ft
+    a = line.interpolate(max(0.0, at - 5.0))
+    b = line.interpolate(min(line.length, at + 5.0))
+    return (b.x - a.x, b.y - a.y)
+
+
+def _side_normal(leg, side, along_ft: float) -> tuple[float, float]:
+    """The direction out across the `side` kerb: what a kerbside label follows to leave the road.
+
+    Rotated off the alignment rather than aimed at the traced kerb, because a traced kerb wanders
+    up to 3 ft over a block and the label would swing with it.
+    """
+    hx, hy = _leg_heading(leg, along_ft)
+    sign = 1.0 if str(side) == "left" else -1.0
+    return (-hy * sign, hx * sign)
 
 
 def _draw(ax, geometries, boundary=None, **style) -> None:
@@ -160,6 +187,12 @@ def _draw_kerbs(ax, kerb_lines) -> None:
 # dedicated marker: they are whatever a config or a proposal named.
 EXTRA_PROP_MARKER = dict(color="darkgoldenrod", marker="^", s=30, zorder=7)
 
+# The radius of a prop marker, in POINTS - matplotlib's `s` is an area in pt^2, and sqrt(30/pi)
+# is 3.1. In points because that is the unit the marker is drawn in; converted to feet only when
+# a label is placed (src/render/labels.py:ft_per_point), so the ground a signal pole is allowed
+# to keep to itself is the size of the dot the reader sees, at any --frame-scale.
+PROP_MARKER_RADIUS_PT = 3.2
+
 # How each marking is drawn in plan. Styling is a real per-marking choice - what colour says
 # "this asphalt is spare" versus "parking here is illegal" is a judgement, not something
 # derivable - so this table is written by hand. require_every_kind is what makes forgetting an
@@ -216,7 +249,7 @@ PAINT_FILL_EDGE = {"gold": "goldenrod", "peru": "saddlebrown", "orangered": "ora
 
 def _draw_props(ax, model: IntersectionModel, state: DesignState, crosswalk_offsets: dict,
                  traffic_control: list[dict] | None, street_furniture: list[dict] | None,
-                 crossings: list[dict] | None, dimension_labels: bool):
+                 crossings: list[dict] | None, labels: LabelPlacer, dimension_labels: bool):
     """Draw the street furniture the 3D render will build - signals above all.
 
     This calls the SAME src/render/props.py:build_props the export does, so the plan view shows
@@ -277,9 +310,9 @@ def _draw_props(ax, model: IntersectionModel, state: DesignState, crosswalk_offs
     if dimension_labels:
         control = (f"SIGNALIZED - {signal_count} signal pole(s)" if signal_count
                     else "NOT signalized - stop/yield control")
-        ax.annotate(control, xy=(0.5, 0.005), xycoords="axes fraction", ha="center", va="bottom",
-                    fontsize=8, fontweight="bold", color="black" if signal_count else "dimgrey",
-                    bbox=dict(boxstyle="round,pad=0.25", fc="white", ec="0.7", alpha=0.9))
+        labels.caption(control, (0.5, 0.005), fontsize=8, fontweight="bold",
+                       color="black" if signal_count else "dimgrey",
+                       bbox=dict(boxstyle="round,pad=0.25", fc="white", ec="0.7", alpha=0.9))
     # Handed to the invariant pass rather than rebuilt there: build_props is the most
     # expensive thing in the plan view, and checking a DIFFERENT set of props from the one
     # drawn would defeat the point of checking at all.
@@ -326,7 +359,7 @@ def _draw_unmodelled_crossings(ax, scene):
         _draw(ax, lines, color="white", linewidth=1.6, zorder=6)
 
 
-def _draw_crosswalks(ax, scene: SceneGeometry, dimension_labels: bool):
+def _draw_crosswalks(ax, scene: SceneGeometry, labels: LabelPlacer, dimension_labels: bool):
     """Draw each leg's crosswalk and stop bar exactly where the 3D export puts them.
 
     Gating mirrors scripts/blender/blender_scene.py precisely - a crosswalk is painted
@@ -365,10 +398,11 @@ def _draw_crosswalks(ax, scene: SceneGeometry, dimension_labels: bool):
             centroid = band.centroid
             note = "" if painted else "\n(unmarked)"
             edge = "darkviolet" if offset.is_surveyed else "crimson"
-            ax.annotate(f"{offset.offset_ft:.0f} ft\n{'OSM' if offset.is_surveyed else 'est.'}{note}",
-                        (centroid.x, centroid.y), fontsize=5.5,
-                        color=edge if painted else "grey", ha="center", va="center", fontweight="bold",
-                        bbox=dict(boxstyle="round,pad=0.12", fc="white", ec="none", alpha=0.7))
+            labels.dimension(
+                f"{offset.offset_ft:.0f} ft\n{'OSM' if offset.is_surveyed else 'est.'}{note}",
+                (centroid.x, centroid.y), toward=_leg_heading(state.legs[leg_name]),
+                fontsize=5.5, pad=0.12, color=edge if painted else "grey", fontweight="bold",
+                bbox=dict(boxstyle="round,pad=0.12", fc="white", ec="none", alpha=0.7))
 
     for bands, edge, dash in ((painted_surveyed, "darkviolet", "-"),
                               (painted_estimated, "crimson", "--")):
@@ -462,6 +496,11 @@ def plot_design_state(ax, model: IntersectionModel, state: DesignState, title: s
     # offsets/skews everything else is measured from. See src/render/scene.py.
     scene = SceneGeometry.resolve(model, state, crossings)
     pavement = scene.pavement
+    # Queued, not drawn: every label below is sized in points and has to be placed in feet, and
+    # the conversion is a fact about axes limits this function sets last. See src/render/labels.py.
+    # Always built, whatever `dimension_labels` says: that flag decides whether the DIMENSIONS
+    # are asked for, but the panel captions are drawn either way and still stand on ground.
+    labels = LabelPlacer()
 
     model.parcels.boundary.plot(ax=ax, color="tan", linewidth=0.6, zorder=1)
     model.corner_parcels.boundary.plot(ax=ax, color="saddlebrown", linewidth=1.5, zorder=1)
@@ -485,10 +524,11 @@ def plot_design_state(ax, model: IntersectionModel, state: DesignState, title: s
         tier = built_width_provenance(leg, model.config["legs"][name])
         curbs_by_tier.setdefault(tier, []).extend(curbs_by_leg[name].values())
         if dimension_labels:
-            mid = leg.centerline.interpolate(min(leg.centerline.length * 0.85, leg.centerline.length - 5))
-            ax.annotate(f"{leg.curb_to_curb_ft:.1f} ft", (mid.x, mid.y), fontsize=7,
-                        color=PLOT_STYLE[tier]["color"], ha="center",
-                        bbox=dict(boxstyle="round,pad=0.15", fc="white", ec="none", alpha=0.75))
+            along_ft = min(leg.centerline.length * 0.85, leg.centerline.length - 5)
+            mid = leg.centerline.interpolate(along_ft)
+            labels.dimension(f"{leg.curb_to_curb_ft:.1f} ft", (mid.x, mid.y), fontsize=7,
+                             toward=_leg_heading(leg, along_ft), color=PLOT_STYLE[tier]["color"],
+                             bbox=dict(boxstyle="round,pad=0.15", fc="white", ec="none", alpha=0.75))
     for tier, curbs in curbs_by_tier.items():
         _draw(ax, curbs, linewidth=2, zorder=3, **PLOT_STYLE[tier])
 
@@ -501,9 +541,12 @@ def plot_design_state(ax, model: IntersectionModel, state: DesignState, title: s
         # running through the junction - has no radius, and reaching for one crashed the build.
         if dimension_labels and pieces.get("radius_ft") is not None:
             mid = pieces["arc"].interpolate(0.5, normalized=True)
-            ax.annotate(f"R={pieces['radius_ft']:.0f} ft", (mid.x, mid.y), fontsize=7, color="darkorange",
-                        fontweight="bold", ha="center",
-                        bbox=dict(boxstyle="round,pad=0.15", fc="white", ec="none", alpha=0.85))
+            # Pushed outward through the corner, away from the junction centre: behind the kerb
+            # return is the one direction from an arc that is nobody's carriageway.
+            labels.dimension(f"R={pieces['radius_ft']:.0f} ft", (mid.x, mid.y), fontsize=7,
+                             toward=(mid.x - model.center_ft.x, mid.y - model.center_ft.y),
+                             color="darkorange", fontweight="bold",
+                             bbox=dict(boxstyle="round,pad=0.15", fc="white", ec="none", alpha=0.85))
     _draw(ax, arcs, color="darkorange", linewidth=2.5, zorder=4)
 
     # Asked of the treatments, which build their polygon against this design - see
@@ -515,8 +558,8 @@ def plot_design_state(ax, model: IntersectionModel, state: DesignState, title: s
     if dimension_labels:
         for island, polygon in islands:
             c = polygon.centroid
-            ax.annotate(f"refuge\n{island.width_ft:.0f} ft", (c.x, c.y), fontsize=6.5, color="darkgreen",
-                        ha="center", va="center", fontweight="bold")
+            labels.dimension(f"refuge\n{island.width_ft:.0f} ft", (c.x, c.y), fontsize=6.5,
+                             color="darkgreen", fontweight="bold")
 
     raised_bands = [t.polygon(state) for t in state.treatments_of(RaiseCrossing)]
     _draw(ax, raised_bands, color="slateblue", alpha=0.35, hatch="//", zorder=2,
@@ -524,16 +567,16 @@ def plot_design_state(ax, model: IntersectionModel, state: DesignState, title: s
     if dimension_labels:
         for poly in raised_bands:
             c = poly.centroid
-            ax.annotate("raised\ncrossing", (c.x, c.y), fontsize=6.5, color="indigo",
-                        ha="center", va="center", fontweight="bold")
+            labels.dimension("raised\ncrossing", (c.x, c.y), fontsize=6.5, color="indigo",
+                             fontweight="bold")
 
     _draw_surveyed_crossings(ax, crossings)
     # Before the modelled crosswalks, so where the two ever overlap the modelled one wins
     # the pixel - and the four this junction models are drawn by _draw_crosswalks below.
     _draw_unmodelled_crossings(ax, scene)
-    _draw_crosswalks(ax, scene, dimension_labels)
+    _draw_crosswalks(ax, scene, labels, dimension_labels)
     props = _draw_props(ax, model, state, scene.crosswalk_offsets, traffic_control,
-                         street_furniture, crossings, dimension_labels)
+                         street_furniture, crossings, labels, dimension_labels)
 
     # Every painted marking comes from src/geometry/paint.py - the same builder the 3D export
     # draws from and src/checks.py inspects. Never assembled here in parallel; the two copies
@@ -569,14 +612,14 @@ def plot_design_state(ax, model: IntersectionModel, state: DesignState, title: s
                    color=BOLLARD_PLAN_COLOR, marker="o", s=10, zorder=6)
 
     if dimension_labels:
-        _label_paint(ax, state, paint)
-        _label_parking_legality(ax, model, state)
+        _label_paint(labels, state, paint)
+        _label_parking_legality(labels, state)
 
     ax.scatter([model.center_ft.x], [model.center_ft.y], color="blue", zorder=6, s=40)
 
     _draw_centerlines(ax, scene)
 
-    violations = _mark_violations(ax, scene, props, paint)
+    violations = _mark_violations(ax, scene, props, paint, labels)
 
     ax.set_title(title, fontsize=11)
     ax.set_aspect("equal")
@@ -585,6 +628,20 @@ def plot_design_state(ax, model: IntersectionModel, state: DesignState, title: s
     xmin, xmax, ymin, ymax = junction_frame(model).bounds_ft()
     ax.set_xlim(xmin, xmax)
     ax.set_ylim(ymin, ymax)
+    # Only now: a label's size in feet is a fact about the limits on the line above, and what it
+    # must not cover is the design drawn between here and the top of this function. Everything
+    # the 3D render builds goes into keep_off - a marking hidden under a call-out is a marking
+    # this view failed to report, which is the one thing it exists to do. Thin paint is left out
+    # deliberately: a stripe reads through a translucent box, and keeping clear of every edge
+    # line leaves a dense junction nowhere to put a dimension.
+    keep_off = ([piece.geometry for piece in paint if piece.kind.covers_area]
+                + [polygon for _island, polygon in islands] + raised_bands
+                + [Point(prop["position_ft"]).buffer(PROP_MARKER_RADIUS_PT * ft_per_point(ax))
+                   for prop in props])
+    label_violations = labels.flush(ax, unary_union(keep_off))
+    for violation in label_violations:
+        print(f"  LABEL PLACEMENT: {violation}")
+    violations = violations + label_violations
     ax.set_xlabel("Feet (EPSG:3424)")
     return PlotResult(violations=violations, metrics=scene.metrics(paint))
 
@@ -630,7 +687,7 @@ PARKING_LEGALITY_COLOR = {"restricted": "#b3261e", "allowed": "#1b7f3b", "untagg
 
 
 
-def _label_parking_legality(ax, model, state):
+def _label_parking_legality(labels: LabelPlacer, state):
     """Per side of every leg: the OSM parking tag, and what the design did with it.
 
     Without this the drawing cannot answer the question it most often provokes - "why is that
@@ -643,6 +700,11 @@ def _label_parking_legality(ax, model, state):
     records "no parking for the first 100 ft", and a label reduced to one value per kerb reports
     only one end of it - East Broad reads "parking OK" over a kerb whose first 80 ft are tagged
     no_parking. See src/geometry/treatments/parking.py:RestrictionSummary.
+
+    KEYED, not written on the road. This is prose - a sentence about a kerb - and a sentence is
+    the one thing that cannot be sized to the street: at --frame-scale 2.5 these two lines
+    covered 235 ft of ground, five Broad Sts, and buried a fifth of the bike lane surface the 3D
+    render shows whole. The number goes where the kerb is; the sentence goes in the block.
     """
     from src.geometry.model import curb_point_at_station
     from src.geometry.targets import BOTH_SIDES, LegSide, LegTarget
@@ -698,17 +760,16 @@ def _label_parking_legality(ax, model, state):
                 drew = (f"nothing: {allowance_ft:.1f} ft spare beside an "
                         f"{TARGET_LANE_WIDTH_FT:.0f} ft lane")
 
-            point = curb_point_at_station(leg, side, leg.centerline.length * 0.42)
+            along_ft = leg.centerline.length * 0.42
+            point = curb_point_at_station(leg, side, along_ft)
             if point is None:
                 continue
             outward = 1 if side == "left" else -1
-            here = inset_point_at_station(leg, leg.centerline.length * 0.42,
+            here = inset_point_at_station(leg, along_ft,
                                            outward * (abs(_offset_of(leg, point)) + 9.0))
-            ax.annotate(f"OSM parking: {says}\n-> {drew}", (here[0], here[1]),
-                        fontsize=5.2, color=PARKING_LEGALITY_COLOR[kind], ha="center",
-                        va="center", zorder=7,
-                        bbox=dict(boxstyle="round,pad=0.18", fc="white",
-                                  ec=PARKING_LEGALITY_COLOR[kind], lw=0.6, alpha=0.9))
+            labels.note(f"{leg_name} {side} kerb", f"OSM parking: {says} -> {drew}",
+                        (here[0], here[1]), toward=_side_normal(leg, side, along_ft),
+                        colour=PARKING_LEGALITY_COLOR[kind])
 
 
 def _offset_of(leg, point):
@@ -720,7 +781,7 @@ def _offset_of(leg, point):
     return float(offsets[0])
 
 
-def _label_paint(ax, state, paint):
+def _label_paint(labels: LabelPlacer, state, paint):
     """Dimension labels for the curbside paint: what each treatment actually measures.
 
     One lane label PER SIDE narrowed, offset into that lane - not a single label on the
@@ -744,8 +805,11 @@ def _label_paint(ax, state, paint):
             # And the label belongs IN that lane, so its position takes the shift too.
             shift_ft = divider_shift_toward_ft(state, leg_name, str(side))
             at = leg.centerline.offset_curve(sign * (shift_ft + lane_ft / 2)).interpolate(along_ft)
-            ax.annotate(f"lane {lane_ft:.1f} ft", (at.x, at.y), fontsize=6.5, color="goldenrod",
-                        ha="center", bbox=dict(boxstyle="round,pad=0.15", fc="white", ec="none", alpha=0.75))
+            # Nudged ALONG the lane, not across it: a travel lane is the same width for its whole
+            # length, so sliding the label up the leg keeps it measuring the thing it names.
+            labels.dimension(f"lane {lane_ft:.1f} ft", (at.x, at.y), fontsize=6.5,
+                             toward=_leg_heading(leg, along_ft), color="goldenrod",
+                             bbox=dict(boxstyle="round,pad=0.15", fc="white", ec="none", alpha=0.75))
 
     # One label per RUN of stalls, not per side: a hydrant mid-block splits a kerb into two
     # separate runs, and a single label would be counting stalls that are not in one place.
@@ -759,12 +823,17 @@ def _label_paint(ax, state, paint):
         # count beside a run and the count in the panel cannot be two arithmetics.
         n_stalls = stalls_in_run(piece.geometry.length, parking.stall_length_ft)
         mid = piece.geometry.interpolate(0.5, normalized=True)
-        ax.annotate(f"parking\n{n_stalls} stalls ({parking.depth_ft:.0f} ft)", (mid.x, mid.y),
-                    fontsize=6, color="steelblue", ha="center", va="center", fontweight="bold",
-                    bbox=dict(boxstyle="round,pad=0.15", fc="white", ec="none", alpha=0.75))
+        # Pushed out over the kerb, off the stalls it counts, with a leader back to them: their
+        # depth is the label's own subject, and a reader cannot check it against paint the label
+        # is standing on.
+        leg = state.legs[piece.leg]
+        labels.dimension(f"parking\n{n_stalls} stalls ({parking.depth_ft:.0f} ft)", (mid.x, mid.y),
+                         toward=_side_normal(leg, piece.side, leg.centerline.project(mid)),
+                         fontsize=6, color="steelblue", fontweight="bold",
+                         bbox=dict(boxstyle="round,pad=0.15", fc="white", ec="none", alpha=0.75))
 
 
-def _mark_violations(ax, scene: SceneGeometry, props, paint):
+def _mark_violations(ax, scene: SceneGeometry, props, paint, labels: LabelPlacer):
     """Run the scene invariants and draw whatever failed, right where it failed.
 
     The plan view reports rather than raises, and the phase script asserts after saving -
@@ -781,10 +850,9 @@ def _mark_violations(ax, scene: SceneGeometry, props, paint):
     if located:
         xs, ys = zip(*(v.where for v in located))
         ax.scatter(xs, ys, s=260, facecolors="none", edgecolors="red", linewidths=2.0, zorder=10)
-        ax.annotate(f"{len(violations)} INVARIANT FAILURE(S) - see console",
-                    xy=(0.5, 0.975), xycoords="axes fraction", ha="center", va="top",
-                    fontsize=9, fontweight="bold", color="red",
-                    bbox=dict(boxstyle="round,pad=0.3", fc="white", ec="red", alpha=0.95))
+        labels.caption(f"{len(violations)} INVARIANT FAILURE(S) - see console", (0.5, 0.975),
+                       va="top", fontsize=9, fontweight="bold", color="red",
+                       bbox=dict(boxstyle="round,pad=0.3", fc="white", ec="red", alpha=0.95))
     for violation in violations:
         label = "INVARIANT FAILED" if violation.fatal else "SOURCE CONFLICT"
         print(f"  {label}: {violation}")

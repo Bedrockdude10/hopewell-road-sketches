@@ -1248,6 +1248,7 @@ def test_the_bollard_proposals_show_their_bollards_in_the_plan_view(site, site_m
     import matplotlib.pyplot as plt
     from matplotlib.colors import to_rgba
 
+    from src.render.labels import LabelPlacer
     from src.render.plan_view import BOLLARD_PLAN_COLOR, _draw_props
 
     model = site_models[site]
@@ -1261,7 +1262,7 @@ def test_the_bollard_proposals_show_their_bollards_in_the_plan_view(site, site_m
         props = _draw_props(ax, model, state, offsets,
                              fetch_traffic_control(model.center_wgs84, radius_m=60),
                              fetch_street_furniture(model.center_wgs84, radius_m=130),
-                             crossings, False)
+                             crossings, LabelPlacer(), False)
 
     expected = sum(1 for prop in props if prop["type"] == "bollard")
     assert expected, "the bollard proposal produced no bollards at all"

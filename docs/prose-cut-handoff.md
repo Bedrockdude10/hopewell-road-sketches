@@ -1,5 +1,20 @@
 # Handoff: cut the prose, speed up the loop
 
+**Status: executed, 2026-08-20.** Kept as the record of why the prose contract and the agent
+guidance are shaped the way they are; it is not a live work queue. Measured against the plan:
+
+| | planned | now |
+|---|---|---|
+| Phase 0 (§6) | 0.1-0.6 | **all landed** - `-n auto` in `scripts/test.sh`, `CLAUDE.md` @-importing `.claude/SKILLS.md`, `.claude/skills/verify-change/SKILL.md`, `measure_drawn.py`, `check_prose_only.py` |
+| README | under ~6k words | 6,291 words, and **0** sections titled with a `src/` path (Lane R's queue, §7) |
+| `src/` prose:code | 0.6:1 | **0.81:1**, from 1.13:1 |
+| suite | `-n auto` | 4.4 s here, 333 of 707 skipped with `data/` absent |
+
+So the structural work is done and only the `src/` ratio fell short of its target. That last row
+is the one thing here still worth acting on - but act on it **by the rules in §5, never to the
+number**, which is what §5 says in its own first line. The lane table in §7 is spent: it names an
+agent's uncommitted files and a blocked Lane X that have long since landed.
+
 A plan for several agents to execute in parallel. Measured 2026-08-18; every number came from a
 command in this repo. **One document on purpose** — an earlier draft split the diagnosis from the
 execution and immediately restated 13 of 17 figures across the two halves, which is the defect

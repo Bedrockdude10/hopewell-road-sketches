@@ -203,8 +203,6 @@ output/.cache/
 # 2D plan view is the reviewable artifact this project checks its 3D renders against.
 output/**/phase4_render_*.png
 
-.DS_Store
-.DS_Store
-output/.DS_Store
-output/.DS_Store
+# macOS Finder metadata. One rule, not a path list: a bare `.DS_Store` already matches at
+# every depth, so the `output/.DS_Store` entries this replaces never added anything.
 .DS_Store

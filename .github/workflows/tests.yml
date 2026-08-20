@@ -31,8 +31,10 @@ jobs:
 
       - uses: actions/setup-python@v6
         with:
-          # Matches the local venv. The code uses 3.10+ syntax throughout (X | None, match) and
-          # itertools.pairwise, so this is a floor as well as a preference.
+          # Matches the local venv. The source syntax needs 3.10+ (X | None, match,
+          # itertools.pairwise), but the INSTALL floor is 3.12: numpy 2.5.0 publishes no wheel
+          # below it, so requirements.txt cannot resolve on 3.11 at all. Anything >= 3.12 works
+          # here; scripts/test.sh names the floor locally, where the pip error blames the pin.
           python-version: "3.13"
           cache: pip
           cache-dependency-path: requirements.txt

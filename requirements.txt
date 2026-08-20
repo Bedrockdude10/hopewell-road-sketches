@@ -1,32 +1,36 @@
-
-
-
-
-
-
-#
-#
-#
-#     its linter is missing, which is the whole point (see that file's docstring). ---
-#   python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
-# --- 3D export ---
-# --- Config and I/O ---
-# --- Geometry and geodata: the actual subject ---
-# --- Plotting (the 2D plan view) ---
-# --- Test tooling. Required, not optional: tests/test_lint.py FAILS rather than skips when
-# --- Transitive, pinned so an install reproduces ---
-# against undefined names reported success on every machine that had not installed it by hand.
-# because a second file you have to remember is the same bug this repo has already shipped once:
 # Everything this repo needs, in one file, installed by one command:
-# Note the Blender scripts (scripts/blender/) run inside Blender's OWN interpreter and use none
-# of this - see their module docstrings.
-# ONE FILE ON PURPOSE. The test tooling at the bottom is not split into a requirements-dev.txt,
+#
+#   python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
+#
+# REQUIRES PYTHON >= 3.12 - stricter than the 3.10+ the source syntax needs. numpy 2.5.0
+# publishes no wheel below 3.12, so on 3.11 the command above dies with "Could not find a
+# version that satisfies the requirement numpy==2.5.0" and a list of versions stopping at
+# 2.4.6. That reads like a bad pin rather than a stale interpreter, which is the same
+# confusion conftest.py and scripts/test.sh exist to remove - so test.sh checks the floor
+# and names it.
+#
+# ONE FILE ON PURPOSE. The test tooling is not split into a requirements-dev.txt, because a
+# second file you have to remember is the same bug this repo has already shipped once:
 # pyflakes was what tests/test_lint.py ran and it was in nobody's requirements, so the guard
-# pytest was missing here too, which means the documented install has never actually been able
-# split would buy nothing and cost exactly that.
-# test one: src/site.py imports it, so every phase script does.
-# to run the suite. There is no packaging step and nothing here is deployed anywhere slim, so a
-# Validates every site's config.yaml on load (src/site_schema.py). A RUNTIME dependency, not a
+# against undefined names reported success on every machine that had not installed it by
+# hand. pytest was missing here too, which means the documented install has never actually
+# been able to run the suite. There is no packaging step and nothing here is deployed
+# anywhere slim, so a split would buy nothing and cost exactly that.
+#
+# The test tooling is required, not optional: tests/test_lint.py FAILS rather than skips when
+# its linter is missing, which is the whole point (see that file's docstring). pydantic is
+# the opposite case - a RUNTIME dependency, not a test one: it validates every site's
+# config.yaml on load (src/site_schema.py), and src/site.py imports that, so every phase
+# script depends on it.
+#
+# Note the Blender scripts (scripts/blender/) run inside Blender's OWN interpreter and use
+# none of this - see their module docstrings.
+#
+# Alphabetical and fully pinned. This list used to carry section markers - 3D export,
+# geometry and geodata, plotting, config and I/O, test tooling, transitive - but a sort pass
+# hoisted every comment to the top of the file, so those markers have labelled nothing since
+# the first commit and the groupings they described are not recoverable from git history.
+# Left alphabetical deliberately: one order that a re-sort cannot silently destroy.
 annotated-types==0.8.0
 certifi==2026.6.17
 charset-normalizer==3.4.7

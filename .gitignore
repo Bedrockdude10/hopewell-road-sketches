@@ -208,3 +208,6 @@ output/**/phase4_render_*.png
 output/.DS_Store
 output/.DS_Store
 .DS_Store
+
+#ignore outputs
+output/**

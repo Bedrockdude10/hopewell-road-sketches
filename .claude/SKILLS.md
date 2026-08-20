@@ -49,18 +49,22 @@ data. The reader also cannot tell you which leg they mean from a render, and nei
 those wrong answers were about `w_broad_st_northeast` when the complaint was about
 `w_broad_st_southwest`.
 
-**So: before proposing a cause, print the numbers.** The four that answer most questions:
+**So: before proposing a cause, print the numbers.** All of them are one command, ~2 s:
 
-```python
-# what is actually drawn on this leg-side, stationed in its own frame
-[(p.kind.name, *np.abs(station_offset_many(leg.centerline, coords)[1])[[0, -1]]) for p in paint]
-# where the traced kerb is, at the same stations
-curb_offsets_at_stations(leg, side, stations)      # and curb_station_span(leg, side)
-# what the treatment THINKS it placed
-treatment.section(state).offsets_from_centerline_ft()
-# whether a facility is continuous: distance between the pieces that should meet
-unary_union(a).distance(unary_union(b))
+```bash
+.venv/bin/python scripts/measure_drawn.py <site> --scenario <build_*> --leg <leg> --all
 ```
+
+| what it prints | the question it answers | reads |
+|---|---|---|
+| the paint table | what is drawn on this leg-side, stationed in its own frame | `station_offset_many` |
+| `--section` | what the treatment THINKS it placed, against the room the kerb gives | `section(state).offsets_from_centerline_ft()`, `narrowest_half_width_ft` |
+| `--limiters` | all four things deciding where kerbside paint starts | see the table below |
+| `--gaps` | kerb offset minus outermost drawn offset, station by station | `curb_offsets_at_stations`, `curb_station_span` |
+| `--continuity` | whether a facility is one piece, and how wide the holes are | `unary_union` |
+
+Reach for the flag before the render. Each one exists because a session guessed that answer from
+a picture and got it wrong, and each is cheap enough that there is no reason to guess.
 
 **AND NEVER REBUILD A SECTION'S ARITHMETIC FROM THE CONSTANTS YOU THINK IT USED.** The third query
 above exists because that reconstruction is always wrong here. A two-way section is measured from a
@@ -69,7 +73,9 @@ Broad St and not `TARGET_LANE_WIDTH_FT`; assuming the 11 ft produced a confident
 needs 22.0 ft and the kerb gives 20.32, so it does not fit", and a four-option design decision put
 to Danny on the strength of it. Nothing about it was true.
 
-The tell was in the numbers and it is worth learning as a shape: printing demand against room gave
+`--section` prints that comparison and flags it when it holds, which is the only useful thing to
+do with a check that cannot fail. The tell is worth learning as a shape: printing demand against
+room gave
 **identity on all six corridor legs** — 14.71/14.71, 20.32/20.32, 26.29/26.29. Two figures that
 agree to the last decimal in every case are not a confirmation, **they are one figure**: the
 section is sized to fill the room at the leg's narrowest point, so it fits there by construction and
@@ -80,12 +86,21 @@ where the kerb is "inside the section" is the narrowest point the section was si
 
 A gap profile — kerb offset minus outermost drawn offset, station by station — turns "it looks
 janky" into "bare from station 0 to 63.7, then 1.4 ft widening to 2.6 ft by station 118", which
-names the mechanism on its own. `scripts/measure_drawn.py` is where that belongs; extend it rather
-than writing another throwaway script, and NEVER answer a geometry question by cropping a PNG.
+names the mechanism on its own. That is `--gaps`; extend it rather than writing another throwaway
+script, and NEVER answer a geometry question by cropping a PNG. Note it is **binned**, because
+paint is polygons and not a function of station — the outermost vertex in each bin is what "how
+far out does the paint reach here" can mean — and that an empty bin has to read as *no
+measurement*. Written the obvious way with `np.max(..., initial=np.nan)` the initial value folds
+into the reduction, every bin comes out NaN, every comparison against a threshold comes out
+false, and the profile reports "flush the whole way" having measured nothing. **A quantitative
+check that cannot see anything must say so, not pass.**
 
 **AND WHEN A MARKING DOES NOT REACH, PRINT EVERY LIMITER, NOT THE FIRST ONE.** Four separate
 things decide where a kerbside marking starts, they disagree, and the answer is whichever sits
-furthest out — so measuring one, finding it innocent, and moving on proves nothing:
+furthest out — so measuring one, finding it innocent, and moving on proves nothing. `--limiters`
+prints all four side by side with the binding one named, and a `paint@` column to check it
+against — but narrow it with `--kind` first, because these hold KERBSIDE paint back and
+unfiltered the column reports whichever marking merely happens to start earliest:
 
 | limiter | where it lives |
 |---|---|
@@ -110,7 +125,7 @@ is §0b's lesson in a second disguise: the quantity is local, but it is not the 
 build while the reader is looking at a 2.5× sheet reports a defect fixed that is not:
 
 ```bash
-HOPEWELL_FRAME_SCALE=2.5 .venv/bin/python scripts/measure_drawn.py wbroad_louellen --scenario ...
+.venv/bin/python scripts/measure_drawn.py wbroad_louellen --scenario ... --frame-scale 2.5
 ```
 
 Worse than a measuring mistake, it is a *design* mistake waiting to happen. A rule sized off a

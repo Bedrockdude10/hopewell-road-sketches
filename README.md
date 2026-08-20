@@ -175,7 +175,8 @@ scripts/
   build_all.py             Every site, every scenario, in parallel
   export_all_scenarios.py  Every scenario through export_scenario, into a directory
   diff_exports.py          Diff two such directories key by key - says WHAT changed
-  measure_drawn.py         What was actually DRAWN, stationed against each leg's centreline
+  measure_drawn.py         What was actually DRAWN, stationed against each leg's centreline;
+                           --all adds the section, limiter, gap and continuity reports
   corridor_report.py       The corridor questions, with the coverage of every answer beside them
   corridor_render.py       A straightened strip plan of one corridor, on stacked panels
   convert_road_network.py  Build + verify a spatially-indexed copy of a roadway network file
@@ -256,9 +257,10 @@ Five seconds, and the only check that exists over there. The failure mode is not
 In this order, because each step is cheaper than the next:
 
 1. **Write the test first, and confirm it fails against the pre-change code** (`git stash`, or a worktree — if a worktree, symlink the gitignored `data/` in, or every run crashes in 0.6 s and you will read that as a result).
-2. `scripts/export_all_scenarios.py /tmp/before` → change → `/tmp/after` → `scripts/diff_exports.py`. Thirteen scenes, ~2 s, key by key. This runs `export_scenario`, so it resolves the scene, builds the paint and props and asserts every invariant.
-3. `scripts/test.sh` — includes the lint pass and the golden comparison, so there is no separate linting step. `.venv/bin/ruff check src scripts tests conftest.py` is the sub-second version while editing.
-4. `scripts/build_all.py --render-3d`, then **look at the PNGs** — the only check on the Blender seam.
+2. **`scripts/verify.py`** — steps 3 and 4 below, at once, with one verdict. It exports the working tree and `--base` in parallel, diffs them key by key, runs the suite, and splits the failures into NEW and KNOWN against a baseline in `output/.verify/`. ~55 s for six sites and 707 tests; `--no-tests --site <site>` is ~4 s while editing one junction. The before side runs in a reused worktree with the inputs wired in both ways (see its docstring), so the trap in step 1 is already handled there.
+3. `scripts/export_all_scenarios.py /tmp/before` → change → `/tmp/after` → `scripts/diff_exports.py`. Six sites, ~4 s across `--jobs` workers, key by key. This runs `export_scenario`, so it resolves the scene, builds the paint and props and asserts every invariant. Reach for it directly when you want the two trees kept, or a `--site` subset verify.py is not driving.
+4. `scripts/test.sh` — includes the lint pass and the golden comparison, so there is no separate linting step. `.venv/bin/ruff check src scripts tests conftest.py` is the sub-second version while editing.
+5. `scripts/build_all.py --render-3d`, then **look at the PNGs** — the only check on the Blender seam. Blender costs ~17 s for the first scene in a process and ~5 s for each one after, so this is a minute or two, not the twenty a stale note here once implied.
 
 And the habit under all of it: **measure the geometry you just built.** Print its extent, its area, its distance to the thing it should touch. Every geometry bug in this repo's history was found by measuring and missed by looking.
 

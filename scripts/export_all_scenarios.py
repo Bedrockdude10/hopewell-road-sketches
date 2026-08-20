@@ -1,10 +1,11 @@
 """Export every site's every scenario to JSON, for diffing a refactor against itself.
 
-`scripts/build_all.py --render-3d` writes these files too, but it also spends ~4 minutes of
-Blender per site doing it, which is far too slow to run after each step of a refactor. This
-does only the part that is this project's own code, and it is the right part: export_scenario
-resolves the scene, builds the paint, builds the props and asserts every invariant, so a
-change that moves any marking, any prop or any note shows up here.
+`scripts/build_all.py --render-3d` writes these files too, but it also pays for Blender -
+~17 s for the first scene in a process and ~5 s for each one after it, so ~1-2 minutes for
+every site's every scenario. This does only the part that is this project's own code, and it
+is the right part: export_scenario resolves the scene, builds the paint, builds the props and
+asserts every invariant, so a change that moves any marking, any prop or any note shows up
+here.
 
     python scripts/export_all_scenarios.py /tmp/before
     ... make a change ...
@@ -21,14 +22,18 @@ on, so one bad junction doesn't cost you the comparison for all the others; the 
 is non-zero if anything failed. Note that diff_exports then compares two possibly-partial
 trees - a scenario missing from BOTH sides is a scenario the diff cannot speak for.
 """
+import argparse
 import contextlib
 import io
 import sys
+from concurrent.futures import ProcessPoolExecutor
+from functools import partial
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from scripts.build_all import scenarios_for
+from scripts.jobs import MAX_BUILD_JOBS
 from src.geometry.intersection import load_intersection_model
 from src.geometry.treatments import DesignState
 from src.render.export import BUILDING_CONTEXT_RADIUS_M, export_scenario
@@ -89,18 +94,34 @@ def export_site(site: str, out_dir: Path) -> tuple[list[Path], list[str]]:
 
 
 def main() -> int:
-    if len(sys.argv) != 2:
-        print(__doc__)
-        return 2
-    out_dir = Path(sys.argv[1]).resolve()
+    parser = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument("out_dir", type=Path, help="directory to write geometry_*.json under")
+    parser.add_argument("--site", action="append",
+                        help="limit to this site (repeatable) - a single-site before/after is "
+                             "~1 s, which is the loop while editing one junction")
+    parser.add_argument("--jobs", type=int, default=MAX_BUILD_JOBS,
+                        help=f"parallel worker processes (default {MAX_BUILD_JOBS} - see "
+                             f"scripts/jobs.py, which is a house rule about a 36 GB machine "
+                             f"and not a core count)")
+    args = parser.parse_args()
+    out_dir = args.out_dir.resolve()
+    sites = args.site or list_sites()
+    jobs = max(1, min(args.jobs, len(sites)))
+
     total = 0
     failures: list[str] = []
-    for site in list_sites():
-        written, site_failures = export_site(site, out_dir)
-        total += len(written)
-        failures += site_failures
-        status = f"  {len(site_failures)} FAILED" if site_failures else ""
-        print(f"  {site:22s} {len(written)} export(s){status}")
+    # Sites share nothing but a read-only cache, so they export in parallel processes, the same
+    # unit scripts/build_all.py parallelises. Threads would not help: the cost is this
+    # project's own geometry and it holds the GIL. pool.map keeps the sites in order, so the
+    # printed report does not shuffle from run to run.
+    with ProcessPoolExecutor(max_workers=jobs) as pool:
+        for site, (written, site_failures) in zip(
+                sites, pool.map(partial(export_site, out_dir=out_dir), sites)):
+            total += len(written)
+            failures += site_failures
+            status = f"  {len(site_failures)} FAILED" if site_failures else ""
+            print(f"  {site:22s} {len(written)} export(s){status}")
     print(f"{total} export(s) under {out_dir}")
     if failures:
         print(f"\n{len(failures)} failure(s):")

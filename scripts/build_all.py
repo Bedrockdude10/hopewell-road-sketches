@@ -3,8 +3,9 @@
 Rebuilding by hand meant ~30 separate `python scripts/phaseN_*.py` runs, each waited on in
 turn. Measured, almost none of that time is this project's geometry; it's matplotlib building
 and rasterizing the plan views, and Blender. Both parallelise cleanly, because sites share
-nothing but a read-only cache, so this runs `--jobs` of them at once. Four sites, 11
-scenarios: ~9 s for the 2D at --jobs 4, ~110 s with --render-3d (Blender dominates).
+nothing but a read-only cache, so this runs `--jobs` of them at once - defaulting to the
+house cap in scripts/jobs.py, because this machine's other job costs 11 GB. Blender dominates
+a `--render-3d` run: ~17 s for the first scene in a process and ~5 s for each one after.
 
     python scripts/build_all.py                     # 2D for every site and scenario
     python scripts/build_all.py --render-3d         # ...and the Blender renders too
@@ -44,6 +45,7 @@ import matplotlib
 matplotlib.use("Agg")   # no GUI backend: this is a batch build
 import matplotlib.pyplot as plt
 
+from scripts.jobs import MAX_BUILD_JOBS
 from src.checks import SceneInvariantError
 from src.geometry.intersection import load_intersection_model
 from src.geometry.treatments import DesignState
@@ -235,8 +237,9 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--site", action="append", help="limit to this site (repeatable)")
     parser.add_argument("--render-3d", action="store_true", help="also run the Blender renders")
-    parser.add_argument("--jobs", type=int, default=4,
-                        help="parallel worker processes for the 2D build (default 4)")
+    parser.add_argument("--jobs", type=int, default=MAX_BUILD_JOBS,
+                        help=f"parallel worker processes for the 2D build (default "
+                             f"{MAX_BUILD_JOBS} - see scripts/jobs.py)")
     parser.add_argument("--render-jobs", type=int, default=None,
                         help="parallel Blender processes (default: derived from RAM, ~11 GB each)")
     parser.add_argument("--dpi", type=int, default=PLOT_DPI,

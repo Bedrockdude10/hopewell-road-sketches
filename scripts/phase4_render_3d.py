@@ -24,6 +24,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+from scripts.jobs import job_limit
 from src.render.frame import FRAME_SCALE_ENV
 from src.render.export import BUILDING_CONTEXT_RADIUS_M, export_scenario
 from src.geometry.intersection import load_intersection_model
@@ -54,9 +55,6 @@ def find_blender() -> str:
 # project's own output: ~11 GB, dominated by the 4k near-zone textures and the ~80-100
 # building meshes. Used to decide how many can run at once - see blender_job_limit.
 BLENDER_PEAK_RAM_GB = 11
-# Left for the OS and whatever else is open. Without it a "safe" job count still pushes the
-# machine into swap, which is slower than rendering serially.
-RAM_HEADROOM_GB = 8
 
 
 def blender_job_limit(requested: int | None = None) -> int:
@@ -66,14 +64,11 @@ def blender_job_limit(requested: int | None = None) -> int:
     instances need 44 GB; on a 36 GB machine that exhausted RAM and all 7 GB of swap, and
     the OOM killer took every one of them - surfacing as `zsh: terminated` and exit 137,
     which look nothing like "out of memory" unless you already suspect it.
+
+    The arithmetic lives in scripts/jobs.py, which every other fan-out knob shares; this
+    keeps only the fact that is about Blender.
     """
-    if requested:
-        return max(1, requested)
-    try:
-        total_gb = os.sysconf("SC_PAGE_SIZE") * os.sysconf("SC_PHYS_PAGES") / 1024 ** 3
-    except (ValueError, OSError, AttributeError):
-        return 1  # can't tell: the safe answer is one at a time
-    return max(1, int((total_gb - RAM_HEADROOM_GB) // BLENDER_PEAK_RAM_GB))
+    return job_limit(BLENDER_PEAK_RAM_GB, requested)
 
 
 # Name of the environment variable blender_scene.py reads its resolution multiplier from.

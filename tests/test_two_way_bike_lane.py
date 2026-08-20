@@ -410,3 +410,109 @@ def test_a_two_way_lane_stays_against_the_kerb_that_protects_it(site_models):
             far.append(f"{where}: typically {typical:.2f} ft off the kerb")
     assert not far, ("a two-way lane is drawn away from the kerb that is supposed to protect it:\n"
                      "  " + "\n  ".join(far))
+
+
+# --------------------------------------------------------------------------
+# The crossbike, where a line's WIDTH is the whole question
+# --------------------------------------------------------------------------
+
+def a_crossbike_context():
+    """A PaintContext holding one facility's green on each side of a junction box.
+
+    Two legs meeting at the origin and running opposite ways, with a two-way lane's green on the
+    SAME PHYSICAL KERB of each - the north one here, which is "left" of the leg running east and
+    "right" of the leg running west, because a leg's sides are named against its own outward
+    direction. Pairing two legs' "left" would put the two lane ends on opposite kerbs and draw
+    the extension diagonally across the road, which is the bow tie its own comment warns about.
+
+    Synthetic, so this runs without data/: the property under test is about offsets, not about
+    any street. It is all ExtendBikeLaneThroughJunction needs, because it reads the lane's ends
+    off the paint rather than rebuilding them - see lane_end_face.
+    """
+    from shapely.geometry import LineString, Polygon
+
+    from src.geometry.markings import BIKE_LANE_SURFACE
+    from src.geometry.model import Leg
+    from src.geometry.paint import PaintContext, PaintPiece
+    from src.geometry.treatments import DesignState
+
+    INNER_FT, OUTER_FT = 6.0, 18.0          # the green's two faces, 12 ft of lane between them
+    legs = {"east": Leg(name="east", centerline=LineString([(0, 0), (130, 0)]),
+                        curb_to_curb_ft=44.0),
+            "west": Leg(name="west", centerline=LineString([(0, 0), (-130, 0)]),
+                        curb_to_curb_ft=44.0)}
+    kerbs = (("east", "left", 30.0, 120.0), ("west", "right", -40.0, -120.0))
+    ctx = PaintContext(state=DesignState(legs=legs, corner_fillets={}),
+                       crosswalk_offsets={}, center_ft=None)
+    for leg_name, side, near_x, far_x in kerbs:
+        ctx.pieces.append(PaintPiece(BIKE_LANE_SURFACE, Polygon(
+            [(near_x, INNER_FT), (far_x, INNER_FT), (far_x, OUTER_FT), (near_x, OUTER_FT)]),
+            leg_name, side))
+    return ctx, INNER_FT, OUTER_FT
+
+
+def test_the_crossbike_stripes_bound_the_green_rather_than_lying_on_it():
+    """The bug this test was written for: the extension's two dotted edge lines were ruled along
+    the lane end faces themselves, so half of each 0.82 ft mark was painted on the green and the
+    lines stepped half a stripe in from the lane's own edge lines they continue.
+
+    Both renderers draw a line from its axis, and only one of them gives it width - the plan view
+    strokes it at a schematic 1.6 points - so the 2D looked right at every site while the render
+    laid 38.4 sq ft of white over green at W Broad & Louellen and 13.4 at Broad & Greenwood.
+    """
+    from shapely.ops import unary_union
+
+    from src.geometry.markings import BIKE_LANE_DOTTED_EXTENSION, BIKE_LANE_SURFACE
+    from src.geometry.paint import LANE_EDGE_LINE_WIDTH_FT
+    from src.geometry.targets import AcrossTheJunction
+    from src.geometry.treatments import ExtendBikeLaneThroughJunction
+
+    ctx, inner_ft, outer_ft = a_crossbike_context()
+    green = unary_union([p.geometry for p in ctx.pieces if p.kind is BIKE_LANE_SURFACE])
+    ExtendBikeLaneThroughJunction(
+        AcrossTheJunction("east", "left", "west", "right")).paint(ctx)
+
+    marks = [p for p in ctx.pieces if p.kind is BIKE_LANE_DOTTED_EXTENSION]
+    assert marks, "no crossbike edge lines were laid at all"
+    half = LANE_EDGE_LINE_WIDTH_FT / 2
+    # THE STRIPE AS PAINTED, which is the only frame the question exists in: overlap area over the
+    # mark's own length, so the number reads as a depth across the stripe.
+    on_the_green = [piece.geometry.buffer(half, cap_style="flat").intersection(green).area
+                    / piece.geometry.length for piece in marks]
+    assert max(on_the_green) < 0.01, (
+        f"{sum(d > 0.01 for d in on_the_green)} of {len(marks)} crossbike marks are painted over "
+        f"the lane's own green, the deepest by {max(on_the_green):.2f} ft of its "
+        f"{LANE_EDGE_LINE_WIDTH_FT:.2f} ft width")
+    # And they are outside it because they sit on the stripe axes: the band the marks occupy is
+    # one whole stripe wider than the band the green does, half of it at each face.
+    lo = min(y for piece in marks for _x, y in piece.geometry.coords)
+    hi = max(y for piece in marks for _x, y in piece.geometry.coords)
+    assert lo == pytest.approx(inner_ft - half, abs=0.05)
+    assert hi == pytest.approx(outer_ft + half, abs=0.05)
+
+
+def test_a_stripe_ruled_along_the_green_is_reported():
+    """StripesDoNotLieOnTheColourTheyBound has to FAIL on the geometry that shipped, or it pins
+    nothing. Same construction as the crossbike's, with the stripe on the face instead of half a
+    stripe outside it."""
+    from shapely.geometry import LineString
+
+    from src.checks import SceneContext, StripesDoNotLieOnTheColourTheyBound
+    from src.geometry.markings import BIKE_LANE_DOTTED_EXTENSION
+    from src.geometry.paint import LANE_EDGE_LINE_WIDTH_FT, PaintPiece
+
+    ctx, inner_ft, _outer_ft = a_crossbike_context()
+    on_the_face = PaintPiece(BIKE_LANE_DOTTED_EXTENSION,
+                             LineString([(40, inner_ft), (60, inner_ft)]), None, None)
+    violations = StripesDoNotLieOnTheColourTheyBound().run(
+        SceneContext(state=ctx.state, paint=[*ctx.pieces, on_the_face]))
+    assert len(violations) == 1
+    assert violations[0].check == "stripe_painted_on_the_bike_lane_surface"
+    assert f"{LANE_EDGE_LINE_WIDTH_FT / 2:.2f} ft of" in violations[0].detail
+
+    clear = PaintPiece(BIKE_LANE_DOTTED_EXTENSION,
+                       LineString([(40, inner_ft - LANE_EDGE_LINE_WIDTH_FT / 2),
+                                   (60, inner_ft - LANE_EDGE_LINE_WIDTH_FT / 2)]), None, None)
+    assert not StripesDoNotLieOnTheColourTheyBound().run(
+        SceneContext(state=ctx.state, paint=[*ctx.pieces, clear])), (
+        "a stripe abutting the green is the correct geometry, not a violation")

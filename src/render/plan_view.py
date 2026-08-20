@@ -198,11 +198,17 @@ PAINT_STYLE = require_every_kind({
     # different colour across a driveway, which it is not.
     markings.BIKE_LANE_DOTTED_EXTENSION: dict(color="seagreen", linewidth=1.6, zorder=3),
     markings.BIKE_BUFFER_FILL:    dict(color="mediumseagreen", alpha=0.35, hatch="\\\\", zorder=3),
-    # A two-way lane's centre stripe. Yellow and dashed, the same as the roadway's own
-    # centreline and for the same reason - it divides opposing traffic. Drawn above the green
-    # surface it sits on (zorder 4, over the surface's 2) or the fill hides it.
-    markings.BIKE_CONTRAFLOW_DIVIDER: dict(color="goldenrod", linewidth=1.3, linestyle="--",
-                                            zorder=4),
+    # A two-way lane's centre stripe. Yellow, the same as the roadway's own centreline and for
+    # the same reason - it divides opposing traffic. Drawn above the green surface it sits on
+    # (zorder 4, over the surface's 2) or the fill hides it.
+    #
+    # SOLID, like every other marking here and like _draw_centerlines' own stripes: this arrives
+    # as a row of 3 ft dashes cut in the GEOMETRY (bikeways.CONTRAFLOW_DASH_FT), so a linestyle
+    # on top of it is a second, finer cadence inside the first - the render extrudes what the
+    # geometry says and matplotlib would draw something else. At this sheet's ~0.36 pt per foot a
+    # 3 ft dash is 1.1 pt against the pattern's 4.8 pt "on", so it never showed; it would the
+    # moment anything drew these closer up.
+    markings.BIKE_CONTRAFLOW_DIVIDER: dict(color="goldenrod", linewidth=1.3, zorder=4),
     # The BIKE LANE symbol, white on the green like the real marking, and above the surface it
     # sits on for the same reason the contraflow stripe is.
     markings.BIKE_LANE_SYMBOL:    dict(color="white", alpha=0.95, zorder=4),

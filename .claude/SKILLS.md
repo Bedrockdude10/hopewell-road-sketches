@@ -135,6 +135,36 @@ min/max/any/all over a leg all fail it.
 Note also that `tests/conftest.py` builds `site_models` at `WIDE_FRAME_SCALE = 2.2`, so the fixture
 is *already* not 1× — a test can agree with the goldens and disagree with every render.
 
+### 0c. A LINE HAS NO WIDTH IN THE PLAN VIEW, so the render is the only view its width is in
+
+Both renderers draw a line from its AXIS. The plan view strokes it at a schematic point-width
+(1.6 pt, ~4 ft of ground on a 630 ft sheet); the render extrudes it at `LANE_EDGE_LINE_WIDTH_FT`,
+0.82 ft, which is what a striper lays. So an axis put half a stripe wrong looks *identical* in 2D
+and is plainly wrong in 3D, and no invariant sees it either: `MarkingsDoNotCollide` compares
+markings that COVER AREA, and a line covers none until something gives it width.
+
+That is where "the 3D doesn't agree with the 2D" came from on a two-way lane. The crossbike's
+dotted edge lines were ruled along the lane end faces `lane_end_face` reports - the green's own
+edges - instead of half a stripe outside them, so half of every mark was painted on the green
+(38.4 sq ft at W Broad & Louellen, 13.4 at Broad & Greenwood, 0 at E Broad, where the kerb runs
+through and there is no crossbike) and the extension's lines stepped 0.41 ft in from the lane's
+edge lines they continue. **Every `*_line_ft` offset on `BikeLane` is the stripe's CENTRE, half a
+stripe outside the face it marks**; anything that lays a stripe from a polygon's boundary has to
+do the same, and `checks.StripesDoNotLieOnTheColourTheyBound` now fires when it does not.
+
+The tell is arithmetic identity again (§0a): the overlap measured **exactly half the stripe
+width** on every one of 46 marks. And the way to find it without Blender is to replicate the
+render's own drawing rules over `output/*/geometry_*.json` - `polyline_rings` at the channel's
+declared width - and intersect the results. Two markings that abut in the design and overlap
+there are a 2D/3D disagreement, measured, with no renderer needed.
+
+**The mirror image of the same seam: a number in the JSON is in a FRAME.** The stop bar's lateral
+offset was stretched by 1/cos(skew) by the plan view and not by the export, so the exported figure
+sat 2.04 ft from the drawn one on louellen_st_west's -43.19 deg crossing and the rendered bar
+crossed that far into the opposing lanes. Both sides carried a comment asserting the other one's
+behaviour, and both were wrong. A quantity crossing that boundary is resolved once, on the side
+that can be tested, and every caller passes the frame it needs to do that.
+
 ---
 
 ## 1. Before you write a number, look for it

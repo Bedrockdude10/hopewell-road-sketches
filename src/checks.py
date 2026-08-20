@@ -70,6 +70,15 @@ COLLINEAR_PAINT_TOLERANCE_FT = 0.1
 # or a crossing - a stall divider meets the lane edge at right angles by design.
 MIN_COLLINEAR_OVERLAP_FT = 1.0
 
+# How far a stripe's BODY may lie over the coloured surface beside it. A line is stored as its
+# axis and drawn with a real width at both ends of the pipeline, so this is measured as a depth -
+# overlap area over the line's own length - and compared against float noise, not against a
+# fraction of the stripe. A sampled polyline butt-joints at every vertex against a polygon
+# sampled on the same grid, which is what the tenth of an inch is for: the measured noise on the
+# per-leg lanes is 0.0009 ft over 200 ft, and a stripe ruled along the face instead of half a
+# stripe outside it reads 0.41 ft.
+STRIPE_ON_ITS_SURFACE_TOLERANCE_FT = 0.01
+
 # A post is one object, and the paint dot and the prop are that one object placed once - the
 # prop is read off the paint. This absorbs float noise, nothing more.
 POST_PROP_TOLERANCE_FT = 0.1
@@ -709,6 +718,65 @@ class TravelLanesHoldTheTarget(SceneCheck):
                         f"is parking or hatching, never lane; call "
                         f"treatments.hold_travel_lane_at_target for this kerb",
                         tuple(leg.centerline.interpolate(leg.centerline.length / 2).coords[0])))
+        return violations
+
+
+class StripesDoNotLieOnTheColourTheyBound(SceneCheck):
+    """A bike lane's edge stripe bounds the green; it is not painted on top of it.
+
+    THE ONE PROPERTY ONLY THE 3D RENDER CAN SHOW, which is why it needs a check of its own. Both
+    views draw a line from its AXIS: the plan view strokes it at a schematic point-width, the
+    render extrudes it at LANE_EDGE_LINE_WIDTH_FT. So an axis ruled along the green's face rather
+    than half a stripe outside it looks correct in plan and lays half the stripe on the green in
+    the render - and MarkingsDoNotCollide cannot see it, because that compares markings that
+    COVER AREA and a line covers none until something gives it width.
+
+    Measured, before this existed: the crossbike's dotted edge lines were ruled along the lane end
+    faces lane_end_face reports, so 38.4 sq ft of ground at W Broad & Louellen and 13.4 at Broad &
+    Greenwood was painted white over green, and the extension's lines stepped 0.41 ft in from the
+    lane's own edge lines they continue.
+
+    Against EVERY green in the scene rather than per kerb, because the pieces that broke it have
+    no leg at all - a marking laid in the junction box spans two frames and sits in neither (see
+    PaintContext.add_across_the_junction). Distant green cannot overlap a distant stripe, so the
+    union costs nothing and a leg-keyed version would have skipped exactly the failing case.
+    """
+
+    def run(self, scene: SceneContext) -> list[Violation]:
+        from shapely.ops import unary_union
+
+        from src.geometry.markings import (BIKE_LANE_DOTTED_EXTENSION, BIKE_LANE_EDGE_LINE,
+                                           BIKE_LANE_SURFACE)
+        from src.geometry.paint import LANE_EDGE_LINE_WIDTH_FT
+
+        green = unary_union([p.geometry for p in scene.paint
+                             if p.kind is BIKE_LANE_SURFACE
+                             and p.geometry is not None and not p.geometry.is_empty])
+        if green.is_empty:
+            return []
+        violations = []
+        for piece in scene.paint:
+            if piece.kind not in (BIKE_LANE_EDGE_LINE, BIKE_LANE_DOTTED_EXTENSION):
+                continue
+            axis = piece.geometry
+            if axis is None or axis.is_empty or not axis.length:
+                continue
+            # The stripe as it is PAINTED: its axis given the width both renderers give it, with
+            # flat ends, so the depth below is the stripe's own overhang and not a cap's.
+            body = axis.buffer(LANE_EDGE_LINE_WIDTH_FT / 2, cap_style="flat")
+            depth_ft = body.intersection(green).area / axis.length
+            if depth_ft <= STRIPE_ON_ITS_SURFACE_TOLERANCE_FT:
+                continue
+            where = f"{piece.leg} {piece.side}" if piece.leg else "in the junction box"
+            violations.append(Violation(
+                "stripe_painted_on_the_bike_lane_surface",
+                f"{where}: a {piece.kind} runs {depth_ft:.2f} ft of its "
+                f"{LANE_EDGE_LINE_WIDTH_FT:.2f} ft width over the lane's own green. A stripe's "
+                f"axis sits half a stripe OUTSIDE the face it marks (the convention every "
+                f"BikeLane *_line_ft offset uses), so the green stops where the white starts; "
+                f"ruled along the face itself it looks right in plan and is painted twice in the "
+                f"render",
+                tuple(axis.interpolate(axis.length / 2).coords[0])))
         return violations
 
 

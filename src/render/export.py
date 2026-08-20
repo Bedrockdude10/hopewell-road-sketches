@@ -91,18 +91,23 @@ def _marking_frame_m(prefix: str, leg, station_ft, center_ft) -> dict:
             f"{prefix}_axis": [ux, uy]}
 
 
-def _stop_bar_span_m(state: DesignState, leg_name: str, has_bar: bool) -> dict:
+def _stop_bar_span_m(state: DesignState, leg_name: str, has_bar: bool,
+                      skew_deg: float = 0.0) -> dict:
     """The stop bar's resolved span and lateral offset, in metres, or {} for a leg with none.
 
     A dict rather than two values so an absent bar leaves the keys out entirely and
     blender_crosswalks.add_stop_bar falls back to its own arithmetic, the same way the
     crossing frame does.
+
+    `skew_deg` is the crossing's own skew, and it is not optional detail: the offset is measured
+    in the frame the bar is laid in, and omitting it wrote a figure 2.04 ft from the plan view's
+    on louellen_st_west - see stop_bar_band_geometry_ft.
     """
     if not has_bar:
         return {}
     span_ft, lateral_ft = stop_bar_band_geometry_ft(
         stop_bar_width_ft(state, leg_name), entering_lane_width_ft(state, leg_name) is None,
-        inner_ft=divider_shift_toward_ft(state, leg_name, Side.LEFT))
+        inner_ft=divider_shift_toward_ft(state, leg_name, Side.LEFT), skew_deg=skew_deg)
     return {"stop_bar_span_m": span_ft * FT_TO_M,
             "stop_bar_lateral_offset_m": lateral_ft * FT_TO_M}
 
@@ -395,11 +400,14 @@ def export_scenario(model: IntersectionModel, state: DesignState, name: str, out
                 "stop_bar_width_m": stop_bar_width_ft(state, leg_name) * FT_TO_M,
                 # ...and the resolved span and lateral offset that width produces, so
                 # blender_crosswalks.add_stop_bar draws the bar this module measured rather than
-                # repeating its arithmetic - two copies diverged twice over, on where the bar
-                # starts across the road and on whether the skew's span factor applies to the
-                # lateral offset as well as the span (it does not). See
-                # src/render/crosswalks.py:stop_bar_band_geometry_ft.
-                **_stop_bar_span_m(state, leg_name, leg_name in stop_bar_offsets),
+                # repeating its arithmetic - two copies diverged three times over: on where the
+                # bar starts across the road, on whether the skew's span factor applies to the
+                # lateral offset as well as the span, and on which side of the boundary that
+                # answer is given. It is given ONCE, in
+                # src/render/crosswalks.py:stop_bar_band_geometry_ft, which is why the skew is
+                # handed to it here as well as in the plan view's stop_bar_bands_ft.
+                **_stop_bar_span_m(state, leg_name, leg_name in stop_bar_offsets,
+                                    skew_deg=crosswalk_skews.get(leg_name, 0.0)),
                 # A SetCenterlineStyle treatment if the design has one, else the real per-leg
                 # fact from config.yaml (street-view confirmed) or OSM's overtaking=no - see
                 # src/geometry/treatments/state.py:DesignState.centerline_style.

@@ -484,6 +484,7 @@ What this repo now draws, and where each answer comes from:
 | yellow contraflow centre stripe | **carries through unbroken** | same | NACTO dotted yellow centreline; §9E.06(15) |
 | green surface | breaks and resumes as the same dashes | same | our choice — **Modelled**; colour is not specified |
 | green surface, across the JUNCTION'S OWN box | n/a — a driveway has no box | dotted marks ruled between the two lane ends | §9E.03(07) Standard; §9E.06(15) Guidance; NACTO crossbike |
+| edge lines and yellow stripe, across that box | n/a — a driveway has no box | the same dotted marks, on the stripe axes and the lane centre | §9E.03(07); §9E.06(15); NACTO crossbike |
 
 The last row is the one added on 2026-08-18, and it is not a cell in `AT_AN_OPENING` like the
 others — see "The lane extension ACROSS the junction" below for why it could not be.
@@ -539,11 +540,15 @@ mouth means — and a crossing is drawn straight across the ground it crosses. L
 legs are 170.9° apart, so the chord runs about 3 ft off where a curve through the node would, well
 inside the lane's own width.
 
-> **Still missing: the rest of the crossbike.** NACTO carries the lane's dotted edge lines and its
-> dotted yellow centreline through the box alongside the green; only the green is drawn. Both are
-> the same construction against a different pair of offsets — `ExtendBikeLaneThroughJunction.paint`
-> already has the two end cross-sections in hand. Recorded here rather than left to be inferred
-> from a render that now looks continuous.
+**The whole crossbike is drawn**, not only the green: NACTO carries the lane's dotted edge lines
+and its dotted yellow centreline through the box alongside it, and both are the same construction
+against a different pair of offsets. The edge lines go on the **stripe axes** — half a stripe
+outside each of the green's two faces, the convention every `BikeLane` `*_line_ft` offset uses —
+and the yellow down the middle of them. Ruled along the faces themselves instead, half of each
+0.82 ft mark is painted *on* the green: 38.4 sq ft of doubly-painted ground at W Broad & Louellen
+and 13.4 at Broad & Greenwood, invisible in a plan view that strokes a line at a schematic
+point-width and plain in a render that gives it its real width. `checks.py`'s
+`StripesDoNotLieOnTheColourTheyBound` is what holds it now.
 
 ### NJDOT says this facility is unacceptable — **Verified 2026-08-14**
 

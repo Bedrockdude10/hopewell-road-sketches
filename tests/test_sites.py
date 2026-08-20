@@ -341,6 +341,35 @@ def test_a_derived_stop_bar_is_still_clamped_out_of_the_corner():
     assert resolved["east"] >= 3.0
 
 
+def test_the_stop_bar_offset_is_given_in_the_frame_the_bar_is_laid_in():
+    """One number for both views, and it has to be the ROTATED one.
+
+    Every builder that lays this bar grows the span by 1/cos(skew) so a rotated bar still reaches
+    the lane edge, and none of them grows the offset - so the bar's near end is
+    `offset - span/(2 cos)`, which is the line it rests against only if the offset took the same
+    stretch. The plan view applied that stretch itself and the export did not, which put the
+    exported offset 2.04 ft from the drawn one on louellen_st_west's -43.19 deg crossing and the
+    rendered bar that far across the opposing lanes. Now the stretch is in the one function both
+    of them read.
+    """
+    import math
+
+    from src.render.crosswalks import stop_bar_band_geometry_ft
+
+    for skew_deg in (0.0, -43.19, 6.96):
+        span_ft, lateral_ft = stop_bar_band_geometry_ft(40.0, edge_is_kerb=True, skew_deg=skew_deg)
+        cos_s = max(math.cos(math.radians(abs(skew_deg))), 0.2)
+        near_end_ft = lateral_ft - span_ft / (2 * cos_s)
+        assert near_end_ft == pytest.approx(0.0, abs=0.001), (
+            f"at {skew_deg} deg the bar begins {near_end_ft:.2f} ft off the centreline it is "
+            f"supposed to meet")
+    # And the shifted case a two-way bike lane creates: the near end is the divider, not zero.
+    span_ft, lateral_ft = stop_bar_band_geometry_ft(40.0, edge_is_kerb=True, inner_ft=4.61,
+                                                    skew_deg=-43.19)
+    cos_s = math.cos(math.radians(43.19))
+    assert lateral_ft - span_ft / (2 * cos_s) == pytest.approx(4.61 / cos_s, abs=0.001)
+
+
 def test_the_centerline_stops_at_the_stop_bar():
     """Paint terminates at the line drivers stop on - it doesn't run into the junction.
 

@@ -70,7 +70,8 @@ STOP_BAR_PLAN_DEPTH_FT = 1.5
 
 
 def stop_bar_band_geometry_ft(width_ft: float, edge_is_kerb: bool = True,
-                               inner_ft: float = 0.0) -> tuple[float, float]:
+                               inner_ft: float = 0.0,
+                               skew_deg: float = 0.0) -> tuple[float, float]:
     """(span_ft, lateral_offset_ft) for a stop bar on a roadway `width_ft` wide.
 
     The bar spans the entering half, from the road centerline out to the edge of the lane the
@@ -93,7 +94,16 @@ def stop_bar_band_geometry_ft(width_ft: float, edge_is_kerb: bool = True,
     # treatments.divider_shift_toward_ft). Starting at the alignment regardless paints the stop
     # line across the opposing lanes.
     span_ft = max(outer_ft - inner_ft, clearance_ft)
-    return span_ft, inner_ft + span_ft / 2
+    # AND THE OFFSET IS IN THE ROTATED FRAME, because both of the bar's ends are. Every builder
+    # that lays this bar - crosswalk_band_ft here, blender_crosswalks.add_stop_bar there - grows
+    # the SPAN by 1/cos(skew) so a rotated bar still reaches the lane edge, and neither grows the
+    # offset. So the near end lands at `offset - span/(2 cos)`, which is only `inner_ft` if the
+    # offset took the same stretch: unstretched it sits (span/2)(1 - 1/cos) short of the line the
+    # bar rests against, and on louellen_st_west's -43.19 deg crossing that is 2.04 ft of stop bar
+    # painted across the opposing lanes. Returned stretched, once, rather than by each caller -
+    # the plan view stretched it and the export did not, which is the whole disagreement.
+    stretch = 1.0 / max(math.cos(math.radians(abs(skew_deg))), 0.2)
+    return span_ft, (inner_ft + span_ft / 2) * stretch
 
 
 def travel_lane_edge_ft(state: DesignState, leg_name: str, side) -> float | None:
@@ -853,21 +863,15 @@ def stop_bar_bands_ft(state, stop_bar_offsets: dict, skews: dict) -> dict:
         leg = state.legs.get(name)
         if leg is None:
             continue
+        # The offset comes back in the SKEWED frame the band is laid in - see
+        # stop_bar_band_geometry_ft, which is also where the export reads it, so the two views
+        # cannot differ about where the bar begins.
         span_ft, lateral_ft = stop_bar_band_geometry_ft(
             stop_bar_width_ft(state, name), entering_lane_width_ft(state, name) is None,
-            inner_ft=divider_shift_toward_ft(state, name, Side.LEFT))
-        # The band runs from lateral_offset - half to lateral_offset + half along the SKEWED
-        # across-axis, and crosswalk_band_ft already stretches the half-span by 1/cos(skew) so
-        # a rotated bar still reaches the lane edge. It does not stretch the offset, so the two
-        # stop agreeing the moment the skew is non-zero: the near end lands at
-        # lateral_offset - span/(2 cos) instead of on the centerline. At zero skew they are
-        # equal and it never showed. Honouring Louellen's -44 deg crossing put the bar 2.1 ft
-        # off the centerline - the exact gap-with-nothing-behind-it that
-        # stop_bar_band_geometry_ft exists to prevent. Both ends live in the same rotated
-        # frame, so the offset takes the same stretch the span already got.
-        stretch = 1.0 / max(math.cos(math.radians(abs(skews.get(name, 0.0)))), 0.2)
+            inner_ft=divider_shift_toward_ft(state, name, Side.LEFT),
+            skew_deg=skews.get(name, 0.0))
         band = crosswalk_band_ft(leg, offset_ft, STOP_BAR_PLAN_DEPTH_FT, skews.get(name, 0.0),
-                                  span_ft=span_ft, lateral_offset_ft=lateral_ft * stretch)
+                                  span_ft=span_ft, lateral_offset_ft=lateral_ft)
         bands[name] = _trim_to_the_entering_side(
             leg, band, divider_shift_toward_ft(state, name, Side.LEFT))
     return bands

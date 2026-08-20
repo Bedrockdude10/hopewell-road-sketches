@@ -1350,10 +1350,10 @@ class ExtendBikeLaneThroughJunction(Treatment):
     own 12 ft - and the alternative, a marking that curves through a junction because the street
     either side of it does, is exactly the wobble a striper does not paint.
 
-    GREEN ONLY, for now. NACTO's crossbike also carries the lane's dotted edge lines and its
-    dotted yellow centreline through the box, and both are the same construction as this one
-    against a different pair of offsets. They are not drawn yet, and STANDARDS.md records that
-    rather than leaving it to be inferred from a render that already looks continuous.
+    NOT GREEN ONLY. NACTO's crossbike also carries the lane's dotted edge lines and its dotted
+    yellow centreline through the box, and both are this same construction against a different
+    pair of offsets: the two edge lines half a stripe outside the green's faces, the yellow down
+    the middle of them.
     """
     paint_group: ClassVar[int] = 40
     target: AcrossTheJunction
@@ -1400,7 +1400,8 @@ class ExtendBikeLaneThroughJunction(Treatment):
         from src.geometry.model import point_at
         from src.geometry.paint import _dash_spans
 
-        ends = []
+        line_ft = _lane_line_ft()
+        ends, stripes = [], []
         for leg_name, side in self.target.ends:
             face = lane_end_face(ctx, leg_name, side)
             if face is None:
@@ -1409,6 +1410,17 @@ class ExtendBikeLaneThroughJunction(Treatment):
             centerline = ctx.state.legs[leg_name].centerline
             ends.append((point_at(centerline, station_ft, inner_ft),
                           point_at(centerline, station_ft, outer_ft)))
+            # THE STRIPE'S CENTRE IS HALF A STRIPE OUTSIDE THE FACE IT MARKS, which is the
+            # convention every *_line_ft offset on BikeLane uses and the reason the green stops
+            # where the white starts instead of running under it. Ruled along the green's own
+            # faces instead, half of each 0.82 ft mark was painted ON the green and the crossbike's
+            # dotted lines stepped 0.41 ft in from the lane's edge lines they continue: 38.4 sq ft
+            # of doubly-painted ground at W Broad & Louellen and 13.4 at Broad & Greenwood. A plan
+            # view draws a line at a schematic point-width so neither showed there; the render
+            # gives paint its real width, which is where it did.
+            outward_ft = float(np.copysign(line_ft / 2, outer_ft))
+            stripes.append((point_at(centerline, station_ft, inner_ft - outward_ft),
+                             point_at(centerline, station_ft, outer_ft + outward_ft)))
         (a_inner, a_outer), (b_inner, b_outer) = ends
         # INNER TO INNER. Both ends are the same physical kerb seen from two approaches, so the
         # edge against the kerb on one leg is the edge against the kerb on the other; pairing
@@ -1416,10 +1428,11 @@ class ExtendBikeLaneThroughJunction(Treatment):
         length_ft = float(np.hypot(a_inner[0] - b_inner[0], a_inner[1] - b_inner[1]))
         if length_ft < MIN_EXTENSION_GAP_FT:
             return
-        def across(fraction: float):
+        def between(pair, fraction: float):
+            (a_in, a_out), (b_in, b_out) = pair
             def lerp(p, q):
                 return (p[0] + (q[0] - p[0]) * fraction, p[1] + (q[1] - p[1]) * fraction)
-            return lerp(a_inner, b_inner), lerp(a_outer, b_outer)
+            return lerp(a_in, b_in), lerp(a_out, b_out)
         # The lane's own green, so a mark meeting the end face is trimmed to butt against it
         # rather than lie over it. The face is where the paint stops, and where the paint stops is
         # a diagonal wherever a skewed crossing cut it - so the two touch along a slanted edge
@@ -1434,8 +1447,8 @@ class ExtendBikeLaneThroughJunction(Treatment):
         # spans are simply shared directly - there is one parameter along the extension and every
         # marking on it is cut at the same two fractions, so they cannot drift.
         for start_ft, end_ft in _dash_spans(0.0, length_ft):
-            near_inner, near_outer = across(start_ft / length_ft)
-            far_inner, far_outer = across(end_ft / length_ft)
+            near_inner, near_outer = between(ends, start_ft / length_ft)
+            far_inner, far_outer = between(ends, end_ft / length_ft)
             mark = Polygon([near_inner, near_outer, far_outer, far_inner])
             if not mark.is_valid:
                 mark = mark.buffer(0)
@@ -1451,7 +1464,11 @@ class ExtendBikeLaneThroughJunction(Treatment):
             # broken line is a different instruction from the solid one it continues". So the
             # marks here are the same kind the per-leg paint already lays across every driveway,
             # and both renderers draw them without being told anything new.
-            for near, far in ((near_inner, far_inner), (near_outer, far_outer)):
+            #
+            # ON THE STRIPE AXES, not on the green's faces - see where `stripes` is built.
+            near_in, near_out = between(stripes, start_ft / length_ft)
+            far_in, far_out = between(stripes, end_ft / length_ft)
+            for near, far in ((near_in, far_in), (near_out, far_out)):
                 ctx.add_across_the_junction(
                     BIKE_LANE_DOTTED_EXTENSION, LineString([near, far]),
                     min_length_ft=(end_ft - start_ft) * MIN_MARK_FRACTION)

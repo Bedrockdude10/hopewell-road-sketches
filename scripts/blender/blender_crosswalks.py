@@ -186,8 +186,14 @@ def add_stop_bar(name: str, near, u, n, width_m: float, material, offset_m: floa
         # geometry JSON, so the plan view and this render cannot disagree about where the bar
         # begins and ends. They twice did: this copy centred the bar on the middle of the
         # entering half, leaving it standing 0.8 ft off the centerline with nothing on the far
-        # side of the gap; and it scaled the LATERAL OFFSET by the skew's span factor as well
-        # as the span, which the plan view does not.
+        # side of the gap; and it scaled the LATERAL OFFSET by the skew's span factor as well as
+        # the span.
+        #
+        # THE SPAN TAKES THE FACTOR HERE AND THE OFFSET DOES NOT, because the offset arrives
+        # already in this rotated frame - that stretch is applied once, on the side of the
+        # boundary that can be tested. Applying it again here is the second of those two bugs;
+        # not applying it there was the same disagreement from the other end, and put the bar
+        # 2.04 ft across the opposing lanes on louellen_st_west.
         lane_span = span_m * span_factor
         lane_center = centre + n_s * lateral_offset_m
     else:

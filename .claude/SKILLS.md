@@ -62,6 +62,22 @@ treatment.section(state).offsets_from_centerline_ft()
 unary_union(a).distance(unary_union(b))
 ```
 
+**AND NEVER REBUILD A SECTION'S ARITHMETIC FROM THE CONSTANTS YOU THINK IT USED.** The third query
+above exists because that reconstruction is always wrong here. A two-way section is measured from a
+centreline that has been SHIFTED toward the far kerb, so the near-side travel edge is 3.8–6.5 ft on
+Broad St and not `TARGET_LANE_WIDTH_FT`; assuming the 11 ft produced a confident "a protected lane
+needs 22.0 ft and the kerb gives 20.32, so it does not fit", and a four-option design decision put
+to Danny on the strength of it. Nothing about it was true.
+
+The tell was in the numbers and it is worth learning as a shape: printing demand against room gave
+**identity on all six corridor legs** — 14.71/14.71, 20.32/20.32, 26.29/26.29. Two figures that
+agree to the last decimal in every case are not a confirmation, **they are one figure**: the
+section is sized to fill the room at the leg's narrowest point, so it fits there by construction and
+the comparison can never fail. When a check cannot fail, the thing it was going to prove is not a
+finding — go and find which span, which datum, or which frame differs instead. (That is also how
+`section_holds_to_ft` came to cut a lane to a 6 ft stub: searching from station 0, the first station
+where the kerb is "inside the section" is the narrowest point the section was sized on.)
+
 A gap profile — kerb offset minus outermost drawn offset, station by station — turns "it looks
 janky" into "bare from station 0 to 63.7, then 1.4 ft widening to 2.6 ft by station 118", which
 names the mechanism on its own. `scripts/measure_drawn.py` is where that belongs; extend it rather

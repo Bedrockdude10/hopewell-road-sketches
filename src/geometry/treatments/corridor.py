@@ -175,23 +175,21 @@ class CorridorFacility:
 
 #: THE BOROUGH'S TWO-WAY PROTECTED BIKEWAY, declared once; no site file restates any part of it.
 #:
-#: WIDTH BEFORE BUFFER, and the ladder is ordered to say so. A two-way lane under 10 ft cannot give
-#: 5 ft per direction, which is the width a rider meeting an oncoming rider actually needs; a buffer
-#: is separation from traffic, which the KERB already provides on the protected side. So the rungs
-#: spend the buffer first and the lane's width last.
+#: THE BUFFER NEVER GIVES, AND THE WIDTH DOES. "Protected" is the claim the whole facility makes,
+#: so a rung that drops the buffer is not a cheaper version of this design - it is a different
+#: design, paint beside 30 mph traffic, on the corridor's hardest junction where riders need the
+#: separation most. The width is the thing with a graduated answer: 5 ft per direction where the
+#: street allows it, 4 ft where it does not, and the concession stated on the drawing either way.
 #:
-#: This reverses an earlier ordering that spent the width and kept the buffer ("the buffer never
-#: gives"), on the grounds that a narrow buffered lane is still protected. It bought protection
-#: with the thing the facility exists to provide: at W Broad & Louellen that ordering landed the
-#: 8 ft constrained rung - 4 ft per direction - where the street will carry a 10 ft lane if the
-#: buffer goes. The cost is stated where it lands rather than in a comment: an unbuffered rung
-#: takes no flex posts (there is nowhere to stand one that is not in a lane), so _place_on skips
-#: them and prints that the lane is painted rather than protected there.
+#: This reverses a width-before-buffer ordering that put an unbuffered 10 ft rung ahead of the
+#: constrained 8 ft one, on the argument that 5 ft per direction with the kerb alongside beats 4 ft
+#: per direction with posts. What that bought at W Broad & Louellen was 5 ft per direction and NO
+#: PROTECTION AT ALL, on both W Broad approaches - the junction the corridor most needs to carry.
+#: The constrained rung fits there: 60 posts, travel lanes still over the 10 ft floor.
 #:
-#: THE OBJECTION THAT REMOVED THE UNBUFFERED RUNG BEFORE WAS THE FAR LANE, not the near one: it
-#: "leaves the opposing lane 13.02 ft with no room to narrow (TravelLanesHoldTheTarget fails the
-#: build)". That was the far kerb's surplus going unhatched, which hold_travel_lane_at_target now
-#: absorbs on both kerbs - so the objection is spent, and the rung is back.
+#: NO INTERMEDIATE PART-BUFFER RUNG. Nothing on this route has room for one: a 10 ft lane with a
+#: 2 ft buffer leaves 9.58 ft travel lanes on Louellen's northeast approach, still under the floor,
+#: so the rung would refuse everywhere the full one does and add a width with no standing.
 #:
 #: TEN FEET ON THE FIRST RUNG, AND PARKING IS WHY. Hopewell Borough is car-dependent, so a plan
 #: that removes a kerb of parking and returns none is not viable here. broad_st_east has 43.26 ft
@@ -199,20 +197,19 @@ class CorridorFacility:
 #: at the far kerb - under a stall, so the leg came out with no parking at all. At 10 ft it leaves
 #: 7.44 ft, a usable stall. THE 10 FT RUNG IS NOT A NACTO WIDTH: NACTO asks at least 13 ft and
 #: gives 8 ft as the absolute minimum, so this rung has no standing in the guide and the 8 ft rung
-#: is the absolute floor being spent (STANDARDS.md §4). The alternative on the table was narrowing
+#: is the absolute floor being spent (STANDARDS.md 4). The alternative on the table was narrowing
 #: the travel lanes to 10 ft to keep 12 ft of bikeway; it was not taken - see TARGET_LANE_WIDTH_FT.
 #:
+#: WHICH RUNG A LEG LANDS ON IS A FACT ABOUT THE STREET, so it must not move with the render frame.
+#: It did: the fit measures what a leg can hold with narrowest_half_width_ft, whose span used to be
+#: the centreline's length - and that is leg_lengths times HOPEWELL_FRAME_SCALE. W Broad's southwest
+#: approach was buffered at 1x and unbuffered at 2.5x, off a pinch 318 ft out that the 1x sheet does
+#: not show. Fixed at the measurement, not here; see Leg.design_length_ft.
 BROAD_ST_TWO_WAY_BIKEWAY = CorridorFacility(
     road="Broad Street",
     side=CORRIDOR_SIDE,
-    # Buffer first, width last - see above. The unbuffered 10 ft rung sits ahead of the constrained
-    # 8 ft one because 5 ft per direction with the kerb alongside beats 4 ft per direction with
-    # posts.
-    # No intermediate part-buffer rung: nothing on this route has room for one. The legs either
-    # take the full 3 ft (five of six) or have under 10 ft for the whole bikeway, where any buffer
-    # at all costs lane width.
+    # Every rung keeps the full buffer; only the width steps down. See above.
     sections=(Section(MIN_TWO_WAY_BIKE_LANE_FT, TWO_WAY_BIKE_LANE_BUFFER_FT),
-              Section(MIN_TWO_WAY_BIKE_LANE_FT, 0.0),
               Section(CONSTRAINED_TWO_WAY_BIKE_LANE_FT, TWO_WAY_BIKE_LANE_BUFFER_FT,
                       constrained=True)),
 )

@@ -286,7 +286,8 @@ def _resize_from_one_traced_kerb(legs: dict, name: str, legs_cfg: dict, quiet: b
               f"measurement.")
     if abs(width_ft - leg.curb_to_curb_ft) < MATERIAL_WIDTH_CHANGE_FT:
         return False
-    legs[name] = Leg(name=name, centerline=leg.centerline, curb_to_curb_ft=width_ft)
+    legs[name] = Leg(name=name, centerline=leg.centerline, curb_to_curb_ft=width_ft,
+                      design_length_ft=leg.design_length_ft)
     return True
 
 
@@ -367,7 +368,8 @@ def _resize_and_centre_from_traced_kerbs(legs: dict, legs_cfg: dict, quiet: bool
             centerline = affinity.translate(centerline, -(y1 - y0) / length * moved_ft,
                                              (x1 - x0) / length * moved_ft)
         legs[name] = Leg(name=name, centerline=centerline, curb_to_curb_ft=width_ft,
-                          width_provenance=None if keep_width else OSM_DERIVED)
+                          width_provenance=None if keep_width else OSM_DERIVED,
+                          design_length_ft=leg.design_length_ft)
         changed = True
     return changed
 
@@ -406,7 +408,8 @@ def _centre_legs_on_traced_kerbs(legs: dict, quiet: bool = False) -> None:
         centred = Leg(name=name, curb_to_curb_ft=leg.curb_to_curb_ft,
                       centerline=LineString(place_in_measured_frame(leg.centerline, stations,
                                                                      offsets)),
-                      width_provenance=leg.width_provenance)
+                      width_provenance=leg.width_provenance,
+                      design_length_ft=leg.design_length_ft)
         # Traced sides keep the surveyor's line; untraced ones keep the offset __post_init__
         # just rebuilt from the corrected alignment.
         for side in leg.traced_sides:
@@ -533,7 +536,8 @@ def _blend_onto(leg, joint: np.ndarray, heading: np.ndarray, blend_ft: float):
                    + slope * blend_ft * (t ** 3 - 2 * t ** 2 + t))
     joined = Leg(name=leg.name, curb_to_curb_ft=leg.curb_to_curb_ft,
                  centerline=LineString(place_in_measured_frame(centerline, stations, corrections)),
-                 width_provenance=leg.width_provenance)
+                 width_provenance=leg.width_provenance,
+                 design_length_ft=leg.design_length_ft)
     for side in leg.traced_sides:
         setattr(joined, f"{side}_curb", getattr(leg, f"{side}_curb"))
     joined.traced_sides = set(leg.traced_sides)
@@ -630,7 +634,8 @@ def _fit_legs_to_traced_kerbs(legs: dict, kerb_ways: list, center_ft: Point, leg
 
     def restore(saved):
         for name, (width_ft, centerline) in saved.items():
-            legs[name] = Leg(name=name, centerline=centerline, curb_to_curb_ft=width_ft)
+            legs[name] = Leg(name=name, centerline=centerline, curb_to_curb_ft=width_ft,
+                              design_length_ft=legs[name].design_length_ft)
         apply_curbs()       # a fresh Leg has no traced_sides until the kerbs are re-read
 
     apply_curbs(ratio_bounds=SEED_RATIO_BOUNDS)

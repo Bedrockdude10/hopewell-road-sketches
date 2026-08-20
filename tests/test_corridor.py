@@ -18,7 +18,9 @@ the fixture does), so a test that pinned "1,227 ft traced" would fail on the nex
 best possible reason. What must not change is that the road is one road, that its widths still
 agree with the legs', and that nothing is counted without saying over how much.
 """
+import contextlib
 import dataclasses
+import io
 
 import numpy as np
 import pytest
@@ -328,3 +330,93 @@ def test_everything_counted_from_osm_is_inside_a_fetch_window(broad_st, site_mod
         assert opening.start_ft >= 0.0 and opening.end_ft <= broad_st.length_ft + 1e-6
     for cross in facts.crossings:
         assert 0.0 <= cross.station_ft <= broad_st.length_ft + 1e-6
+
+
+@needs_source_data
+def test_what_the_street_can_hold_does_not_move_with_the_render_frame():
+    """A rung is a fact about the street, so the sheet's width must not decide it.
+
+    `narrowest_half_width_ft` is a MINIMUM OVER A SPAN, and the span used to be the centreline's
+    length - which load.py multiplies by HOPEWELL_FRAME_SCALE. So a wider sheet reached further
+    down the block, found a narrower pinch, and judged the street less able to hold the facility:
+    W Broad's southwest approach measured 20.32 ft at 1x and 16.58 ft at 2.5x, off a pinch 318 ft
+    out that the 1x sheet does not show. That cost the leg its 3 ft buffer and its flex posts on
+    the wide render alone - a facility protected in one picture and painted in another.
+
+    Bounded by Leg.design_length_ft now. The tolerance is not zero because the centreline itself
+    is refitted over the longer leg and shifts a little laterally; what must not survive is a
+    swing wide enough to change a rung.
+    """
+    from src.geometry.intersection import load_intersection_model
+    from src.geometry.model import narrowest_half_width_ft
+    from src.render.frame import FRAME_SCALE_ENV
+
+    def widths(scale):
+        with contextlib.ExitStack() as stack:
+            monkey = pytest.MonkeyPatch()
+            stack.callback(monkey.undo)
+            if scale is None:
+                monkey.delenv(FRAME_SCALE_ENV, raising=False)
+            else:
+                monkey.setenv(FRAME_SCALE_ENV, str(scale))
+            with contextlib.redirect_stdout(io.StringIO()):
+                model = load_intersection_model(site="wbroad_louellen")
+            return {(name, side): narrowest_half_width_ft(leg, side)
+                    for name, leg in model.legs.items() for side in ("left", "right")}
+
+    narrow, wide = widths(None), widths(2.5)
+    corridor = {k: v for k, v in narrow.items() if k[0].startswith("w_broad")}
+    worst = max(abs(corridor[k] - wide[k]) for k in corridor)
+    assert worst < 0.5, (
+        "the width a corridor leg is judged to have moved with the frame scale: "
+        + ", ".join(f"{k[0]}/{k[1]} {corridor[k]:.2f}->{wide[k]:.2f}"
+                    for k in corridor if abs(corridor[k] - wide[k]) >= 0.5))
+    # The CROSS street still moves by up to 1.2 ft (louellen_st_west/right, pinched at station 1),
+    # and that residual is the centreline itself: refitting it over a 2.5x leg shifts it laterally,
+    # which moves both kerb offsets. Bounded and asserted rather than left unstated, because the
+    # span was only the larger of the two mechanisms.
+    everywhere = max(abs(narrow[k] - wide[k]) for k in narrow)
+    assert everywhere < 1.5, f"a leg width moved {everywhere:.2f} ft with the frame scale"
+
+
+@needs_source_data
+def test_the_corridor_lands_on_the_same_rung_at_either_frame_scale():
+    """The output that matters: which section each approach takes, and whether it is protected.
+
+    The width bug reached the drawing through this - W Broad's southwest approach took the full
+    10 ft + 3 ft buffer at 1x and fell to an unbuffered rung at 2.5x, so the wide sheet showed a
+    painted lane where the narrow one showed a protected one. Asserted on the DESIGN rather than
+    on the measurement because that is what a reader sees.
+    """
+    from src.geometry.intersection import load_intersection_model
+    from src.geometry.treatments import (AddBikeLane, BROAD_ST_TWO_WAY_BIKEWAY, DesignState)
+    from src.geometry.targets import LegSide
+    from src.render.frame import FRAME_SCALE_ENV
+
+    def sections(scale):
+        with contextlib.ExitStack() as stack:
+            monkey = pytest.MonkeyPatch()
+            stack.callback(monkey.undo)
+            if scale is None:
+                monkey.delenv(FRAME_SCALE_ENV, raising=False)
+            else:
+                monkey.setenv(FRAME_SCALE_ENV, str(scale))
+            with contextlib.redirect_stdout(io.StringIO()):
+                model = load_intersection_model(site="wbroad_louellen")
+                state = BROAD_ST_TWO_WAY_BIKEWAY.apply_to(DesignState.from_model(model), model,
+                                                          quiet=True)
+        placed = {}
+        for leg_name in BROAD_ST_TWO_WAY_BIKEWAY.legs_on(model):
+            for side in ("left", "right"):
+                lane = state.treatment_for(AddBikeLane, LegSide(leg_name, side))
+                if lane is not None:
+                    placed[(leg_name, side)] = (round(lane.width_ft, 2),
+                                                round(lane.buffer_ft, 2))
+        return placed
+
+    narrow, wide = sections(None), sections(2.5)
+    assert narrow == wide, f"the corridor's sections differ by frame scale: {narrow} vs {wide}"
+    assert narrow, "no approach carried the facility, so nothing was compared"
+    assert all(buffer_ft > 0 for _width, buffer_ft in narrow.values()), (
+        f"an approach carries an UNBUFFERED lane, which takes no flex posts - the buffer is the "
+        f"rung that never gives on this facility: {narrow}")

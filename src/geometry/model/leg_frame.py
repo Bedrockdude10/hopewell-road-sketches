@@ -62,6 +62,11 @@ class Leg:
     # say which one they are showing - "ESTIMATE / PLACEHOLDER" over a line drawn from a
     # surveyor's trace is the project's own principle stated backwards.
     width_provenance: str | None = None
+    # How much of this approach the design is ABOUT, in feet, independent of the render frame.
+    # `centerline` is trimmed to leg_lengths, which load.py multiplies by HOPEWELL_FRAME_SCALE, so
+    # its length is a camera setting. Anything deciding what the street can HOLD has to be asked
+    # over a fixed span or the answer moves when the sheet widens - see narrowest_half_width_ft.
+    design_length_ft: float | None = None
 
     def __post_init__(self):
         if self.curb_to_curb_ft is not None:
@@ -338,11 +343,21 @@ def narrowest_half_width_ft(leg: "Leg", side: str, from_ft: float = 0.0,
 
     Falls back to the nominal half-width where the side has no traced kerb, since then there is
     no measurement to prefer.
+
+    BOUNDED BY THE DESIGN LENGTH, NOT THE CENTRELINE'S. A minimum over "the leg" is a total
+    accumulated over a span, and this leg's span is `leg_lengths`, which load.py multiplies by
+    HOPEWELL_FRAME_SCALE - so widening the sheet reaches further out, finds a narrower pinch, and
+    changes what the street is judged able to hold. It did: W Broad's southwest leg measured
+    20.32 ft here at 1x and 16.58 ft at 2.5x, the pinch 318 ft out and not on the 1x sheet at all,
+    which cost that leg its 3 ft buffer and its flex posts on the wide render alone. A facility
+    that is protected in one picture and painted in another is not a design.
     """
     span = curb_station_span(leg, side)
     if span is not None:
         lo = max(span[0], from_ft)
-        hi = min(span[1], leg.centerline.length if to_ft is None else to_ft)
+        if to_ft is None:
+            to_ft = leg.design_length_ft or leg.centerline.length
+        hi = min(span[1], to_ft)
         if hi - lo >= STRIP_SAMPLE_FT:
             offsets = curb_offsets_at_stations(
                 leg, side, np.linspace(lo, hi, max(int(np.ceil((hi - lo) / STRIP_SAMPLE_FT)) + 1, 2)))
@@ -556,6 +571,49 @@ def kerb_parallel_line_ft(leg: "Leg", side: str, inset_ft: float, start_ft: floa
     if offsets is None:
         return None
     return line_from_offsets(leg, side, stations, offsets)
+
+
+def section_holds_to_ft(leg: "Leg", side: str, outer_offset_ft: float,
+                        from_ft: float = 0.0) -> float | None:
+    """The station out to which the traced kerb still leaves room for `outer_offset_ft`.
+
+    THE OTHER HALF OF kerb_inset_offsets' `floor_ft`. That floor keeps a kerbside marking from
+    ever coming inward of its design, which is right only where the design is known to fit - and
+    it is known to fit over the span the section was SIZED on. Past that span a kerb that comes in
+    tighter than the section leaves the marking held at its floor, on the wrong side of the kerb:
+    PaintInsideTheCurb reported W Broad's southwest lane 3.2 ft over, 318 ft out.
+
+    So a facility is drawn over the stations where it is known to fit and stops where the street
+    runs out - which is this project's usual answer for a corridor that runs out of room, and a
+    truer statement than paint over a kerb. Broad St loses 7 ft of half-width between stations 225
+    and 318 there; nothing NACTO offers fits in what is left, so narrowing a rung would not save it.
+
+    None where the kerb never comes inside the section, which is every leg at 1x - the whole leg
+    is then drawn, exactly as before. Sampled on paint_stations' own grid so the answer lands on a
+    station the marking will actually be built on.
+    """
+    # SEARCHED PAST THE SIZED SPAN ONLY, and this is the whole subtlety. A section is sized to fill
+    # the room at the narrowest point of that span - the two numbers agree to the foot on every leg
+    # of every site, which is the tell that one is derived from the other - so a search that starts
+    # at station 0 finds the narrowest point itself and truncates the facility there. It did: W
+    # Broad's southwest lane came out as a 6 ft stub at station 54-60.
+    sized_to_ft = leg.design_length_ft or leg.centerline.length
+    stations = paint_stations(leg, side, max(from_ft, sized_to_ft))
+    if stations is None:
+        return None
+    room = np.abs(curb_offsets_at_stations(leg, side, stations))
+    # The same tolerance PaintInsideTheCurb allows, so this ends a facility exactly where that
+    # check would otherwise report it rather than at some tighter margin of its own. Imported in
+    # the body because src.checks reads this module - one home for the number, no import cycle.
+    from src.checks import PAINT_PAST_CURB_TOLERANCE_FT
+
+    short = np.flatnonzero(np.isfinite(room)
+                            & (room < outer_offset_ft - PAINT_PAST_CURB_TOLERANCE_FT))
+    if short.size == 0:
+        return None
+    # The last station that FITS, not the first that does not: the marking is built up to here.
+    first = int(short[0])
+    return float(stations[first - 1]) if first else sized_to_ft
 
 
 def kerb_referenced_band_polygon(leg: "Leg", side: str, outer_inset_ft: float, width_ft: float,

@@ -105,6 +105,17 @@ threshold has to be a rate, a curvature, or something else local**; if it is an 
 over a leg, the leg's length is an input and the leg's length is a rendering decision. `git grep`
 for a new constant's units before you add it.
 
+**AND A MINIMUM OVER A LEG IS A TOTAL TOO.** This bit twice, the second time through
+`narrowest_half_width_ft`, which took the least half-width from the tracing's start to
+`leg.centerline.length` — a longer leg simply reaches further and finds a narrower pinch, so the
+street was judged *less* able to hold a facility on a wider sheet. W Broad's southwest approach:
+20.32 ft at 1×, 16.58 ft at 2.5×, off a pinch 318 ft out that the 1× sheet does not show. It cost
+that leg its 3 ft buffer and its flex posts on the wide render only — a protected bikeway in one
+picture and a painted one in the other. The fix is a span that is a design decision:
+`Leg.design_length_ft`, the configured length before `frame_scale()` multiplies it. So the test is
+not just "is this a rate" — it is **"could this answer have been different on a wider sheet"**, and
+min/max/any/all over a leg all fail it.
+
 Note also that `tests/conftest.py` builds `site_models` at `WIDE_FRAME_SCALE = 2.2`, so the fixture
 is *already* not 1× — a test can agree with the goldens and disagree with every render.
 

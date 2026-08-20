@@ -108,6 +108,10 @@ def load_intersection_model(config: dict | None = None, site: str | None = None)
     # reports the projected part separately so a stall count does not move with a camera setting.
     scale = frame_scale()
     leg_lengths = {name: length * scale for name, length in surveyed_leg_lengths.items()}
+    # ...and the UNSCALED length travels with each Leg, because a question about what the street
+    # can hold must not be answered over however much of it the current frame shows. See
+    # Leg.design_length_ft and narrowest_half_width_ft.
+    design_lengths = surveyed_leg_lengths
     sri_to_leg_names: dict[str, list[str]] = {}
     for name, leg_cfg in legs_cfg.items():
         sri_to_leg_names.setdefault(leg_cfg["sri"], []).append(name)
@@ -131,11 +135,14 @@ def load_intersection_model(config: dict | None = None, site: str | None = None)
             # station-0 origin every measurement in the project is taken from.
             if piece.length > leg_lengths[name]:
                 piece = substring(piece, 0, leg_lengths[name])
-            legs[name] = Leg(name=name, centerline=piece, curb_to_curb_ft=legs_cfg[name].get("curb_to_curb_ft"))
+            legs[name] = Leg(name=name, centerline=piece,
+                              curb_to_curb_ft=legs_cfg[name].get("curb_to_curb_ft"),
+                              design_length_ft=design_lengths[name])
 
     kerb_lines = _kerb_lines_ft(center, center_ft)
     for name, width_ft in _widths_from_traced_kerbs(legs, kerb_lines, legs_cfg).items():
-        legs[name] = Leg(name=name, centerline=legs[name].centerline, curb_to_curb_ft=width_ft)
+        legs[name] = Leg(name=name, centerline=legs[name].centerline, curb_to_curb_ft=width_ft,
+                          design_length_ft=legs[name].design_length_ft)
 
     # The NEAR set for the fit - ways around the junction, not the wide set that
     # _extend_curbs_with_far_tracing adds afterwards.

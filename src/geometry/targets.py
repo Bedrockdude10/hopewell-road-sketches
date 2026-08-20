@@ -9,6 +9,11 @@ apron to the corner between two legs), which is why this is three classes.
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from enum import StrEnum
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:    # annotation-only: these types are layered above this module,
+    # so importing them for real would close a cycle.
+    from src.geometry.treatments.state import DesignState
 
 
 class Side(StrEnum):
@@ -47,7 +52,7 @@ class Target(ABC):
     """
 
     @abstractmethod
-    def missing_from(self, state) -> str | None:
+    def missing_from(self, state: "DesignState") -> str | None:
         ...
 
     @abstractmethod
@@ -74,7 +79,7 @@ class Everywhere(Target):
     carries markings.
     """
 
-    def missing_from(self, state) -> str | None:
+    def missing_from(self, state: "DesignState") -> str | None:
         return None
 
     def __str__(self) -> str:
@@ -86,7 +91,7 @@ class LegTarget(Target):
     """A whole leg: both kerbs, or the roadway between them."""
     leg: str
 
-    def missing_from(self, state) -> str | None:
+    def missing_from(self, state: "DesignState") -> str | None:
         if self.leg not in state.legs:
             return f"no leg {self.leg!r} at this junction - it has {sorted(state.legs)}"
         return None
@@ -106,7 +111,7 @@ class LegSide(Target):
         # is refused here rather than becoming a dict key that never matches.
         object.__setattr__(self, "side", Side(self.side))
 
-    def missing_from(self, state) -> str | None:
+    def missing_from(self, state: "DesignState") -> str | None:
         return LegTarget(self.leg).missing_from(state)
 
     @property
@@ -136,7 +141,7 @@ class Corner(Target):
     def key(self) -> tuple[str, str]:
         return (self.leg_a, self.leg_b)
 
-    def missing_from(self, state) -> str | None:
+    def missing_from(self, state: "DesignState") -> str | None:
         if self.key not in state.corner_fillets:
             return (f"no corner {self.key} at this junction - it has "
                     f"{sorted(state.corner_fillets)}. A corner is (leg_a's left kerb, leg_b's "
@@ -177,7 +182,7 @@ class AcrossTheJunction(Target):
         """The two (leg, side) keys, in the order the extension runs."""
         return ((self.leg_a, str(self.side_a)), (self.leg_b, str(self.side_b)))
 
-    def missing_from(self, state) -> str | None:
+    def missing_from(self, state: "DesignState") -> str | None:
         for leg in (self.leg_a, self.leg_b):
             missing = LegTarget(leg).missing_from(state)
             if missing:

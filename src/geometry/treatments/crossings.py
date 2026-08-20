@@ -11,6 +11,11 @@ from src.geometry.treatments.base import (DEFAULT_CENTERLINE_STYLE,
                                           VALID_CENTERLINE_STYLES, VALID_CROSSWALK_STYLES,
                                           Treatment, _band_across_the_road)
 from src.geometry.treatments.state import DesignState
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:    # annotation-only: these types are layered above this module,
+    # so importing them for real would close a cycle.
+    from src.geometry.intersection.junction import IntersectionModel
 
 
 
@@ -59,7 +64,7 @@ class RefugeIsland(Treatment):
                                       self.width_ft / 2,
                                       f"{self.width_ft:.0f} ft refuge island")
 
-    def apply_to(self, state: "DesignState", model=None) -> None:
+    def apply_to(self, state: "DesignState", model: "IntersectionModel" = None) -> None:
         # Built and discarded, for the refusal only: a leg too short to hold the band says so
         # here, where the scenario that asked for it is on the stack, rather than in a renderer.
         self.polygon(state)
@@ -99,7 +104,7 @@ class RaiseCrossing(Treatment):
             leg.centerline, start, start + self.crossing_width_ft, leg.curb_to_curb_ft / 2,
             f"{self.crossing_width_ft:.0f} ft raised crossing on {self.target.leg!r}")
 
-    def apply_to(self, state: "DesignState", model=None) -> None:
+    def apply_to(self, state: "DesignState", model: "IntersectionModel" = None) -> None:
         # Built and discarded, for the refusals only - a leg with no traced kerbs, or one whose
         # corner return consumes its whole length. Both are things the scenario author needs told.
         self.polygon(state)
@@ -138,7 +143,7 @@ class SetCenterlineStyle(Treatment):
         return f"SetCenterlineStyle({self.target}, style={self.style!r})"
 
 
-def resolved_crossing_stations(model, state: DesignState) -> dict:
+def resolved_crossing_stations(model: "IntersectionModel", state: DesignState) -> dict:
     """{leg name: the station its crossing is resolved to}, for treatments measured off it.
 
     RESOLVED DATA, not a parameter: a real OSM-surveyed position where one was matched, else the

@@ -16,6 +16,11 @@ from src.geometry.treatments.base import (CORNER_APRON_DEFAULT_EXTENT_FT,
                                           LANE_WIDTH_SLACK_FT, TARGET_LANE_WIDTH_FT,
                                           CornerApron, Treatment)
 from src.geometry.treatments.state import DesignState
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:    # annotation-only: these types are layered above this module,
+    # so importing them for real would close a cycle.
+    from src.geometry.intersection.junction import IntersectionModel
 
 
 
@@ -64,7 +69,7 @@ class SetCornerRadius(Treatment):
     def describe(self) -> str:
         return f"SetCornerRadius({self.target.key}, radius_ft={self.radius_ft})"
 
-    def apply_to(self, state: "DesignState", model=None) -> None:
+    def apply_to(self, state: "DesignState", model: "IntersectionModel" = None) -> None:
         _rebuild_corner(state, self.target.key, self.radius_ft, self.source)
 
 
@@ -139,7 +144,7 @@ class MountableApron(Treatment):
         """CornerApron validates the depth/radius exclusivity itself."""
         return CornerApron(depth_ft=self.extent_ft)
 
-    def apron_corner(self, state) -> tuple[str, str] | None:
+    def apron_corner(self, state: DesignState) -> tuple[str, str] | None:
         return self.target.key
 
     def paint(self, ctx) -> None:
@@ -264,7 +269,7 @@ class AddCurbExtension(Treatment):
         return CornerApron(swept_radius_ft=self.swept_radius_ft,
                             face_radius_ft=self.face_radius_ft)
 
-    def apron_corner(self, state) -> tuple[str, str] | None:
+    def apron_corner(self, state: DesignState) -> tuple[str, str] | None:
         """The corner this moved kerb feeds - not this treatment's own target.
 
         build_corner_fillets pairs leg A's LEFT curb with leg B's RIGHT, so which corner a kerb
@@ -292,7 +297,7 @@ class AddCurbExtension(Treatment):
     def describe(self) -> str:
         return f"AddCurbExtension({self.target.leg}, {self.target.side}): "
 
-    def apply_to(self, state: "DesignState", model=None) -> str:
+    def apply_to(self, state: "DesignState", model: "IntersectionModel" = None) -> str:
         leg_name, side = self.target.leg, str(self.target.side)
         leg = state.legs[leg_name]
         if leg.curb_to_curb_ft is None:
@@ -420,7 +425,7 @@ class ProtectDaylightZone(Treatment):
     def describe(self) -> str:
         return f"ProtectDaylightZone({self.target.leg}, {self.target.side}): "
 
-    def apply_to(self, state: "DesignState", model=None) -> str:
+    def apply_to(self, state: "DesignState", model: "IntersectionModel" = None) -> str:
         # The one check that is about the LAW rather than about the street, and it depends on
         # another treatment having been applied - so it belongs here, where the design is
         # visible, not in the constructor.

@@ -10,6 +10,7 @@ from src.geometry.targets import BOTH_SIDES, Side
 
 if TYPE_CHECKING:                       # DesignState is layered above this module;
     from src.geometry.treatments.state import DesignState   # the annotation is a string
+    from src.geometry.intersection.junction import IntersectionModel
 from src.geometry.treatments.base import (BOLLARD_DEFAULT_SPACING_FT,
                                           LANE_NARROWING_DEFAULT_STRIPE_FT, Treatment)
 
@@ -124,7 +125,7 @@ class LaneNarrowingBollards(Treatment):
     def describe(self) -> str:
         return f"LaneNarrowingBollards({self.target}, spacing_ft={self.spacing_ft})"
 
-    def apply_to(self, state: "DesignState", model=None) -> None:
+    def apply_to(self, state: "DesignState", model: "IntersectionModel" = None) -> None:
         if state.treatment_for(LaneNarrowing, self.target) is None:
             raise KeyError(f"{self.target} has no lane-narrowing buffer - apply LaneNarrowing "
                             f"first. A row of posts is placed inside a buffer, so its lateral "

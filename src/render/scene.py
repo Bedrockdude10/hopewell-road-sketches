@@ -20,6 +20,13 @@ from src.render.crosswalks import (CROSSWALK_DEPTH_FT, crosswalk_bands_ft, cross
                                    resolve_crosswalk_offsets, resolve_crosswalk_skews,
                                    resolve_stop_bar_offsets, stop_bar_bands_ft)
 from src.sources.osm_context import fetch_stop_lines
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:    # annotation-only: these types are layered above this module,
+    # so importing them for real would close a cycle.
+    from src.geometry.intersection.junction import IntersectionModel
+    from src.geometry.paint import PaintPiece
+    from src.geometry.treatments.state import DesignState
 
 # A bar governing this junction sits 33-67 ft out; this is generous. ONE constant, because a
 # stop bar resolved at a different radius is a differently-placed stop bar.
@@ -60,7 +67,7 @@ class SceneGeometry:
     drawn_kerbs: tuple = ()
 
     @classmethod
-    def resolve(cls, model, state, crossings: list[dict], stop_lines: list[dict] | None = None
+    def resolve(cls, model: "IntersectionModel", state: "DesignState", crossings: list[dict], stop_lines: list[dict] | None = None
                  ) -> "SceneGeometry":
         """Resolve one scenario's marking geometry. `crossings` is the fetched OSM layer.
 
@@ -168,7 +175,7 @@ class SceneGeometry:
         """
         return tuple(c.band_ft for c in self.unmodelled_crossings if c.is_marked)
 
-    def build_paint(self, props: list[dict] | None = None) -> list:
+    def build_paint(self, props: list[dict] | None = None) -> list["PaintPiece"]:
         """Every painted marking this scenario puts down (src/geometry/paint.py).
 
         Here rather than at each call site so the paint is always cut around the same bands the
@@ -182,7 +189,7 @@ class SceneGeometry:
                                   marked_crosswalks=self.marked_crosswalks,
                                   crossings_elsewhere=self.unmodelled_crossing_bands)
 
-    def build_paint_and_posts(self, props: list[dict]) -> tuple[list, list[dict]]:
+    def build_paint_and_posts(self, props: list[dict]) -> tuple[list["PaintPiece"], list[dict]]:
         """The paint, and `props` extended with the posts only the paint knows the place of.
 
         The dependency runs both ways, which is why both come back from one call: the paint

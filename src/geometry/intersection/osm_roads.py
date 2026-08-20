@@ -38,7 +38,7 @@ SNAP_REPORT_THRESHOLD_FT = 2.0
 ROAD_CONTEXT_RADIUS_M = 130
 
 
-def _snap_distance_ft(line, center_ft: Point) -> float:
+def _snap_distance_ft(line: LineString, center_ft: Point) -> float:
     """Perpendicular distance from the resolved intersection node to a road centerline."""
     return line.distance(center_ft)
 

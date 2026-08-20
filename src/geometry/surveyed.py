@@ -35,6 +35,12 @@ from src.render.crosswalks import (CONTINENTAL_BAR_WIDTH_FT, CROSSWALK_DEPTH_FT,
                                    OSM_MARKINGS_TO_STYLE, continental_bar_count,
                                    match_crossing_lines_to_legs)
 from src.render.frame import junction_frame
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:    # annotation-only: these types are layered above this module,
+    # so importing them for real would close a cycle.
+    from src.geometry.intersection.junction import IntersectionModel
+    from src.geometry.treatments.state import DesignState
 
 
 @dataclass(frozen=True)
@@ -94,7 +100,7 @@ class SurveyedCrossing:
         return _band_along(self.geometry, 0.0, self.geometry.length)
 
 
-def surveyed_crossings_in_frame(model, crossings: list[dict] | None = None
+def surveyed_crossings_in_frame(model: "IntersectionModel", crossings: list[dict] | None = None
                                 ) -> list[SurveyedCrossing]:
     """Every OSM crossing whose traced way reaches inside the frame `model` will be drawn at.
 
@@ -193,7 +199,7 @@ def carriageway_geometry_ft(crossing: SurveyedCrossing, kerb_lines=None) -> Line
     return substring(line, min(hits), max(hits)) or line
 
 
-def crossing_style_in(state, crossing: SurveyedCrossing) -> str | None:
+def crossing_style_in(state: "DesignState", crossing: SurveyedCrossing) -> str | None:
     """How `state` calls for this crossing to be drawn, or None to draw nothing.
 
     THE ONE PLACE a design's marking policy meets a crossing that has no leg; the per-leg path asks

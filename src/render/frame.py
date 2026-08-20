@@ -30,6 +30,11 @@ from shapely.geometry import Point
 
 from src.geometry.model import build_pavement_polygon
 from src.render.coords import FT_TO_M
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:    # annotation-only: these types are layered above this module,
+    # so importing them for real would close a cycle.
+    from src.geometry.intersection.junction import IntersectionModel
 
 # How much wider than the modelled pavement the frame is drawn. Tight on purpose: this is a
 # drawing of one junction, and the paint and signage detail is the subject.
@@ -73,7 +78,7 @@ def context_radius_m(base_m: float) -> float:
     return base_m * frame_scale()
 
 
-def frame_covering_radius_m(model, base_m: float) -> float:
+def frame_covering_radius_m(model: "IntersectionModel", base_m: float) -> float:
     """Enough to cover the FRAME, for a layer whose extent is radial rather than along a street.
 
     THE DIFFERENCE FROM context_radius_m, which is easy to get wrong and expensive when you do.
@@ -114,7 +119,7 @@ class Frame:
                 "radius_m": self.radius_ft * FT_TO_M}
 
 
-def leg_reach_ft(model) -> float:
+def leg_reach_ft(model: "IntersectionModel") -> float:
     """How far from the junction the SURVEYED street extends, along its longest leg.
 
     The site's configured working length, not the built centerline, because the frame scale also
@@ -144,7 +149,7 @@ def leg_reach_ft(model) -> float:
     return max(reaches, default=0.0)
 
 
-def junction_frame(model) -> Frame:
+def junction_frame(model: "IntersectionModel") -> Frame:
     """The one frame both views draw, from the baseline pavement of `model`.
 
     Falls back to the leg reach itself where there is no pavement ring to measure - an

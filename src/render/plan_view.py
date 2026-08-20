@@ -60,7 +60,7 @@ def _leg_heading(leg, along_ft: float | None = None) -> tuple[float, float]:
     return (b.x - a.x, b.y - a.y)
 
 
-def _side_normal(leg, side, along_ft: float) -> tuple[float, float]:
+def _side_normal(leg, side: str, along_ft: float) -> tuple[float, float]:
     """The direction out across the `side` kerb: what a kerbside label follows to leave the road.
 
     Rotated off the alignment rather than aimed at the traced kerb, because a traced kerb wanders
@@ -687,7 +687,7 @@ PARKING_LEGALITY_COLOR = {"restricted": "#b3261e", "allowed": "#1b7f3b", "untagg
 
 
 
-def _label_parking_legality(labels: LabelPlacer, state):
+def _label_parking_legality(labels: LabelPlacer, state: DesignState):
     """Per side of every leg: the OSM parking tag, and what the design did with it.
 
     Without this the drawing cannot answer the question it most often provokes - "why is that
@@ -781,7 +781,7 @@ def _offset_of(leg, point):
     return float(offsets[0])
 
 
-def _label_paint(labels: LabelPlacer, state, paint):
+def _label_paint(labels: LabelPlacer, state: DesignState, paint):
     """Dimension labels for the curbside paint: what each treatment actually measures.
 
     One lane label PER SIDE narrowed, offset into that lane - not a single label on the

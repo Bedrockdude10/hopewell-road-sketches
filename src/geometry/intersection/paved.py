@@ -25,7 +25,7 @@ from src.geometry.intersection.kerb_sources import drawn_kerb_radius_ft
 DRIVEWAY_CONTEXT_RADIUS_M = 130
 
 
-def to_state_plane(coords) -> list:
+def to_state_plane(coords) -> list[tuple[float, float]]:
     xs, ys = wgs84_to_state_plane.transform([c[0] for c in coords], [c[1] for c in coords])
     return list(zip(xs, ys))
 

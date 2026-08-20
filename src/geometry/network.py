@@ -33,6 +33,11 @@ from src.geometry.model import (Alignment, STRIP_SAMPLE_FT, curb_edge_by_station
                                 curb_offsets_at_stations, curb_station_span,
                                 frame_at, is_through_street, leg_bearing_deg, line_direction,
                                 place_in_measured_frame, station_offset_many, vertex_tangents)
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:    # annotation-only: these types are layered above this module,
+    # so importing them for real would close a cycle.
+    from src.geometry.intersection.junction import IntersectionModel
 
 
 @dataclass(frozen=True)
@@ -159,7 +164,7 @@ def _joined_kerb(near, near_side: str, far, far_side: str) -> LineString | None:
     return LineString(coords)
 
 
-def roads_from_model(model) -> list[Road]:
+def roads_from_model(model: "IntersectionModel") -> list[Road]:
     """Every street that runs THROUGH this junction, as a Road.
 
     Only through pairs: a stem (Louellen at W Broad, Princeton at E Broad) is one leg and already
@@ -887,7 +892,7 @@ def _oriented_piece(road: Road, first_leg: str) -> dict:
                 "node_from_start_ft": road.node_ft,
                 "legs": ((road.near_leg, -1.0), (road.far_leg, 1.0)),
                 "leg_joint_ft": ((road.far_leg, _road_joint_ft(road)),)}
-    def flip(line):
+    def flip(line: LineString):
         return None if line is None else LineString(list(line.coords)[::-1])
 
     return {"centerline": flip(road.centerline), "left": flip(road.right_curb),
@@ -1133,7 +1138,7 @@ def _junction_kerb_runs(pieces: list[dict], stations: np.ndarray) -> list[KerbRu
     return runs
 
 
-def junction_corner_reach_ft(model) -> float:
+def junction_corner_reach_ft(model: "IntersectionModel") -> float:
     """How far this junction's corner returns sweep along the roads meeting in it.
 
     One number per junction - the most generous of its legs - because the corridor reads kerb

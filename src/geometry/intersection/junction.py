@@ -227,7 +227,7 @@ PARKING_RESTRICTION_KEYS = {"left": "parking:left:restriction",
                             "both": "parking:both:restriction"}
 
 
-def parking_restriction_by_side(tags: dict, aligned: bool) -> dict:
+def parking_restriction_by_side(tags: dict, aligned: bool) -> dict[str, str | None]:
     """{"left": value|None, "right": value|None} in the LEG's frame.
 
     OSM's left and right are relative to the direction the way was drawn; a leg's are

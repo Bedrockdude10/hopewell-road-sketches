@@ -27,6 +27,11 @@ from dataclasses import dataclass
 import numpy as np
 
 from src.geometry.model import corner_tangent_station_ft, station_offset_many
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:    # annotation-only: these types are layered above this module,
+    # so importing them for real would close a cycle.
+    from src.geometry.treatments.state import DesignState
 
 # R.S. 39:4-138(e). The headline daylighting distance.
 CROSSWALK_SETBACK_FT = 25.0
@@ -107,7 +112,7 @@ def _prop_station_ft(leg, side: str, position_ft, setback_ft: float) -> float | 
     return station
 
 
-def no_parking_zones_ft(state, leg_name: str, side: str, crosswalk_offsets: dict,
+def no_parking_zones_ft(state: "DesignState", leg_name: str, side: str, crosswalk_offsets: dict,
                          props: list[dict] | None = None) -> list[NoParkingZone]:
     """Every stretch of this kerb where R.S. 39:4-138 forbids parking, nearest first."""
     leg = state.legs[leg_name]
@@ -202,7 +207,7 @@ def merged_no_parking_spans_ft(zones: list[NoParkingZone]) -> list[tuple[float, 
     return [(a, b) for a, b in spans if b > a]
 
 
-def parkable_runs_ft(state, leg_name: str, side: str, crosswalk_offsets: dict,
+def parkable_runs_ft(state: "DesignState", leg_name: str, side: str, crosswalk_offsets: dict,
                       props: list[dict] | None = None,
                       physical_clearance_ft: float = 0.0,
                       min_run_ft: float = 0.0) -> list[tuple[float, float]]:
@@ -226,7 +231,7 @@ def parkable_runs_ft(state, leg_name: str, side: str, crosswalk_offsets: dict,
     return [(a, b) for a, b in runs if b - a >= min_run_ft and b > a]
 
 
-def legal_parking_start_ft(state, leg_name: str, side: str, crosswalk_offsets: dict,
+def legal_parking_start_ft(state: "DesignState", leg_name: str, side: str, crosswalk_offsets: dict,
                             props: list[dict] | None = None,
                             physical_clearance_ft: float = 0.0,
                             min_run_ft: float = 0.0) -> float | None:

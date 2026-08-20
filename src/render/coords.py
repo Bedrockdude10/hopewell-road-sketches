@@ -6,6 +6,11 @@ import pyproj
 from shapely.geometry import Polygon
 
 from src.geometry.model import NJ_STATE_PLANE_FT, WGS84
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:    # annotation-only: these types are layered above this module,
+    # so importing them for real would close a cycle.
+    from shapely.geometry import Point
 
 FT_TO_M = 0.3048
 
@@ -41,15 +46,15 @@ def round_for_export(value):
     return value
 
 
-def ring_to_local_m(coords, center_ft) -> list[list[float]]:
+def ring_to_local_m(coords, center_ft: "Point") -> list[list[float]]:
     return [[(x - center_ft.x) * FT_TO_M, (y - center_ft.y) * FT_TO_M] for x, y in coords]
 
 
-def pt_to_local_m(x, y, center_ft) -> list[float]:
+def pt_to_local_m(x, y, center_ft: "Point") -> list[float]:
     return [(x - center_ft.x) * FT_TO_M, (y - center_ft.y) * FT_TO_M]
 
 
-def wgs84_ring_to_local_m(coords_wgs84, center_ft) -> list[list[float]]:
+def wgs84_ring_to_local_m(coords_wgs84, center_ft: "Point") -> list[list[float]]:
     xs, ys = wgs84_to_state_plane.transform([c[0] for c in coords_wgs84], [c[1] for c in coords_wgs84])
     return [[(x - center_ft.x) * FT_TO_M, (y - center_ft.y) * FT_TO_M] for x, y in zip(xs, ys)]
 

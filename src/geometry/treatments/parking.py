@@ -19,6 +19,11 @@ from src.geometry.treatments.base import (BOLLARD_DEFAULT_SPACING_FT,
 from src.geometry.treatments.bikeways import AddBikeLane, divider_shift_toward_ft
 from src.geometry.treatments.lanes import LaneNarrowing
 from src.geometry.treatments.state import DesignState
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:    # annotation-only: these types are layered above this module,
+    # so importing them for real would close a cycle.
+    from src.geometry.intersection.junction import IntersectionModel
 
                                   # an intersection - a real legal minimum, not a rendering choice. Marked parking
                                   # (src/render/export.py/plan_view.py) starts at max(this distance past the real
@@ -213,7 +218,7 @@ class ParkingBufferBollards(Treatment):
         return (f"ParkingBufferBollards({self.target.leg}, "
                 f"side={str(self.target.side)!r}, spacing_ft={self.spacing_ft})")
 
-    def apply_to(self, state: "DesignState", model=None) -> None:
+    def apply_to(self, state: "DesignState", model: "IntersectionModel" = None) -> None:
         parking = state.treatment_for(MarkedParking, self.target)
         if parking is None:
             raise KeyError(f"{self.target} has no marked parking - apply MarkedParking first.")
@@ -260,7 +265,7 @@ def _kerb_already_treated(state: DesignState, leg_name: str, side: str) -> bool:
     return narrowing is not None and Side(side) in narrowing.sides
 
 
-def apply_osm_parking(state: DesignState, model, depth_ft: float = PARKING_STALL_DEPTH_DEFAULT_FT,
+def apply_osm_parking(state: DesignState, model: "IntersectionModel", depth_ft: float = PARKING_STALL_DEPTH_DEFAULT_FT,
                        stripe_width_ft: float = LANE_NARROWING_DEFAULT_STRIPE_FT,
                        legs: tuple | None = None) -> DesignState:
     """Paint each kerb according to what OSM says about parking there.
@@ -519,7 +524,7 @@ def lane_surplus_that_cannot_be_striped_ft() -> float:
     return max(LANE_WIDTH_SLACK_FT, MIN_HATCHED_ZONE_FT)
 
 
-def osm_derived_baseline(state: DesignState, model, legs: tuple | None = None) -> DesignState:
+def osm_derived_baseline(state: DesignState, model: "IntersectionModel", legs: tuple | None = None) -> DesignState:
     """Paint every kerb the way OSM says it is used, complete the centrelines, upgrade the
     crossings - the design that proposes nothing.
 

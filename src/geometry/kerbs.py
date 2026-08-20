@@ -37,6 +37,13 @@ import numpy as np
 from src.geometry.intersection.junction import PavedKind
 from src.geometry.model import (curb_offsets_at_stations, junction_mouth_ft,
                                 station_offset_many)
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:    # annotation-only: these types are layered above this module,
+    # so importing them for real would close a cycle.
+    from shapely.geometry import LineString
+    from src.geometry.intersection.junction import IntersectionModel
+    from src.geometry.treatments.state import DesignState
 
 
 class KerbType(StrEnum):
@@ -235,7 +242,7 @@ DRIVEWAY_REACH_FT = 5.0
 MAX_MOUTH_SNAP_FT = 20.0
 
 
-def kerb_openings_from_model(model) -> dict:
+def kerb_openings_from_model(model: "IntersectionModel") -> dict:
     """{(leg, side): [KerbOpening]} for every vehicle-crossable kerb along this junction's legs.
 
     Seeded onto the design by DesignState.from_model, exactly as parking_restrictions and
@@ -336,7 +343,7 @@ def kerb_openings_from_model(model) -> dict:
     return openings
 
 
-def _service_way_meetings(model) -> list[tuple[str, str, float, int | None, OpeningSource]]:
+def _service_way_meetings(model: "IntersectionModel") -> list[tuple[str, str, float, int | None, OpeningSource]]:
     """(leg, side, station, way id, source) wherever a mapped SERVICE WAY reaches a modelled kerb.
 
     The SECOND signal (module docstring): a driveway drawn without its kerb tagged is still a
@@ -393,7 +400,7 @@ _SERVICE_SOURCE_BY_KIND = {
 }
 
 
-def _kerb_coverage_outside_openings(model) -> dict:
+def _kerb_coverage_outside_openings(model: "IntersectionModel") -> dict:
     """{(leg, side): [(start_ft, end_ft)]} for the stations a traced kerb covers, openings aside.
 
     Everything opens_the_kerb rejects counts as coverage, which is a wider set than "raised" and
@@ -450,7 +457,7 @@ def _mouth_from_the_tracing(spans, station_ft: float, assumed: tuple) -> tuple:
     return (near, far) if far > near else assumed
 
 
-def _place_on_a_leg_side(line, legs: dict):
+def _place_on_a_leg_side(line: "LineString", legs: dict):
     """(leg, side, start_ft, end_ft) for the kerb this line lies along, or None.
 
     Which leg AND which side, decided by the same measurement: a kerb belongs to whichever leg
@@ -502,7 +509,7 @@ def _place_on_a_leg_side(line, legs: dict):
     return leg_name, side, start_ft, end_ft
 
 
-def describe_kerb_openings(state) -> list[str]:
+def describe_kerb_openings(state: "DesignState") -> list[str]:
     """One line per opening this design will break its markings for, for the phase output.
 
     Provenance, not diagnostics: a gap in a drawing's markings is a claim about the street, and

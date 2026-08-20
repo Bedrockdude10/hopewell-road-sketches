@@ -454,7 +454,7 @@ def paint_stations(leg: "Leg", side: str, start_ft: float,
     return np.linspace(lo, hi, max(int(np.ceil((hi - lo) / STRIP_SAMPLE_FT)) + 1, 2))
 
 
-def kerb_inset_offsets(leg: "Leg", side: str, stations, inset_ft: float,
+def kerb_inset_offsets(leg: "Leg", side: str, stations: np.ndarray, inset_ft: float,
                         keep_inside_ft: float = 0.0,
                         floor_ft: float = 0.0) -> np.ndarray | None:
     """Offsets that sit `inset_ft` in from the TRACED KERB at each station - a line that follows
@@ -523,7 +523,7 @@ def _advancing(centerline: LineString, points) -> np.ndarray:
     return keep
 
 
-def line_from_offsets(leg: "Leg", side: str, stations, offsets_ft) -> LineString | None:
+def line_from_offsets(leg: "Leg", side: str, stations: np.ndarray, offsets_ft) -> LineString | None:
     """A polyline through `offsets_ft` (absolute, unsigned) at `stations` on one side."""
     sign = 1.0 if side == "left" else -1.0
     pts = place_in_measured_frame(leg.centerline, stations, sign * np.asarray(offsets_ft))
@@ -531,7 +531,7 @@ def line_from_offsets(leg: "Leg", side: str, stations, offsets_ft) -> LineString
     return LineString(pts) if len(pts) >= 2 else None
 
 
-def band_from_offsets(leg: "Leg", side: str, stations, inner_ft, outer_ft) -> Polygon | None:
+def band_from_offsets(leg: "Leg", side: str, stations: np.ndarray, inner_ft, outer_ft) -> Polygon | None:
     """The strip between two per-station offset arrays on one side.
 
     The shared tail of offset_band_polygon and its kerb-referenced sibling: once both boundaries

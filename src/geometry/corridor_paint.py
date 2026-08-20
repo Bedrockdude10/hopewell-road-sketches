@@ -27,6 +27,11 @@ from shapely.geometry import LineString, Polygon
 from src.geometry.model import (Alignment, band_from_offsets, line_from_offsets,
                                 place_in_measured_frame, side_facing)
 from src.geometry.treatments.bikeways import TwoWayBikeLane
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:    # annotation-only: these types are layered above this module,
+    # so importing them for real would close a cycle.
+    from src.geometry.network import Corridor
 
 #: How finely the section is sampled along the corridor. The kerb is traced, so its offset moves
 #: with every vertex the surveyor placed; 5 ft follows a real kerb's course. Coarser than the
@@ -121,7 +126,7 @@ NOT_TRACED = "one or both kerbs untraced - the section cannot be tested here"
 MOUTH_REACH_FT = 45.0
 
 
-def _why_no_kerb(corridor, lo_ft: float, hi_ft: float) -> str:
+def _why_no_kerb(corridor: "Corridor", lo_ft: float, hi_ft: float) -> str:
     """Whether this hole is an intersection or a stretch nobody has traced."""
     mid = (lo_ft + hi_ft) / 2
     for junction in corridor.junctions:
@@ -133,7 +138,7 @@ def _why_no_kerb(corridor, lo_ft: float, hi_ft: float) -> str:
     return NOT_TRACED
 
 
-def facility_side(corridor, compass: str) -> str:
+def facility_side(corridor: "Corridor", compass: str) -> str:
     """Which of the corridor's own sides faces `compass`.
 
     Through the SAME side_facing every leg uses, on the corridor's centreline. A corridor runs one
@@ -143,7 +148,7 @@ def facility_side(corridor, compass: str) -> str:
     return side_facing(Alignment(corridor.centerline), compass)
 
 
-def kerb_offset_ft(corridor, side: str, station_ft: float) -> float | None:
+def kerb_offset_ft(corridor: "Corridor", side: str, station_ft: float) -> float | None:
     """How far out the traced kerb sits on one side, unsigned, or None where it is not traced."""
     from src.geometry.network import _kerb_offset_at
 
@@ -182,7 +187,7 @@ def section_at(facility, near_half_ft: float, far_half_ft: float):
 CROSSING_BREAK_FT = 10.0
 
 
-def opening_spans(corridor, facts, side: str) -> tuple:
+def opening_spans(corridor: "Corridor", facts, side: str) -> tuple:
     """Driveway and side-street mouths on the facility's OWN kerb - where the lane goes DOTTED.
 
     IT DOES NOT BREAK HERE. NACTO requires a bidirectional lane to continue through every
@@ -199,7 +204,7 @@ def opening_spans(corridor, facts, side: str) -> tuple:
                         and o.start_ft < corridor.length_ft))
 
 
-def crossing_spans(corridor, facts) -> tuple:
+def crossing_spans(corridor: "Corridor", facts) -> tuple:
     """Pedestrian crossings - the ONE thing that does cut the lane.
 
     A crossing outranks whatever runs along the kerb.
@@ -209,7 +214,7 @@ def crossing_spans(corridor, facts) -> tuple:
                         for station_ft, _markings in facts.marked_crossings))
 
 
-def _cut_around(geometry, corridor, side: str, spans, reach_ft: float = 60.0):
+def _cut_around(geometry, corridor: "Corridor", side: str, spans, reach_ft: float = 60.0):
     """`geometry` with the break spans taken out of it.
 
     Cut as full-depth bands across the kerbside rather than as station ranges of the polygon,
@@ -235,7 +240,7 @@ def _cut_around(geometry, corridor, side: str, spans, reach_ft: float = 60.0):
     return None if cut.is_empty else cut
 
 
-def paint_facility(corridor, facility, facts=None) -> CorridorFacilityPaint:
+def paint_facility(corridor: "Corridor", facility, facts=None) -> CorridorFacilityPaint:
     """Place `facility` along `corridor`, wherever the street can carry it.
 
     Walks the stations at which BOTH kerbs are traced - the only stations where a width is a
@@ -269,7 +274,7 @@ def paint_facility(corridor, facility, facts=None) -> CorridorFacilityPaint:
     return paint
 
 
-def _collect(paint, corridor, facility, side, stations, near, far, fits):
+def _collect(paint, corridor: "Corridor", facility, side: str, stations: np.ndarray, near, far, fits):
     """Split one traced span into the stretches that fit and the ones that do not.
 
     The section for a run is rebuilt at the run's NARROWEST cross-section: a facility drawn
@@ -320,7 +325,7 @@ def _blocks(flags: np.ndarray):
             for i in range(len(bounds) - 1)]
 
 
-def _build_run(corridor, side: str, section, stations, offs, breaks=()):
+def _build_run(corridor: "Corridor", side: str, section, stations: np.ndarray, offs, breaks=()):
     """The paint itself, from the SAME section accounting the per-leg treatment uses.
 
     The lane hugs the kerb (TwoWayBikeLane.hugs_kerb); the travel lane's edge is measured from
@@ -359,7 +364,7 @@ def _build_run(corridor, side: str, section, stations, offs, breaks=()):
                        section=section), None
 
 
-def _bollards(on: Alignment, side: str, stations, offsets) -> tuple:
+def _bollards(on: Alignment, side: str, stations: np.ndarray, offsets) -> tuple:
     """Flex posts down the middle of the buffer, at the facility's own pitch.
 
     Placed on the corridor's station grid rather than on a fresh one, so a post never lands
@@ -373,7 +378,7 @@ def _bollards(on: Alignment, side: str, stations, offsets) -> tuple:
     return tuple(place_in_measured_frame(on.centerline, want, sign * at))
 
 
-def centred_on_its_kerbs(corridor, sample_ft: float = 10.0, smooth_ft: float = 60.0):
+def centred_on_its_kerbs(corridor: "Corridor", sample_ft: float = 10.0, smooth_ft: float = 60.0):
     """The corridor with its centreline moved onto the midpoint of its two traced kerbs.
 
     WITHOUT THIS THE CORRIDOR CANNOT BE PAINTED. Between modelled junctions the centreline is
@@ -429,7 +434,7 @@ def _restationed(run, centerline: LineString):
     return dataclasses.replace(run, start_ft=float(span[0]), end_ft=float(span[1]))
 
 
-def parking_bands(corridor, facts, side: str, depth_ft: float | None = None):
+def parking_bands(corridor: "Corridor", facts, side: str, depth_ft: float | None = None):
     """[(lo_ft, hi_ft, polygon)] where a stall may legally be marked along one kerb.
 
     The spans are `CorridorFacts.parkable` - R.S. 39:4-138 applied along the whole road rather
@@ -455,7 +460,7 @@ def parking_bands(corridor, facts, side: str, depth_ft: float | None = None):
     return out
 
 
-def stall_room_spans(corridor, side: str, lane_edge_at, sample_ft: float = CORRIDOR_SAMPLE_FT):
+def stall_room_spans(corridor: "Corridor", side: str, lane_edge_at, sample_ft: float = CORRIDOR_SAMPLE_FT):
     """Where this kerb has room for a usable stall once the travel lane holds its target.
 
     THE OTHER HALF OF A STALL COUNT. `CorridorFacts.parkable` says where the LAW leaves room;
@@ -515,7 +520,7 @@ def stalls_per_span(spans, stall_ft: float | None = None):
                  if int((hi - lo) // stall_ft) >= 1)
 
 
-def stall_marks(corridor, side: str, spans, depth_ft: float | None = None,
+def stall_marks(corridor: "Corridor", side: str, spans, depth_ft: float | None = None,
                 stall_ft: float | None = None):
     """(divider lines, stall count) - the stalls DRAWN, one mark per boundary between two cars.
 
@@ -594,7 +599,7 @@ def green_extension_spans(paint: CorridorFacilityPaint, reach_ft: float | None =
     return tuple(sorted(spans))
 
 
-def contraflow_centreline(corridor, paint: CorridorFacilityPaint):
+def contraflow_centreline(corridor: "Corridor", paint: CorridorFacilityPaint):
     """The dotted yellow centreline down each run, CONTINUING across every opening.
 
     NACTO asks for the dotted yellow both along a bidirectional lane and in its crossbikes,

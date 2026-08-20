@@ -23,6 +23,11 @@ from shapely.ops import unary_union
 from src.geometry.markings import PARKING_EDGE_LINE
 from src.geometry.model import station_offset_many
 from src.geometry.targets import Corner, LegSide
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:    # annotation-only: these types are layered above this module,
+    # so importing them for real would close a cycle.
+    from src.geometry.treatments.state import DesignState
 
 # MUTCD's normal walking speed for timing a pedestrian clearance interval. Stated on the
 # panel beside every time it produces, because a time in seconds is an assumption about who
@@ -74,7 +79,7 @@ def turn_speed_mph(radius_ft: float) -> float:
     return sqrt(15 * radius_ft * (TURN_SUPERELEVATION + TURN_SIDE_FRICTION))
 
 
-def motor_lane_reach_ft(state, leg_name: str, reach: tuple) -> tuple[float, float]:
+def motor_lane_reach_ft(state: "DesignState", leg_name: str, reach: tuple) -> tuple[float, float]:
     """How far either side of the centerline a person is in front of MOTOR traffic.
 
     The kerb, unless a treatment put something else against it — a bike lane, its buffer, a
@@ -246,7 +251,7 @@ class SceneMetrics:
     corners: tuple[CornerTurn, ...]
 
     @classmethod
-    def of(cls, state, reaches: dict, offsets: dict, skews: dict, paint: list,
+    def of(cls, state: "DesignState", reaches: dict, offsets: dict, skews: dict, paint: list,
            marked=None, surveyed_leg_lengths: dict | None = None) -> "SceneMetrics":
         """Measure a design. Arguments are SceneGeometry's own fields - see its `metrics`.
 

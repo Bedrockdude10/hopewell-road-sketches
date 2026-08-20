@@ -27,6 +27,11 @@ from shapely.geometry import LineString, Point
 from shapely.ops import unary_union
 
 from src.render.coords import FT_TO_M
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:    # annotation-only: these types are layered above this module,
+    # so importing them for real would close a cycle.
+    from src.geometry.intersection.junction import IntersectionModel
 
 # How much of a surveyed way's own length has to lie under drawn paint before the drawing counts
 # as containing it. Measured: a drawn crossing has 62-91% of its traced length inside its band (the
@@ -103,7 +108,7 @@ class Uncovered:
         return f"{self.layer}: {self.count} of {self.total} surveyed in the frame are not drawn"
 
 
-def coverage_gaps(model, paint, frame_radius_ft: float | None = None) -> list[Uncovered]:
+def coverage_gaps(model: "IntersectionModel", paint, frame_radius_ft: float | None = None) -> list[Uncovered]:
     """Every layer where the drawing omits a surveyed feature inside its own frame.
 
     `paint` is EVERYTHING THE DRAWING PUTS ON THE GROUND - PaintPieces, bare shapely footprints,
@@ -237,7 +242,7 @@ def _read_drawing(paint) -> _Drawing:
                     lines=tuple(drawn_lines))
 
 
-def _frame_radius_ft(model, given: float | None) -> float:
+def _frame_radius_ft(model: "IntersectionModel", given: float | None) -> float:
     """The radius of the frame both views draw, or the caller's own.
 
     Local import: src.render.frame reaches back into src.geometry.model, and this module is
@@ -250,7 +255,7 @@ def _frame_radius_ft(model, given: float | None) -> float:
     return junction_frame(model).radius_ft
 
 
-def _in_frame(model, radius_ft: float):
+def _in_frame(model: "IntersectionModel", radius_ft: float):
     """A test for "this is in the picture", and the distance to report it at.
 
     Two different centres: membership from the FRAME's centre (what is drawn), distance from
@@ -297,7 +302,7 @@ def _uncovered(layer: str, features: list[tuple]) -> Uncovered | None:
 # The layers
 # ---------------------------------------------------------------------------
 
-def crossing_gaps(model, drawing: _Drawing, radius_ft: float) -> Uncovered | None:
+def crossing_gaps(model: "IntersectionModel", drawing: _Drawing, radius_ft: float) -> Uncovered | None:
     """Surveyed pedestrian crossings the drawing does not draw.
 
     All crossings are traced WAYS carrying their own position, length and skew, so each one
@@ -369,7 +374,7 @@ def _markings_label(tags: dict | None) -> str:
     return "no markings tag"
 
 
-def kerb_gaps(model, drawing: _Drawing, radius_ft: float) -> Uncovered | None:
+def kerb_gaps(model: "IntersectionModel", drawing: _Drawing, radius_ft: float) -> Uncovered | None:
     """Traced kerb ways in the frame that the render does not draw. THE CONTROL CASE.
 
     Expected clean: both renderers take the same one number (drawn_kerb_radius_ft), so the
@@ -394,7 +399,7 @@ def kerb_gaps(model, drawing: _Drawing, radius_ft: float) -> Uncovered | None:
     return _uncovered("kerbs", features)
 
 
-def kerb_ramp_gaps(model, drawing: _Drawing, radius_ft: float) -> Uncovered | None:
+def kerb_ramp_gaps(model: "IntersectionModel", drawing: _Drawing, radius_ft: float) -> Uncovered | None:
     """Surveyed kerb ramps - kerb ways tagged tactile_paving=yes - with no pad drawn on them.
 
     The traced KERB WAY is the ramp's geometry (OSM records a ramp as `barrier=kerb` tagged
@@ -419,7 +424,7 @@ def kerb_ramp_gaps(model, drawing: _Drawing, radius_ft: float) -> Uncovered | No
     return _uncovered("kerb_ramps", features)
 
 
-def traffic_control_gaps(model, drawing: _Drawing, radius_ft: float) -> Uncovered | None:
+def traffic_control_gaps(model: "IntersectionModel", drawing: _Drawing, radius_ft: float) -> Uncovered | None:
     """Surveyed stop / give-way / signal nodes with no hardware drawn for them.
 
     Matched on the prop TYPE as well as the distance, so a node is only covered by hardware of

@@ -71,7 +71,7 @@ PAD_NEAR_JUNCTION_FT = 90.0  # a ramp belonging to THIS junction; crossings/kerb
                               # Princeton's 'ramps' were 350+ ft away at a different junction
 
 
-def _merged_crossing_tags(line, crossing_tags: dict, nodes_ft: list[dict]) -> dict:
+def _merged_crossing_tags(line: LineString, crossing_tags: dict, nodes_ft: list[dict]) -> dict:
     """A crossing's tags from BOTH its way and its highway=crossing node.
 
     OSM splits the detail across the two: the way usually carries crossing:markings and
@@ -91,7 +91,7 @@ def _merged_crossing_tags(line, crossing_tags: dict, nodes_ft: list[dict]) -> di
     return merged
 
 
-def _crossing_endpoint_props(line, leg, tags: dict, leg_name: str, pavement) -> list[dict]:
+def _crossing_endpoint_props(line: LineString, leg, tags: dict, leg_name: str, pavement) -> list[dict]:
     """Kerbside hardware at a crossing's two ends: pedestrian pushbuttons, RRFB beacons,
     and the tactile paving pad where the crossing meets each curb.
 
@@ -192,7 +192,7 @@ def pad_polygon(x: float, y: float, heading_deg: float,
     ])
 
 
-def _kerb_tactile_pad_props(kerb_ways: list, crossings: list[dict], pavement, center_ft=None):
+def _kerb_tactile_pad_props(kerb_ways: list, crossings: list[dict], pavement, center_ft: Point = None):
     """One tactile pad per ATTACH NODE - a node shared by a crossing way and a
     tactile_paving kerb way - deduplicated by node id.
 
@@ -290,7 +290,7 @@ def _pad_orientation(x: float, y: float, kerb_line, pavement):
     return None
 
 
-def _tactile_pad_props(line, pavement, leg_name: str, heading: float) -> list[dict]:
+def _tactile_pad_props(line: LineString, pavement, leg_name: str, heading: float) -> list[dict]:
     """A detectable warning pad at each end of a crossing, wholly on the footway.
 
     Finding the roadway edge: take the parts of the crossing way that lie OUTSIDE the
@@ -352,7 +352,7 @@ def _tactile_pad_props(line, pavement, leg_name: str, heading: float) -> list[di
 
 
 def _osm_crossing_hardware_props(state: DesignState, crossings: list[dict], nodes_ft: list[dict],
-                                  kerb_ways: list | None = None, center_ft=None) -> list[dict]:
+                                  kerb_ways: list | None = None, center_ft: Point = None) -> list[dict]:
     """Pushbuttons, RRFBs and tactile paving pads for every crossing we can match to a leg.
 
     Reuses the same matcher the crosswalk geometry uses, so a crossing credited to a leg
@@ -397,7 +397,7 @@ def _crossing_centroids_ft(crossings: list[dict]) -> list[tuple]:
     return out
 
 
-def _crossing_is_covered(centroids: list[tuple], covered_ways: set, line) -> bool:
+def _crossing_is_covered(centroids: list[tuple], covered_ways: set, line: LineString) -> bool:
     """Whether the crossing matching `line` already had pads placed from a traced kerb."""
     if not centroids:
         return False

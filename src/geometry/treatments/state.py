@@ -14,6 +14,11 @@ from src.geometry.kerbs import kerb_openings_from_model
 from src.geometry.targets import LegTarget, Side
 from src.geometry.treatments.base import (DEFAULT_CENTERLINE_STYLE, Treatment,
                                           _parking_restrictions_from_model)
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:    # annotation-only: these types are layered above this module,
+    # so importing them for real would close a cycle.
+    from src.geometry.intersection.junction import IntersectionModel
 
 
 
@@ -49,7 +54,7 @@ class DesignState:
     notes: list = field(default_factory=list)
 
     @classmethod
-    def from_model(cls, model) -> "DesignState":
+    def from_model(cls, model: "IntersectionModel") -> "DesignState":
         # PRECEDENCE IS BY PROVENANCE, not by which file the value came from (src/provenance.py).
         # A double yellow IS the no-passing marking, so OSM's overtaking=no is a direct statement
         # about the paint. An explicit config.yaml centerline_style is direct observation and
@@ -128,7 +133,7 @@ class DesignState:
             return -toward_left_ft, str(Side.RIGHT)
         return None
 
-    def treatment_for(self, kind, target):
+    def treatment_for(self, kind, target) -> Treatment | None:
         """The treatment of `kind` applied at `target`, or None if there is none.
 
         The last one applied wins: a design is a sequence of decisions and the later one is the
@@ -144,7 +149,7 @@ class DesignState:
                 found = treatment
         return found
 
-    def treatments_of(self, kind) -> list:
+    def treatments_of(self, kind) -> list[Treatment]:
         """Every treatment of `kind`, ONE PER TARGET (the last applied), sorted by target.
 
         Last-applied-wins per target, for the reason treatment_for gives. Painting both instead
@@ -163,7 +168,7 @@ class DesignState:
                 by_target[treatment.target] = treatment
         return [by_target[target] for target in sorted(by_target, key=str)]
 
-    def every_treatment(self, kind, target=None) -> list:
+    def every_treatment(self, kind, target=None) -> list[Treatment]:
         """Every treatment of `kind`, in application order, WITHOUT collapsing per target.
 
         For the two treatments that add up instead of replacing: ShiftCrosswalk shifts a crossing
@@ -173,7 +178,7 @@ class DesignState:
         return [t for t in self.treatments
                 if isinstance(t, kind) and (target is None or t.target == target)]
 
-    def apply(self, *treatments: Treatment, model=None) -> "DesignState":
+    def apply(self, *treatments: Treatment, model: "IntersectionModel" = None) -> "DesignState":
         """Apply treatments to a COPY of this design and return it.
 
         THE SINGLE WAY a treatment enters a design, so everything every treatment needs checked

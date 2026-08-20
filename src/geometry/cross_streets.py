@@ -31,6 +31,11 @@ from shapely.geometry import LineString, Point
 from shapely.ops import nearest_points
 
 from src.geometry.context_roads import assumed_width_ft, is_carriageway
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:    # annotation-only: these types are layered above this module,
+    # so importing them for real would close a cycle.
+    from src.geometry.intersection.junction import IntersectionModel
 
 # THIS JUNCTION'S OWN ARMS, and the test is about the WAY rather than about distance along a leg.
 # Its arms all meet at the centre and the (e) setback is already measured from the side line there.
@@ -72,7 +77,7 @@ def _crossing_angle_deg(leg_line: LineString, way_line: LineString, at: Point) -
     """Angle between the two centrelines where they meet, folded into 0-90 degrees."""
     import math
 
-    def bearing(line, point, span=15.0):
+    def bearing(line: LineString, point, span=15.0):
         along = line.project(point)
         a = line.interpolate(max(along - span, 0.0))
         b = line.interpolate(min(along + span, line.length))
@@ -155,7 +160,7 @@ def _sides_of(leg_line: LineString, way_line: LineString, at: Point) -> frozense
     return frozenset(sides)
 
 
-def cross_streets_from_model(model) -> dict:
+def cross_streets_from_model(model: "IntersectionModel") -> dict:
     """{leg name: [CrossStreet]} for this model, RESOLVED ONCE at load.
 
     Reads `model.cross_streets` rather than deriving it again. Falls back to computing it for
@@ -247,7 +252,7 @@ def _crossing_lines_ft(center_wgs84) -> list:
     return lines
 
 
-def cross_streets_ft(center_wgs84, center_ft, legs: dict) -> dict:
+def cross_streets_ft(center_wgs84, center_ft: Point, legs: dict) -> dict:
     """{leg name: [CrossStreet]} for every other street these legs run across.
 
     Takes the pieces rather than a model so `load_intersection_model` can call it while the

@@ -70,8 +70,8 @@ def drawn_kerb_radius_ft() -> float:
 
 
 def kerb_lines_with_tags_ft(center_wgs84: Point, center_ft: Point, legs: dict | None = None,
-                             radius_ft: float | None = None) -> list:
-    """[(LineString, tags)] for traced kerbs near the junction - geometry plus what OSM
+                             radius_ft: float | None = None) -> list[tuple[LineString, dict, int | None]]:
+    """[(LineString, tags, way id)] for traced kerbs near the junction - geometry plus what OSM
     says about each (kerb=lowered, tactile_paving=yes, wheelchair=yes).
 
     THREE relevance tests, because "is this kerb ours" has three different answers and they are
@@ -98,7 +98,7 @@ def kerb_lines_with_tags_ft(center_wgs84: Point, center_ft: Point, legs: dict | 
     the widths are settled and extra ways can only lengthen a curb, never redefine one.
     See tests/test_leg_frame.py.
     """
-    def relevant(line):
+    def relevant(line: LineString):
         if radius_ft is not None:
             return line.distance(center_ft) <= radius_ft
         if legs:

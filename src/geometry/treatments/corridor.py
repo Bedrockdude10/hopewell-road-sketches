@@ -25,6 +25,11 @@ from src.geometry.treatments.bikeways import (BIKE_LANE_BOLLARD_SPACING_FT,
                                               ExtendBikeLaneThroughJunction)
 from src.geometry.treatments.parking import hold_travel_lane_at_target
 from src.geometry.treatments.state import DesignState
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:    # annotation-only: these types are layered above this module,
+    # so importing them for real would close a cycle.
+    from src.geometry.intersection.junction import IntersectionModel
 
 
 @dataclass(frozen=True)
@@ -58,7 +63,7 @@ class CorridorFacility:
     sections: tuple[Section, ...]
     bollard_spacing_ft: float = BIKE_LANE_BOLLARD_SPACING_FT
 
-    def legs_on(self, model) -> list[str]:
+    def legs_on(self, model: "IntersectionModel") -> list[str]:
         """This junction's approaches that lie on this route, in a stable order.
 
         Read off each leg's configured `street_name`, never a per-site list of leg names: that
@@ -70,7 +75,7 @@ class CorridorFacility:
                       if name in model.legs
                       and _street_name(cfg.get("street_name", "")) == self.road)
 
-    def apply_to(self, state: DesignState, model, quiet: bool = False) -> DesignState:
+    def apply_to(self, state: DesignState, model: "IntersectionModel", quiet: bool = False) -> DesignState:
         """Place the facility on every approach of this junction that is on the route.
 
         Each approach takes the first section that fits. WHERE IT LANDS ON THE LADDER, AND WHERE

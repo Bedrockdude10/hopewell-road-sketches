@@ -15,6 +15,7 @@ from src.geometry.model import (narrowest_half_width_ft)
 
 if TYPE_CHECKING:                       # DesignState is layered above this module;
     from src.geometry.treatments.state import DesignState   # the annotation is a string
+    from src.geometry.intersection.junction import IntersectionModel
 
 
 
@@ -119,7 +120,7 @@ class ParkingRestriction:
                 + (f" on way {self.way_id}" if self.way_id is not None else ""))
 
 
-def _parking_restrictions_from_model(model) -> dict:
+def _parking_restrictions_from_model(model: "IntersectionModel") -> dict:
     """{(leg, side): [ParkingRestriction]} from every OSM way lying along each leg.
 
     Seeded onto the state like centerline_styles, so treatments, renderers and invariants read
@@ -211,7 +212,7 @@ class Treatment(ABC):
         crosswalk restyle is drawn by the crossing renderer rather than from the paint list.
         """
 
-    def apply_to(self, state: "DesignState", model=None) -> str | None:
+    def apply_to(self, state: "DesignState", model: "IntersectionModel" = None) -> str | None:
         """Check this treatment against the design, and change the MODELLED STREET if it moves it.
 
         Nothing by default: a treatment IS the record, so being applied is the whole of the

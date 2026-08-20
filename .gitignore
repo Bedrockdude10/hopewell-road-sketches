@@ -211,3 +211,12 @@ output/.DS_Store
 
 #ignore outputs
 output/**
+output/broad_st_greenwood/geometry_existing.json
+output/broad_st_greenwood/geometry_proposal_daylight_bollards.json
+output/broad_st_greenwood/geometry_proposed.json
+output/ebroad_princeton/geometry_existing.json
+output/ebroad_princeton/geometry_proposal_daylight_bollards.json
+output/ebroad_princeton/geometry_proposed.json
+output/wbroad_louellen/geometry_existing.json
+output/wbroad_louellen/geometry_proposal_two_way_bike_lane.json
+output/wbroad_louellen/geometry_proposed.json

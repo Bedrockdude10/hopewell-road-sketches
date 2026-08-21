@@ -64,7 +64,6 @@ def bike_symbol_polygon(on, side: str, station_ft: float, centre_offset_ft: floa
     its place here rather than being decoration: it tells a driver at a mouth which direction the
     rider bearing down on them is coming from.
     """
-    import numpy as np
     from shapely.geometry import Polygon
 
     from src.geometry.model import place_in_measured_frame

@@ -12,7 +12,7 @@ from dataclasses import dataclass
 from typing import ClassVar
 import numpy as np
 import shapely.ops
-from src.geometry.targets import LegSide, Side
+from src.geometry.targets import Side
 from src.geometry.model import narrowest_half_width_ft
 from src.geometry.treatments.base import (LANE_WIDTH_SLACK_FT, PARKING_STALL_LENGTH_DEFAULT_FT,
                                           TARGET_LANE_WIDTH_FT, Treatment)
@@ -134,8 +134,8 @@ class AddBikeLane(Treatment):
         from src.geometry.model import (band_from_offsets, curbside_strip_polygon, inset_line_ft,
                                         kerb_inset_offsets, kerb_parallel_line_ft,
                                         kerb_referenced_band_polygon, lane_narrowing_polygons_ft,
-                                        offset_band_polygon, paint_stations, parking_stall_lines_ft,
-                                        section_holds_to_ft)
+                                        offset_band_polygon, paint_stations,
+                                        parking_stall_lines_ft)
         from src.geometry.paint import (LANE_EDGE_LINE_WIDTH_FT, _one, end_against_crossing,
                                         parking_runs)
 
@@ -164,27 +164,23 @@ class AddBikeLane(Treatment):
             start_ft, beyond_ft = at.target_ft, None
         bounds = lane.offsets_from_centerline_ft()
         kerb = lane.offsets_from_kerb_ft()
-        # AND WHERE THE STREET RUNS OUT. The section is sized at the narrowest point of the span it
-        # was measured over (Leg.design_length_ft), so that is the span it is known to fit; past it
-        # a kerb that comes in tighter leaves every kerb-referenced stripe held at its floor_ft, on
-        # the far side of the kerb. Drawn to here instead - see model.section_holds_to_ft. None at
-        # 1x on every leg of every site, where the whole leg is inside the measured span.
-        outermost_ft = max(o for k, o in bounds.items()
-                            if o is not None and k != "travel_lane_edge_ft")
-        # Silent, unlike a rung refusal: which section an APPROACH takes is a design decision and
-        # gets a note, while how far down the block the drawing carries it is a fact about the
-        # frame. It is in the geometry either way, and PaintInsideTheCurb is what would catch its
-        # absence.
-        stop_ft = section_holds_to_ft(leg, side, outermost_ft, start_ft)
-        # ...AND THE FLOOR ITSELF IS CAPPED AT THE ROOM THERE IS. floor_ft says "never come inward
-        # of the design", which is sound only while the design fits: the test that granted this
-        # section measures the TRAVEL WAY, so a section can be granted whose outer stripe sits
-        # outside the near kerb - 24.16 ft of section against a kerb 20.32 ft out on W Broad's
-        # southwest approach. Held at that floor the lane is drawn over the kerb; capped here it
-        # follows the kerb inward instead, which is the graduated width this facility is meant to
-        # have - full where the street allows it, narrower where it does not.
-        room_ft = narrowest_half_width_ft(leg, side, max(start_ft, 0.0),
-                                          leg.centerline.length if stop_ft is None else stop_ft)
+        # THE FLOOR IS CAPPED AT THE ROOM THERE IS, and this is the ONLY thing the kerb is
+        # allowed to do to the section. floor_ft says "never come inward of the design", which is
+        # sound only while the design fits: the test that granted this section measures the TRAVEL
+        # WAY, so a section can be granted whose outer stripe sits outside the near kerb - 24.16 ft
+        # of section against a kerb 20.32 ft out on W Broad's southwest approach. Held at that
+        # floor the lane is drawn over the kerb; capped here it follows the kerb inward instead.
+        #
+        # WHAT IT MAY NOT DO IS END THE FACILITY. There was a second guard here that stopped every
+        # band at the first station where the section no longer fit, on the reasoning that a
+        # section is only known to fit over the span it was sized on. It amputated two legs:
+        # broad_st_east carried green for 180 ft of a 425 ft leg, under 42 flex posts and a centre
+        # stripe that both ran the full length, because the sizing span was 1x and the drawing was
+        # 2.5x. Sizing over the whole drawn leg is what actually fixes that (see
+        # narrowest_half_width_ft) - a facility that fits the street it is drawn on needs no stop
+        # station, and one that does not fit is a design decision for the rung ladder to take, not
+        # a length for this method to trim. BikewayReachesTheEndOfItsKerb is the check that says so.
+        room_ft = narrowest_half_width_ft(leg, side, max(start_ft, 0.0))
         floor = {key: None if offset_ft is None else min(offset_ft, room_ft)
                  for key, offset_ft in bounds.items()}
         # Every stripe at its own CENTRE, which BikeLane has already offset half a stripe out
@@ -199,7 +195,6 @@ class AddBikeLane(Treatment):
         # the alignment where it does not - one branch, so a section cannot end up with its green
         # on one datum and its stripes on the other.
         def lane_edge_line(key, from_ft, to_ft=None):
-            to_ft = stop_ft if to_ft is None else to_ft
             if lane.hugs_kerb:
                 # floor_ft is this stripe's own designed offset, so it follows the kerb OUTWARD
                 # and never comes in tighter than the section - see kerb_inset_offsets.
@@ -211,7 +206,6 @@ class AddBikeLane(Treatment):
                     if bounds[key] is not None else None)
 
         def lane_surface(from_ft, to_ft=None):
-            to_ft = stop_ft if to_ft is None else to_ft
             if lane.hugs_kerb:
                 return kerb_referenced_band_polygon(leg, side, kerb["bike_outer_ft"],
                                                      lane.width_ft, from_ft, to_ft,
@@ -233,7 +227,7 @@ class AddBikeLane(Treatment):
         surface = lane_surface(start_ft)
         ctx.dash_phase(leg_name, side, surface)
         ctx.add(BIKE_LANE_EDGE_LINE,
-                 inset_line_ft(leg, side, bounds["inner_line_ft"], start_ft, stop_ft,
+                 inset_line_ft(leg, side, bounds["inner_line_ft"], start_ft,
                                 keep_inside_ft=LANE_EDGE_LINE_WIDTH_FT / 2),
                  leg_name, side, beyond_ft, shares_a_kerb=through)
         for key in ("buffer_outer_line_ft", "outer_line_ft"):
@@ -328,7 +322,7 @@ class AddBikeLane(Treatment):
             inner_face_ft = bounds["travel_lane_edge_ft"] + LANE_EDGE_LINE_WIDTH_FT
             fill = None
             if lane.hugs_kerb:
-                stations = paint_stations(leg, side, start_ft, stop_ft)
+                stations = paint_stations(leg, side, start_ft)
                 if stations is not None:
                     outer = kerb_inset_offsets(
                         leg, side, stations, kerb["bike_inner_ft"] + LANE_EDGE_LINE_WIDTH_FT,

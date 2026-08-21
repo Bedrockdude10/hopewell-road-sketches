@@ -333,60 +333,76 @@ def test_everything_counted_from_osm_is_inside_a_fetch_window(broad_st, site_mod
 
 
 @needs_source_data
-def test_what_the_street_can_hold_does_not_move_with_the_render_frame():
-    """A rung is a fact about the street, so the sheet's width must not decide it.
+@pytest.mark.parametrize("scale", [None, 2.5])
+def test_the_facility_covers_the_street_it_is_drawn_on(scale):
+    """A bikeway runs the whole kerb it is placed on, at whatever width the sheet is.
 
-    `narrowest_half_width_ft` is a MINIMUM OVER A SPAN, and the span used to be the centreline's
-    length - which load.py multiplies by HOPEWELL_FRAME_SCALE. So a wider sheet reached further
-    down the block, found a narrower pinch, and judged the street less able to hold the facility:
-    W Broad's southwest approach measured 20.32 ft at 1x and 16.58 ft at 2.5x, off a pinch 318 ft
-    out that the 1x sheet does not show. That cost the leg its 3 ft buffer and its flex posts on
-    the wide render alone - a facility protected in one picture and painted in another.
+    THIS IS THE PROPERTY THE FRAME-INVARIANT RUNG WAS TRADED FOR, and it is worth more. Sections
+    used to be sized over a configured span while being drawn over HOPEWELL_FRAME_SCALE times it,
+    so which rung a leg took could not move with the sheet - and the 195 ft nobody had measured
+    had its paint trimmed off at the first station the section stopped fitting. broad_st_east
+    carried green over 180 ft of a 425 ft leg, under 42 flex posts and a centre stripe that both
+    ran the full length, because those are drawn by paths that never consulted the design span.
 
-    Bounded by Leg.design_length_ft now. The tolerance is not zero because the centreline itself
-    is refitted over the longer leg and shifts a little laterally; what must not survive is a
-    swing wide enough to change a rung.
+    Measured off the DRAWN pieces against the traced kerb, which is the comparison
+    BikewayReachesTheEndOfItsKerb makes in the pipeline; asserted here at two scales because the
+    fixtures build at one, and a single scale is exactly what hid this.
     """
-    from src.geometry.intersection import load_intersection_model
-    from src.geometry.model import narrowest_half_width_ft
+    import numpy as np
+    from src.checks import BIKEWAY_SHORTFALL_TOLERANCE_FT
+    from src.geometry.markings import BIKE_LANE_SURFACE
+    from src.geometry.model import curb_station_span, station_offset_many
     from src.render.frame import FRAME_SCALE_ENV
+    from scripts.measure_drawn import build
 
-    def widths(scale):
-        with contextlib.ExitStack() as stack:
-            monkey = pytest.MonkeyPatch()
-            stack.callback(monkey.undo)
-            if scale is None:
-                monkey.delenv(FRAME_SCALE_ENV, raising=False)
-            else:
-                monkey.setenv(FRAME_SCALE_ENV, str(scale))
-            with contextlib.redirect_stdout(io.StringIO()):
-                model = load_intersection_model(site="wbroad_louellen")
-            return {(name, side): narrowest_half_width_ft(leg, side)
-                    for name, leg in model.legs.items() for side in ("left", "right")}
+    with contextlib.ExitStack() as stack:
+        monkey = pytest.MonkeyPatch()
+        stack.callback(monkey.undo)
+        if scale is None:
+            monkey.delenv(FRAME_SCALE_ENV, raising=False)
+        else:
+            monkey.setenv(FRAME_SCALE_ENV, str(scale))
+        with contextlib.redirect_stdout(io.StringIO()):
+            built = build("wbroad_louellen", "build_proposal_two_way_bike_lane")
 
-    narrow, wide = widths(None), widths(2.5)
-    corridor = {k: v for k, v in narrow.items() if k[0].startswith("w_broad")}
-    worst = max(abs(corridor[k] - wide[k]) for k in corridor)
-    assert worst < 0.5, (
-        "the width a corridor leg is judged to have moved with the frame scale: "
-        + ", ".join(f"{k[0]}/{k[1]} {corridor[k]:.2f}->{wide[k]:.2f}"
-                    for k in corridor if abs(corridor[k] - wide[k]) >= 0.5))
-    # The CROSS street still moves by up to 1.2 ft (louellen_st_west/right, pinched at station 1),
-    # and that residual is the centreline itself: refitting it over a 2.5x leg shifts it laterally,
-    # which moves both kerb offsets. Bounded and asserted rather than left unstated, because the
-    # span was only the larger of the two mechanisms.
-    everywhere = max(abs(narrow[k] - wide[k]) for k in narrow)
-    assert everywhere < 1.5, f"a leg width moved {everywhere:.2f} ft with the frame scale"
+    reached: dict[tuple[str, str], float] = {}
+    for piece in built.paint:
+        if piece.kind is not BIKE_LANE_SURFACE or piece.leg is None:
+            continue
+        leg = built.state.legs[piece.leg]
+        coords = np.asarray(piece.geometry.exterior.coords, dtype=float)
+        stations, _offsets = station_offset_many(leg.centerline, coords)
+        key = (piece.leg, piece.side)
+        reached[key] = max(reached.get(key, float("-inf")), float(stations.max()))
+
+    assert reached, "no bikeway surface was drawn, so nothing was measured"
+    short = {}
+    for (leg_name, side), reached_ft in reached.items():
+        span = curb_station_span(built.state.legs[leg_name], side)
+        if span is None:
+            continue
+        if float(span[1]) - reached_ft > BIKEWAY_SHORTFALL_TOLERANCE_FT:
+            short[f"{leg_name}/{side}"] = (reached_ft, float(span[1]))
+    assert not short, (
+        "a bikeway stops before the kerb it was placed on does: "
+        + ", ".join(f"{k} reached {a:.1f} of {b:.1f} ft" for k, (a, b) in short.items()))
 
 
 @needs_source_data
-def test_the_corridor_lands_on_the_same_rung_at_either_frame_scale():
-    """The output that matters: which section each approach takes, and whether it is protected.
+def test_a_narrower_rung_never_costs_an_approach_its_protection():
+    """What a wider sheet may and may not change about a section.
 
-    The width bug reached the drawing through this - W Broad's southwest approach took the full
-    10 ft + 3 ft buffer at 1x and fell to an unbuffered rung at 2.5x, so the wide sheet showed a
-    painted lane where the narrow one showed a protected one. Asserted on the DESIGN rather than
-    on the measurement because that is what a reader sees.
+    MAY change the width. A treatment applies to the street in the drawing, so a sheet that shows
+    more street is asking the question of more street: W Broad's southwest approach measures
+    20.32 ft over 130 ft and 16.58 ft over 325 ft, off a real pinch 318 ft out, and takes NACTO's
+    constrained rung on the sheet that shows it. Both drawings are honest about what they depict -
+    the alternative was a section sized on the short span and drawn over the long one, which is
+    how the same leg came to carry 63.6 ft of amputated paint.
+
+    MAY NOT change whether it is protected. The buffer is the rung that never gives on this
+    facility (see BROAD_ST_TWO_WAY_BIKEWAY), and it is what the flex posts stand in - so a
+    painted lane in one picture and a protected one in another is a difference in the PROPOSAL,
+    not in the sheet. That is the half of the old frame-invariance assertion worth keeping.
     """
     from src.geometry.intersection import load_intersection_model
     from src.geometry.treatments import (AddBikeLane, BROAD_ST_TWO_WAY_BIKEWAY, DesignState)
@@ -415,8 +431,10 @@ def test_the_corridor_lands_on_the_same_rung_at_either_frame_scale():
         return placed
 
     narrow, wide = sections(None), sections(2.5)
-    assert narrow == wide, f"the corridor's sections differ by frame scale: {narrow} vs {wide}"
     assert narrow, "no approach carried the facility, so nothing was compared"
-    assert all(buffer_ft > 0 for _width, buffer_ft in narrow.values()), (
-        f"an approach carries an UNBUFFERED lane, which takes no flex posts - the buffer is the "
-        f"rung that never gives on this facility: {narrow}")
+    assert set(narrow) == set(wide), (
+        f"an approach carries the facility on one sheet and not the other: {narrow} vs {wide}")
+    for scale_name, placed in (("1x", narrow), ("2.5x", wide)):
+        assert all(buffer_ft > 0 for _width, buffer_ft in placed.values()), (
+            f"at {scale_name} an approach carries an UNBUFFERED lane, which takes no flex posts - "
+            f"the buffer is the rung that never gives on this facility: {placed}")

@@ -80,9 +80,12 @@ room gave
 agree to the last decimal in every case are not a confirmation, **they are one figure**: the
 section is sized to fill the room at the leg's narrowest point, so it fits there by construction and
 the comparison can never fail. When a check cannot fail, the thing it was going to prove is not a
-finding — go and find which span, which datum, or which frame differs instead. (That is also how
-`section_holds_to_ft` came to cut a lane to a 6 ft stub: searching from station 0, the first station
-where the kerb is "inside the section" is the narrowest point the section was sized on.)
+finding — go and find which span, which datum, or which frame differs instead. (That identity is
+also what wrecked the since-deleted `section_holds_to_ft`, a guard that walked out from station 0
+looking for the first station where the kerb came inside the section and ended the facility there.
+The first such station IS the narrowest point the section was sized on, so it cut a lane to a 6 ft
+stub. A search whose answer is fixed by construction is the same mistake as a check that cannot
+fail.)
 
 A gap profile — kerb offset minus outermost drawn offset, station by station — turns "it looks
 janky" into "bare from station 0 to 63.7, then 1.4 ft widening to 2.6 ft by station 118", which
@@ -136,19 +139,39 @@ threshold has to be a rate, a curvature, or something else local**; if it is an 
 over a leg, the leg's length is an input and the leg's length is a rendering decision. `git grep`
 for a new constant's units before you add it.
 
-**AND A MINIMUM OVER A LEG IS A TOTAL TOO.** This bit twice, the second time through
-`narrowest_half_width_ft`, which took the least half-width from the tracing's start to
-`leg.centerline.length` — a longer leg simply reaches further and finds a narrower pinch, so the
-street was judged *less* able to hold a facility on a wider sheet. W Broad's southwest approach:
-20.32 ft at 1×, 16.58 ft at 2.5×, off a pinch 318 ft out that the 1× sheet does not show. It cost
-that leg its 3 ft buffer and its flex posts on the wide render only — a protected bikeway in one
-picture and a painted one in the other. The fix is a span that is a design decision:
-`Leg.design_length_ft`, the configured length before `frame_scale()` multiplies it. So the test is
-not just "is this a rate" — it is **"could this answer have been different on a wider sheet"**, and
-min/max/any/all over a leg all fail it.
+**A MINIMUM OVER A LEG MOVES WITH THE SHEET TOO, AND THAT IS ALLOWED. WHAT IS NOT ALLOWED IS
+TRIMMING THE PAINT.** `narrowest_half_width_ft` takes the least half-width over the whole drawn leg,
+so a longer leg reaches further and finds a narrower pinch: W Broad's southwest approach is 20.32 ft
+at 1× and 16.58 ft at 2.5×, off a real pinch 318 ft out. The wide sheet therefore lands that leg on
+a narrower rung. **This was fixed the wrong way first and the wrong fix is the instructive one.** The
+first answer was a frozen design span — a `design_length_ft` the treatments measured over while the
+render drew further — which bought frame-invariance and paid for it in the only currency that
+matters: a section sized over 130 ft, DRAWN over 325 ft, and then *trimmed off* at the first station
+it stopped fitting. `broad_st_east` carried green over 180 ft of a 425 ft leg under 42 flex posts and
+a centre stripe that both ran the full length. Roads are a network and these treatments apply
+universally, so **a treatment applies to all of the street in the drawing** — the rung gives, the
+extent never does.
 
-Note also that `tests/conftest.py` builds `site_models` at `WIDE_FRAME_SCALE = 2.2`, so the fixture
-is *already* not 1× — a test can agree with the goldens and disagree with every render.
+So the test is not "is this a rate". It is **"if this answer moves with the sheet, is the thing that
+moves a WIDTH or an EXTENT?"** A width that steps down on a sheet showing a tighter pinch is the
+design working. An extent, a count, or a claim of protection that moves is a bug — hence
+`BikewayReachesTheEndOfItsKerb` (`src/checks.py`), fatal, and every rung of
+`BROAD_ST_TWO_WAY_BIKEWAY` keeping the full buffer.
+
+**And know the residual: a width that moves can take a treatment with it.** `broad_st_east` measures
+43.26 ft between kerbs over 170 ft and 39.95 ft over the 374 ft actually drawn, which drops the
+far-kerb spare from 7.44 ft to 4.13 ft — under `MIN_USABLE_STALL_FT` — so that leg is *parked* on
+the narrow sheet and *hatched* on the wide one. Nothing is wrong with either drawing; the pinch is
+real. But the section is sized on the narrowest point anywhere along the leg, so one tight spot 300
+ft out sets the width for all 374 ft, and a treatment two derivations downstream flips. Print
+`state.notes` after any change to a section, not just the paint.
+
+Note also which fixture is which, because it is the opposite of what you would guess:
+`tests/conftest.py` has **`site_models` at 1×** and **`wide_site_models` at `WIDE_FRAME_SCALE =
+2.2`**, and the geometry goldens (`digests`, `test_geometry_regression.py`) build from the **1×** one
+— so the goldens cannot see anything the wide sheet does. The parking flip above moves nothing in
+any golden. A green suite here is agreement at 1× and says nothing about every render in `output/`;
+that is what `--frame-scale` on `measure_drawn.py` is for.
 
 ---
 

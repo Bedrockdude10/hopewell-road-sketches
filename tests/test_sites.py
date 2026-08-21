@@ -1086,6 +1086,11 @@ def test_every_declared_marking_is_something_paint_can_build():
     returns its __init__.py alone, so when treatments became a package this read the re-export list
     and called eight genuinely-emitted markings stale. Globbing the directory means a new submodule
     is covered the day it is added, which a hand-written list of the seven would not be.
+
+    RECURSIVELY, because a submodule may itself be a package. `glob` stopped at the top level and
+    so stopped reading the bikeways the day they were split into one, and every marking only they
+    emit went unchecked - masked meanwhile by the pre-split bikeways.py, which was left behind
+    shadowed and unimportable. The guard below counts directories for that reason.
     """
     import inspect
     from pathlib import Path
@@ -1095,11 +1100,15 @@ def test_every_declared_marking_is_something_paint_can_build():
     from src.geometry.markings import AT_AN_OPENING, KINDS
 
     package_dir = Path(treatments_module.__file__).parent
-    treatment_sources = sorted(package_dir.glob("*.py"))
+    treatment_sources = sorted(package_dir.rglob("*.py"))
     assert len(treatment_sources) > 1, (
         f"expected the treatments package's submodules under {package_dir}, found "
         f"{[p.name for p in treatment_sources]} - if it went back to being one module, read that "
         f"file instead, but do not let this silently check nothing")
+    unread = [d.name for d in package_dir.iterdir()
+              if d.is_dir() and (d / "__init__.py").exists()
+              and not any(p.is_relative_to(d) for p in treatment_sources)]
+    assert not unread, f"a subpackage of treatments went unread: {unread}"
     source = inspect.getsource(paint_module) + "".join(p.read_text() for p in treatment_sources)
     # ...OR IT IS NAMED AS ANOTHER MARKING'S DOTTED EXTENSION, which is how a marking gets built
     # without any treatment mentioning it. BIKE_LANE_DOTTED_EXTENSION is laid by

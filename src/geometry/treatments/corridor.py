@@ -197,19 +197,37 @@ class CorridorFacility:
 #: so the rung would refuse everywhere the full one does and add a width with no standing.
 #:
 #: TEN FEET ON THE FIRST RUNG, AND PARKING IS WHY. Hopewell Borough is car-dependent, so a plan
-#: that removes a kerb of parking and returns none is not viable here. broad_st_east has 43.26 ft
-#: between traced kerbs: a 12 ft lane plus 3 ft buffer plus two 11 ft travel lanes leaves 5.44 ft
-#: at the far kerb - under a stall, so the leg came out with no parking at all. At 10 ft it leaves
-#: 7.44 ft, a usable stall. THE 10 FT RUNG IS NOT A NACTO WIDTH: NACTO asks at least 13 ft and
-#: gives 8 ft as the absolute minimum, so this rung has no standing in the guide and the 8 ft rung
-#: is the absolute floor being spent (STANDARDS.md 4). The alternative on the table was narrowing
-#: the travel lanes to 10 ft to keep 12 ft of bikeway; it was not taken - see TARGET_LANE_WIDTH_FT.
+#: that removes a kerb of parking and returns none is not viable here. Over its first 170 ft
+#: broad_st_east has 43.26 ft between traced kerbs: a 12 ft lane plus 3 ft buffer plus two 11 ft
+#: travel lanes leaves 5.44 ft at the far kerb - under MIN_USABLE_STALL_FT, so the leg came out
+#: with no parking at all. At 10 ft it leaves 7.44 ft, a usable stall.
 #:
-#: WHICH RUNG A LEG LANDS ON IS A FACT ABOUT THE STREET, so it must not move with the render frame.
-#: It did: the fit measures what a leg can hold with narrowest_half_width_ft, whose span used to be
-#: the centreline's length - and that is leg_lengths times HOPEWELL_FRAME_SCALE. W Broad's southwest
-#: approach was buffered at 1x and unbuffered at 2.5x, off a pinch 318 ft out that the 1x sheet does
-#: not show. Fixed at the measurement, not here; see Leg.design_length_ft.
+#: THAT PAIR OF FIGURES IS A 170 FT MEASUREMENT, AND IT DOES NOT SURVIVE THE WHOLE LEG. Measured
+#: over all 374 ft the sheet draws, broad_st_east is 39.95 ft between kerbs and the 10 ft rung
+#: leaves 4.13 ft - under a stall, so this leg is hatched on the drawing whichever rung it takes,
+#: and the 12 ft one would leave 2.13 ft. So the argument above is the reason the FIRST rung is 10
+#: and not 12, and it is no longer a stall this corridor actually gets: the parking it does keep is
+#: broad_st_west's, 8 ft deep, which the section never threatened. Worth knowing before the width
+#: is defended on parking grounds again - and worth reopening 12 ft on, which is 1 ft off NACTO's
+#: ask, if nothing else claims that 2 ft. Note also WHY the long span is tighter: the section is
+#: sized on the narrowest pinch anywhere along the leg, so one tight spot 300 ft out sets the
+#: width for all 374 ft. A section that varied by station would keep both; none of this does.
+#:
+#: THE 10 FT RUNG IS NOT A NACTO WIDTH: NACTO asks at least 13 ft and gives 8 ft as the absolute
+#: minimum, so this rung has no standing in the guide and the 8 ft rung is the absolute floor being
+#: spent (STANDARDS.md 4). The alternative on the table was narrowing the travel lanes to 10 ft to
+#: keep 12 ft of bikeway; it was not taken - see TARGET_LANE_WIDTH_FT.
+#:
+#: WHICH RUNG A LEG LANDS ON MOVES WITH THE SHEET, and that is the design working rather than
+#: leaking. A sheet that shows more street asks the question of more street: W Broad's southwest
+#: approach measures 20.32 ft over 130 ft and 16.58 ft over 325 ft, off a real pinch 318 ft out, and
+#: takes the constrained rung on the sheet that shows it. The alternative was tried - freeze the
+#: measurement at a configured span so the rung cannot move - and it bought frame-invariance with a
+#: worse lie, a section sized over 130 ft and DRAWN over 325 ft whose paint was then trimmed off at
+#: the first station it stopped fitting. broad_st_east carried green over 180 ft of a 425 ft leg.
+#: A treatment applies to the street in the drawing; extent is the load-bearing claim, and the rung
+#: is what gives to keep it. What may NOT move with the sheet is whether an approach is PROTECTED -
+#: every rung here keeps the full buffer, which is what makes that safe.
 BROAD_ST_TWO_WAY_BIKEWAY = CorridorFacility(
     road="Broad Street",
     side=CORRIDOR_SIDE,

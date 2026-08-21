@@ -340,11 +340,37 @@ street allows it and 4 ft where it does not.** There is no unbuffered rung, so e
 carries the facility carries flex posts. NACTO requires a solid white line along both buffer edges
 and diagonals in any buffer of 3 ft or more, which every rung now has.
 
-The rung below the standard one is reached at exactly one place on this route:
-`w_broad_st_northeast`, where 10 ft + 3 ft leaves 9.09 ft travel lanes, under NACTO's 10 ft truck
-floor. It takes 8 ft + 3 ft instead — **the absolute minimum being spent, not a NACTO width** —
-which leaves 10.09 ft travel lanes, 0.91 ft under the 11 ft target and still over the floor. Every
-other approach on the route takes 10 ft + 3 ft with 11 ft travel lanes.
+The rung below the standard one is reached at `w_broad_st_northeast`, where 10 ft + 3 ft leaves
+9.09 ft travel lanes, under NACTO's 10 ft truck floor. It takes 8 ft + 3 ft instead — **the absolute
+minimum being spent, not a NACTO width** — which leaves 10.09 ft travel lanes, 0.91 ft under the
+11 ft target and still over the floor.
+
+**WHICH OTHER APPROACHES REACH IT DEPENDS ON HOW MUCH STREET THE SHEET SHOWS — measured
+2026-08-21.** A section is sized on the narrowest half-width anywhere along the leg that is drawn,
+and `HOPEWELL_FRAME_SCALE` decides how far that is, so a longer sheet can reach a pinch the short
+one never shows. `w_broad_st_southwest` has one 318 ft out:
+
+| sheet | leg drawn | `w_broad_st_northeast` | `w_broad_st_southwest` |
+|---|---|---|---|
+| 1× | 130 ft | 8 + 3 | 10 + 3 |
+| 2.2× | 286 ft | 8 + 3 | 10 + 3 |
+| 2.5× | 325 ft | 8 + 3 | **8 + 3** — the pinch is inside the frame |
+
+This is deliberate, on the client's instruction of 2026-08-20 — *"We should be apply all treatments
+to whatever's rendered. Roads are a network"* — so a treatment applies to the street in the drawing and the
+question of what the street can hold is asked over exactly the street the reader is looking at. What
+does NOT move with the sheet is the facility's EXTENT or its protection — every rung keeps the full
+3 ft buffer, and `BikewayReachesTheEndOfItsKerb` is fatal if a bikeway stops short of its kerb.
+
+**AND THE 10 FT RUNG'S PARKING JUSTIFICATION DOES NOT SURVIVE THE LONGER SHEET — measured
+2026-08-21.** The 10 ft width was chosen over 12 ft to leave a parkable far kerb on
+`broad_st_east`, and over that leg's first 170 ft it does: 43.26 ft between traced kerbs, 7.44 ft
+spare, above `MIN_USABLE_STALL_FT` (7 ft). Over the whole 374 ft drawn at 2.2× the same leg
+measures 39.95 ft and leaves 4.13 ft, so it is hatched rather than parked on that sheet whichever
+rung it takes (12 ft would leave 2.13 ft). The parking this corridor actually keeps is
+`broad_st_west`'s, 8 ft deep, which the section never threatened. **So 12 ft — 1 ft off NACTO's
+ask — is open again on any sheet longer than 170 ft, and the 10 ft rung should not be defended on
+parking grounds without restating the span.**
 
 **The ordering this replaced put an unbuffered 10 ft rung ahead of the constrained 8 ft one**, on
 the earlier instruction that 5 ft per direction was the requirement. What it produced at W Broad &

@@ -241,8 +241,8 @@ def report_gaps(built: Built, leg_filter: str | None, kind_filter: str | None,
 
     Binned, and the bin is the honest unit: paint is polygons, not a function of station, so the
     outermost vertex in each bin is what "how far out does the paint reach here" can mean. The
-    profile runs over the centreline's real length rather than design_length_ft, because the
-    question is about what was DRAWN and the drawing is at the render frame.
+    Runs over the centreline's whole length, because the question is about what was DRAWN and the
+    drawing is at the render frame - measure at the reader's --frame-scale, not at 1x.
     """
     print(f"\n{'leg':22s} {'side':6s}  gap profile (kerb - outermost paint, ft; "
           f"{bin_ft:.0f} ft bins, runs over {threshold_ft:.1f} ft)")

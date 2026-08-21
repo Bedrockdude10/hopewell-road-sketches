@@ -58,6 +58,10 @@ LANE_WIDTH_TOLERANCE_FT = 0.05
 # past it where the strip is sampled across a curve between two traced vertices. Beyond this
 # it is painted on the footway.
 PAINT_PAST_CURB_TOLERANCE_FT = 0.25
+# A kerbside facility's surface is built on paint_stations' ~2 ft grid, so its last station
+# landing a step or two short of the kerb's is measurement rather than amputation. Beyond this
+# the facility ended early and the drawing owes the reader a reason.
+BIKEWAY_SHORTFALL_TOLERANCE_FT = 5.0
 # Statutory setbacks are whole feet; this absorbs the float noise of resolving a station,
 # nothing more. It is deliberately far below a foot - the distances themselves are the law.
 PARKING_SETBACK_TOLERANCE_FT = 0.1
@@ -440,6 +444,88 @@ class PaintInsideTheCurb(SceneCheck):
                     f"never cross it. Usually paint sized off the nominal half-width instead of the "
                     f"kerb that was actually traced there",
                     tuple(points[index])))
+        return violations
+
+
+class BikewayReachesTheEndOfItsKerb(SceneCheck):
+    """A bikeway is drawn along the whole kerb it was placed on.
+
+    EXTENT IS A DESIGN CLAIM, and the path that used to trim it made no note. A kerbside facility
+    was ended at the first station where the traced kerb stopped leaving room for its outermost
+    stripe, on the argument that "how far down the block the drawing carries it is a fact about
+    the frame". It is not: a render asserting a protected two-way bikeway over 42% of
+    broad_st_east - with 42 flex posts and six lane symbols standing along the 245 ft that got no
+    paint - is exactly the finished-looking-but-false picture this module exists to catch.
+
+    WHAT MAKES IT A DEFECT rather than a fact about the street is that nothing had judged the
+    street unable to hold the facility there. The section was sized over a span SHORTER than the
+    one it was drawn over, so those 245 ft were never measured at all - see
+    narrowest_half_width_ft, which measures the whole drawn leg now, and the rung ladder, which is
+    where a street that genuinely cannot hold the wide section gets a NARROWER section rather than
+    a shorter one.
+
+    ANCHORED ON THE TRACED KERB - not the leg's length, and not the facility's own furniture. The
+    kerb's traced span is a fact about the street AND the span paint_stations would have built
+    over, so this compares what was drawn against what there was to draw on. The contraflow
+    divider, the flex posts and the lane symbols each run the leg by a path of their own: all
+    three covered the full 425 ft while the green stopped at 180, so a check measuring the
+    facility against its own furniture would have called that flush.
+
+    FAR END ONLY. The near end stops against the junction mouth or the crossing band and is meant
+    to - that is curbside_paint_ft and the four limiters in SKILLS 0a, none of which are defects.
+
+    THE TOLERANCE IS THE DOTTED GRID, not slack for a design decision. Where the end of the kerb
+    is inside an opening the lane crosses dotted, the last mark lands on paint_stations' ~2 ft
+    grid and the surface finishes a step short of the kerb's own last station - 0.7 ft on
+    e_broad_st_east, 1.7 ft on e_broad_st_west. Past BIKEWAY_SHORTFALL_TOLERANCE_FT a facility
+    stopped.
+    """
+
+    def run(self, scene: SceneContext) -> list[Violation]:
+        from src.geometry.markings import BIKE_LANE_SURFACE
+        from src.geometry.model import curb_station_span
+        state = scene.state
+        # Per kerb: the outermost station any of this facility's surface reached. Taken over the
+        # pieces rather than off the treatment, because the treatment's own idea of its extent is
+        # the arithmetic this check exists not to trust (SKILLS 0).
+        reached: dict[tuple[str, str], float] = {}
+        for piece in scene.paint:
+            if piece.kind is not BIKE_LANE_SURFACE or piece.leg is None or piece.side is None:
+                continue
+            leg = state.legs.get(piece.leg)
+            if leg is None:
+                continue
+            coords = (piece.geometry.exterior.coords if piece.geometry.geom_type == "Polygon"
+                      else piece.geometry.coords)
+            stations, _ = station_offset_many(leg.centerline, np.asarray(coords, dtype=float))
+            key = (piece.leg, piece.side)
+            reached[key] = max(reached.get(key, float("-inf")), float(stations.max()))
+
+        violations = []
+        for (leg_name, side), reached_ft in sorted(reached.items()):
+            leg = state.legs[leg_name]
+            span = curb_station_span(leg, side)
+            if span is None:
+                continue        # no kerb traced on this side, so nothing to have fallen short of
+            # The whole traced span, with nothing excused. An opening running off the end of the
+            # leg used to be subtracted here, on the same "no far side to extend to" reasoning
+            # that stopped the dotted extension crossing it - and cost e_broad_st_east 59 ft.
+            # PaintContext._dash_spans_along carries the lane to the edge of the sheet instead,
+            # so there is no longer any ground a facility could not occupy for that reason.
+            kerb_ends_ft = float(span[1])
+            short_ft = kerb_ends_ft - reached_ft
+            if short_ft <= BIKEWAY_SHORTFALL_TOLERANCE_FT:
+                continue
+            at = leg.centerline.interpolate(min(max(reached_ft, 0.0), leg.centerline.length))
+            violations.append(Violation(
+                "bikeway_ends_early",
+                f"{leg_name} {side}: the bikeway's surface stops at station {reached_ft:.1f} ft "
+                f"while this kerb carries it to {kerb_ends_ft:.1f} ft - {short_ft:.1f} ft of kerb "
+                f"with no facility on it and no note saying why. A street that cannot hold this "
+                f"section takes a NARROWER rung for its whole length (the corridor's ladder is "
+                f"BROAD_ST_TWO_WAY_BIKEWAY) or breaks here for a reason worth printing; what it "
+                f"does not get is a facility that quietly stops",
+                (float(at.x), float(at.y))))
         return violations
 
 

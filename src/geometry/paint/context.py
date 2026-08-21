@@ -342,6 +342,13 @@ class PaintContext:
         look identical to a clip and are opposite in meaning: a lane stopping 19 ft short of a
         mouth's far end otherwise yields an "extension" of one whole mark and three 0.1-1.1 ft
         stubs.
+
+        UNLESS THE OPENING RUNS OFF THE END OF THE DRAWING, in which case there IS no afterwards to
+        look for and the absence of one says nothing. E Broad's east approach ends inside a 57.9 ft
+        dropped kerb and its west approach inside a side-street mouth; read as lanes that end,
+        those two forfeited the last 59.4 ft and 17.3 ft of their kerb to no marking at all. The
+        street does not stop at the edge of the sheet and neither does the entrance, so the lane is
+        carried to the edge dotted - which is also what it would be doing at the station after.
         """
         centerline = self.state.legs[leg_name].centerline
 
@@ -359,8 +366,10 @@ class PaintContext:
             if part.is_empty:
                 continue
             lo, hi = stations_of(part)
-            if not (phase_lo < lo - DASH_CROSSING_SLACK_FT
-                    and phase_hi > hi + DASH_CROSSING_SLACK_FT):
+            if phase_lo >= lo - DASH_CROSSING_SLACK_FT:
+                continue        # the marking starts here - it is not coming into this opening
+            if (phase_hi <= hi + DASH_CROSSING_SLACK_FT
+                    and hi < centerline.length - DASH_CROSSING_SLACK_FT):
                 continue        # the marking ends here rather than crossing - nothing to extend
             spans.extend(_dash_spans(lo, hi))
         return spans

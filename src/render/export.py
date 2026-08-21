@@ -5,15 +5,14 @@ shapely/geopandas inside Blender's bundled Python.
 This module only orchestrates: coordinate transforms live in src/render/coords.py,
 crosswalk-to-leg matching in src/render/crosswalks.py, and street-furniture placement
 in src/render/props.py."""
-import json
 import math
 from pathlib import Path
 
 from shapely.geometry import Point, Polygon
 from shapely.ops import unary_union
 
-from src.render.coords import (FT_TO_M, building_footprint_ft, pt_to_local_m, ring_to_local_m,
-                                round_for_export, wgs84_ring_to_local_m)
+from src.render.coords import (FT_TO_M, building_footprint_ft, dumps_for_export, pt_to_local_m,
+                                ring_to_local_m, wgs84_ring_to_local_m)
 from src.render.crosswalks import (CROSSWALK_DEPTH_M, STOP_BAR_CURB_CLEARANCE_M,
                                    centerline_paint_ft, continental_bar_count, crosswalk_axes,
                                    centerline_start_ft,
@@ -513,7 +512,8 @@ def export_scenario(model: IntersectionModel, state: DesignState, name: str, out
 
     out_path.parent.mkdir(parents=True, exist_ok=True)
     with open(out_path, "w") as f:
-        # Rounded on the way out, not as it is built - see coords.round_for_export for why the
-        # file (rather than each of the ~40 places that make a coordinate) is where this belongs.
-        json.dump(round_for_export(data), f, indent=2)
+        # Rounded AND formatted on the way out, not as it is built - see coords.dumps_for_export
+        # for why the file (rather than each of the ~40 places that make a coordinate) is where
+        # both belong, and why a coordinate is one line rather than json.dump's four.
+        f.write(dumps_for_export(data))
     return out_path

@@ -79,7 +79,7 @@ the piece that makes the rest trustworthy rather than merely better.
 Must prove: it reports the 6 dropped crossings on today's code, and reports zero once A is wired in.
 
 ### C — the corridor, on roads
-*Extends `src/geometry/network.py`; new `scripts/corridor_report.py`, `tests/test_corridor.py`.*
+*Extends `src/geometry/network/`; new `scripts/corridor_report.py`, `tests/test_corridor.py`.*
 
 A Road that runs the length of the borough rather than stopping at one junction's legs, and the
 corridor questions asked of it: stalls, driveway openings, crossings, narrowest width. Replaces the

@@ -10,10 +10,14 @@ to move", which is the only question worth asking of a rendered artifact under v
 So what is asserted here is not "numbers are shorter". It is the two properties that make the
 diff mean something - noise below EXPORT_DECIMALS is DISCARDED, and movement above it SURVIVES -
 plus the structural things a naive recursive rounder gets wrong.
+
+The second half of the file is the same argument about LINE BREAKS rather than digits, and it is
+the same reasoning: rounding decides whether a changed line is a changed shape, and the line
+breaks decide whether a reader can see which shape changed.
 """
 import json
 
-from src.render.coords import EXPORT_DECIMALS, round_for_export
+from src.render.coords import EXPORT_DECIMALS, dumps_for_export, round_for_export
 
 
 def test_noise_below_the_floor_is_discarded():
@@ -77,3 +81,58 @@ def test_tuples_become_lists():
     """pt_to_local_m returns a list but several callers build tuples, and json.dump writes both
     as arrays - so normalising here keeps the file's form independent of which one a caller used."""
     assert round_for_export({"axis": (0.5, 0.5)}) == {"axis": [0.5, 0.5]}
+
+
+# ---------------------------------------------------------------------------
+# The file's SHAPE, which is the other half of the same argument. Rounding decides whether a
+# changed line means a changed shape; the line breaks decide whether a reader can see WHICH
+# shape. json.dump(indent=2) put every number on its own line, so a vertex spanned four lines,
+# x was never beside y, and 62% of the 33 MB of committed exports was indentation.
+# ---------------------------------------------------------------------------
+
+def test_a_coordinate_is_one_line():
+    """The unit a reader of this diff wants is the VERTEX. Under indent=2 a moved vertex was two
+    changed lines with `],` and `[` between them, which is why the whole point of rounding -
+    "a changed line is a changed shape" - stopped short of being useful."""
+    out = dumps_for_export({"coords": [[-27.680958, -3.780609], [1.5, 2.5]]})
+    assert "    [-27.680958, -3.780609],\n" in out
+    assert out.count("\n") == 6      # {, "coords": [, two vertices, ], }, trailing
+
+
+def test_structure_above_a_coordinate_is_still_indented():
+    """Only the INNERMOST numeric list goes inline. Collapsing the level above it too would put a
+    whole marking channel on one line, and a diff of one 40,000-character line names nothing."""
+    out = dumps_for_export({"legs": [{"name": "broad_st_east", "coords": [[1.0, 2.0]]}]})
+    assert '\n  "legs": [\n' in out
+    assert '\n      "name": "broad_st_east",\n' in out
+
+
+def test_it_parses_back_to_exactly_what_was_rounded():
+    """The property that makes the reformat safe to run over 33 MB of committed exports: the
+    writer is a FORMATTER, so the document it emits is the document round_for_export produced -
+    every key, every value, every type. Verified against all 65 committed files before the
+    reformat landed; kept here as the invariant rather than the one-off check."""
+    payload = {"units": "meters", "notes": [], "theme": {}, "crosswalk_reach_left_m": None,
+               "legs": [{"confirmed": True, "faces": [[0, 1, 2]],
+                         "vertices_m": [[1.5, 2.5, 0.0]], "axis": (0.5, 0.5)}]}
+    assert json.loads(dumps_for_export(payload)) == round_for_export(payload)
+
+
+def test_empty_containers_read_the_same_as_json_dump():
+    """`notes`, `tree_points` and `existing_marked_crosswalks` export present-and-empty, and an
+    empty list is how a reader tells "this scenario has none" from "this file is too old to have
+    the key at all" - so it has to be `[]` and not a blank line pair."""
+    assert dumps_for_export({"notes": [], "theme": {}}) == '{\n  "notes": [],\n  "theme": {}\n}\n'
+
+
+def test_a_row_of_bools_is_not_a_coordinate():
+    """isinstance(True, int), so the test for "is this a row of numbers" is the one place a bool
+    could be mistaken for one. Nothing in the export writes a bool list today; the check is here
+    because the cost of it being wrong is silent."""
+    assert dumps_for_export({"flags": [True, False]}) == '{\n  "flags": [\n    true,\n    false\n  ]\n}\n'
+
+
+def test_the_file_ends_with_a_newline():
+    """json.dump does not write one, so every committed export ended mid-line and every diff
+    that touched the last building carried `\\ No newline at end of file`."""
+    assert dumps_for_export({"units": "meters"}).endswith("}\n")

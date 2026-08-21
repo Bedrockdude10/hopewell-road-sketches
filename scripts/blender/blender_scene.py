@@ -37,6 +37,7 @@ import bpy
 import mathutils
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))  # for the sibling blender_*.py imports below
+REPO_ROOT = Path(__file__).resolve().parent.parent.parent  # scripts/blender/blender_scene.py -> repo root
 
 from blender_crosswalks import (
     add_crosswalk, add_dashed_centerline, add_double_yellow_centerline, add_paint_polyline,
@@ -100,6 +101,36 @@ def parse_args() -> list[tuple[Path, Path]]:
     if len(args) < 2 or len(args) % 2 != 0:
         raise SystemExit("Need pairs of <geometry.json> <output.png>")
     return [(Path(args[i]), Path(args[i + 1])) for i in range(0, len(args), 2)]
+
+
+# The keys whose ABSENCE from a geometry file would produce a picture that is wrong rather than
+# incomplete, so a file without them is refused instead of rendered. Every one of them is read
+# below through `.get(..., [])`, which is right for a scenario that legitimately has none of
+# something - and indistinguishable from a file too old to carry the key at all. That is not a
+# cosmetic difference: 39 of the 65 committed exports predated these four, so rendering one drew
+# a street with no kerbs, no driveways or parking aprons and no surveyed crossings, and with
+# `frame` gone this script computed a camera extent of its own from the pavement, which
+# src/render/export.py says in as many words it must not do. Nothing warned; the render looked
+# fine. "A picture that shows a marked crosswalk as bare asphalt is not a conservative
+# simplification - it is a false statement about the street, made to an audience deciding whether
+# to build something" (docs/network-renderer-plan.md).
+#
+# NOT the whole 37-key schema, which lives in src/render/export.py and cannot be imported here
+# (see .importlinter: this file runs in Blender's interpreter). These four are what this RENDERER
+# needs in order not to lie. The full-schema check on the committed files is
+# tests/test_exported_geometry.py, on the side of the boundary that can read the exporter.
+REQUIRED_KEYS = ("frame", "kerbs", "paved_surfaces", "surveyed_crossings")
+
+
+def load_geometry(path: Path) -> dict:
+    with open(path) as f:
+        data = json.load(f)
+    missing = [k for k in REQUIRED_KEYS if k not in data]
+    if missing:
+        raise SystemExit(
+            f"{path}: geometry export is stale - no {', '.join(missing)}. Rendering it would "
+            f"silently draw a street without them. Re-export with scripts/build_all.py.")
+    return data
 
 
 def clear_scene():
@@ -183,8 +214,35 @@ def _marking_frame(leg: dict, near, u, n, prefix: str, fallback_offset_m: float)
             mathutils.Vector((-axis_u.y, axis_u.x, 0.0)))
 
 
+def resolve_theme_paths(theme: dict) -> dict:
+    """`theme` with every asset path resolved against THIS checkout's root.
+
+    src/render/theme.py writes them repo-relative (`output/.textures/...`) so a geometry file
+    does not carry the absolute paths of the machine that exported it - the 65 committed exports
+    each held 19 of those, naming a directory that exists on one laptop. Joining them here is the
+    other half of that; an ALREADY-ABSOLUTE path is passed through, which is what a geometry file
+    written before that change contains.
+
+    Missing files are still not an error - make_textured_material and import_gltf_template each
+    fall back - so this only has to name the right place to look.
+    """
+    resolved = {}
+    for key, value in theme.items():
+        if isinstance(value, dict):
+            resolved[key] = {k: _under_repo(v) for k, v in value.items()}
+        else:
+            resolved[key] = _under_repo(value)
+    return resolved
+
+
+def _under_repo(path):
+    if not isinstance(path, str) or os.path.isabs(path):
+        return path
+    return str(REPO_ROOT / path)
+
+
 def build_scene(data: dict):
-    theme = data.get("theme") or {}
+    theme = resolve_theme_paths(data.get("theme") or {})
     asphalt_near = make_textured_material("AsphaltNear", theme.get("asphalt_near"), (0.07, 0.07, 0.08), 0.95)
     asphalt_far = make_textured_material("AsphaltFar", theme.get("asphalt_far"), (0.07, 0.07, 0.08), 0.95)
     concrete_near = make_textured_material("ConcreteNear", theme.get("concrete_near"), (0.72, 0.71, 0.67), 0.85)
@@ -626,9 +684,7 @@ def main():
     disable_undo()
     configure_render()  # render settings are scene-independent - set once
     for geometry_path, output_path in jobs:
-        with open(geometry_path) as f:
-            data = json.load(f)
-
+        data = load_geometry(geometry_path)
         clear_scene()
         cx, cy, scene_radius, ground_size = build_scene(data)
         setup_camera_and_light(cx, cy, scene_radius, ground_size)

@@ -2,6 +2,8 @@
 Plane feet -> local meters centered on the intersection (what
 scripts/blender/blender_scene.py actually consumes, since Blender's bundled Python
 has no shapely/geopandas/pyproj)."""
+import json
+
 import pyproj
 from shapely.geometry import Polygon
 
@@ -44,6 +46,50 @@ def round_for_export(value):
     if isinstance(value, (list, tuple)):
         return [round_for_export(v) for v in value]
     return value
+
+
+INDENT = 2
+
+
+def dumps_for_export(data) -> str:
+    """`data` as the JSON text a geometry export is written as: rounded to EXPORT_DECIMALS,
+    INDENT per level of STRUCTURE, and the innermost list of numbers kept on ONE LINE.
+
+    `json.dump(..., indent=2)` puts every number on a line of its own, so one vertex spans four
+    lines and x is never beside y. That costs 62% of the file in whitespace - all 65 committed
+    exports are 33 MB of which 14 MB is indentation - but the reason to change it is the same
+    reason EXPORT_DECIMALS exists: a diff a reader can answer "did I move geometry I did not
+    mean to move" from. One line per vertex IS that unit. A moved vertex was two changed lines
+    with a bracket between them; it is now one line showing both coordinates.
+
+    Written here rather than by handing json.dump a smarter encoder because there is no hook for
+    this - `default=` is only consulted for types json cannot already serialize, and a list is
+    not one. See round_for_export for why the whole-document-at-serialization layer is where the
+    file's form belongs.
+    """
+    return _dump(round_for_export(data), 0) + "\n"
+
+
+def _dump(value, depth: int) -> str:
+    """One JSON value, indented for `depth`. Matches json.dump(indent=INDENT) exactly except
+    that an all-numeric list is emitted inline."""
+    pad, inner = " " * (INDENT * depth), " " * (INDENT * (depth + 1))
+    if isinstance(value, dict):
+        if not value:
+            return "{}"
+        items = (f"{inner}{json.dumps(str(k))}: {_dump(v, depth + 1)}" for k, v in value.items())
+        return "{\n" + ",\n".join(items) + "\n" + pad + "}"
+    if isinstance(value, (list, tuple)):
+        if not value:
+            return "[]"
+        # bool first, because isinstance(True, int) - `[true, false]` is not a coordinate, and
+        # the check that decides "is this a row of numbers" is the one place a bool could pass
+        # for one.
+        if all(isinstance(v, (int, float)) and not isinstance(v, bool) for v in value):
+            return "[" + ", ".join(json.dumps(v) for v in value) + "]"
+        items = (f"{inner}{_dump(v, depth + 1)}" for v in value)
+        return "[\n" + ",\n".join(items) + "\n" + pad + "]"
+    return json.dumps(value)
 
 
 def ring_to_local_m(coords, center_ft: "Point") -> list[list[float]]:

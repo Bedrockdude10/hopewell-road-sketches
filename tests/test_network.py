@@ -1,6 +1,6 @@
 """THE CHECKPOINT for docs/network-model.md: does a road reproduce the per-leg model?
 
-Nothing renders from src/geometry/network.py yet. Its only purpose is to answer, cheaply and before
+Nothing renders from src/geometry/network/ yet. Its only purpose is to answer, cheaply and before
 14k lines are rewritten, whether reading the traced kerbs as ONE CONTINUOUS ROAD gives the same
 geometry the two legs give separately. If it does, the frame can move onto roads. If it does not,
 the disagreement is the finding, and the migration should stop until it is understood.
@@ -129,7 +129,7 @@ def test_a_leg_station_maps_to_the_node_at_zero(site, site_models):
     """Each leg's station 0 maps to where that leg actually meets the road.
 
     NOT "both map to node_ft". Both legs start AT the junction in the model, but they are built
-    from two NJDOT alignments that do not quite meet, and network.py:_joined_centerline can only
+    from two NJDOT alignments that do not quite meet, and network/road.py:_joined_centerline can only
     close that laterally - what is left is longitudinal and the joined line carries it as real
     length. So the far leg's station 0 lands that much past the node, and saying otherwise put
     every far-leg station up the street: at W Broad & Louellen the gap is 2.79 ft and the road

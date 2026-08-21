@@ -14,7 +14,8 @@ import requests
 from src.sources.data_loader import NOMINATIM_USER_AGENT
 
 POLYHAVEN_API = "https://api.polyhaven.com"
-CACHE_DIR = Path(__file__).resolve().parent.parent.parent / "output" / ".textures"  # src/render/assets.py -> repo root
+REPO_ROOT = Path(__file__).resolve().parent.parent.parent  # src/render/assets.py -> repo root
+CACHE_DIR = REPO_ROOT / "output" / ".textures"
 HEADERS = {"User-Agent": NOMINATIM_USER_AGENT}
 TIMEOUT = 30
 

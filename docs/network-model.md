@@ -179,7 +179,7 @@ line once removes the gap.
 And that is harder at Louellen than anywhere else, which is worth knowing before starting: the two
 halves come off DIFFERENT SRIs (CR 518 turns west onto Louellen, CR 654 carries on southwest), so
 there is no single source alignment to build the road from. The seam is real and has to be eased,
-the way `network.py:_eased_alignment` already eases a corridor across one.
+the way `network/corridor.py:_eased_alignment` already eases a corridor across one.
 
 **`nj31_wdelaware` does not build at all** on current OSM — `build_all` reports 4 of 5 sites ok and
 that one as "Pavement ring is self-intersecting". It is the Pennington failure this document names,

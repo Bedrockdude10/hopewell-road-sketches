@@ -24,13 +24,13 @@ class Alignment:
     Every function below is annotated `leg: "Leg"` and not one of them touches a leg: they read
     `.centerline` and one of `.left_curb` / `.right_curb`, and nothing else. So the frame was
     never about legs, and saying so in a type is the first step of docs/network-model.md's step 4.
-    A `Road` (src/geometry/network.py) carries the same three attributes and now goes through
+    A `Road` (src/geometry/network/road.py) carries the same three attributes and now goes through
     these functions unchanged, which is what makes moving the datum a change of caller rather
     than a rewrite of the frame.
 
     It also gives the one-sided case a name. Reading a single traced kerb against some
     centreline - a corridor's KerbRun, one piece of a chained road - was done by a private shim
-    in network.py that duck-typed those attributes into existence. That shim was right about the
+    in network/road.py that duck-typed those attributes into existence. That shim was right about the
     contract and wrong about where it belongs: the contract is this module's, so the type is too.
     """
     centerline: LineString

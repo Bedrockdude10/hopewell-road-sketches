@@ -148,7 +148,11 @@ src/                       General-purpose library - NO data specific to any one
     context_roads.py       The streets around the junction, built from the kerb actually traced
     surveyed.py            Every crossing the surveyor traced inside the frame, drawn as traced
     coverage.py            Does the drawing contain every surveyed feature inside its own frame?
-    network.py             A ROAD: one street with continuous stationing, through a borough
+    network/               A STREET as one object, with continuous stationing across junctions
+      road.py              One street through ONE junction: two through legs joined head-to-head
+      kerb.py              Where the kerb is TRACED along a road, and where it is a corner instead
+      corridor.py          A chain of roads, bridged along the NJDOT alignment they were cut from
+      facts.py             What is actually there - driveways, crossings, parking - stationed once
     corridor_paint.py      The facility painted along a ROAD, not along a leg
   sources/                 External data - real-world inputs, nothing rendering-specific
     data_loader.py         NJDOT network + parcels, Overpass retry, intersection geocoding

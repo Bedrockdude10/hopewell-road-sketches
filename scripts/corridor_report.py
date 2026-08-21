@@ -30,7 +30,7 @@ WHAT A DENOMINATOR IS, per figure, because they are not all the same question:
     second understates a street somebody could go and trace.
 
 Nothing here renders and nothing here writes a golden - see docs/network-renderer-plan.md, stream
-C. It is a reading of src/geometry/network.py, which is the object all of this now hangs off.
+C. It is a reading of src/geometry/network/, which is the object all of this now hangs off.
 """
 import argparse
 import contextlib

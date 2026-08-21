@@ -378,7 +378,7 @@ def marked_parking_capacity(corridor: Corridor, facts: CorridorFacts, side: str,
     Stall length is PARKING_STALL_LENGTH_DEFAULT_FT, imported - the same figure the per-leg
     marking uses.
     """
-    from src.geometry.model import parking_stall_count_ft
+    from src.geometry.model import whole_stalls_ft
     from src.geometry.treatments import PARKING_STALL_LENGTH_DEFAULT_FT
 
     runs = facts.by_side("parkable", side)
@@ -388,9 +388,10 @@ def marked_parking_capacity(corridor: Corridor, facts: CorridorFacts, side: str,
     for lo, hi in runs:
         measured_ft += hi - lo
         # Through the same counter parking_stall_lines_ft uses, so the reported number is the
-        # number that would be drawn. Given both bounds it reads nothing off its first argument
-        # but `.centerline`, which a Corridor has.
-        stalls += parking_stall_count_ft(corridor, PARKING_STALL_LENGTH_DEFAULT_FT, lo, hi)
+        # number that would be drawn over a run this open - it does not know about the driveway
+        # and crossing cuts a real paint pass would also apply, same as the "stalls" figure
+        # elsewhere in this module.
+        stalls += whole_stalls_ft(hi - lo, PARKING_STALL_LENGTH_DEFAULT_FT)
     return stalls, measured_ft
 
 

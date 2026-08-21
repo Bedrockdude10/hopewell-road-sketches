@@ -25,7 +25,7 @@ import numpy as np
 from shapely.geometry import LineString, Polygon
 
 from src.geometry.model import (Alignment, band_from_offsets, line_from_offsets,
-                                place_in_measured_frame, side_facing)
+                                place_in_measured_frame, side_facing, whole_stalls_ft)
 from src.geometry.treatments.bikeways import TwoWayBikeLane
 from typing import TYPE_CHECKING
 
@@ -516,8 +516,8 @@ def stalls_per_span(spans, stall_ft: float | None = None):
 
     stall_ft = PARKING_STALL_LENGTH_DEFAULT_FT if stall_ft is None else stall_ft
     # A span shorter than one car holds none, and gets no label pretending otherwise.
-    return tuple((lo, hi, int((hi - lo) // stall_ft)) for lo, hi in spans
-                 if int((hi - lo) // stall_ft) >= 1)
+    return tuple((lo, hi, whole_stalls_ft(hi - lo, stall_ft)) for lo, hi in spans
+                 if whole_stalls_ft(hi - lo, stall_ft) >= 1)
 
 
 def stall_marks(corridor: "Corridor", side: str, spans, depth_ft: float | None = None,

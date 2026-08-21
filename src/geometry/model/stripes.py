@@ -295,12 +295,61 @@ def bollard_points_ft(leg: "Leg", stripe_width_ft: float, start_ft: float,
     return points
 
 
-def parking_stall_count_ft(leg: "Leg", stall_length_ft: float, start_ft: float, end_ft: float | None = None) -> int:
-    """How many full stall_length_ft stalls fit between start_ft and end_ft (defaults to the
-    leg's far end). THE ONE HOME for that count: parking_stall_lines_ft and any caller
-    labelling a number both read it here, so the drawing and the label cannot disagree."""
-    end_ft = leg.centerline.length if end_ft is None else end_ft
-    return max(int((end_ft - start_ft) // stall_length_ft), 0)
+def whole_stalls_ft(length_ft: float, stall_length_ft: float) -> int:
+    """How many whole stall_length_ft stalls fit in length_ft.
+
+    THE ONE HOME for that division, and it took three: this, metrics.stalls_in_run and
+    corridor_paint.stalls_per_span each carried its own copy, so the ticks on the plan, the
+    number in the summary panel and the number on the corridor sheet were three rules that
+    happened to agree.
+
+    A PARTIAL STALL IS NOT A STALL. The remainder is floored away and gets no marking, because
+    a car needs the whole length: half a stall drawn at the end of a run is not a space anyone
+    can use, and a driver who believes it is parks across whatever comes next.
+
+    Floors on `length_ft / stall_length_ft + 1e-9`, not the bare ratio. A run built to hold
+    exactly n stalls is itself n * stall_length_ft summed in float, so a caller that later
+    recovers length_ft by subtracting that run's own (lo, hi) can land a few ULPs under the
+    true multiple (21.99999999999997 instead of 22.0) - and a bare floor reads that as n-1
+    stalls, silently dropping the closing tick of a stall that was already drawn to fit. The
+    epsilon is 5 orders below the smallest real partial remainder this project ever compares
+    (inches, not tenths of a foot), so a genuine partial stall floors the same as before.
+    """
+    if stall_length_ft <= 0:
+        return 0
+    return max(int(length_ft / stall_length_ft + 1e-9), 0)
+
+
+def stall_lane_runs_ft(runs: list[tuple[float, float]], stall_length_ft: float,
+                        keep_inside_ft: float = 0.0) -> list[tuple[float, float]]:
+    """Each run of paintable kerb, trimmed back to the whole stalls it holds.
+
+    THE ONE HOME for where a parking lane starts and stops, and the answer to a defect the
+    renders wore for a long time: a stall lane laid out over the run where parking is LEGAL and
+    then cut by everything that turns out to be in the way. Four separate things cut kerbside
+    paint after a treatment has placed it - the mountable aprons, every painted crossing in the
+    frame, the kerb openings, and the end of the traced kerb - and none of them was consulted
+    about where a stall could go. So the ticks stopped at the last whole stall of the LEGAL run
+    while the edge line ran to its end, which is the open-ended stub of parking lane at the far
+    end of every run on every sheet; a tick that landed in a driveway was deleted by the opening
+    rule and left the stall it was closing 44 ft long; and a stall whose two ticks straddled a
+    driveway was drawn straight across it.
+
+    Feed it the runs the paint actually reaches - PaintContext.open_runs - and every stall it
+    lays is bounded at both ends by a tick of its own, with nothing in between.
+
+    keep_inside_ft holds the two end ticks that far inside the run, the same courtesy
+    inset_line_ft pays the kerb: a tick drawn exactly on the boundary of the cut that made the
+    run is half over it, and half a tick is dropped by MIN_LINE_LENGTH_FT - which is the missing
+    closing tick again, arrived at from the other side.
+    """
+    lanes = []
+    for lo, hi in runs:
+        lo, hi = lo + keep_inside_ft, hi - keep_inside_ft
+        n_stalls = whole_stalls_ft(hi - lo, stall_length_ft)
+        if n_stalls:
+            lanes.append((lo, lo + n_stalls * stall_length_ft))
+    return lanes
 
 
 def parking_lane_edge_line_ft(leg: "Leg", side: str, depth_ft: float, start_ft: float,
@@ -326,11 +375,16 @@ def parking_stall_lines_ft(leg: "Leg", side: str, depth_ft: float, stall_length_
     of a leg - the standard MUTCD curbside-parking marking: a short tie line at each stall
     boundary, not a hatched zone (a driver parks a real vehicle inside each one). One extra
     divider closes off the last full stall, so n stalls get n+1 lines; n is
-    parking_stall_count_ft's.
+    whole_stalls_ft's.
 
     Each divider runs from the real curb to depth_ft in from it; curb_offset_ft > 0 (see
     parking_lane_edge_line_ft) shifts BOTH ends in, so the divider spans the parking lane
-    itself rather than the no-parking buffer between it and the curb."""
+    itself rather than the no-parking buffer between it and the curb.
+
+    start_ft..end_ft is a WHOLE NUMBER OF STALLS - stall_lane_runs_ft's job - so the closing
+    tick lands on end_ft and the lane the edge line draws is exactly as long as the stalls in
+    it. Handed a fractional span it still lays whole stalls and the remainder goes unmarked,
+    which is the honest reading of a span that cannot hold another car."""
     half = leg.curb_to_curb_ft / 2
     sign = 1 if side == "left" else -1
     outer_off = max(half - curb_offset_ft, 0.5)
@@ -339,7 +393,7 @@ def parking_stall_lines_ft(leg: "Leg", side: str, depth_ft: float, stall_length_
     if span is None:
         return []
     end_ft = min(span[1], leg.centerline.length if end_ft is None else end_ft)
-    n_stalls = parking_stall_count_ft(leg, stall_length_ft, start_ft, end_ft)
+    n_stalls = whole_stalls_ft(end_ft - start_ft, stall_length_ft)
     # Station, not distance along an offset curve - see inset_line_ft. A divider is a
     # cross-section of the parking lane, so both ends must be at the same station.
     stations = start_ft + np.arange(n_stalls + 1) * stall_length_ft

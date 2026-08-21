@@ -83,9 +83,11 @@ class MarkedParking(Treatment):
                                            DAYLIGHT_FILL, PARKING_EDGE_LINE, STALL_DIVIDER,
                                            ZONE_END_LINE)
         from src.geometry.model import (inset_line_ft, lane_narrowing_polygons_ft,
-                                        parking_lane_edge_line_ft, parking_stall_lines_ft)
-        from src.geometry.paint import (LANE_EDGE_LINE_WIDTH_FT, _one, end_against_crossing,
-                                        lane_edge_stripes, parking_runs, zone_end_line_ft)
+                                        offset_band_polygon, parking_lane_edge_line_ft,
+                                        parking_stall_lines_ft, stall_lane_runs_ft)
+        from src.geometry.paint import (LANE_EDGE_LINE_WIDTH_FT, MIN_LINE_LENGTH_FT, _one,
+                                        end_against_crossing, lane_edge_stripes, parking_runs,
+                                        zone_end_line_ft)
 
         leg_name, side = self.target.leg, str(self.target.side)
         state = ctx.state
@@ -181,10 +183,37 @@ class MarkedParking(Treatment):
             if edge is None:
                 continue  # the corner return consumes the whole leg - see plan_view's note
             ctx.add(PARKING_EDGE_LINE, edge, leg_name, side)
-            for divider in parking_stall_lines_ft(
-                    leg, side, depth_ft, stall_length_ft, start_ft, end_ft,
-                    curb_offset_ft=curb_offset_ft - LANE_EDGE_LINE_WIDTH_FT):
-                ctx.add(STALL_DIVIDER, divider, leg_name, side)
+
+            # A STALL, UNLIKE THE EDGE LINE ABOVE, MUST NOT BE DRAWN WHERE IT WILL BE CUT.
+            # PARKING_EDGE_LINE is CARRIED across a driveway (real curbside parking keeps its
+            # edge line straight through one), but STALL_DIVIDER is STOPPED at every opening -
+            # a car cannot be told to park across a driveway mouth. Laying the divider grid over
+            # the LEGAL run and letting ctx.add cut it afterwards is what left a stall's far tick
+            # open-ended at the edge line, a driveway's dropped tick fusing its neighbour into a
+            # 44 ft "stall", and a stall straddling a driveway outright - see
+            # model.stall_lane_runs_ft. So the grid is built over the ground STALL_DIVIDER will
+            # actually keep: the same footprint the dividers themselves occupy, cut by the same
+            # openings/crossings/surfaces ctx.add cuts against, trimmed back to whole stalls.
+            #
+            # NOT beyond_the_tracing: a stall proposes paint on the physical kerb, not a
+            # statement of law like the daylight zone above, so it may reach no further than
+            # the kerb is actually surveyed - paint_stations' own distinction (leg_frame.py).
+            # parking_stall_lines_ft enforces the same curb_station_span bound when it places
+            # each tick's offset; asking ctx.open_runs to look past it here just meant this
+            # run and that clamp disagreed about where the ground ends, which is the second
+            # source of truth that left the run's closing tick clipped off again.
+            stall_curb_offset_ft = curb_offset_ft - LANE_EDGE_LINE_WIDTH_FT
+            half = leg.curb_to_curb_ft / 2
+            outer_off = max(half - stall_curb_offset_ft, 0.5)
+            inner_off = max(half - stall_curb_offset_ft - depth_ft, 0.5)
+            band = offset_band_polygon(leg, side, inner_off, outer_off, start_ft, end_ft)
+            open_runs = ctx.open_runs(leg_name, side, STALL_DIVIDER, band) if band else []
+            for lo, hi in stall_lane_runs_ft(open_runs, stall_length_ft,
+                                              keep_inside_ft=MIN_LINE_LENGTH_FT):
+                for divider in parking_stall_lines_ft(
+                        leg, side, depth_ft, stall_length_ft, lo, hi,
+                        curb_offset_ft=stall_curb_offset_ft):
+                    ctx.add(STALL_DIVIDER, divider, leg_name, side)
 
             if not curb_offset_ft:
                 continue

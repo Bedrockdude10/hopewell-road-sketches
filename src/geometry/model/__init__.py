@@ -97,8 +97,9 @@ from src.geometry.model.stripes import (
                                     lane_narrowing_taper_ft,
                                     lane_narrowing_taper_polygons_ft,
                                     parking_lane_edge_line_ft,
-                                    parking_stall_count_ft,
                                     parking_stall_lines_ft,
+                                    stall_lane_runs_ft,
+                                    whole_stalls_ft,
 )
 from src.geometry.model.traced_kerbs import (
                                     CORNER_BLEND_FT,
@@ -205,7 +206,6 @@ __all__ = [
                                     "offset_band_polygon",
                                     "paint_stations",
                                     "parking_lane_edge_line_ft",
-                                    "parking_stall_count_ft",
                                     "parking_stall_lines_ft",
                                     "place_in_measured_frame",
                                     "point_at",
@@ -216,6 +216,7 @@ __all__ = [
                                     "sidewalk_span_ft",
                                     "smooth_traced_arc",
                                     "split_leg_centerlines",
+                                    "stall_lane_runs_ft",
                                     "station_offset",
                                     "station_offset_many",
                                     "tapered_curb_offsets",
@@ -225,4 +226,5 @@ __all__ = [
                                     "trimmed_curb_lines",
                                     "unit_vector",
                                     "vertex_tangents",
+                                    "whole_stalls_ft",
 ]

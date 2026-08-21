@@ -137,11 +137,9 @@ class PaintContext:
         # Cut clear of the mountable surfaces, then of the crossings, then of the kerb
         # openings - each may fragment a piece, so every stage runs over whatever the last left.
         # WHICH openings, and how much of each, is markings.AT_AN_OPENING's answer and no longer
-        # this function's: see KerbOpenings.against.
-        opening = self.openings.against(kind, leg, side) if self.openings else None
-        surviving = [cut for whole in clip_paint_clear_of(geometry, self.surfaces)
-                     for part in clip_paint_clear_of(whole, self.keep_clear)
-                     for cut in clip_paint_clear_of(part, opening)]
+        # this function's: see KerbOpenings.against. Shared with open_runs below, which asks the
+        # same question ahead of laying anything rather than after.
+        surviving = self._clipped(kind, leg, side, geometry)
         for part in surviving:
             if beyond_ft is not None and _lies_wholly_behind(self.state.legs[leg], part,
                                                               beyond_ft):
@@ -159,6 +157,44 @@ class PaintContext:
         # the cut just made, so a treatment cannot paint the solid part and forget the broken one.
         added.extend(self._dashes_across_openings(kind, geometry, leg, side))
         return added
+
+    def _clipped(self, kind, leg, side: str | None, geometry) -> list:
+        """`geometry`'s surviving pieces after add()'s three cuts, with none of add()'s size
+        floors or bookkeeping - the clip pipeline both add() and open_runs() run, factored out
+        so a fourth cut has one place to be added rather than two that can drift apart.
+        """
+        opening = self.openings.against(kind, leg, side) if self.openings else None
+        return [cut for whole in clip_paint_clear_of(geometry, self.surfaces)
+                for part in clip_paint_clear_of(whole, self.keep_clear)
+                for cut in clip_paint_clear_of(part, opening)]
+
+    def open_runs(self, leg_name: str, side: str, kind, geometry) -> list[tuple[float, float]]:
+        """Where `geometry` would actually survive add()'s cuts, as station (lo, hi) sub-spans.
+
+        Asked AHEAD of laying anything with a fixed unit inside it - a parking stall, a bollard
+        row - so the unit's grid can be built inside the ground that will actually receive it,
+        rather than laid over the LEGAL span and left to discover the cuts one clipped piece at
+        a time. That is the mechanism behind a stall lane ending in an open-ended stub short of
+        its edge line, and a stall whose two ticks straddle a driveway: the grid never saw the
+        opening that STALL_DIVIDER's own AT_AN_OPENING row says must stop it. See
+        model.stall_lane_runs_ft, which turns these into whole-stall spans.
+
+        Reads the same three cuts `add` applies and does not paint anything itself - `add` still
+        runs the real cut when the caller paints the unit this lays out.
+        """
+        if geometry is None or geometry.is_empty:
+            return []
+        leg = self.state.legs[leg_name]
+        runs = []
+        for piece in self._clipped(kind, leg_name, side, geometry):
+            coords = (piece.exterior.coords if piece.geom_type == "Polygon"
+                      else piece.coords if piece.geom_type == "LineString" else None)
+            if coords is None:
+                continue
+            stations, _offsets = station_offset_many(leg.centerline, np.asarray(coords, dtype=float))
+            if stations.size:
+                runs.append((float(stations.min()), float(stations.max())))
+        return sorted(runs)
 
     def _clear_of_the_paint_already_down(self, kind, geometry):
         """Hold a new area fill out of ground an earlier one already covers.

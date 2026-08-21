@@ -112,11 +112,11 @@ channels:
     count: 6
     extent:
       max:
-      - 40.287
-      - 27.123
+      - 40.356
+      - 27.156
       min:
-      - 22.799
-      - 6.157
+      - 22.867
+      - 6.19
     points: 12
   paved_surfaces:
     count: 33

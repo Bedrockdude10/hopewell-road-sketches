@@ -21,7 +21,7 @@ from shapely.geometry import LineString
 from shapely.ops import unary_union
 
 from src.geometry.markings import PARKING_EDGE_LINE
-from src.geometry.model import station_offset_many
+from src.geometry.model import station_offset_many, whole_stalls_ft
 from src.geometry.targets import Corner, LegSide
 from typing import TYPE_CHECKING
 
@@ -64,10 +64,14 @@ def stalls_in_run(length_ft: float, stall_length_ft: float) -> int:
     src/render/plan_view.py:_label_paint) so the number beside a run on the drawing and the
     number in the summary panel cannot be two different rules. They were computed in one
     place and about to be computed in a second, which is how the twenty dicts started.
+
+    The division itself is stripes.whole_stalls_ft - the one home for it, shared with the
+    paint builders that lay the dividers out. This wrapper only keeps the validation a metric
+    (as opposed to a layout call fed a geometry it already trusts) needs on a bad input.
     """
     if stall_length_ft <= 0:
         raise ValueError(f"A stall needs a length; got stall_length_ft={stall_length_ft}.")
-    return max(int(length_ft // stall_length_ft), 0)
+    return whole_stalls_ft(length_ft, stall_length_ft)
 
 
 def turn_speed_mph(radius_ft: float) -> float:

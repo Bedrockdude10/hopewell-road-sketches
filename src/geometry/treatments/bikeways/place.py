@@ -137,9 +137,9 @@ class AddBikeLane(Treatment):
                                         kerb_inset_offsets, kerb_parallel_line_ft,
                                         kerb_referenced_band_polygon, lane_narrowing_polygons_ft,
                                         offset_band_polygon, paint_stations,
-                                        parking_stall_lines_ft)
-        from src.geometry.paint import (LANE_EDGE_LINE_WIDTH_FT, _one, end_against_crossing,
-                                        parking_runs)
+                                        parking_stall_lines_ft, stall_lane_runs_ft)
+        from src.geometry.paint import (LANE_EDGE_LINE_WIDTH_FT, MIN_LINE_LENGTH_FT, _one,
+                                        end_against_crossing, parking_runs)
 
         leg_name, side = self.target.leg, str(self.target.side)
         leg = ctx.state.legs[leg_name]
@@ -384,13 +384,30 @@ class AddBikeLane(Treatment):
             # Parking-protected: the stalls sit OUTSIDE the bike lane, between it and the kerb,
             # which is what shields the lane. Ticked at the standard stall length over the runs
             # where parking is legal, exactly as a kerbside parking lane would be.
+            #
+            # NOT over the legal span directly - the same fix MarkedParking.paint applies and
+            # for the same reason (see there): STALL_DIVIDER is STOPPED at every opening, so a
+            # grid laid over ground the treatment has not yet been cut against draws a stall
+            # with an open-ended tick at a driveway or a crossing, or one straddling it outright.
+            # ctx.open_runs asks the real cut ahead of laying anything.
+            #
+            # NOT beyond_the_tracing: a stall proposes paint on the physical kerb, so it may
+            # reach no further than the kerb is actually surveyed - see the note in
+            # MarkedParking.paint for the disagreement asking past that bound produces.
+            half = leg.curb_to_curb_ft / 2
+            outer_off = max(half - lane.shy_ft, 0.5)
+            inner_off = max(half - lane.shy_ft - lane.parking_ft, 0.5)
             for run_start_ft, run_end_ft in parking_runs(ctx.state, leg_name, side,
                                                           ctx.crosswalk_offsets, ctx.props):
-                for divider in parking_stall_lines_ft(
-                        leg, side, lane.parking_ft, PARKING_STALL_LENGTH_DEFAULT_FT,
-                        max(run_start_ft, start_ft), run_end_ft,
-                        curb_offset_ft=lane.shy_ft):
-                    ctx.add(STALL_DIVIDER, divider, leg_name, side)
+                band = offset_band_polygon(leg, side, inner_off, outer_off,
+                                           max(run_start_ft, start_ft), run_end_ft)
+                open_runs = ctx.open_runs(leg_name, side, STALL_DIVIDER, band) if band else []
+                for lo, hi in stall_lane_runs_ft(open_runs, PARKING_STALL_LENGTH_DEFAULT_FT,
+                                                  keep_inside_ft=MIN_LINE_LENGTH_FT):
+                    for divider in parking_stall_lines_ft(
+                            leg, side, lane.parking_ft, PARKING_STALL_LENGTH_DEFAULT_FT, lo, hi,
+                            curb_offset_ft=lane.shy_ft):
+                        ctx.add(STALL_DIVIDER, divider, leg_name, side)
         else:
             # The leftover between the lane's outer stripe and the kerb, hatched. A bike lane is
             # a standard width and the street's spare asphalt is not part of it - the same

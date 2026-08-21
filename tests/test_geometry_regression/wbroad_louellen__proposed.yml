@@ -109,15 +109,15 @@ channels:
       - -29.825
     points: 80
   parking_stall_divider_lines:
-    count: 9
+    count: 7
     extent:
       max:
-      - -10.629
-      - -0.444
+      - -10.679
+      - -0.439
       min:
-      - -36.516
-      - -31.465
-    points: 18
+      - -36.592
+      - -26.632
+    points: 14
   paved_surfaces:
     count: 24
     extent:

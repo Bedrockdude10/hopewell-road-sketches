@@ -41,6 +41,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+from src.geometry.corridor_paint import centred_on_its_kerbs
 from src.geometry.network import (Corridor, CorridorFacts, KERB_FROM_TRACING, corridor_facts,
                                  corridors_from_models, marked_parking_capacity, osm_window_spans)
 
@@ -261,9 +262,13 @@ def build_reports(sites=DEFAULT_SITES, road: str | None = None,
         with contextlib.nullcontext() if model_notes else contextlib.redirect_stdout(io.StringIO()):
             models[site] = load_intersection_model(site=site)
     reports = []
-    for corridor in corridors_from_models(models):
-        if road and road.lower() not in corridor.name.lower():
+    for raw_corridor in corridors_from_models(models):
+        if road and road.lower() not in raw_corridor.name.lower():
             continue
+        # Same recentring corridor_render.py applies before painting - CorridorFacts is offset-
+        # dependent (kerb-matching in _road_spans_on), so a report built off the raw NJDOT
+        # alignment is a second, divergent way to resolve the same facts.
+        corridor = centred_on_its_kerbs(raw_corridor)
         reports.append(corridor_report(corridor, corridor_facts(corridor, models), models))
     return reports
 

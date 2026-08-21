@@ -485,15 +485,19 @@ def far_kerb_lane_edge(paint: CorridorFacilityPaint, default_ft: float | None = 
     """station -> where the FAR kerb's travel lane edge sits, given what the facility placed.
 
     Taking width out of one kerbside pushes the divider toward the other, so the far kerb's
-    lane edge is `travel_lane_divider_shift_ft` plus the target width wherever the section is
-    actually down. Per run, because a constrained rung shifts the divider by a different amount.
+    lane edge is `travel_lane_divider_shift_ft` plus the lane's own width wherever the section
+    is actually down - `divided_lane_width_ft`, NOT `TARGET_LANE_WIDTH_FT`: they agree only on a
+    leg wide enough to hold two target-width lanes, and `divider.travel_lane_edge_ft`'s docstring
+    names the leg that doesn't (w_broad_st_northeast, an 0.92 ft error) - the same reconstruction,
+    repeated here, undercounted far-kerb room on every run that takes the equal split. Per run,
+    because a constrained rung shifts the divider by a different amount.
     """
     from src.geometry.treatments.base import TARGET_LANE_WIDTH_FT
-    from src.geometry.treatments.bikeways import travel_lane_divider_shift_ft
+    from src.geometry.treatments.bikeways import divided_lane_width_ft, travel_lane_divider_shift_ft
 
     default_ft = TARGET_LANE_WIDTH_FT if default_ft is None else default_ft
     placed = [(run.start_ft, run.end_ft,
-               travel_lane_divider_shift_ft(run.section) + TARGET_LANE_WIDTH_FT)
+               travel_lane_divider_shift_ft(run.section) + divided_lane_width_ft(run.section))
               for run in paint.runs if run.section is not None]
 
     def at(station_ft: float) -> float:

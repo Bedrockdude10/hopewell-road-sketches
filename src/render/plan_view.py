@@ -173,7 +173,7 @@ def _draw_kerbs(ax, kerb_lines) -> None:
 
     One collection per kerb type rather than per line, the same reason _draw groups everything
     else. Grouped by TYPE and not drawn uniformly because a dropped kerb is why a marking stops:
-    src/geometry/paint.py:kerb_opening_bands breaks the kerbside paint over exactly these, and a
+    src/geometry/paint/openings.py:kerb_opening_bands breaks the kerbside paint over exactly these, and a
     reader looking at a gap in a bike lane needs to see the driveway that caused it.
     """
     by_type: dict = {}
@@ -578,7 +578,7 @@ def plot_design_state(ax, model: IntersectionModel, state: DesignState, title: s
     props = _draw_props(ax, model, state, scene.crosswalk_offsets, traffic_control,
                          street_furniture, crossings, labels, dimension_labels)
 
-    # Every painted marking comes from src/geometry/paint.py - the same builder the 3D export
+    # Every painted marking comes from src/geometry/paint/ - the same builder the 3D export
     # draws from and src/checks.py inspects. Never assembled here in parallel; the two copies
     # drifted on where a parking buffer's taper starts and on whether taper fill is cut around a
     # crossing.

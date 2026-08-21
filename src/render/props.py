@@ -594,7 +594,7 @@ def _bollard_props(state: DesignState) -> list[dict]:
     from src.geometry.treatments import LaneNarrowing, LaneNarrowingBollards
 
     # A post inside a driveway opening is a post in the entrance. The paint breaks there
-    # (src/geometry/paint.py:kerb_opening_bands) and these props have to break with it, or the
+    # (src/geometry/paint/openings.py:kerb_opening_bands) and these props have to break with it, or the
     # plan view and the render disagree about whether a driveway is passable.
     openings = kerb_opening_bands(state)
     props = []
@@ -804,7 +804,7 @@ def _extra_props_from_state(state: DesignState, offsets_ft: dict, pavement=None)
 
 
 # Bollards the TREATMENT layer already draws for itself. The plan view builds its markings
-# from src/geometry/paint.py, which emits a bollard piece for every LaneNarrowingBollards a
+# from src/geometry/paint/, which emits a bollard piece for every LaneNarrowingBollards a
 # design records, so drawing these props on top would just thicken the same markers. Tagged
 # rather than inferred: daylight-zone bollards come only from props, so a blanket skip would
 # drop them from the 2D view while the 3D render showed them.
@@ -847,7 +847,7 @@ def bollard_props_from_paint(state: DesignState, paint: list) -> list[dict]:
 
     A bollard is a physical object, so the 3D render can only build it from a prop - it draws
     props and paint from two different lists and never turns one into the other. The plan
-    view builds its markings from src/geometry/paint.py; check_bollards_are_props ensures
+    view builds its markings from src/geometry/paint/; check_bollards_are_props ensures
     every paint post has a matching prop.
 
     Derived rather than recomputed, unlike the two builders above, because where a bike
@@ -875,7 +875,7 @@ def bollard_props_from_paint(state: DesignState, paint: list) -> list[dict]:
             "source": f"scenario-specified (add_bike_lane_bollards): flex-post delineator centered in the "
                       f"{lane.buffer_ft:.0f} ft buffer on the traffic side of {piece.leg}'s {piece.side} bike "
                       f"lane, spaced {spacing_ft:.0f} ft apart. Position read off the painted post row "
-                      f"(src/geometry/paint.py), which is where the row's first station is resolved.",
+                      f"(src/geometry/paint/), which is where the row's first station is resolved.",
         })
     return posts
 

@@ -213,7 +213,7 @@ def export_scenario(model: IntersectionModel, state: DesignState, name: str, out
     scene.report_coverage(props, paint)
 
     # Paint-only / no-curb-change proposal treatments - lane-narrowing buffers, marked
-    # parking, corner hatching, aprons. All of it is built by src/geometry/paint.py, which
+    # parking, corner hatching, aprons. All of it is built by src/geometry/paint/, which
     # the plan view also draws from and src/checks.py inspects, so the three cannot disagree
     # about where a marking goes. This function's job is only to sort the pieces into the
     # lists blender_paint.py expects and convert them to local meters.

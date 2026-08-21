@@ -176,7 +176,7 @@ class SceneGeometry:
         return tuple(c.band_ft for c in self.unmodelled_crossings if c.is_marked)
 
     def build_paint(self, props: list[dict] | None = None) -> list["PaintPiece"]:
-        """Every painted marking this scenario puts down (src/geometry/paint.py).
+        """Every painted marking this scenario puts down (src/geometry/paint/).
 
         Here rather than at each call site so the paint is always cut around the same bands the
         crossings are drawn from, and always told which crossings are marked - including those at

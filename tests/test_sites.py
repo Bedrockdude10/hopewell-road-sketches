@@ -1111,7 +1111,7 @@ def test_every_declared_marking_is_something_paint_can_build():
     for name, kind in KINDS.items():
         constant = name.upper()
         assert constant in source or kind in built_as_an_extension, (
-            f"src/geometry/markings.py declares {name!r} but nothing in src/geometry/paint.py or "
+            f"src/geometry/markings.py declares {name!r} but nothing in src/geometry/paint/ or "
             f"src/geometry/treatments/ emits {constant}, and no marking's AT_AN_OPENING row names "
             f"it as the kind its dotted extension is laid in - a marking nothing builds is a "
             f"stale declaration")
@@ -1165,7 +1165,7 @@ def test_curbside_paint_ends_against_its_crossing(site, site_models):
             if band is None or band.is_empty:
                 continue
             # is_fill AND not a bollard: a bollard's geometry is a degenerate 1e-6 ft square
-            # standing in for a point (paint.py:_dot), so it is a Polygon by type but is not a
+            # standing in for a point (pieces.py:_dot), so it is a Polygon by type but is not a
             # zone that can run up to a crossing and be cut by one. check_markings_do_not_collide
             # excludes it for the same reason.
             near = [p for p in paint

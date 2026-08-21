@@ -508,7 +508,7 @@ class MarkingsDoNotCollide(SceneCheck):
         paint = scene.paint
         violations = []
         # covers_area, not "is a Polygon": a bollard's geometry is a degenerate 1e-6 ft square
-        # standing in for a point (src/geometry/paint.py:_dot), so it is a Polygon by type with no
+        # standing in for a point (src/geometry/paint/pieces.py:_dot), so it is a Polygon by type with no
         # area to collide. The marking knows what it is - see src/geometry/markings.py:Role.
         fills = [p for p in paint if p.covers_area]
         # Bounding boxes first: two markings can only share ground if their extents do, and an
@@ -854,7 +854,7 @@ class BollardsAreProps(SceneCheck):
     has no post there.
 
     The two renderers get posts from different places. The plan view draws them straight off
-    the paint (src/geometry/paint.py emits a dot per post); the 3D render builds objects, and
+    the paint (src/geometry/paint/ emits a dot per post); the 3D render builds objects, and
     it only ever builds objects from props - it never turns a marking into one. So a post that
     exists only as a PaintPiece is a post that is in the 2D picture and absent from the render,
     with neither view internally wrong about anything.

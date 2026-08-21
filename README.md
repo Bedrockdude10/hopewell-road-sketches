@@ -76,7 +76,7 @@ Four things here used to be conventions spread across modules, and each generate
 
 **The design is the list of treatments.** Every parameter every renderer, invariant and policy reads comes off `state.treatments` through three accessors — `treatment_for(kind, target)`, `treatments_of(kind)` (one per target, sorted by target) and `every_treatment(kind)` (all, in application order, for the two treatments that accumulate). What is left on `DesignState` is the modelled street, two observed facts (`existing_centerline_styles`, `parking_restrictions`), the treatment list and the provenance notes. `src/geometry/treatments/state.py` documents each accessor and why the sort order is load-bearing.
 
-**A treatment owns its markings too.** `Treatment.paint(ctx)` puts them down through a `PaintContext`, and `src/geometry/paint.py:curbside_paint_ft` is a dispatcher over the treatments a design recorded, ordered by a class-level `paint_group`/`paint_rank`. Aprons paint first because everything else is cut around them; `src/geometry/paint.py` documents the ordering and what breaks without it.
+**A treatment owns its markings too.** `Treatment.paint(ctx)` puts them down through a `PaintContext`, and `src/geometry/paint/context.py:curbside_paint_ft` is a dispatcher over the treatments a design recorded, ordered by a class-level `paint_group`/`paint_rank`. Aprons paint first because everything else is cut around them; `src/geometry/paint/` documents the ordering and what breaks without it.
 
 ## Scene invariants
 
@@ -141,7 +141,11 @@ src/                       General-purpose library - NO data specific to any one
       extras.py            Scenario-specific props, and the sidewalk band
     targets.py             What a treatment is applied TO: a leg, one kerb of a leg, a corner
     markings.py            Every marking kind and every renderer channel, declared once
-    paint.py               Every piece of curbside paint a DesignState calls for, built once
+    paint/                 Every piece of curbside paint a DesignState calls for, built once
+      pieces.py            What a painted piece IS: one marking, its kind, how wide it is painted
+      anchors.py           Where on a leg-side a treatment may paint, and what is too small to draw
+      openings.py          Where the kerb opens for a vehicle, and what a marking does across it
+      context.py           The machinery every treatment paints through, and the one call that runs it
     kerbs.py               Whether a kerb is raised, and where it is dropped for a vehicle
     daylighting.py         Where a car may legally park near these junctions; the rest is marked clear
     cross_streets.py       Where a leg crosses ANOTHER street, and what that costs the kerb

@@ -201,7 +201,7 @@ class Treatment(ABC):
     #: Where this treatment's markings fall in the painting order. Groups run in ascending
     #: order and are painted target by target within a group; rank breaks a tie between two
     #: treatments on the same target (a bollard row is painted after the buffer it stands in).
-    #: See src/geometry/paint.py:curbside_paint_ft.
+    #: See src/geometry/paint/context.py:curbside_paint_ft.
     paint_group: ClassVar[int] = 50
     paint_rank: ClassVar[int] = 0
 

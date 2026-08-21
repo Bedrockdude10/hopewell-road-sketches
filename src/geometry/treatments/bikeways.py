@@ -53,7 +53,7 @@ AASHTO_MIN_BIKE_LANE_FT = 5.0
 # AT 2 FT THE BUFFER IS ESSENTIALLY ITS OWN TWO STRIPES, and that is a real consequence of this
 # figure rather than a drawing artifact. Every width here is between paint FACES and the stripes
 # come out of the buffer (see BikeLane), and a stripe here is 0.82 ft - 10 in, chosen in
-# src/geometry/paint.py to read at the render's scale, against MUTCD's 4-6 in for a lane line. Two
+# src/geometry/paint/ to read at the render's scale, against MUTCD's 4-6 in for a lane line. Two
 # of them leave 0.36 ft of asphalt showing, against 1.36 ft at the 3 ft buffer this replaced, so
 # the buffer's diagonal hatching disappears from the 3D render: there is no longer a strip wide
 # enough to draw a stroke across. A post still fits, which is what the buffer is for.
@@ -333,7 +333,7 @@ class BikeLane:
 
 
 def _lane_line_ft() -> float:
-    """The painted width of one edge line. Local import: src/geometry/paint.py imports this
+    """The painted width of one edge line. Local import: src/geometry/paint/ imports this
     module, and the figure is single-sourced there against what the 3D renderer actually lays."""
     from src.geometry.paint import LANE_EDGE_LINE_WIDTH_FT
 
@@ -351,7 +351,7 @@ def min_bike_lane_buffer_ft() -> float:
     e_broad_st_west (2.01 and 2.14).
 
     A function rather than a constant for the same reason _lane_line_ft is one: the stripe width
-    lives in src/geometry/paint.py, which imports this module.
+    lives in src/geometry/paint/, which imports this module.
     """
     return 2 * _lane_line_ft()
 
@@ -1143,8 +1143,9 @@ class AddBikeLaneBollards(Treatment):
         """
         from src.geometry.markings import BOLLARD
         from src.geometry.model import points_at_offset_ft
-        from src.geometry.paint import (CROSSWALK_CLEARANCE_FT, PaintPiece, _dot,
-                                        end_against_crossing)
+        from src.geometry.paint import PaintPiece, _dot, end_against_crossing
+        # From its home rather than through paint, which only ever passed it along.
+        from src.render.crosswalks import CROSSWALK_CLEARANCE_FT
 
         leg_name, side = self.target.leg, str(self.target.side)
         leg = ctx.state.legs[leg_name]

@@ -174,7 +174,7 @@ intersection with no intersecting approach."*
 marking** in `markings.AT_AN_OPENING` ([`src/geometry/markings.py`](src/geometry/markings.py)) —
 what it does at a driveway, what it does at an intersecting approach, and the clause each cell
 came from — consumed by `KerbOpenings.against()` in
-[`src/geometry/paint.py`](src/geometry/paint.py).
+[`src/geometry/paint/`](src/geometry/paint/).
 
 > **Why a table and not two sets.** Until 2026-08-17 this was `LINES_UNBROKEN_BY_A_DRIVEWAY` plus
 > `ZONE_BOUNDARY_LINES`, and a third rule — whether a marking carries a **dotted extension** —
@@ -226,7 +226,7 @@ binds at Blackwell exactly as it binds at Greenwood. See
 the surveyed way where one is traced and from `CROSSWALK_OFFSET_FROM_KERB_FT` where none is.
 
 **A SECOND CONSUMER of that same unmarked crosswalk, added 2026-08-19:**
-[`paint.junction_mouths_ft`](src/geometry/paint.py) ends this junction's own mouth at the leg's
+[`paint.junction_mouths_ft`](src/geometry/paint/) ends this junction's own mouth at the leg's
 crosswalk *painted or not*, on the strength of the sentence above — the mouth is where the
 intersection stops on a kerb, and the statute says the crosswalk is there either way. It matters
 because the alternative was the corner fillet's tangent point, which is `R/tan(theta/2)` back
@@ -268,7 +268,7 @@ setback and an unmarked mid-block stretch does not.
 | Slower walker (the person a treatment is usually for) | 3.0 ft/s | `SLOW_WALKING_SPEED_FT_S` | `src/metrics.py` |
 | Stop line to near edge of crosswalk | 4.0 ft | `STOP_BAR_TO_CROSSWALK_GAP_FT` | `src/render/crosswalks.py` |
 | Longitudinal line width | 4–6 in | — | see the caveat below |
-| Dotted lane extension across a conflict area | 2 ft mark / 2 ft gap | `DOTTED_MARK_FT`, `DOTTED_GAP_FT` | `src/geometry/paint.py` |
+| Dotted lane extension across a conflict area | 2 ft mark / 2 ft gap | `DOTTED_MARK_FT`, `DOTTED_GAP_FT` | `src/geometry/paint/` |
 | Tubular marker banding | at least two retroreflective bands | — | `scripts/blender/blender_props.py` |
 | Sign codes used | R10-11 (no turn on red), W11-2 (ped crossing) | — | `scripts/blender/blender_props.py` |
 

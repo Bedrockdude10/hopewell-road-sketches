@@ -48,7 +48,7 @@ class MarkedParking(Treatment):
     curb_offset_ft > 0 pulls the parking lane in from the curb by that much,
     leaving a striped no-parking buffer between the curb and the parking
     lane itself (so parking sits directly against the active travel lane
-    instead of against the curb) - src/geometry/paint.py paints that buffer with the
+    instead of against the curb) - src/geometry/paint/ paints that buffer with the
     same chevron treatment as a lane narrowing. 0 (the default) means the
     parking lane starts right at the curb, no buffer.
     """

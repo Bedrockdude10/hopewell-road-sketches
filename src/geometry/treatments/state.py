@@ -36,7 +36,7 @@ class DesignState:
     existing_centerline_styles: dict = field(default_factory=dict)
     # (leg name, "left"|"right") -> [KerbOpening]. Where OSM says the kerb is DROPPED for a
     # vehicle to cross - a driveway or yard entrance. Seeded in from_model from the traced kerbs'
-    # kerb=lowered / kerb=flush tags; read by src/geometry/paint.py to break the kerbside
+    # kerb=lowered / kerb=flush tags; read by src/geometry/paint/ to break the kerbside
     # markings over it. See src/geometry/kerbs.py.
     kerb_openings: dict = field(default_factory=dict)
     # (leg name, "left"|"right") -> [ParkingRestriction]. What OSM says about this kerb, per

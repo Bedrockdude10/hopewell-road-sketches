@@ -53,17 +53,41 @@ def curbside_strip_polygon(leg: "Leg", side: str, inner_offset_ft: float,
     if outer_pts is None:
         return None
     inner_pts = _place_no_further_in_than(leg.centerline, stations, inner)
+
+    # OSM traces the block, not every curb kink (SKILLS.md #7) - greenwood_ave_south's right
+    # kerb goes 261 ft with no vertex at all, and its centerline bends inside that gap (48
+    # vertices - a real curve, not noise). A straight chord across a gap that wide, held
+    # against a bending centerline, does one of two things, and both shipped a defect before
+    # this check existed. Against the INNER edge it can cross it: a self-intersecting ring
+    # that buffer(0) resolves into a bowtie rather than a clean strip, staying one piece
+    # across a cross-street opening a later cut could not split. Short of crossing, it can
+    # still bow far outside where the kerb actually runs - greenwood's LEFT side stayed
+    # perfectly valid but its chord bulged 8-9 ft past the traced line at the very station an
+    # opening cut was sized to reach, so the cut's outer bound never got there either and the
+    # opening failed to sever the fill a second, distinct way. Both are the same mechanism
+    # (a straight chord standing in for a curve), so both get the same fallback: rebuild the
+    # outer edge on the SAME station grid as the inner edge, both placed in the measuring
+    # frame, where outer's offset magnitude is never less than inner's (inner already clamps
+    # to it above) so the two boundaries cannot cross and the outer edge cannot wander from
+    # the curb line the rest of this leg's paint is measured against.
+    #
+    # Detected by sampling the raw chord and comparing to the smooth curve rather than by gap
+    # size: gaps of 130-357 ft are normal and harmless on every other leg in this dataset (the
+    # chord tracks a straight or gently-curving centerline there), so gap size alone is not
+    # the signal - deviation from the smooth curve is. A survey of every curbside strip built
+    # across all five sites found greenwood's two sides at 9.6-10.9 ft of deviation and every
+    # other leg under 1.2 ft; STRIP_SAMPLE_FT sits well inside that margin on both sides.
+    outer_line = LineString(outer_pts)
+    n_samples = max(int(outer_line.length / 5.0), 2)
+    sample_pts = np.array([outer_line.interpolate(t, normalized=True).coords[0]
+                            for t in np.linspace(0.0, 1.0, n_samples)])
+    sample_st, sample_off = station_offset_many(leg.centerline, sample_pts)
+    sample_smooth = curb_offsets_at_stations(leg, side, np.clip(sample_st, lo, hi))
+    chord_deviates = (sample_smooth is None
+                       or np.max(np.abs(np.abs(sample_off) - np.abs(sample_smooth))) > STRIP_SAMPLE_FT)
+
     poly = Polygon(list(outer_pts) + list(reversed(inner_pts)))
-    if not poly.is_valid:
-        # OSM traces the block, not every curb kink (SKILLS.md #7) - greenwood_ave_south's
-        # right kerb goes 261 ft with no vertex at all. A straight chord across a gap that
-        # wide, held against a centerline that bends inside it, cuts across the inner edge:
-        # a self-intersecting ring that buffer(0) resolves into a bowtie rather than a clean
-        # strip - it stayed one piece across a cross-street opening a later cut could not
-        # split. Rebuild the outer edge on the SAME station grid as the inner edge instead,
-        # both placed in the measuring frame: outer's offset magnitude is never less than
-        # inner's (inner already clamps to it above), so the two boundaries cannot cross.
-        # Only reached where the real tracing already produced an invalid ring.
+    if not poly.is_valid or chord_deviates:
         outer_pts = place_in_measured_frame(leg.centerline, stations, curb_offsets)
         poly = Polygon(list(outer_pts) + list(reversed(inner_pts)))
         if not poly.is_valid:

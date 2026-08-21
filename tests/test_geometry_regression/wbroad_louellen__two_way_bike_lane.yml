@@ -6,8 +6,8 @@ channels:
     count: 34
     extent:
       max:
-      - 27.824
-      - 26.478
+      - 27.826
+      - 26.48
       min:
       - -32.712
       - -23.816
@@ -21,7 +21,7 @@ channels:
       min:
       - -33.989
       - -26.061
-    points: 421
+    points: 394
   bike_lane_hatch_lines:
     count: 15
     extent:
@@ -46,8 +46,8 @@ channels:
     count: 4
     extent:
       max:
-      - 9.707
-      - 14.387
+      - 9.65
+      - 14.34
       min:
       - -20.777
       - -11.826
@@ -85,11 +85,11 @@ channels:
     extent:
       max:
       - 1.118
-      - 7.663
+      - 7.645
       min:
       - -41.293
       - -30.75
-    points: 183
+    points: 176
   lane_narrowing_hatch_lines:
     count: 24
     extent:
@@ -711,18 +711,18 @@ props:
 - bollard@417986.72,565969.88
 - bollard@417991.97,565975.82
 - bollard@417997.12,565981.75
-- bollard@418070.79,566042.85
-- bollard@418077.66,566046.80
-- bollard@418084.43,566050.89
-- bollard@418090.95,566055.16
-- bollard@418097.53,566059.70
-- bollard@418104.15,566064.23
-- bollard@418110.80,566068.73
-- bollard@418117.44,566073.20
-- bollard@418124.09,566077.66
+- bollard@418070.80,566042.85
+- bollard@418077.67,566046.81
+- bollard@418084.43,566050.90
+- bollard@418090.95,566055.17
+- bollard@418097.54,566059.71
+- bollard@418104.16,566064.23
+- bollard@418110.81,566068.74
+- bollard@418117.45,566073.20
+- bollard@418124.10,566077.67
 - bollard@418130.75,566082.11
-- bollard@418137.42,566086.54
-- bollard@418144.11,566090.95
+- bollard@418137.43,566086.54
+- bollard@418144.12,566090.96
 - fire_hydrant@418080.91,566067.60
 - pedestrian_signal_head@417978.75,565993.31
 - pedestrian_signal_head@418029.05,566040.40

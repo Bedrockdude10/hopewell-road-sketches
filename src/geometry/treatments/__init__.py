@@ -69,7 +69,9 @@ from src.geometry.treatments.bikeways import (AASHTO_MIN_BIKE_LANE_FT, AddBikeLa
                                               divider_shift_toward_ft,
                                               far_kerb_surplus_ft,
                                               min_bike_lane_buffer_ft,
+                                              divided_lane_width_ft,
                                               travel_lane_divider_shift_ft,
+                                              travel_lane_edge_ft,
                                               travel_lane_width_ft,
                                               widest_protected_lane_ft)
 from src.geometry.treatments.corners import (AddCurbExtension, CURB_EXTENSION_DEVICES,
@@ -181,6 +183,7 @@ __all__ = [
                                           "build_sidewalk_pieces",
                                           "bulb_out_corner_pair",
                                           "complete_centerlines",
+                                          "divided_lane_width_ft",
                                           "divider_shift_toward_ft",
                                           "far_kerb_surplus_ft",
                                           "find_corner",
@@ -194,6 +197,7 @@ __all__ = [
                                           "resolved_crossing_stations",
                                           "restriction_summary",
                                           "travel_lane_divider_shift_ft",
+                                          "travel_lane_edge_ft",
                                           "travel_lane_width_ft",
                                           "widest_protected_lane_ft",
 ]

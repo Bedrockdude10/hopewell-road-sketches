@@ -1125,12 +1125,12 @@ def test_the_parking_edge_line_carries_across_a_driveway_on_the_real_sites(wide_
 def _mouth_polygon(state, leg_name, side, opening):
     """The ground one opening covers, on the kerbside strip its markings live on."""
     from src.geometry.model import offset_band_polygon
-    from src.geometry.treatments import TARGET_LANE_WIDTH_FT, divider_shift_toward_ft
+    from src.geometry.treatments import travel_lane_edge_ft
 
     leg = state.legs.get(leg_name)
     if leg is None or leg.curb_to_curb_ft is None:
         return None
-    inner_ft = divider_shift_toward_ft(state, leg_name, side) + TARGET_LANE_WIDTH_FT
+    inner_ft = travel_lane_edge_ft(state, leg_name, side)
     return offset_band_polygon(leg, side, inner_ft, leg.curb_to_curb_ft,
                                 opening.start_ft, opening.end_ft)
 

@@ -13,8 +13,9 @@ from dataclasses import dataclass, field
 import numpy as np
 from shapely.geometry import LineString, Polygon
 from shapely.ops import unary_union
-from src.geometry.model import (corner_apron_annulus, corner_overlay_polygon, curb_offsets_at_stations,
-                                point_at, station_offset_many)
+from src.geometry.model import (band_from_offsets, corner_apron_annulus, corner_overlay_polygon,
+                                curb_offsets_at_stations, paint_stations, point_at,
+                                station_offset_many)
 from src.render.crosswalks import crosswalk_reach_on_leg_side_ft
 from src.geometry.paint.pieces import LANE_EDGE_LINE_WIDTH_FT
 from typing import TYPE_CHECKING
@@ -29,6 +30,19 @@ if TYPE_CHECKING:    # annotation-only: these types are layered above this modul
 # Kept small on purpose: every foot of trim is a foot of bike lane or hatched buffer given up.
 # Not a swept-path figure - see kerb_opening_bands.
 OPENING_TRIM_FT = 1.5
+
+# HOW FAR PAST THE KERB AN OPENING'S CUT REACHES. Not a design figure at all - it is the margin
+# that makes the cut's outer edge stop BEING a description of the kerb, and it is here because
+# every description of the kerb disagrees with every other in the third decimal place. See
+# _kerbside_cut for the two constructions that were tried instead and what each left standing.
+#
+# BOUNDED FROM BOTH SIDES, which is why this value and not a rounder one. Above: it has to clear
+# the largest disagreement measured between two honest descriptions of one kerb, 0.071 ft, with
+# room over. Below: the cut is clipped per station to the kerb plus this, so this is also how far
+# the trim's round buffer may bulge past the kerb, and checks.PaintOverTheCurb calls 0.25 ft past
+# the tracing a fatal violation. 0.15 is twice the first and three fifths of the second. There is
+# no paint out there for the margin itself to remove - PaintInsideTheTracedKerb is fatal too.
+OPENING_PAST_THE_KERB_FT = 0.15
 
 # A HATCHED zone ends at an opening on an arc that LEAVES ITS OWN EDGE LINE TANGENTIALLY and
 # curves out to the kerb - a fillet, not a chamfer and not a bulge. That tangency is the whole
@@ -237,7 +251,7 @@ def junction_mouths_ft(state: "DesignState", crosswalk_bands: dict | None = None
     T-intersection exception, falling out of the geometry rather than written as a rule.
     """
     from src.geometry.model import junction_mouth_ft
-    from src.geometry.treatments import TARGET_LANE_WIDTH_FT, divider_shift_toward_ft
+    from src.geometry.treatments import travel_lane_edge_ft
 
     bands = crosswalk_bands or {}
     out = {}
@@ -250,7 +264,7 @@ def junction_mouths_ft(state: "DesignState", crosswalk_bands: dict | None = None
                 # leg_anchors makes and for the same reason: a skewed band reaches further along
                 # the leg near the centreline than it does at the kerb, and no kerbside marking
                 # goes near the centreline.
-                inner_ft = divider_shift_toward_ft(state, leg_name, side) + TARGET_LANE_WIDTH_FT
+                inner_ft = travel_lane_edge_ft(state, leg_name, side)
                 reach_ft = crosswalk_reach_on_leg_side_ft(leg, side, band, inner_ft,
                                                            beyond_the_tracing=True) or None
             mouth = junction_mouth_ft(leg_name, side, state.legs, state.corner_fillets,
@@ -477,6 +491,78 @@ def _opening_run_out(leg, side: str, inner_ft, outer_ft, start_ft, end_ft):
     return out
 
 
+def _traced_kerb_depth_ft(leg, side: str, start_ft: float, end_ft: float | None) -> float | None:
+    """How far out the kerb actually runs over one span - the depth an opening's fillet sweeps.
+
+    Measured, so it is the kerb's own figure and not the width the cut asked for: see
+    _opening_run_out for the flat 4 ft gap that using the requested width gave instead.
+    """
+    stations = paint_stations(leg, side, start_ft, end_ft, beyond_the_tracing=True)
+    if stations is None:
+        return None
+    offsets = curb_offsets_at_stations(leg, side, stations)
+    if offsets is None:
+        return abs(leg.curb_to_curb_ft) / 2
+    return float(np.minimum(np.abs(offsets), abs(leg.curb_to_curb_ft)).max())
+
+
+def _kerbside_cut(leg, side: str, inner_ft: float,
+                  start_ft: float, end_ft: float | None):
+    """The ground an opening removes: from the travel lane's edge to PAST the kerb, whatever
+    describes the kerb.
+
+    Deliberately NOT a kerbside strip. Every kerbside zone this cuts runs from `inner_ft` out to
+    the kerb, so the obvious cut is the same strip over the opening's span - and that is wrong,
+    because there is no single "the kerb" to share. Three constructions here answer that question
+    and no two of them agree past the third decimal:
+
+    - `curbside_strip_polygon` takes the kerb's OWN traced vertices (curb_edge_by_station). The
+      fills use it, so over a traced stretch the difference is exact - but BEYOND the tracing its
+      vertex list is just the two interpolated ends, a chord across a leg that curves. On
+      louellen_st_west's left kerb, traced only from station 58.2 against a junction mouth of
+      0-65.9, that chord cut 605.6 sq ft where the mouth is 893.3, and left 85 sq ft of daylight
+      hatching standing in the intersection.
+    - `offset_band_polygon` clamps a lateral offset to the kerb RESAMPLED onto paint_stations. It
+      follows a curve out front and sags inside the traced kerb between samples, leaving a hairline
+      of zone along the kerb - 0.005 to 0.071 ft of it at four driveways, a parking aisle and a side
+      street across three sites.
+    - EVEN THE SAME CONSTRUCTION OVER A DIFFERENT SPAN DISAGREES WITH ITSELF, which is what makes
+      this margin rather than a shared construction the answer. A cut that starts mid-way along one
+      traced kerb segment interpolates its end vertex in station-offset space, while the fill it
+      cuts draws the world chord between that segment's two real vertices. On
+      greenwood_ave_south's right kerb the two cross by 0.003 ft over a 12 ft cross street: 0.66
+      sq ft of hatching survived, invisible as hatching, and PaintContext.rim then outlined it as a
+      22.2 ft white line straight back across the opening - the exact defect this module exists to
+      prevent, and the one a reader reported.
+
+    So the cut is a plain band between two lateral offsets, and its outer offset is past every one
+    of those answers. Overshooting was tried once before and appeared to make things worse; it was
+    being clawed straight back, because the shapes were then clipped to a kerbside strip built with
+    the clamping - so the overshoot bought nothing and left the cut's corners degenerate, and GEOS's
+    overlay against the resulting doubled-back sliver is unreliable (a stroke measured 100% inside a
+    fill whose own bounding box does not contain it, flipping in and out with the overshoot size).
+    The clip is built here too, so that does not recur.
+    """
+    stations = paint_stations(leg, side, start_ft, end_ft, beyond_the_tracing=True)
+    if stations is None:
+        return None
+    # PER STATION, and that is not a detail. Bounded instead by the kerb's widest offset anywhere
+    # on the leg, this permitted 2.1 ft of slack where louellen_st_west's right kerb comes in at
+    # 18.94 against a 20.92 ft maximum further out - enough for the trim's 1.5 ft round buffer to
+    # bulge out there, and checks.PaintOverTheCurb reported the fill 0.45 ft past its kerb. A
+    # maximum over a leg is also a figure that MOVES WITH THE SHEET (.claude/SKILLS.md 0b): the
+    # leg is longer at --frame-scale 2.5, so it reaches a wider kerb and every cut on the leg
+    # loosens. The bound has to be local.
+    offsets = curb_offsets_at_stations(leg, side, stations)
+    kerb_ft = (np.abs(offsets) if offsets is not None
+               else np.full(stations.shape, abs(leg.curb_to_curb_ft) / 2))
+    # Arrays, which is what band_from_offsets takes: a scalar reaches place_in_measured_frame as
+    # a 0-d array and it cannot iterate one.
+    return band_from_offsets(leg, side, stations,
+                             np.full(stations.shape, inner_ft),
+                             kerb_ft + OPENING_PAST_THE_KERB_FT)
+
+
 def kerb_opening_bands(state: "DesignState", junction_mouths: dict | None = None) -> KerbOpenings:
     """Where the kerbside markings open for a vehicle, in the two shapes KerbOpenings holds.
 
@@ -516,8 +602,7 @@ def kerb_opening_bands(state: "DesignState", junction_mouths: dict | None = None
     parking well before the mouth anyway.
     """
     from src.geometry.kerbs import OpeningSource
-    from src.geometry.model import offset_band_polygon
-    from src.geometry.treatments import TARGET_LANE_WIDTH_FT, divider_shift_toward_ft
+    from src.geometry.treatments import travel_lane_edge_ft
 
     # WHERE THIS JUNCTION'S OWN MOUTH ENDS, resolved against the crossings by junction_mouths_ft
     # and passed in rather than re-derived: the span seeded onto the state by kerbs.py is the
@@ -529,18 +614,20 @@ def kerb_opening_bands(state: "DesignState", junction_mouths: dict | None = None
         leg = state.legs.get(leg_name)
         if leg is None or leg.curb_to_curb_ft is None:
             continue
-        # The whole kerbside strip on this side, as the bound the trim is clipped to. The outer
-        # offset is deliberately past the nominal half-width: offset_band_polygon clamps it to
-        # the traced kerb, so asking for more than the road has means "out to the kerb, wherever
-        # it really is" rather than to a mid-block cross-section.
         # WHERE THE KERBSIDE ZONE BEGINS, which is where the travel lane ENDS on this side - not
         # a fixed TARGET_LANE_WIDTH_FT from the alignment. Those coincide only while the two travel
         # lanes straddle the alignment. Under a two-way bike lane the section starts far closer in
         # (4.22 ft from the alignment on e_broad_st_east against 11), so a region beginning at 11
         # covered only the OUTER part of the lane: the driveway break was drawn across some of the
         # bike lane and not the rest of it, which is visible in the render as striping that stops
-        # part way across. Same signed definition every check and both renderers use.
-        inner_ft = divider_shift_toward_ft(state, leg_name, side) + TARGET_LANE_WIDTH_FT
+        # part way across.
+        #
+        # THROUGH travel_lane_edge_ft AND NOT REBUILT AS `divider_shift + TARGET_LANE_WIDTH_FT`,
+        # which is what stood here and is wrong by 0.92 ft on a leg that splits its travel way
+        # rather than holding two target-width lanes. Rebuilt that way the cutter sat OUTBOARD of
+        # the zone it had to cut, so instead of a swept fillet it left a 0.10 ft ribbon of hatching
+        # along the zone's inner face and the rim outlined it across the driveway.
+        inner_ft = travel_lane_edge_ft(state, leg_name, side)
         # BEYOND THE TRACING, because an opening is a FACT about the street and not a marking
         # proposed on it - the same short list model.paint_stations lets past that bound, and for
         # the same reason a daylight zone is on it. Where a vehicle crosses the kerb does not stop
@@ -549,24 +636,24 @@ def kerb_opening_bands(state: "DesignState", junction_mouths: dict | None = None
         # station 60.3 against a junction mouth of 0-68.0, so without this the mouth came out 7.7 ft
         # long and left the daylight hatching it exists to remove standing in the intersection in
         # pieces - MORE pieces than before it was cut, which is the worst of both.
-        kerbside = offset_band_polygon(leg, side, inner_ft, leg.curb_to_curb_ft, 0.0, None,
-                                        beyond_the_tracing=True)
+        # The whole kerbside band on this side, as the bound the trim is clipped to - and built by
+        # _kerbside_cut too, which is the half of the overshoot that was missing the first time it
+        # was tried: clipping to a kerb-clamped strip claws the overshoot straight back off.
+        kerbside = _kerbside_cut(leg, side, inner_ft, 0.0, None)
         for opening in openings:
             start_ft, end_ft = opening.start_ft, opening.end_ft
             if opening.source is OpeningSource.JUNCTION:
                 start_ft, end_ft = junction_mouths.get((leg_name, side), (start_ft, end_ft))
                 if end_ft <= start_ft:
                     continue
-            band = offset_band_polygon(leg, side, inner_ft, leg.curb_to_curb_ft,
-                                        start_ft, end_ft,
-                                        beyond_the_tracing=True)
+            band = _kerbside_cut(leg, side, inner_ft, start_ft, end_ft)
             if band is None or band.is_empty:
                 continue
             opening_start_ft, opening_end_ft = start_ft, end_ft
-            # The kerb as traced HERE, off the band the clamping already produced - see
-            # _opening_run_out for the flat 4 ft gap that using the requested width gave instead.
-            _stations, offsets = station_offset_many(
-                leg.centerline, np.asarray(band.exterior.coords, dtype=float))
+            # THE KERB AS TRACED HERE, and measured rather than read off the cut's own exterior:
+            # the cut deliberately reaches OPENING_PAST_THE_KERB_FT further out than the kerb, so
+            # its widest offset is no longer a fact about the street.
+            depth_ft = _traced_kerb_depth_ft(leg, side, start_ft, end_ft)
             # THE TRIM IS THE MOUTH'S, and only the mouth's. JOIN_STYLE 1 is round, so the corners
             # where the entrance meets the travel lane edge and the kerb come off as arcs rather
             # than right angles. Buffering the fillet along with it - which is what this did - grew
@@ -582,8 +669,7 @@ def kerb_opening_bands(state: "DesignState", junction_mouths: dict | None = None
                 mouth = band.buffer(OPENING_TRIM_FT, join_style=1, cap_style=1)
                 # Grown from the TRIMMED mouth, so the arc's square end lands exactly on the
                 # entrance's edge and the two join without a step.
-                run_out = _opening_run_out(leg, side, inner_ft,
-                                           float(np.abs(offsets).max()),
+                run_out = _opening_run_out(leg, side, inner_ft, depth_ft,
                                            opening_start_ft - OPENING_TRIM_FT,
                                            opening_end_ft + OPENING_TRIM_FT)
             shapes = by_kerb.setdefault((leg_name, side), {"driveway_mouths": [],

@@ -30,12 +30,31 @@ def travel_lane_divider_shift_ft(section: TwoWayBikeLane) -> float:
     Where the leg cannot hold two target-width lanes beside the section, it falls back to an
     equal split, because then the shortfall is the street's and there is nothing to allocate.
     E Broad's east leg is that case at 10.04 ft a lane.
+
+    BOTH RULES ARE ONE EXPRESSION - the divider sits one lane width in from the near travel edge -
+    and they were written as two branches, which is how the equal-split case came to be missing
+    from everything downstream. `far_half - travel_way/2` and `divided_lane_width_ft - inner_edge`
+    are the same figure to the last decimal, so this is a rewrite and not a change: the branch was
+    hiding that the answer is always the lane width, and callers that reconstructed it as
+    `TARGET_LANE_WIDTH_FT + shift` were wrong by 0.92 ft on any leg taking the equal split. See
+    divider.travel_lane_edge_ft, which is now the only place that sum is written.
     """
-    inner_edge_ft = section.near_half_ft - section.section_ft
+    return divided_lane_width_ft(section) - (section.near_half_ft - section.section_ft)
+
+
+def divided_lane_width_ft(section: TwoWayBikeLane) -> float:
+    """How wide EACH travel lane is built beside this section, whichever kerb it is against.
+
+    TARGET_LANE_WIDTH_FT where the leg can hold two of them and half the travel way where it
+    cannot - the equal split of travel_lane_divider_shift_ft, hoisted out of it because the
+    divider is not the only thing that needs the figure. Anything asking "where does the travel
+    lane end" needs the lane's WIDTH, and reaching for the target instead is right on five of the
+    six corridor legs and 0.92 ft wrong on w_broad_st_northeast, which takes the split at 10.08 ft
+    a lane. That 0.92 ft is what left a 0.10 ft ribbon of buffer hatching standing across every
+    driveway on that leg, outlined by a 49.68 ft edge line straight over a 9.5 ft driveway.
+    """
     travel_way_ft = section.near_half_ft + section.far_half_ft - section.section_ft
-    if travel_way_ft < 2 * TARGET_LANE_WIDTH_FT:
-        return section.far_half_ft - travel_way_ft / 2
-    return TARGET_LANE_WIDTH_FT - inner_edge_ft
+    return min(TARGET_LANE_WIDTH_FT, travel_way_ft / 2)
 
 
 def far_kerb_surplus_ft(section: TwoWayBikeLane) -> float:

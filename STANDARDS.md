@@ -834,7 +834,8 @@ Listed so nobody goes looking for a standard behind them.
 | `CORNER_HATCHING_DEFAULT_DEPTH_FT` | 6 ft | `treatments.py` | paint-only zone, sized like a modest bulbout |
 | `MIN_CROSSING_ANGLE_DEG` | 30° | `crosswalks.py` | calibrated against the four sites' bimodal match data |
 | `REPORT_CROSSING_SKEW_DEG` | 20° | `crosswalks.py` | reporting threshold, deliberately not a discard |
-| `OPENING_TRIM_FT` | 1.5 ft | `paint.py` | cohesion at a driveway mouth, not a swept-path design |
+| `OPENING_TRIM_FT` | 1.5 ft | `paint/openings.py` | cohesion at a driveway mouth, not a swept-path design |
+| `OPENING_PAST_THE_KERB_FT` | 0.15 ft | `paint/openings.py` | not a design figure — the margin that stops an opening's cut from *being* a description of the kerb |
 | `THROUGH_JOIN_BLEND_FT` | 60 ft | `intersection.py` | the run over which a striper swings a centreline |
 | `TRACED_SECTION_START/END_FT` | 35 / 130 ft | `intersection.py` | the window a leg's *width* is a fact about |
 | `CROSSWALK_OFFSET_FROM_KERB_FT` | 8.3 ft | `model/context.py` | **not the statute** — measured, see below |

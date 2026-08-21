@@ -12,11 +12,11 @@ from dataclasses import dataclass, field, replace
 import numpy as np
 from shapely.ops import unary_union
 from src.geometry.model import clip_paint_clear_of, station_offset_many, through_street_sides
-from src.geometry.markings import lies_legitimately_on, yields_the_ground_to
+from src.geometry.markings import ZONE_END_LINE, lies_legitimately_on, yields_the_ground_to
 from src.geometry.paint.pieces import LANE_EDGE_LINE_WIDTH_FT, PaintPiece, RimCause, SURFACE_PAINT_GROUP
 from src.geometry.paint.anchors import (MIN_LINE_LENGTH_FT, MIN_RIM_LENGTH_FT, MIN_ZONE_AREA_SQ_FT,
-                                        PAINT_TO_CROSSWALK_GAP_FT, RIM_SNAP_FT, _lies_wholly_behind,
-                                        leg_anchors)
+                                        PAINT_TO_CROSSWALK_GAP_FT, RIM_SNAP_FT, ZONE_END_REACH_FT,
+                                        _lies_wholly_behind, leg_anchors)
 from src.geometry.paint.openings import (DASH_CROSSING_SLACK_FT, DOTTED_MARK_FT, _dash_spans,
                                          _held_inside_the_kerb, _inside_the_traced_kerb,
                                          _stands_in_a_crossing, _station_band, junction_mouths_ft,
@@ -543,4 +543,43 @@ def curbside_paint_ft(state: "DesignState", crosswalk_offsets: dict, center_ft: 
     ctx.seal_surfaces()
     for treatment in ordered[len(surface_pass):]:
         treatment.paint(ctx)
-    return ctx.pieces
+    return without_stranded_end_lines(ctx.pieces)
+
+
+def without_stranded_end_lines(pieces: list[PaintPiece]) -> list[PaintPiece]:
+    """Drop every square end that no longer has hatching to close. Runs LAST, and has to.
+
+    A zone's end line is the transverse stripe across the front of a hatched zone, placed by the
+    treatment that placed the hatching, at the station that treatment ASKED the zone to start at.
+    Whether the zone still starts there is not knowable then: a later treatment's fill outranks it
+    and takes the ground (`_clear_of_the_paint_already_down` rewrites pieces already placed), and a
+    crossing or an opening can take the front off as well. So the line is placed hopefully and the
+    question is settled here, once, against the geometry that is actually going out.
+
+    THE CALLER CANNOT DO THIS AND NEITHER CAN THE CALLER'S OWN PIECE LIST. Both were tried. The
+    pieces `ctx.add` hands back are REPLACED, not mutated (`replace(piece, geometry=part)`), so a
+    list captured at add time still holds the uncut polygons and reports a zone reaching back to a
+    station it no longer reaches. On w_broad_st_southwest's right kerb `daylight_fill` cut
+    `lane_narrowing_fill` from 2855.7 to 2761.0 sq ft and was then dropped below
+    MIN_ZONE_AREA_SQ_FT itself, which left the end line standing 9.3 ft clear of any hatching and
+    3.2 ft inside the junction mouth - fatal to NoPaintInsideTheJunction. Same defect, three ways
+    of arriving at it; only this one sees the answer.
+
+    IT WAS ALSO SURVIVING ON FLOAT LUCK BEFORE THAT. Drawn at its requested station the line lies
+    exactly along the transverse edge of the junction mouth's cut, and whether GEOS's difference
+    keeps a line lying on a polygon's boundary depends on where the overlay nodes it. Widening the
+    opening cut by a foot for unrelated reasons moved the coincidence and the line appeared. A
+    drawing decision resting on that is a defect whichever way the luck falls, so the rule is
+    stated instead of left to the overlay.
+
+    Touching is measured with ZONE_END_REACH_FT, one edge-line width: closer than the width of the
+    line itself is not a gap a reader can see, and a real cut here moves the zone by feet.
+    """
+    hatching: dict[tuple, list] = {}
+    for piece in pieces:
+        if piece.kind.is_fill:
+            hatching.setdefault((piece.leg, str(piece.side)), []).append(piece.geometry)
+    return [piece for piece in pieces
+            if piece.kind is not ZONE_END_LINE
+            or any(piece.geometry.distance(fill) <= ZONE_END_REACH_FT
+                   for fill in hatching.get((piece.leg, str(piece.side)), ()))]

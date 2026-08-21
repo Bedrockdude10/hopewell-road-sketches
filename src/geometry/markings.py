@@ -412,6 +412,18 @@ def opening_rule(kind: PaintKind) -> OpeningRule:
             f"nothing able to notice.") from None
 
 
+def gives_way_at(kind: PaintKind, is_an_intersection: bool) -> bool:
+    """Whether `kind` ends at THIS KIND of opening with nothing laid back across it.
+
+    The two rules that end a marking - FILLETED and STOPPED - as against the two that put paint
+    inside the mouth. Worth one predicate because the difference is what makes the claim
+    checkable: where a marking gives way there should be a GAP in the drawing, and where it is
+    carried or dotted the mouth is full of paint on purpose. Read by
+    checks.ZonesGiveWayAtAnOpening.
+    """
+    return opening_rule(kind).at(is_an_intersection) not in _CARRIES
+
+
 def carries_across_an_intersection(kind: PaintKind) -> bool:
     """Whether `kind` may legitimately be drawn inside an intersecting approach's mouth.
 
@@ -420,7 +432,7 @@ def carries_across_an_intersection(kind: PaintKind) -> bool:
     checks.NoPaintInsideTheJunction so the invariant tests the drawn geometry against the
     declaration rather than against a second list of exceptions.
     """
-    return opening_rule(kind).at_an_intersection in _CARRIES
+    return not gives_way_at(kind, is_an_intersection=True)
 
 
 def kinds_in(channel: Channel) -> tuple[PaintKind, ...]:

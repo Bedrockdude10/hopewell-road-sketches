@@ -42,6 +42,7 @@ from src.geometry.treatments.bikeways.sections import (
 from src.geometry.treatments.bikeways.fit import (
                                             bike_lane_spare_ft,
                                             far_kerb_surplus_ft,
+                                            divided_lane_width_ft,
                                             travel_lane_divider_shift_ft,
                                             widest_protected_lane_ft,
 )
@@ -62,6 +63,7 @@ from src.geometry.treatments.bikeways.place import (
 )
 from src.geometry.treatments.bikeways.divider import (
                                             divider_shift_toward_ft,
+                                            travel_lane_edge_ft,
                                             travel_lane_width_ft,
 )
 from src.geometry.treatments.bikeways.bollards import (
@@ -111,11 +113,13 @@ __all__ = [
                                             "bike_lane_spare_ft",
                                             "bike_symbol_polygon",
                                             "bike_symbol_stations_ft",
+                                            "divided_lane_width_ft",
                                             "divider_shift_toward_ft",
                                             "far_kerb_surplus_ft",
                                             "lane_end_face",
                                             "min_bike_lane_buffer_ft",
                                             "travel_lane_divider_shift_ft",
+                                            "travel_lane_edge_ft",
                                             "travel_lane_width_ft",
                                             "widest_protected_lane_ft",
 ]

@@ -22,7 +22,7 @@ import numpy as np
 from shapely.geometry import Point
 
 from src.geometry.markings import (PARKING_EDGE_LINE, STALL_DIVIDER,
-                                   lies_legitimately_on)
+                                   lies_legitimately_on, opening_rule)
 from src.geometry.paint import stroke_width_ft
 from src.geometry.targets import Side
 from src.geometry.model import curb_offsets_at_stations, station_offset_many
@@ -68,6 +68,14 @@ PARKING_SETBACK_TOLERANCE_FT = 0.1
 # Two markings may share an edge, and clipping one against another leaves slivers along that
 # shared edge. Beyond this they genuinely cover the same ground.
 MARKING_OVERLAP_TOLERANCE_SQ_FT = 1.0
+# HOW MUCH OF A MARKING MAY SURVIVE AN OPENING IT DECLARED IT GIVES WAY AT. Both figures are
+# float noise, not slack: clipping a zone against a mouth that shares its inner edge leaves
+# slivers along that edge, and anything a reader could see is orders of magnitude above this. The
+# defect this was written for left 0.95 sq ft of hatching in one driveway - twenty times the area
+# tolerance - and the only reason it was invisible on the drawing is that a 0.10 ft ribbon of
+# hatch is thinner than the stripe bounding it. What made it VISIBLE was the rim outlining it.
+ZONE_REMNANT_TOLERANCE_SQ_FT = 0.05
+MARKING_REMNANT_TOLERANCE_FT = 0.25
 # How close two lines have to be to count as the same line. Well under a paint stripe's own
 # width, so it only catches lines genuinely drawn on top of each other.
 COLLINEAR_PAINT_TOLERANCE_FT = 0.1
@@ -706,6 +714,22 @@ def _boxes_apart(a: tuple, b: tuple) -> bool:
     return a[2] < b[0] or b[2] < a[0] or a[3] < b[1] or b[3] < a[1]
 
 
+def _station_extent(leg, geometry) -> tuple[float, float] | None:
+    """How far along the leg a piece of geometry reaches, or None if it has no vertices to read.
+
+    Every part of a multi-part geometry, because a piece clipped into two lobes reaches as far as
+    the further one - and the whole point of asking is whether one piece spans something.
+    """
+    coords = []
+    for part in getattr(geometry, "geoms", [geometry]):
+        ring = getattr(part, "exterior", None)
+        coords.extend(ring.coords if ring is not None else getattr(part, "coords", ()))
+    if not coords:
+        return None
+    stations, _offsets = station_offset_many(leg.centerline, np.asarray(coords, dtype=float))
+    return float(stations.min()), float(stations.max())
+
+
 def _divider_shift_toward_ft(state: "DesignState", leg_name: str, side: str) -> float:
     """Signed divider offset toward `side`. Delegates to src/geometry/treatments/, which is
     where the one definition lives - see divider_shift_toward_ft for why there is only one."""
@@ -715,25 +739,12 @@ def _divider_shift_toward_ft(state: "DesignState", leg_name: str, side: str) -> 
 
 
 def _travel_lane_target_ft(state: "DesignState", leg_name: str, side: str) -> float:
-    """How far from the alignment this kerb's travel lane reaches, for the paint checks.
+    """How far from the alignment this kerb's travel lane reaches. Delegates to
+    src/geometry/treatments/, which is where the one definition lives - see travel_lane_edge_ft
+    for why the sum is written once and what the second copy of it drew."""
+    from src.geometry.treatments import travel_lane_edge_ft
 
-    TARGET_LANE_WIDTH_FT everywhere the travel lanes straddle the alignment, which is every leg
-    of every scenario but one. Where a two-way bike lane is involved the travel way has been
-    shifted off the alignment, and the two sides of the leg are different questions:
-
-      * the side CARRYING the lane - the travel way stops at the section's own inner edge, and
-        that is what the lane's paint has to stay outside of.
-      * the side OPPOSITE it - the travel lane still holds its target width, but it is measured
-        from the shifted divider rather than from the alignment, so the offset paint must clear
-        is the target plus however far the divider moved this way. Missing this second case
-        reports a correctly-sized 11 ft lane as a violation.
-    """
-    from src.geometry.treatments import TARGET_LANE_WIDTH_FT, AddTwoWayBikeLane
-
-    for treatment in state.treatments_of(AddTwoWayBikeLane):
-        if treatment.target.leg == leg_name and str(treatment.target.side) == str(side):
-            return treatment.section(state).offsets_from_centerline_ft()["travel_lane_edge_ft"]
-    return TARGET_LANE_WIDTH_FT + _divider_shift_toward_ft(state, leg_name, side)
+    return travel_lane_edge_ft(state, leg_name, side)
 
 
 class PaintClearOfTheTravelLane(SceneCheck):
@@ -1099,7 +1110,7 @@ class NoPaintInsideTheJunction(SceneCheck):
 
     def run(self, scene: SceneContext) -> list[Violation]:
         from src.geometry.markings import carries_across_an_intersection
-        from src.geometry.paint import junction_mouths_ft
+        from src.geometry.paint import LANE_EDGE_LINE_WIDTH_FT, junction_mouths_ft
 
         # THE SAME RESOLUTION THE PAINT WAS CUT AGAINST - the mouth ends at the leg's crosswalk,
         # painted or not, and at the corner return only where none resolves. Asked of the shared
@@ -1126,7 +1137,15 @@ class NoPaintInsideTheJunction(SceneCheck):
                 continue
             stations, _offsets = station_offset_many(leg.centerline,
                                                       np.asarray(coords, dtype=float))
-            if float(stations.max()) > mouth[1]:
+            # REACHING THE MOUTH'S END IS NOT BEING INSIDE IT, and the margin is what makes that
+            # decidable. A zone's own end line is placed AT the mouth's far end, so both its
+            # vertices station out at 26.4040 against a mouth ending at 26.4040 - and whether `>`
+            # calls that inside comes down to the last bit of the float. It is the case this
+            # docstring already argues for rims, with a different provenance: paint that reaches
+            # the mouth's end is closing a zone there, not standing in the intersection. One edge
+            # line width, the same unit paint.ZONE_END_REACH_FT measures the other end of that
+            # relationship in.
+            if float(stations.max()) > mouth[1] - LANE_EDGE_LINE_WIDTH_FT:
                 continue
             how_much = (f"{geometry.area:.0f} sq ft of" if piece.kind.covers_area
                          else f"{geometry.length:.1f} ft of")
@@ -1139,6 +1158,95 @@ class NoPaintInsideTheJunction(SceneCheck):
                 f"cross street does (src/geometry/kerbs.py:OpeningSource.is_an_intersection); "
                 f"a marking that survives it was never cut against it",
                 (geometry.centroid.x, geometry.centroid.y)))
+        return violations
+
+
+class ZonesGiveWayAtAnOpening(SceneCheck):
+    """A marking is not drawn across an opening its own row says it gives way at.
+
+    THE OTHER HALF OF NoPaintInsideTheJunction. That one asks whether a marking sits inside THIS
+    junction's mouth; this one asks whether a marking bridges any of the other openings on the
+    kerb - every driveway and side street - and reads the answer off the same table the cut was
+    made from (markings.AT_AN_OPENING, via gives_way_at). Where a row is FILLETED or STOPPED
+    nothing is laid back in, so the drawing owes the reader a GAP, and a piece running from one
+    side of the entrance to the other is the absence of one.
+
+    MEASURED AGAINST THE SURVEYED OPENING, NOT AGAINST THE GROUND THE CUT USED, and that is the
+    only version of this check worth having. Written the obvious way - intersect each piece with
+    openings.against(its kind), the very shape it was clipped by - it reported nothing on any
+    site, because a piece clipped by a shape cannot overlap the shape. It could not fail, so it
+    proved nothing (SKILLS.md 0a). The opening's own start and end stations come off
+    kerbs.KerbOpening, which is OSM's survey of the street, so a wrong datum in the cut has
+    nowhere to hide.
+
+    WHY THIS NEEDED A CHECK AT ALL: what survives a wrong datum is a RIBBON, and a ribbon of
+    hatching is invisible. `w_broad_st_northeast left` under build_proposal_two_way_bike_lane
+    carried 0.10 ft of bike buffer through all three of its openings, because two derivations of
+    "where the travel lane ends on this side" disagreed by 0.92 ft - the opening ground was built
+    from divider_shift + TARGET_LANE_WIDTH_FT (3.81 ft) while the section had put the buffer's
+    face at 3.71 ft, the near travel lane having come out at 10.08 ft rather than the target.
+    Nobody would ever see a tenth of a foot of green. What they saw was PaintContext.rim
+    faithfully outlining it: a 49.68 ft solid edge line straight across a 9.5 ft driveway, plus
+    41.98 ft across the cross-street mouth and 30.69 ft across the next driveway. Fail on the
+    remnant rather than on the line, because the remnant is the cause.
+
+    BRIDGING, not overlapping, so there is no false positive to argue about - the same choice
+    NoPaintInsideTheJunction made and for the same reason. A zone cut by a skewed crossing has a
+    diagonal end whose stations reach into a mouth while the zone sits outside it; a piece with
+    material inside the entrance AND on both sides of it is not a long end, it is a marking that
+    never gave way. RIMS ARE SKIPPED: a rim is the line drawn AT the cut, so it lies against the
+    opening by construction however correct it is.
+    """
+
+    def run(self, scene: SceneContext) -> list[Violation]:
+        from src.geometry.kerbs import OpeningSource
+        from src.geometry.markings import gives_way_at
+        from src.geometry.paint import _station_band, junction_mouths_ft
+
+        legs = scene.legs
+        # The junction's own mouth is resolved against the crossings, exactly as the cut resolves
+        # it - see paint.kerb_opening_bands, which does this substitution on the same field.
+        mouths = junction_mouths_ft(scene.state, scene.crosswalk_bands)
+        violations = []
+        for (leg_name, side), openings in sorted(
+                (getattr(scene.state, "kerb_openings", None) or {}).items()):
+            leg = legs.get(leg_name)
+            if leg is None:
+                continue
+            pieces = [p for p in scene.paint if p.rim is None and p.leg == leg_name
+                       and p.side is not None and str(p.side) == str(side)]
+            for opening in openings:
+                start_ft, end_ft = opening.start_ft, opening.end_ft
+                if opening.source is OpeningSource.JUNCTION:
+                    start_ft, end_ft = mouths.get((leg_name, str(side)), (start_ft, end_ft))
+                if end_ft <= start_ft:
+                    continue
+                band = _station_band(leg, start_ft, end_ft)
+                if band is None:
+                    continue
+                for piece in pieces:
+                    if not gives_way_at(piece.kind, opening.is_an_intersection):
+                        continue
+                    extent = _station_extent(leg, piece.geometry)
+                    if extent is None or not (extent[0] < start_ft and extent[1] > end_ft):
+                        continue        # ends at the entrance, or nowhere near it
+                    inside = piece.geometry.intersection(band)
+                    covers = piece.kind.covers_area
+                    amount = inside.area if covers else inside.length
+                    if amount <= (ZONE_REMNANT_TOLERANCE_SQ_FT if covers
+                                   else MARKING_REMNANT_TOLERANCE_FT):
+                        continue
+                    violations.append(Violation(
+                        "paint_across_an_opening",
+                        f"{amount:.2f} {'sq ft' if covers else 'ft'} of {piece.kind} runs across "
+                        f"the {opening.source.value} at {start_ft:.1f}-{end_ft:.1f} ft on "
+                        f"{leg_name} {side}, and its row in markings.AT_AN_OPENING gives way "
+                        f"there ({opening_rule(piece.kind).at(opening.is_an_intersection).value})"
+                        f" - the piece has paint inside the entrance and on both sides of it, so "
+                        f"it was never cut. Usually a datum: the ground an opening is cut out of "
+                        f"starts at the travel lane's edge, and a marking placed off a second "
+                        f"derivation of that edge leaves the difference standing as a ribbon",
+                        (inside.centroid.x, inside.centroid.y)))
         return violations
 
 

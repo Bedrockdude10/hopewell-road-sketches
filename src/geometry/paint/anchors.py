@@ -174,6 +174,14 @@ def zone_end_line_ft(leg, side: str, start_ft: float, inner_offset_ft: float):
     leg_anchors puts anchor_ft AT target_ft where the crossing is only nominal. A square end wants
     a line across it, or the hatch strokes end in mid-air.
 
+    THIS PLACES THE LINE; WHETHER IT SURVIVES IS DECIDED LATER, by without_stranded_end_lines at
+    the end of the paint pass, and it has to be: `start_ft` is where the zone was REQUESTED to
+    start, and a zone can lose its front long after this returns. On w_broad_st_southwest's right
+    kerb a crossing takes the first 9.3 ft, so the line stood 9.3 ft clear of the hatching it was
+    closing - which is the first of the three cases above, where the rim outlines the cut and there
+    is nothing left to close. It cannot be settled here or at the caller: the fill that takes the
+    ground is a LATER treatment's, and it rewrites the pieces this one was handed.
+
     Returns None where the kerb has come inside the zone's own lane edge, which leaves
     nothing to draw a line across.
     """
@@ -185,6 +193,14 @@ def zone_end_line_ft(leg, side: str, start_ft: float, inner_offset_ft: float):
         return None
     return LineString([point_at(leg.centerline, start_ft, inner_ft),
                        point_at(leg.centerline, start_ft, outer_ft)])
+
+
+# HOW FAR A ZONE'S END LINE MAY STAND OFF THE HATCHING IT CLOSES. One edge-line width, because a
+# gap narrower than the line drawn across it is not a gap a reader can see - and anything wider is
+# the zone having been cut back by a crossing or an opening, which the rim outlines instead. Not a
+# float tolerance: a real cut here moves the zone by FEET (9.3 of them on w_broad_st_southwest), so
+# nothing sits near this figure from either side. Read by context.without_stranded_end_lines.
+ZONE_END_REACH_FT = LANE_EDGE_LINE_WIDTH_FT
 
 
 def _lies_wholly_behind(leg, geometry, station_ft: float) -> bool:

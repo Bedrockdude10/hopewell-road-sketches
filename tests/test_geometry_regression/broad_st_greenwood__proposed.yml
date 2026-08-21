@@ -59,7 +59,7 @@ channels:
       min:
       - -34.634
       - -36.51
-    points: 486
+    points: 489
   lane_narrowing_hatch_lines:
     count: 47
     extent:
@@ -82,8 +82,8 @@ channels:
       - 29.132
       min:
       - 1.819
-      - -4.322
-    points: 285
+      - -4.228
+    points: 230
   parking_buffer_hatch_lines:
     count: 29
     extent:

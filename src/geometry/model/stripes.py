@@ -55,7 +55,19 @@ def curbside_strip_polygon(leg: "Leg", side: str, inner_offset_ft: float,
     inner_pts = _place_no_further_in_than(leg.centerline, stations, inner)
     poly = Polygon(list(outer_pts) + list(reversed(inner_pts)))
     if not poly.is_valid:
-        poly = poly.buffer(0)
+        # OSM traces the block, not every curb kink (SKILLS.md #7) - greenwood_ave_south's
+        # right kerb goes 261 ft with no vertex at all. A straight chord across a gap that
+        # wide, held against a centerline that bends inside it, cuts across the inner edge:
+        # a self-intersecting ring that buffer(0) resolves into a bowtie rather than a clean
+        # strip - it stayed one piece across a cross-street opening a later cut could not
+        # split. Rebuild the outer edge on the SAME station grid as the inner edge instead,
+        # both placed in the measuring frame: outer's offset magnitude is never less than
+        # inner's (inner already clamps to it above), so the two boundaries cannot cross.
+        # Only reached where the real tracing already produced an invalid ring.
+        outer_pts = place_in_measured_frame(leg.centerline, stations, curb_offsets)
+        poly = Polygon(list(outer_pts) + list(reversed(inner_pts)))
+        if not poly.is_valid:
+            poly = poly.buffer(0)
     return poly if (not poly.is_empty and poly.area > 1e-6) else None
 
 

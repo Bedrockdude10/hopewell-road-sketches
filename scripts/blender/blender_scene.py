@@ -107,7 +107,7 @@ def parse_args() -> list[tuple[Path, Path]]:
 # incomplete, so a file without them is refused instead of rendered. Every one of them is read
 # below through `.get(..., [])`, which is right for a scenario that legitimately has none of
 # something - and indistinguishable from a file too old to carry the key at all. That is not a
-# cosmetic difference: 39 of the 65 committed exports predated these four, so rendering one drew
+# cosmetic difference: 39 of the 65 exports committed at the time predated these four, so one drew
 # a street with no kerbs, no driveways or parking aprons and no surveyed crossings, and with
 # `frame` gone this script computed a camera extent of its own from the pavement, which
 # src/render/export.py says in as many words it must not do. Nothing warned; the render looked
@@ -117,8 +117,9 @@ def parse_args() -> list[tuple[Path, Path]]:
 #
 # NOT the whole 37-key schema, which lives in src/render/export.py and cannot be imported here
 # (see .importlinter: this file runs in Blender's interpreter). These four are what this RENDERER
-# needs in order not to lie. The full-schema check on the committed files is
-# tests/test_exported_geometry.py, on the side of the boundary that can read the exporter.
+# needs in order not to lie. Nothing checks the committed files against that full schema: the
+# exporter writes every key unconditionally, so only a file committed BEFORE a key existed can
+# lack one, and this guard is what stops such a file being rendered rather than reported.
 REQUIRED_KEYS = ("frame", "kerbs", "paved_surfaces", "surveyed_crossings")
 
 

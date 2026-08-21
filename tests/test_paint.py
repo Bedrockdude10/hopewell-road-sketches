@@ -1209,7 +1209,14 @@ def test_blender_stroke_widths_match_the_channels():
     declared = {}
     for node in ast.parse(source).body:
         if isinstance(node, ast.Assign) and isinstance(node.targets[0], ast.Name):
-            declared[node.targets[0].id] = ast.literal_eval(node.value)
+            try:
+                declared[node.targets[0].id] = ast.literal_eval(node.value)
+            except (ValueError, TypeError, SyntaxError):
+                continue    # a COMPUTED module constant (REPO_ROOT = Path(__file__)...), not one
+                # of the width tables this guard reads. Unguarded, literal_eval raised on the
+                # first of those and the failure read as a widths mismatch - so the guard
+                # reported a marking defect that did not exist, which is worse than not running.
+                # `wanted <= set(declared)` below is what says the tables have gone missing.
     wanted = {"SAMPLED_POLYLINE_CHANNELS", "TWO_POINT_CHANNELS", "TWO_POINT_WIDTH_M",
               "CENTERLINE_WIDTH_M"}
     assert wanted <= set(declared), (

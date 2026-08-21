@@ -23,6 +23,7 @@ from src.render.crosswalks import (CROSSWALK_DEPTH_M, STOP_BAR_CURB_CLEARANCE_M,
                                    crosswalk_bands_ft, resolve_crosswalk_offsets,
                                    resolve_crosswalk_skews, resolve_stop_bar_offsets)
 from src.render.coords import FT_TO_M
+from src.render.frame import FRAME_SCALE_ENV
 from src.render.props import build_props
 from src.geometry.markings import (DAYLIGHT_EDGE_LINE, DAYLIGHT_FILL)
 from src.geometry.paint import curbside_paint_ft
@@ -30,7 +31,7 @@ from src.site import list_sites, load_site_scenarios, run_scenario, site_dir
 from src.sources.osm_context import (fetch_crossings, fetch_kerbs, fetch_stop_lines,
                                      fetch_street_furniture, fetch_traffic_control)
 
-from tests.conftest import SITES, needs_source_data
+from tests.conftest import SITES, WIDE_FRAME_SCALE, needs_source_data
 import itertools
 
 # Whatever each site's scenarios.py actually defines. Naming the scenarios here instead
@@ -122,6 +123,36 @@ def test_every_scenario_satisfies_the_invariants(site, site_models):
             state = run_scenario(builder, DesignState.from_model(model), model)
         violations = fatal(scene_violations(model, state))
         assert not violations, f"{site}/{name}:\n" + "\n".join(str(v) for v in violations)
+
+
+@needs_source_data
+@pytest.mark.parametrize("site", SITES)
+def test_every_scenario_satisfies_the_invariants_on_the_wide_sheet(site, wide_site_models,
+                                                                  monkeypatch):
+    """The same sweep at the frame `output/` is drawn at, which is the frame that ships.
+
+    The 1x sweep above cannot see anything the wide sheet reaches. A longer leg follows its
+    kerb further, so a marking placed rigidly against one that follows the kerb drifts apart
+    from it, and that drift is what collides. Measured 2026-08-21 against the symbol placement
+    this test was written for: at 1x the sweep reported NOTHING on any of the four sites, while
+    at 2.5x it reported a fatal `markings_collide` at W Broad & Louellen - 0.1 sq ft of bike
+    symbol under 8% of the contraflow divider's 0.49 ft stroke. Fatal means it refused the 3D
+    export of a render this repo ships, and no test in the suite could see it.
+
+    The env var as well as the fixture: the models are BUILT wide, and the frame is read again
+    when the scene resolves (see tests/test_surveyed_crossings.py). Without it this resolves a
+    1x frame around wide models, which is a slower copy of the test above.
+    """
+    monkeypatch.setenv(FRAME_SCALE_ENV, str(WIDE_FRAME_SCALE))
+    model = wide_site_models[site]
+    builders = scenario_builders(site)
+    assert builders, f"{site} defines no scenarios - this test would silently check nothing"
+    for name, builder in sorted(builders.items()):
+        with contextlib.redirect_stdout(io.StringIO()):
+            state = run_scenario(builder, DesignState.from_model(model), model)
+        violations = fatal(scene_violations(model, state))
+        assert not violations, (f"{site}/{name} at {WIDE_FRAME_SCALE}x:\n"
+                               + "\n".join(str(v) for v in violations))
 
 
 @needs_source_data
@@ -539,8 +570,8 @@ def test_osm_parking_never_narrows_a_lane_below_target(site, site_models):
     assert not violations, "\n".join(str(v) for v in violations)
 
 
-# The frame the committed outputs are drawn at (scripts/build_all.py --frame-scale; see the
-# commit "Regenerate the outputs: the corridor, drawn to the frame at 2.2x"). The session
+# The frame the committed outputs are drawn at (`scripts/build_all.py --frame-scale`, 2.5,
+# which is also `tests/conftest.py:WIDE_FRAME_SCALE`). The session
 # fixture builds at 1x, where every leg ends inside the 130 ft its width and centre were
 # measured over - so a promise that only breaks further out cannot show up there at all.
 @needs_source_data

@@ -133,7 +133,14 @@ src/                       General-purpose library - NO data specific to any one
       state.py             DesignState: the thing every treatment transforms
       base.py              The Treatment ABC, shared value objects, shared constants
       corners.py           Corner radius, curb extensions, aprons, corner hatching
-      bikeways.py          Bike-lane cross-sections, the treatments that place them, their bollards
+      bikeways/            Bike-lane cross-sections, the treatments that place them, their paint
+        sections.py        What a bikeway IS in cross-section, and the figures that size one
+        fit.py             Whether a section fits this kerb, and what it leaves for the rest
+        place.py           The treatments that place a bikeway, and all the paint one puts down
+        divider.py         Where the travel-lane divider sits once a two-way lane has a kerbside
+        bollards.py        The flex posts that make a painted lane a protected one
+        symbols.py         The bike symbol and the contraflow dash: how a lane says what it is
+        through_junction.py  Carrying a lane across the junction: the crossbike, and the gap
       crossings.py         Refuge islands, raised crossings, crosswalk markings, crosswalk shifts
       parking.py           Marked stalls, their buffer, and the borough's parking tags
       lanes.py             Lane narrowing and the flex posts that hold it
@@ -169,6 +176,7 @@ src/                       General-purpose library - NO data specific to any one
     plan_view.py           matplotlib plan-view rendering (Phase 2/3)
     crosswalks.py          Matches OSM crossings to legs; resolves crosswalk/stop-bar/centreline paint
     props.py               Street-furniture placement: WHERE + WHY, not drawing
+    labels.py              Where a label goes, and where prose goes instead, so no panel covers its own design
     export.py              Orchestrator: DesignState + theme -> local-meters JSON for Blender
     coords.py              WGS84 / state-plane / local-meter conversions
     assets.py              Poly Haven texture/model fetch + disk cache
@@ -181,13 +189,17 @@ scripts/
   phase4_export_geometry.py  Export-only (no Blender) - useful for debugging the JSON
   phase4_render_3d.py      Fetch theme + export + shell out to Blender
   build_all.py             Every site, every scenario, in parallel
+  verify.py                The whole loop in one command: export, diff, suite, reported NEW / KNOWN / FIXED
+  jobs.py                  How many jobs this machine runs at once - in one place, because it had three
   export_all_scenarios.py  Every scenario through export_scenario, into a directory
   diff_exports.py          Diff two such directories key by key - says WHAT changed
   measure_drawn.py         What was actually DRAWN, stationed against each leg's centreline;
                            --all adds the section, limiter, gap and continuity reports
+  whatis.py                What is this symbol? Signature, docstring line, and how callers actually use it
   corridor_report.py       The corridor questions, with the coverage of every answer beside them
   corridor_render.py       A straightened strip plan of one corridor, on stacked panels
   convert_road_network.py  Build + verify a spatially-indexed copy of a roadway network file
+  make_data_fixture.py     Clip data/ down to the features the sites read, as a committed test fixture
   check_prose_only.py      Prove a commit changed only comments and docstrings
   test.sh                  Run the suite under .venv/bin/python, activated or not
   blender/                 Runs INSIDE Blender's own Python (no network, no venv)

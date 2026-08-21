@@ -32,6 +32,9 @@ render inside the loop is a round trip that cannot answer the question you asked
 - **`./scripts/test.sh`, never bare `pytest`.** The script pins the venv interpreter, so a
   wrong `python` on PATH cannot masquerade as a broken repo. It runs `-n auto`; pass `-n 0`
   when you need `-x`, `pdb`, or readable ordering.
+- `scripts/whatis.py <symbol>`, ~1 s, before you write a second copy of anything: signature,
+  the docstring's first line, and every call site. §1 of SKILLS.md is the list of facts that
+  already have a home; this is how you find the ones that are not on it.
 - `scripts/check_prose_only.py --base <rev>` proves a diff changed only comments and
   docstrings. Exit 0 means no behaviour moved and the suite is not required.
 

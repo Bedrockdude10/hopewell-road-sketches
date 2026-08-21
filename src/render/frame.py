@@ -125,7 +125,7 @@ def leg_reach_ft(model: "IntersectionModel") -> float:
     The site's configured working length, not the built centerline, because the frame scale also
     carries the legs out (src/geometry/intersection/) and the two would compound: longer legs make
     a longer pavement ring, this measures the ring, and the scale multiplies a second time, so a
-    2.2x frame comes out 4.8x.
+    2.5x frame comes out 6.2x.
 
     Measured by TRUNCATING each centerline to its surveyed length and taking the far end, not by
     reading the configured number off directly. The two differ - a centerline does not start

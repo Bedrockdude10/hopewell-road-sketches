@@ -34,11 +34,11 @@ from tests.conftest import SITES, WIDE_FRAME_SCALE, needs_source_data
 GREENWOOD = "broad_st_greenwood"
 
 # The frame docs/network-renderer-plan.md measures the defect at: 431.2 ft, 2.5x the 172.5 ft
-# Greenwood is drawn at by default.
-# The scale THIS module's counts were measured at (10 crossings in Greenwood's frame,
-# 6 of them off-leg). Distinct from tests/conftest.py:WIDE_FRAME_SCALE, which is the
-# scale output/ is drawn at and what wide_site_models builds to.
-MEASURED_FRAME_SCALE = "2.5"
+# Greenwood is drawn at by default - and the scale this module's counts were measured at (10
+# crossings in Greenwood's frame, 6 of them off-leg). NO LONGER A SECOND NUMBER: it was written
+# here as its own "2.5" while conftest's WIDE_FRAME_SCALE said 2.2, so this module and the
+# wide_site_models fixture it uses were on different sheets. One constant, and it is the render's.
+MEASURED_FRAME_SCALE = str(WIDE_FRAME_SCALE)
 WIDE_FRAME_RADIUS_FT = 431.2
 
 # Inside that frame: 10 traced crossings, 4 of them this junction's own legs', 6 belonging to
@@ -317,7 +317,7 @@ def test_no_paint_is_laid_over_a_crossing_at_an_unmodelled_junction(wide_site_mo
 
     # The models were BUILT wide; the frame is read again at draw time, and the fixture has
     # already put the env var back. Without this the scene resolves a 1x frame around models with
-    # 2.2x legs, finds no crossing at any other junction, and the test passes having checked
+    # wide legs, finds no crossing at any other junction, and the test passes having checked
     # nothing - which is what it did first time round.
     monkeypatch.setenv(FRAME_SCALE_ENV, str(WIDE_FRAME_SCALE))
     checked = 0

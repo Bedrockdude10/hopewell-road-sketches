@@ -47,7 +47,7 @@ combined:
 
 - **(e) has two arms.** The crosswalk arm and the side-line arm. Only the crosswalk arm was
   applied at first, so legs with no marked crossing got no setback at all.
-- **The statute is about *an* intersection, not *this* one.** A leg drawn 374 ft out crosses
+- **The statute is about *an* intersection, not *this* one.** A leg drawn 425 ft out crosses
   Blackwell Avenue and Model Avenue too, and each gets its own (e) setback. See
   `src/geometry/cross_streets.py`.
 - **Both arms, at every intersection** *(fixed 2026-08-17)*. When (e) was extended past the
@@ -353,7 +353,6 @@ one never shows. `w_broad_st_southwest` has one 318 ft out:
 | sheet | leg drawn | `w_broad_st_northeast` | `w_broad_st_southwest` |
 |---|---|---|---|
 | 1× | 130 ft | 8 + 3 | 10 + 3 |
-| 2.2× | 286 ft | 8 + 3 | 10 + 3 |
 | 2.5× | 325 ft | 8 + 3 | **8 + 3** — the pinch is inside the frame |
 
 This is deliberate, on the client's instruction of 2026-08-20 — *"We should be apply all treatments
@@ -365,9 +364,10 @@ does NOT move with the sheet is the facility's EXTENT or its protection — ever
 **AND THE 10 FT RUNG'S PARKING JUSTIFICATION DOES NOT SURVIVE THE LONGER SHEET — measured
 2026-08-21.** The 10 ft width was chosen over 12 ft to leave a parkable far kerb on
 `broad_st_east`, and over that leg's first 170 ft it does: 43.26 ft between traced kerbs, 7.44 ft
-spare, above `MIN_USABLE_STALL_FT` (7 ft). Over the whole 374 ft drawn at 2.2× the same leg
-measures 39.95 ft and leaves 4.13 ft, so it is hatched rather than parked on that sheet whichever
-rung it takes (12 ft would leave 2.13 ft). The parking this corridor actually keeps is
+spare, above `MIN_USABLE_STALL_FT` (7 ft). Over the whole 425 ft drawn at 2.5× the same leg
+measures 39.16 ft and leaves 3.34 ft, so it is hatched rather than parked on that sheet whichever
+rung it takes (12 ft would leave 1.34 ft). `state.notes` says which: `MarkedParking(depth_ft=7.44)`
+at 1×, `LaneNarrowing(stripe_width_ft=9.56)` at 2.5×. The parking this corridor actually keeps is
 `broad_st_west`'s, 8 ft deep, which the section never threatened. **So 12 ft — 1 ft off NACTO's
 ask — is open again on any sheet longer than 170 ft, and the 10 ft rung should not be defended on
 parking grounds without restating the span.**

@@ -64,11 +64,17 @@ def site_models():
     return models
 
 
-# The frame scale output/ is actually drawn at. Here rather than in one test module because three
-# of them need it now: anything about a feature PAST the modelled junction - a cross street, its
-# kerb opening, its crosswalks - is invisible at 1x, so a test that forgets to widen the frame
-# passes having checked nothing.
-WIDE_FRAME_SCALE = 2.2
+# The frame scale output/ is actually drawn at - `build_all.py --frame-scale 2.5`, which is what
+# every render under output/ was built with. Here rather than in one test module because five of
+# them need it now: anything about a feature PAST the modelled junction - a cross street, its kerb
+# opening, its crosswalks - is invisible at 1x, so a test that forgets to widen the frame passes
+# having checked nothing.
+#
+# IT IS THE RENDER'S SCALE OR IT IS WORTH LITTLE. This was 2.2 while output/ was drawn at 2.5, and
+# a fixture near the render is not the render: a leg is 41 ft longer at 2.5x, which is where W
+# Broad's kerb pinch to 16.58 ft lies, and every test on this fixture was measuring a sheet nobody
+# looks at. Two other modules had already written 2.5 as their own constant to get the real frame.
+WIDE_FRAME_SCALE = 2.5
 
 
 @pytest.fixture(scope="session")
@@ -77,7 +83,7 @@ def wide_site_models():
 
     NOTE the env var is restored when this returns. The frame is read again at DRAW time, so a
     test that resolves a scene from these models must set it back itself (FRAME_SCALE_ENV,
-    WIDE_FRAME_SCALE) or it will draw a 1x frame around 2.2x legs.
+    WIDE_FRAME_SCALE) or it will draw a 1x frame around 2.5x legs.
     """
     import contextlib
     import io

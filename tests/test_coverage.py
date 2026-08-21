@@ -33,13 +33,14 @@ from src.render.frame import FRAME_SCALE_ENV, junction_frame
 from src.render.scene import SceneGeometry
 from src.sources.osm_context import (fetch_crossings, fetch_kerbs, fetch_street_furniture,
                                      fetch_traffic_control)
-from tests.conftest import needs_source_data
+from tests.conftest import WIDE_FRAME_SCALE, needs_source_data
 
-# The frame docs/network-renderer-plan.md measures the gap at, and the frame output/ is drawn
-# wider than. At 1x every leg ends inside the 130-170 ft its width was measured over, so the
-# neighbouring junctions whose features are dropped are not in shot at all - which is why the
-# same code is faithful at one scale and not at the other.
-WIDE_FRAME_SCALE = "2.5"
+# The frame docs/network-renderer-plan.md measures the gap at, and the frame output/ is drawn at.
+# At 1x every leg ends inside the 130-170 ft its width was measured over, so the neighbouring
+# junctions whose features are dropped are not in shot at all - which is why the same code is
+# faithful at one scale and not at the other. conftest's WIDE_FRAME_SCALE is that scale; this
+# module used to restate it as its own "2.5" beside a conftest that said 2.2.
+WIDE_FRAME = str(WIDE_FRAME_SCALE)
 GREENWOOD_WIDE_RADIUS_FT = 431.2
 
 
@@ -130,7 +131,7 @@ def test_the_crossings_gap_is_what_the_drawing_does_not_contain(site_models, mon
     - so the two agreeing is worth something. When stream A draws all ten, `drawn` becomes 10, no
     crossings gap comes back, and the first branch holds without an edit.
     """
-    monkeypatch.setenv(FRAME_SCALE_ENV, WIDE_FRAME_SCALE)
+    monkeypatch.setenv(FRAME_SCALE_ENV, WIDE_FRAME)
     model = site_models["broad_st_greenwood"]
     radius_ft = junction_frame(model).radius_ft
     _scene, drawing = a_drawing(model, radius_ft)
@@ -190,7 +191,7 @@ def test_greenwoods_wide_frame_now_draws_every_crossing_it_records(site_models, 
     is kerb_ramps and traffic_control, which are PROPS placed per leg and so have the same structural
     problem crossings had - see the module docstring.
     """
-    monkeypatch.setenv(FRAME_SCALE_ENV, WIDE_FRAME_SCALE)
+    monkeypatch.setenv(FRAME_SCALE_ENV, WIDE_FRAME)
     model = site_models["broad_st_greenwood"]
     radius_ft = junction_frame(model).radius_ft
     assert radius_ft == pytest.approx(GREENWOOD_WIDE_RADIUS_FT, abs=0.5), (
@@ -213,7 +214,7 @@ def test_a_narrower_frame_drops_fewer_crossings(site_models, monkeypatch):
     """
     model = site_models["broad_st_greenwood"]
 
-    monkeypatch.setenv(FRAME_SCALE_ENV, WIDE_FRAME_SCALE)
+    monkeypatch.setenv(FRAME_SCALE_ENV, WIDE_FRAME)
     wide_radius_ft = junction_frame(model).radius_ft
     _scene, wide = a_drawing(model, wide_radius_ft)
     wide_gap = gap_for(coverage_gaps(model, wide), "crossings")
@@ -234,7 +235,7 @@ def test_a_narrower_frame_drops_fewer_crossings(site_models, monkeypatch):
 # --------------------------------------------------------------------------
 
 @needs_source_data
-@pytest.mark.parametrize("scale", [None, WIDE_FRAME_SCALE])
+@pytest.mark.parametrize("scale", [None, WIDE_FRAME])
 def test_the_kerbs_layer_reports_no_gap(site_models, monkeypatch, scale):
     """Every traced kerb inside the frame is drawn - the layer that was already fixed.
 
@@ -279,7 +280,7 @@ def test_the_kerb_ramps_layer_is_clean_at_1x_and_dirty_at_2_5x(site_models, monk
     assert gap_for(coverage_gaps(model, near), "kerb_ramps") is None, (
         "every ramp in the 1x frame belongs to this junction and is drawn")
 
-    monkeypatch.setenv(FRAME_SCALE_ENV, WIDE_FRAME_SCALE)
+    monkeypatch.setenv(FRAME_SCALE_ENV, WIDE_FRAME)
     _scene, wide = a_full_drawing(model, junction_frame(model).radius_ft)
     gap = gap_for(coverage_gaps(model, wide), "kerb_ramps")
     assert gap is not None and (gap.count, gap.total) == (7, 11)
@@ -300,7 +301,7 @@ def test_the_traffic_control_layer_finds_the_stop_nodes_nobody_draws(site_models
     layer trustworthy: its poles stand 43 ft away at the corners and are matched on prop type
     within CONTROL_NEAR_NODE_FT, so a node whose hardware IS drawn comes out covered.
     """
-    monkeypatch.setenv(FRAME_SCALE_ENV, WIDE_FRAME_SCALE)
+    monkeypatch.setenv(FRAME_SCALE_ENV, WIDE_FRAME)
     model = site_models["broad_st_greenwood"]
     _scene, drawing = a_full_drawing(model, junction_frame(model).radius_ft)
 

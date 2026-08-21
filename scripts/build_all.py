@@ -261,7 +261,7 @@ def main():
     # Before anything is built, not beside the Blender call below: the frame scale reaches the
     # PLAN VIEW and the exported geometry too, and it widens what context is fetched at all
     # (src/render/frame.py:context_radius_m). Setting it late would have produced a 1x geometry
-    # file and a 2.2x camera. Inherited by the worker processes, which is why it is an env var
+    # file and a 2.5x camera. Inherited by the worker processes, which is why it is an env var
     # in the first place. Without this flag, `build_all` silently reset a wide artifact to 1x -
     # the standard rebuild command could not reproduce the pictures in output/.
     os.environ[FRAME_SCALE_ENV] = str(args.frame_scale)

@@ -21,7 +21,9 @@ from src.geometry.treatments.bikeways.sections import (BikeLane, CONSTRAINED_TWO
                                                        MIN_TWO_WAY_BIKE_LANE_FT, NJDOT_TWO_WAY_OBJECTION,
                                                        TWO_WAY_BIKE_LANE_WIDTH_FT, TwoWayBikeLane, _feet)
 from src.geometry.treatments.bikeways.fit import far_kerb_surplus_ft, travel_lane_divider_shift_ft
-from src.geometry.treatments.bikeways.symbols import (CONTRAFLOW_DASH_FT, CONTRAFLOW_GAP_FT, SYMBOL_WIDTH_FT,
+from src.geometry.treatments.bikeways.symbols import (CONTRAFLOW_DASH_FT, CONTRAFLOW_GAP_FT,
+                                                      SYMBOL_CLEAR_OF_DIVIDER_FT, SYMBOL_LENGTH_FT,
+                                                      SYMBOL_WIDTH_FT,
                                                       bike_symbol_polygon, bike_symbol_stations_ft)
 from typing import TYPE_CHECKING
 
@@ -277,28 +279,59 @@ class AddBikeLane(Treatment):
             if at is None or not np.isfinite(at[0]):
                 return None
             return abs(float(at[0]))
-        # The leg's own drawn length, NOT beyond_ft. beyond_ft is a clipping THRESHOLD - the
-        # station past which a piece is discarded for lying behind a crossing - and reading it as
-        # the run's end gave 6 ft "runs" at Broad & Greenwood, inside which no symbol interval
-        # could ever land. Two different quantities that are both stations.
-        run_end_ft = leg.centerline.length
-        for station_ft in bike_symbol_stations_ft(max(start_ft, 0.0), run_end_ft, mouths):
+        # WHERE THE LANE IS ACTUALLY DRAWN, and that is not start_ft. start_ft is what this
+        # treatment ASKED for; paint_stations then bounds the ask by the stations where the kerb is
+        # traced, and on W Broad's southwest approach the two are 22 ft apart - the ask is station
+        # 32, the tracing starts at 54.4. Everything between is the crossbike box, which has its
+        # own dotted edges and its own carried centre stripe on the extension's straight axis. Run
+        # from the ask and two stencils were placed in there off THIS leg's kerb-following centre,
+        # 0.8 ft from the stripe actually drawn there, and 0.08 sq ft of one went under it.
+        #
+        # NOT beyond_ft for the far end either. beyond_ft is a clipping THRESHOLD - the station
+        # past which a piece is discarded for lying behind a crossing - and reading it as the run's
+        # end gave 6 ft "runs" at Broad & Greenwood, inside which no symbol interval could ever
+        # land. Three different quantities that are all stations.
+        drawn = paint_stations(leg, side, start_ft)
+        for station_ft in (() if drawn is None else
+                           bike_symbol_stations_ft(float(drawn[0]), float(drawn[-1]), mouths)):
             centre_ft = lane_centre_at(station_ft)
             if centre_ft is None:
                 continue
+            # THE LANE MOVES UNDER THE STENCIL, so a pair is spread from the extremes of its centre
+            # over the footprint the symbol covers, and not from its value at the middle station. A
+            # stencil is rigid - one offset for all of its vertices - while the divider it has to
+            # clear follows the traced kerb continuously, and on W Broad's approach that kerb swings
+            # 0.70 ft across the 5.5 ft a symbol is long. Read once at the centre, the stencil was
+            # placed on a stripe that had moved out from under it by more than the whole clearance.
+            over_footprint = [across for across in
+                              (lane_centre_at(station_ft - SYMBOL_LENGTH_FT / 2), centre_ft,
+                               lane_centre_at(station_ft + SYMBOL_LENGTH_FT / 2))
+                              if across is not None]
+            inner_ft, outer_ft = min(over_footprint), max(over_footprint)
             # A two-way lane's two halves face opposite ways, so each gets its own symbol: that is
             # what tells a driver at a mouth which direction the rider bearing down on them is
             # coming from, and it is the reason the symbol is worth drawing rather than decorative.
             faces = (True, False) if isinstance(self, AddTwoWayBikeLane) else (True,)
             for index, forward in enumerate(faces):
-                # Half a symbol plus clearance either side of centre. Bounded by the lane's own
-                # sixth so a narrow lane does not push them into the edge stripes, and floored at
-                # half a symbol plus a margin so a wide one does not let the pair touch - which is
-                # what a plain sixth did on a 10 ft lane, overlapping them by 2 sq ft.
-                spread_ft = max(SYMBOL_WIDTH_FT / 2 + 0.4, lane.width_ft / 6)
-                spread_ft = min(spread_ft, max(lane.width_ft / 2 - SYMBOL_WIDTH_FT / 2, 0.0))
-                across_ft = centre_ft + (0.0 if len(faces) == 1
-                                         else spread_ft * (1 if index else -1))
+                # Half a symbol plus the divider's own clearance either side of centre. Bounded
+                # by the lane's own sixth so a narrow lane does not push them into the edge
+                # stripes, and floored at half a symbol plus that clearance so a wide one does not
+                # let the pair touch - which is what a plain sixth did on a 10 ft lane, overlapping
+                # them by 2 sq ft.
+                room_ft = max(lane.width_ft / 2 - SYMBOL_WIDTH_FT / 2, 0.0)
+                spread_ft = max(SYMBOL_WIDTH_FT / 2 + SYMBOL_CLEAR_OF_DIVIDER_FT,
+                                lane.width_ft / 6)
+                spread_ft = min(spread_ft, room_ft)
+                if len(faces) == 1:
+                    across_ft = centre_ft
+                else:
+                    # Clear of the stripe wherever it runs under this stencil, but never further
+                    # out than the lane's own edge over that same footprint: a symbol shoved off
+                    # the lane to dodge its centre stripe has traded one collision for another.
+                    # Where the kerb runs straight the two terms are equal and this is the old
+                    # centre +/- spread exactly, which is why a straight leg's symbols do not move.
+                    across_ft = (min(outer_ft + spread_ft, inner_ft + room_ft) if index
+                                 else max(inner_ft - spread_ft, outer_ft - room_ft))
                 # NOT shares_a_kerb, unlike the lane it sits on. That flag subtracts ground the
                 # adjoining leg has already painted, which is right for a zone running through the
                 # node and fatal for a symbol: the lane's own green is registered first, so a

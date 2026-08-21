@@ -159,19 +159,23 @@ design working. An extent, a count, or a claim of protection that moves is a bug
 `BROAD_ST_TWO_WAY_BIKEWAY` keeping the full buffer.
 
 **And know the residual: a width that moves can take a treatment with it.** `broad_st_east` measures
-43.26 ft between kerbs over 170 ft and 39.95 ft over the 374 ft actually drawn, which drops the
-far-kerb spare from 7.44 ft to 4.13 ft — under `MIN_USABLE_STALL_FT` — so that leg is *parked* on
+43.26 ft between kerbs over 170 ft and 39.16 ft over the 425 ft actually drawn, which drops the
+far-kerb spare from 7.44 ft to 3.34 ft — under `MIN_USABLE_STALL_FT` — so that leg is *parked* on
 the narrow sheet and *hatched* on the wide one. Nothing is wrong with either drawing; the pinch is
 real. But the section is sized on the narrowest point anywhere along the leg, so one tight spot 300
-ft out sets the width for all 374 ft, and a treatment two derivations downstream flips. Print
+ft out sets the width for all 425 ft, and a treatment two derivations downstream flips. Print
 `state.notes` after any change to a section, not just the paint.
 
 Note also which fixture is which, because it is the opposite of what you would guess:
 `tests/conftest.py` has **`site_models` at 1×** and **`wide_site_models` at `WIDE_FRAME_SCALE =
-2.2`**, and the geometry goldens (`digests`, `test_geometry_regression.py`) build from the **1×** one
+2.5`**, and the geometry goldens (`digests`, `test_geometry_regression.py`) build from the **1×** one
 — so the goldens cannot see anything the wide sheet does. The parking flip above moves nothing in
-any golden. A green suite here is agreement at 1× and says nothing about every render in `output/`;
-that is what `--frame-scale` on `measure_drawn.py` is for.
+any golden. **The goldens are the 1× half; the INVARIANTS are swept at both** —
+`test_every_scenario_satisfies_the_invariants` on `site_models` and
+`..._on_the_wide_sheet` on `wide_site_models`, which is the render's own frame. That second one
+exists because at 1× the sweep reported nothing on any site while 2.5× reported a fatal
+`markings_collide` that refused a shipped render's 3D export. A green golden still says nothing
+about a number in `output/`; that is what `--frame-scale` on `measure_drawn.py` is for.
 
 ---
 

@@ -443,8 +443,11 @@ class Comparison:
                        f"stalls   {self.stalls_delta:+d}"]
         # A projected stall is one the frame scale drew, past the length of leg the site
         # configured. Said out loud rather than folded into the total, because otherwise the
-        # same proposal reports 8 stalls at 1x and 17 at 2.2x and nothing on the drawing says
-        # why - a number that moves with a camera setting, presented as a measurement.
+        # same proposal reports 2 stalls at 1x and 8 at 2.5x and nothing on the drawing says
+        # why - a number that moves with a camera setting, presented as a measurement. It is
+        # not even the same kerb: at 1x those 2 are on broad_st_east inside its surveyed
+        # length, and at 2.5x that leg's far kerb pinches too narrow to park, so the 8 are
+        # broad_st_west's and every one of them is past the surveyed end.
         if self.after.projected_stalls or self.before.projected_stalls:
             lines.append(f"  of which surveyed       {self.before.measured_stalls} -> "
                           f"{self.after.measured_stalls}   the rest is projected past the "

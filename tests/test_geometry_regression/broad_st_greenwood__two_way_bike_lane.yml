@@ -46,11 +46,11 @@ channels:
     count: 6
     extent:
       max:
-      - 22.772
-      - 19.487
+      - 22.797
+      - 19.537
       min:
-      - -12.993
-      - -0.995
+      - -13.046
+      - -1.033
     points: 48
   corner_apron_polygons:
     count: 0

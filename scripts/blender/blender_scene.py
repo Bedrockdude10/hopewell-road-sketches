@@ -318,7 +318,7 @@ def build_scene(data: dict):
     context_radius = max(max(all_x) - min(all_x), max(all_y) - min(all_y)) / 2
     # AND AT LEAST FOUR TIMES THE FRAME, because the camera can be asked to pull back further than
     # the context reaches (src/render/frame.py's HOPEWELL_FRAME_SCALE, for a picture whose subject
-    # is longer than one junction). At a 2.2x frame the ground ran out inside the shot and the
+    # is longer than one junction). On a wide frame the ground ran out inside the shot and the
     # horizon showed the plane's own edge with sky under it - the buildings and pavement had all
     # been drawn correctly on a groundsheet too small for the view.
     ground_size = max(context_radius * 2.5, scene_radius * 4, 100)

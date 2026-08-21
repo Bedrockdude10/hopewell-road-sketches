@@ -43,15 +43,15 @@ channels:
       - -24.902
     points: 295
   bike_lane_symbol_polygons:
-    count: 6
+    count: 4
     extent:
       max:
-      - 9.593
-      - 14.33
+      - 9.707
+      - 14.387
       min:
-      - -22.104
-      - -13.114
-    points: 48
+      - -20.777
+      - -11.826
+    points: 32
   corner_apron_polygons:
     count: 0
     extent: null

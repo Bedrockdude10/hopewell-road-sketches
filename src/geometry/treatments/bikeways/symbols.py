@@ -6,6 +6,8 @@ to read the treatments to find it.
 """
 import numpy as np
 
+from src.geometry.markings import BIKE_CONTRAFLOW_DIVIDER
+
 # The contraflow stripe's cadence. Shorter than the roadway's dashed centreline, because it is
 # read at bicycle speed over a 12 ft lane rather than at 25 mph over a 40 ft one, and a stripe
 # scaled to the road reads as two or three marks over a whole block.
@@ -22,6 +24,20 @@ SYMBOL_CLEAR_OF_OPENING_FT = 15.0
 # BIKE_LANE_SYMBOL_POLYGONS for why, and the legend says which marking it represents.
 SYMBOL_LENGTH_FT = 5.5
 SYMBOL_WIDTH_FT = 2.4
+# HOW FAR A PAIR OF STENCILS SITS CLEAR OF THE STRIPE BETWEEN THEM, in a two-way lane. The divider
+# is not a hairline - its channel lays real paint about the axis - so half that stroke is ground the
+# stencil may not have, and the width is READ OFF THE MARKING rather than restated here.
+# The 0.25 ft on top is for CHORDING: the stripe is a run of 3 ft dashes between points on a curve
+# while the stencil is placed at its own stations, so two markings at one nominal offset are not
+# that far apart everywhere. Measured on the 2.5x sheet before this constant existed, the flat 0.4
+# ft it replaces left 0.08 ft of clearance at Broad & Greenwood and none at all at W Broad &
+# Louellen, where 0.12 sq ft of stencil went under the stripe and MarkingsDoNotCollide said so.
+# NOT through paint.stroke_width_ft, which is the one home for this conversion and is unreachable
+# from here: anything under src.geometry.paint runs that package's __init__, which reaches
+# anchors -> render.crosswalks -> treatments, and a treatment importing it is a cycle.
+_stroke_m = BIKE_CONTRAFLOW_DIVIDER.channel.stroke_width_m if BIKE_CONTRAFLOW_DIVIDER.channel else 0
+assert _stroke_m, "the contraflow divider is a LINE in a stroked channel, so it has a width"
+SYMBOL_CLEAR_OF_DIVIDER_FT = _stroke_m / 0.3048 / 2 + 0.25
 
 CONTRAFLOW_DASH_FT = 3.0
 CONTRAFLOW_GAP_FT = 5.0

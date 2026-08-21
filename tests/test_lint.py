@@ -33,6 +33,7 @@ Two things changed when ruff replaced a `python -m pyflakes` subprocess:
     it cannot be run this file FAILS and says how to install it.
 """
 import json
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -123,6 +124,104 @@ def test_no_readme_section_shadows_a_module():
     assert not shadowed, (
         "README section title(s) contain a src/ path — the module docstring is the home:\n  "
         + "\n  ".join(shadowed)
+    )
+
+
+# The roots the README's tree claims to cover. Asserted rather than assumed: a tree that
+# quietly stopped covering a directory would pass a comparison scoped to what it lists.
+TREE_ROOTS = ("src/", "scripts/", "sites/")
+# `<site>/` entries in the tree are a SCHEMA, not paths - every site has these two files and
+# listing six copies would say nothing. Everything else in the tree is a real path.
+TREE_PLACEHOLDER_SUFFIXES = ("/config.yaml", "/scenarios.py")
+# A DIRECTORY MAY BE BARE - `scripts/` and `sites/` carry no description, and requiring one
+# silently reparented every script under src/ the first time this ran.
+TREE_ENTRY = re.compile(r"^(\s*)([A-Za-z_][\w.\-]*(?:/|\.\w+))(?:\s\s+(\S.*))?$")
+
+
+def _readme_tree() -> tuple[dict[str, str], set[str]]:
+    """{path: one-line description} and the set of directory prefixes, from README's tree.
+
+    Indentation carries the path, so the prefix is rebuilt from a stack rather than read off
+    each line. TREE_ENTRY also does the work of skipping the wrapped second line of a long
+    description - `--all adds the section, limiter...` under measure_drawn.py parses as an
+    entry named `--all` under any looser pattern, and then the tree appears to list a file
+    that cannot exist.
+    """
+    lines = (REPO_ROOT / "README.md").read_text().splitlines()
+    start = next(i for i, line in enumerate(lines) if line.startswith("## Repo structure"))
+    block, inside = [], False
+    for line in lines[start:]:
+        if line.strip() == "```":
+            if inside:
+                break
+            inside = True
+            continue
+        if inside:
+            block.append(line)
+    files, dirs, stack = {}, set(), []
+    for line in block:
+        match = TREE_ENTRY.match(line)
+        if match is None:
+            continue
+        indent, name, description = len(match[1]), match[2], match[3] or ""
+        while stack and stack[-1][0] >= indent:
+            stack.pop()
+        full = (stack[-1][1] if stack else "") + name
+        if name.endswith("/"):
+            stack.append((indent, full))
+            dirs.add(full)
+        else:
+            files[full] = description.strip()
+    return files, dirs
+
+
+def test_the_readme_tree_is_the_tree_on_disk():
+    """Every module under src/ and scripts/ is in README's tree, and nothing else is.
+
+    THE TREE IS THE ONLY INDEX OF THIS REPO, and an index nobody checks is worse than none -
+    it is believed. Two failures, both from one session: `treatments/bikeways.py` was split
+    into a package and the old 1552-line file stayed on disk, dead and shadowed, listed in the
+    tree as though it were the live one; and `scripts/whatis.py` - a tool written to answer
+    "what is this symbol" - was never added to the tree at all, so the answer to "how do I
+    find my way around this code" was itself unfindable. Nine other modules were missing.
+
+    WHAT THIS DOES NOT CHECK IS THE PROSE. The one-liners are editorial - they are the
+    docstring's first line cut to fit a tree, and no generator writes them well. So the
+    structure is derived and enforced, the description is written by whoever adds the file,
+    and the enforcement is what makes them write it: a new module cannot land without a line.
+    """
+    listed, listed_dirs = _readme_tree()
+    tracked = subprocess.run(["git", "ls-files"], cwd=REPO_ROOT,
+                             capture_output=True, text=True, check=True).stdout.split()
+    on_disk = {p for p in tracked
+               if p.startswith(TREE_ROOTS) and p.endswith((".py", ".sh"))
+               and not p.endswith(TREE_PLACEHOLDER_SUFFIXES)}
+    assert on_disk, "found no modules to check - is this a git checkout?"
+
+    def covered(path: str) -> bool:
+        # A directory entry stands for its own __init__.py: the package's docstring is the
+        # thing the tree's line about the directory is already summarising.
+        package = path.rsplit("/", 1)[0] + "/"
+        return path in listed or (path.endswith("/__init__.py") and package in listed_dirs)
+
+    bare = sorted(path for path, description in listed.items() if not description)
+    assert not bare, (
+        "tree entr(ies) with no description - the path alone is what the filesystem already "
+        f"says, and the line is there for the other half: {bare}")
+
+    missing = sorted(p for p in on_disk if not covered(p))
+    # Ghosts are checked against the filesystem, not against `on_disk`: the tree lists a few
+    # things that are neither .py nor .sh (sites/README.md) and they are not ghosts.
+    ghosts = sorted(p for p in listed
+                    if not (REPO_ROOT / p).exists()
+                    and not p.endswith(TREE_PLACEHOLDER_SUFFIXES))
+    assert not (missing or ghosts), (
+        "README.md's `## Repo structure` tree disagrees with the checkout. It is the only "
+        "index of this repo, so a wrong one costs the next reader a session:\n"
+        + "".join(f"\n  ON DISK, NOT IN THE TREE: {p}" for p in missing)
+        + "".join(f"\n  IN THE TREE, NOT ON DISK: {p}" for p in ghosts)
+        + "\n\nAdd the line beside its neighbours, or delete it. One line, cut from the "
+          "module's own docstring - `.venv/bin/python scripts/whatis.py <module>` prints it."
     )
 
 

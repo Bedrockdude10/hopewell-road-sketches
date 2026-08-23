@@ -6,7 +6,7 @@ doesn't - against a synthetic junction rather than a site, so these run in milli
 can't be broken by re-tracing a kerb in OSM.
 """
 import pytest
-from shapely.geometry import LineString, Polygon
+from shapely.geometry import LineString, MultiLineString, MultiPolygon, Polygon
 
 from src.checks import (
     BikewayReachesTheEndOfItsKerb,
@@ -375,6 +375,55 @@ def test_paint_entirely_inside_the_keep_clear_area_disappears():
     strip = Polygon([(1, 1), (2, 1), (2, 2), (1, 2)])
     big = Polygon([(0, 0), (10, 0), (10, 10), (0, 10)])
     assert clip_paint_clear_of(strip, big) == []
+
+
+def test_a_zone_that_arrives_in_two_pieces_survives_a_clip_that_misses_it():
+    """The parts of a MultiPolygon are Polygons, so a filter keyed off the CONTAINER's type
+    discards every one of them.
+
+    Not a corner case: a kerbside zone is built between a constant inner edge and the traced
+    kerb, so wherever the kerb comes inside that edge the strip pinches to nothing and the zone
+    arrives here in two pieces. That is the DESIGN - curbside_strip_polygon says so - and it is
+    what a zone sized per station rather than off one minimum will do far more often.
+
+    The filter exists to drop debris of the WRONG DIMENSION, which a difference can leave
+    behind; that is a question about each part, never about the container it travelled in.
+    Asked the wrong way it cost 1617.8 sq ft of hatching on w_broad_st_southwest's south kerb
+    against a keep-clear area that did not touch the zone at all, and 65.1 sq ft on
+    broad_st_greenwood in two shipped scenarios.
+    """
+    from src.geometry.model import clip_paint_clear_of
+
+    near = Polygon([(0, 0), (100, 0), (100, 6), (0, 6)])
+    far = Polygon([(140, 0), (240, 0), (240, 6), (140, 6)])
+    zone = MultiPolygon([near, far])
+    elsewhere = Polygon([(500, 500), (510, 500), (510, 510), (500, 510)])
+
+    survives = clip_paint_clear_of(zone, elsewhere)
+
+    assert sum(p.area for p in survives) == pytest.approx(zone.area), \
+        "a clip that touches nothing must remove nothing"
+    assert all(p.geom_type == "Polygon" for p in survives)
+
+
+def test_a_line_that_arrives_in_two_pieces_survives_a_clip_that_misses_it():
+    """The same confusion on the other dimension, and it takes an already-broken line to see it.
+
+    A plain LineString is safe here by luck: cutting one yields a MultiLineString whose parts
+    are LineStrings, which is what the container comparison happens to be asking for. It is a
+    line that arrives ALREADY in two pieces - an edge line cut by a crossing, a dashed run, a
+    lane line broken at a driveway - that the filter throws away entire.
+    """
+    from src.geometry.model import clip_paint_clear_of
+
+    line = MultiLineString([[(0, 0), (100, 0)], [(140, 0), (240, 0)]])
+    elsewhere = Polygon([(500, 500), (510, 500), (510, 510), (500, 510)])
+
+    survives = clip_paint_clear_of(line, elsewhere)
+
+    assert sum(p.length for p in survives) == pytest.approx(line.length), \
+        "a clip that touches nothing must remove nothing"
+    assert all(p.geom_type == "LineString" for p in survives)
 
 
 # --------------------------------------------------------------------------

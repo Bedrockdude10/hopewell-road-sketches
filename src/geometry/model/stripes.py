@@ -535,8 +535,19 @@ def clip_paint_clear_of(geometry, keep_clear):
     remainder = geometry.difference(keep_clear)
     if remainder.is_empty:
         return []
+    # BY DIMENSION, NOT BY CONTAINER. A difference can leave debris one dimension down - a
+    # polygon minus a polygon that shaves an edge returns the seam as a line - and dropping
+    # that is this filter's whole job. But the parts of a Multi* are singles, so comparing each
+    # part against `geometry.geom_type` asks "is this Polygon a MultiPolygon", answers no, and
+    # discards a zone that was never touched. Which is not rare: a kerbside zone runs between a
+    # constant inner edge and the traced kerb, so it pinches into two pieces wherever the kerb
+    # comes inside that edge, and arrives here already multi. That cost 1617.8 sq ft of hatching
+    # on w_broad_st_southwest's south kerb and 65.1 sq ft on broad_st_greenwood in two shipped
+    # scenarios - silently, because paint that is dropped collides with nothing and leaves the
+    # kerb it should have covered simply bare.
+    singular = geometry.geom_type.removeprefix("Multi")
     parts = getattr(remainder, "geoms", [remainder])
-    return [g for g in parts if g.geom_type == geometry.geom_type and not g.is_empty]
+    return [g for g in parts if g.geom_type == singular and not g.is_empty]
 
 
 def hatch_lines_ft(polygon: Polygon, spacing_ft: float = 2.0, angle_deg: float = 45.0,

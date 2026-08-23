@@ -182,6 +182,7 @@ channels:
     points: 0
 existing_marked_crosswalks:
 - louellen_st_west
+facilities: {}
 frame:
   center_m:
   - -3.762

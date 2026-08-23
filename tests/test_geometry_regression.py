@@ -226,13 +226,51 @@ def _digest(export: dict) -> dict:
     return digest
 
 
+def _facilities(state) -> dict:
+    """WHICH RUNG EACH KERB LANDED ON, and how far it runs. Read off the design, not the export.
+
+    THE DECISION IS THE OUTPUT, and no other field here can see it. Every rung on a ladder draws
+    the same channels at slightly different offsets, so w_broad_st_northeast moving from NACTO's
+    constrained 8 ft section to the full 10 ft one - a two-foot change in what the drawing
+    promises a rider - showed up in this golden as coordinate lists wobbling and one stop bar
+    resizing, with nothing named saying a rung had changed. That is SKILLS 3's "pin extent, not
+    just position" one level up: pin the DECISION, not just the geometry it happens to produce.
+
+    Four fields because four different things can move independently. The width and buffer are the
+    rung; `constrained` says whether that rung is a concession, which is the figure the plan
+    reports; `to_ft` and the refusals are the extent, which a rung must never buy - a facility
+    shortened where a narrower section would have covered the leg is the failure
+    BikewayReachesTheEndOfItsKerb is fatal over, and this is where a golden would notice it
+    silently becoming normal.
+    """
+    from src.geometry.treatments.bikeways import AddBikeLane
+
+    out = {}
+    for treatment in state.treatments:
+        if not isinstance(treatment, AddBikeLane):
+            continue
+        key = f"{treatment.target.leg}/{treatment.target.side}"
+        out[key] = {
+            "width_ft": round(float(treatment.width_ft), PLACES),
+            "buffer_ft": round(float(treatment.buffer_ft), PLACES),
+            "constrained": bool(getattr(treatment, "constrained", False)),
+            "to_ft": (None if treatment.to_ft is None else round(float(treatment.to_ft), PLACES)),
+            "refused": [f"{r.start_ft:.1f}-{r.end_ft:.1f} ft"
+                        for r in state.refusals_on(treatment.target.leg,
+                                                    str(treatment.target.side))],
+        }
+    return out
+
+
 def _export_digest(model, state, name: str) -> dict:
     with tempfile.TemporaryDirectory() as tmp:
         # theme={} rather than the default: build_default_theme() downloads textures, and the
         # export only carries their file paths - which are machine-specific and would make the
         # golden unportable even if the network were available.
         path = export_scenario(model, state, name, Path(tmp) / "geometry.json", theme={})
-        return _digest(json.loads(Path(path).read_text()))
+        digest = _digest(json.loads(Path(path).read_text()))
+        digest["facilities"] = _facilities(state)
+        return digest
 
 
 @pytest.fixture(scope="module")

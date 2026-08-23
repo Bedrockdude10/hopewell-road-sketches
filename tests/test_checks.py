@@ -9,6 +9,7 @@ import pytest
 from shapely.geometry import LineString, Polygon
 
 from src.checks import (
+    BikewayReachesTheEndOfItsKerb,
     CrosswalksCrossTheRoadway,
     CurbsClearOfJunction,
     CurbsDoNotCross,
@@ -424,3 +425,86 @@ def test_a_check_reading_a_field_the_caller_left_out_gets_a_default():
     assert [v.check for v in check_scene(empty)] == ["pavement_ring"]
     for check in CHECKS:
         check.run(empty)      # must not raise: the fields it reads are all defaulted
+
+
+# --------------------------------------------------------------------------
+# A bikeway runs the whole kerb it was placed on - unless the design SAID
+# why it does not.
+# --------------------------------------------------------------------------
+
+def a_bikeway_kerb(reaches_ft, kerb_to_ft=120.0):
+    """A leg with a traced left kerb, carrying a bike lane surface up to `reaches_ft`."""
+    from src.geometry.markings import BIKE_LANE_SURFACE
+    from src.geometry.paint import PaintPiece
+
+    leg = a_leg(name="east")
+    leg.left_curb = LineString([(0, 15), (kerb_to_ft, 15)])
+    leg.right_curb = LineString([(0, -15), (kerb_to_ft, -15)])
+    surface = Polygon([(0, 5), (reaches_ft, 5), (reaches_ft, 13), (0, 13)])
+    piece = PaintPiece(kind=BIKE_LANE_SURFACE, geometry=surface, leg="east", side="left")
+    return a_state(legs={"east": leg}), [piece]
+
+
+def test_a_bikeway_that_stops_short_of_its_kerb_with_no_reason_is_reported():
+    """The headline case: 60 ft of kerb with no facility on it and nothing saying why."""
+    state, paint = a_bikeway_kerb(reaches_ft=60.0)
+    violations = run(BikewayReachesTheEndOfItsKerb(), state=state, paint=paint)
+    assert len(violations) == 1, f"expected one report, got {violations}"
+    assert "60.0" in violations[0].detail and "120.0" in violations[0].detail
+
+
+def test_a_refused_tail_is_not_a_shortfall():
+    """A stretch the design MEASURED and declined is a drawing saying what it is doing.
+
+    This is the whole reason a refusal is a record on DesignState rather than a line on stdout:
+    the check's own complaint is "no note saying why", so it has to be able to read the note. A
+    facility that stops at 60 ft on a kerb traced to 120 with the 60-120 ft span refused - by name,
+    carrying the measurement that stopped it - is the honest half of TwoWayBikeway._reach_on.
+    """
+    from src.geometry.treatments.state import FacilityRefusal
+
+    state, paint = a_bikeway_kerb(reaches_ft=60.0)
+    state.refuse("east", "left", FacilityRefusal(60.0, 120.0, "the street is 28.4 ft here", 28.4))
+    assert not run(BikewayReachesTheEndOfItsKerb(), state=state, paint=paint)
+
+
+def test_a_refusal_only_excuses_the_ground_it_covers():
+    """Refuse 20 ft and stop 60 ft short, and the other 40 ft is still a defect.
+
+    A refusal that excused a whole kerb because it named part of one would be the relax-the-check
+    move SKILLS 4 is about - and the failure it would hide is the original: paint trimmed at the
+    first station it stopped fitting, with the posts and the centre stripe carrying on regardless.
+    """
+    from src.geometry.treatments.state import FacilityRefusal
+
+    state, paint = a_bikeway_kerb(reaches_ft=60.0)
+    state.refuse("east", "left", FacilityRefusal(100.0, 120.0, "the street is 28.4 ft here", 28.4))
+    violations = run(BikewayReachesTheEndOfItsKerb(), state=state, paint=paint)
+    assert len(violations) == 1, f"expected the un-refused 40 ft to report, got {violations}"
+    assert "100.0" in violations[0].detail, (
+        f"the message should measure against the refusal's start, not the kerb's end: "
+        f"{violations[0].detail}")
+
+
+def test_a_refusal_nowhere_near_the_facilitys_end_excuses_nothing():
+    """A refused span in the MIDDLE of a kerb says nothing about where the paint stopped.
+
+    THE SPANS ARE THE POINT, WHICH IS WHY THE CHEAP VERSION IS WRONG. Subtracting the LENGTH of
+    every refusal from the kerb would pass this: 70 ft refused against a 60 ft shortfall comes out
+    negative and reports nothing, while 10 ft at the end of the kerb was never declined at all.
+    Only a refusal reaching the end of the kerb, or a contiguous chain of them reaching it, can
+    explain a facility that ends before the kerb does.
+    """
+    from src.geometry.treatments.state import FacilityRefusal
+
+    # Refused: 40-110 ft (70 ft of it). Painted to 60, kerb traced to 120 - so 60 ft short, with
+    # the last 10 ft of kerb outside any refusal and outside BIKEWAY_SHORTFALL_TOLERANCE_FT of one.
+    state, paint = a_bikeway_kerb(reaches_ft=60.0)
+    state.refuse("east", "left", FacilityRefusal(40.0, 110.0, "the street is 28.4 ft here", 28.4))
+    violations = run(BikewayReachesTheEndOfItsKerb(), state=state, paint=paint)
+    assert len(violations) == 1, (
+        f"a refusal 5 ft shy of the end of the kerb excused a facility that stopped 60 ft shy of "
+        f"it, so the refused SPAN is being read as a refused LENGTH: {violations}")
+    assert "120.0" in violations[0].detail, (
+        f"nothing adjacent to the paint's end was refused, so the whole kerb is what it fell "
+        f"short of: {violations[0].detail}")

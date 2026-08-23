@@ -13,13 +13,13 @@ a kink in every marking drawn over it.
 from dataclasses import dataclass
 
 import numpy as np
-from shapely.geometry import LineString, Point
+from shapely.geometry import LineString
 
 from src.geometry.model import (STRIP_SAMPLE_FT, frame_at, is_through_street, line_direction,
                                 place_in_measured_frame, station_offset_many)
 from src.geometry.network.kerb import (CORRIDOR_KERB_RADIUS_M, KerbRun, _complement_spans,
                                        _corridor_kerb_ways, _intersect_spans, _junction_kerb_runs,
-                                       _merged_spans, _traced_kerb_runs, _tracing_reach_ft,
+                                       _merged_spans, _traced_end_ft, _traced_kerb_runs,
                                        junction_corner_reach_ft)
 from src.geometry.network.road import (Road, _kerb_offset_at, roads_from_model)
 from typing import TYPE_CHECKING
@@ -500,7 +500,7 @@ def _build_corridor(models: dict[str, "IntersectionModel"], chain: list[tuple],
 
     The order here is the order the geometry depends on. The centreline has to exist before a kerb
     can be placed in its frame, and the extensions' length depends on where the tracing stops - so
-    the reach is measured against NJDOT's alignment first (see _tracing_reach_ft) and the road is
+    the reach is measured against NJDOT's alignment first (see _traced_end_ft) and the road is
     built once, at its final length, rather than built long and trimmed.
     """
     from src.geometry.intersection import THROUGH_JOIN_BLEND_FT
@@ -519,7 +519,7 @@ def _build_corridor(models: dict[str, "IntersectionModel"], chain: list[tuple],
 
     first = np.asarray(pieces[0]["centerline"].coords[:2], dtype=float)
     head, head_gap = _extension(models, kerb_ways, first[0], first[0] - first[1], sris[0][0],
-                                THROUGH_JOIN_BLEND_FT)
+                                THROUGH_JOIN_BLEND_FT, models[pieces[0]["site"]].center_ft)
     if len(head):
         coords.extend(tuple(point) for point in head[::-1][:-1])
 
@@ -553,7 +553,7 @@ def _build_corridor(models: dict[str, "IntersectionModel"], chain: list[tuple],
 
     last = np.asarray(pieces[-1]["centerline"].coords[-2:], dtype=float)
     tail, tail_gap = _extension(models, kerb_ways, last[1], last[1] - last[0], sris[-1][1],
-                                THROUGH_JOIN_BLEND_FT)
+                                THROUGH_JOIN_BLEND_FT, models[pieces[-1]["site"]].center_ft)
     if len(tail):
         seam_marks.append((len(coords) - 1, tail_gap))
         coords.extend(tuple(point) for point in tail[1:])
@@ -609,12 +609,18 @@ def _build_corridor(models: dict[str, "IntersectionModel"], chain: list[tuple],
 
 
 def _extension(models: dict[str, "IntersectionModel"], kerb_ways, seam_point, away, sri: str,
-               blend_ft: float) -> tuple[np.ndarray, float]:
+               blend_ft: float, node_point) -> tuple[np.ndarray, float]:
     """NJDOT's alignment carried AWAY from the end of a chain, as far as the tracing continues.
 
     `away` is the direction the road is leaving in, and it is needed because which way that is
     along NJDOT's line depends on how the route was digitised - CR 518 is "West to East", CR 654
     need not be. Returns (points running away from the seam, the lateral seam gap).
+
+    `node_point` is the centre of the junction this extension leaves FROM, and it is the anchor for
+    how far the road may run: see _traced_end_ft. It is passed in rather than found here because
+    the nearest modelled junction TO THE SEAM is not the same thing - the seam moves with the sheet,
+    and at 2.5x on Broad St the nearest centre changed from one junction to another, which moved
+    the fetch circle the cap is applied in.
     """
     align = _sri_alignment(models, sri)
     if align is None:
@@ -622,14 +628,11 @@ def _extension(models: dict[str, "IntersectionModel"], kerb_ways, seam_point, aw
     seam_ft, offset_ft = _seam(align, seam_point)
     _origin, tangent = frame_at(align, seam_ft)
     forward = bool(np.dot(tangent, np.asarray(away, dtype=float)) > 0)
-    # The nearest modelled junction is the one whose fetch reaches out here, so its centre is the
-    # circle the cap belongs to - see _tracing_reach_ft.
-    centre = min((model.center_ft for model in models.values()),
-                 key=lambda point: point.distance(Point(seam_point)), default=None)
-    reach = _tracing_reach_ft(align, seam_ft, forward, kerb_ways, CORRIDOR_EXTENSION_FT,
-                              centre_xy=None if centre is None else (centre.x, centre.y))
-    lo = max(seam_ft, 0.0) if forward else max(seam_ft - reach, 0.0)
-    hi = min(seam_ft + reach, align.length) if forward else min(seam_ft, align.length)
+    node_ft, _node_offset = _seam(align, (node_point.x, node_point.y))
+    end_ft = _traced_end_ft(align, node_ft, forward, kerb_ways, CORRIDOR_EXTENSION_FT,
+                            centre_xy=(node_point.x, node_point.y))
+    lo = max(seam_ft, 0.0) if forward else max(end_ft, 0.0)
+    hi = min(end_ft, align.length) if forward else min(seam_ft, align.length)
     if hi - lo <= blend_ft:
         # Shorter than the blend is not an extension, it is a stub of eased correction with no
         # NJDOT alignment left in the middle of it. Better to end the road at the modelled leg.

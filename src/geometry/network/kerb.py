@@ -125,13 +125,22 @@ def _complement_spans(spans, lo: float, hi: float) -> tuple[tuple[float, float],
     return tuple((a, b) for a, b in out if b > a)
 
 
-def _tracing_reach_ft(align: LineString, seam_ft: float, forward: bool, kerb_ways,
-                      max_ft: float, centre_xy=None) -> float:
-    """How far past a seam the traced kerb continues along the alignment, capped at max_ft.
+def _traced_end_ft(align: LineString, node_ft: float, forward: bool, kerb_ways,
+                   max_ft: float, centre_xy=None) -> float:
+    """The ABSOLUTE station on the alignment where the traced kerb stops, out from a junction node.
 
     Measured against NJDOT's alignment rather than the finished corridor, because the corridor
-    cannot be built until its length is known. The reach only ever shortens the road, so an error
+    cannot be built until its length is known. The answer only ever shortens the road, so an error
     here cannot invent street.
+
+    ANCHORED ON THE NODE, NOT ON THE SEAM, AND THAT IS THE WHOLE POINT. This used to take the end
+    of the junction piece and return a reach measured FROM it. Both the search window and the cap
+    were then relative to a point that moves with HOPEWELL_FRAME_SCALE, because the piece is a
+    frame-cut leg - so a wider sheet slid the window outward and the corridor discovered street
+    that a narrower sheet had not looked for. Greenwood Ave came out 1,695 ft at 1x and 1,891 ft at
+    2.5x, and a facility's governing cross-section is taken over the span, so the sheet was voting
+    on the design. A junction centre is a surveyed fact and does not move, so anchoring here makes
+    the answer a property of the survey and leaves the frame to crop.
 
     THE CAP IS A RADIUS, SO IT IS APPLIED AS ONE. `max_ft` is CORRIDOR_KERB_RADIUS_M - the distance
     past which no kerb was FETCHED, and the fetch is a circle round the junction. Capping the
@@ -144,11 +153,11 @@ def _tracing_reach_ft(align: LineString, seam_ft: float, forward: bool, kerb_way
     from src.geometry.intersection import KERB_PLAUSIBLE_HALF_WIDTH_FT
 
     near, far = KERB_PLAUSIBLE_HALF_WIDTH_FT
-    lo = seam_ft if forward else max(seam_ft - max_ft, 0.0)
-    hi = min(seam_ft + max_ft, align.length) if forward else seam_ft
-    centre = (np.asarray(align.interpolate(seam_ft).coords[0]) if centre_xy is None
+    lo = node_ft if forward else max(node_ft - max_ft, 0.0)
+    hi = min(node_ft + max_ft, align.length) if forward else node_ft
+    centre = (np.asarray(align.interpolate(node_ft).coords[0]) if centre_xy is None
               else np.asarray(centre_xy, dtype=float))
-    reach = 0.0
+    end = node_ft
     for line, _tags in kerb_ways.values():
         points = _dense_kerb_points(line)
         stations, offsets = station_offset_many(align, points)
@@ -156,9 +165,9 @@ def _tracing_reach_ft(align: LineString, seam_ft: float, forward: bool, kerb_way
         within_radius = np.hypot(*(points - centre).T) <= max_ft
         inside = beside & within_radius & (stations >= lo) & (stations <= hi)
         if inside.any():
-            beyond = stations[inside] - seam_ft if forward else seam_ft - stations[inside]
-            reach = max(reach, float(beyond.max()))
-    return min(reach, max_ft)
+            here = stations[inside]
+            end = max(end, float(here.max())) if forward else min(end, float(here.min()))
+    return end
 
 
 def _dense_kerb_points(line: LineString) -> np.ndarray:

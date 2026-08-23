@@ -52,7 +52,7 @@ from src.geometry.network.kerb import (
                                     _kerb_samples_on,
                                     _merged_spans,
                                     _traced_kerb_runs,
-                                    _tracing_reach_ft,
+                                    _traced_end_ft,
                                     junction_corner_reach_ft,
 )
 from src.geometry.network.corridor import (
@@ -154,8 +154,8 @@ __all__ = [
                                     "_sri_alignment",
                                     "_sri_spans",
                                     "_street_name",
+                                    "_traced_end_ft",
                                     "_traced_kerb_runs",
-                                    "_tracing_reach_ft",
                                     "approaches_of",
                                     "corridor_facts",
                                     "corridors_from_models",

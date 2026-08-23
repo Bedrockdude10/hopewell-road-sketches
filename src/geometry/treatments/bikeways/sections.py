@@ -9,7 +9,7 @@ file keeps both, because a caller that collapses them to one silently changes wh
 buildable - see MIN_BIKE_LANE_FT. Anything published from here belongs in STANDARDS.md too.
 """
 from dataclasses import dataclass
-from src.geometry.treatments.base import TARGET_LANE_WIDTH_FT
+from src.geometry.treatments.base import LANE_WIDTH_SLACK_FT, TARGET_LANE_WIDTH_FT
 
 # AASHTO gives two figures for an exclusive on-street bike lane and this project needs both, so
 # they are two constants rather than one that quietly changes meaning:
@@ -373,7 +373,15 @@ class TwoWayBikeLane(BikeLane):
                 f"directions.")
         super().__post_init__()
         travel_way_ft = self.near_half_ft + self.far_half_ft - self.section_ft
-        if travel_way_ft / 2 < MIN_TRAVEL_LANE_BESIDE_TWO_WAY_FT:
+        # LANE_WIDTH_SLACK_FT, like every other width-against-room comparison in this package
+        # (AddBikeLane.apply_to, CurbExtension, the parking surplus). Its absence here was the
+        # anomaly, and it is not a free concession on the floor: 0.05 ft is 0.6 inch, against two
+        # half-widths read off a kerb traced from aerial imagery and interpolated on a 2 ft grid.
+        # W Broad's southwest approach on a 3x sheet came to 9.9964 ft per travel lane at one
+        # station of 169 - short of the floor by four THOUSANDTHS of a foot - and that refusal
+        # denied a protected bikeway over the whole 335 ft approach. Refusing at that margin is
+        # false precision about a measurement, not fidelity to NACTO.
+        if travel_way_ft / 2 < MIN_TRAVEL_LANE_BESIDE_TWO_WAY_FT - LANE_WIDTH_SLACK_FT:
             raise ValueError(
                 f"A {self.width_ft:.1f} ft lane and a {self.buffer_ft:.1f} ft buffer spend "
                 f"{self.section_ft:.2f} ft of the {self.near_half_ft + self.far_half_ft:.2f} ft "

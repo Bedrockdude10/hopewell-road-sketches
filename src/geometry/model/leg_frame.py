@@ -352,17 +352,41 @@ def narrowest_half_width_ft(leg: "Leg", side: str, from_ft: float = 0.0,
     the approach takes NACTO's constrained rung because of it - a narrower lane the whole way, with
     its buffer and its posts, rather than a wider one that stops.
     """
+    profile = half_width_profile(leg, side, from_ft, to_ft)
+    if profile is None:
+        return _nominal_half_ft(leg)
+    return float(profile[1].min())
+
+
+def half_width_profile(leg: "Leg", side: str, from_ft: float = 0.0, to_ft: float | None = None
+                        ) -> tuple[np.ndarray, np.ndarray] | None:
+    """(stations, unsigned half-widths) where this side's kerb is traced, over a span.
+
+    THE MEASUREMENT narrowest_half_width_ft REDUCES, published because the reduction throws away
+    the only thing that can answer "where". A single minimum says an approach cannot hold a
+    section without saying over how much of it, and that ambiguity is a whole bug class: at
+    W Broad & Louellen on a 3x sheet, ONE station where the street measures 31.80 ft against the
+    31.82 ft the constrained rung needs - short by a quarter of an inch - denied the facility
+    over all 390 ft of the approach, including the 270 ft where the FULL rung fits. Whoever needs
+    to split a facility into the stretches the street can carry needs the profile, and a second
+    sampling of the same kerb written next to the caller would be free to disagree with the
+    number the fit was judged on.
+
+    None, not an empty array, where there is nothing traced to measure - see
+    SKILLS 0a: a quantitative check that cannot see anything has to say so rather than pass.
+    """
     span = curb_station_span(leg, side)
-    if span is not None:
-        lo = max(span[0], from_ft)
-        if to_ft is None:
-            to_ft = leg.centerline.length
-        hi = min(span[1], to_ft)
-        if hi - lo >= STRIP_SAMPLE_FT:
-            offsets = curb_offsets_at_stations(
-                leg, side, np.linspace(lo, hi, max(int(np.ceil((hi - lo) / STRIP_SAMPLE_FT)) + 1, 2)))
-            return float(np.abs(offsets).min())
-    return _nominal_half_ft(leg)
+    if span is None:
+        return None
+    lo = max(span[0], from_ft)
+    hi = min(span[1], leg.centerline.length if to_ft is None else to_ft)
+    if hi - lo < STRIP_SAMPLE_FT:
+        return None
+    stations = np.linspace(lo, hi, max(int(np.ceil((hi - lo) / STRIP_SAMPLE_FT)) + 1, 2))
+    offsets = curb_offsets_at_stations(leg, side, stations)
+    if offsets is None:
+        return None
+    return stations, np.abs(offsets)
 
 
 def _nominal_half_ft(alignment) -> float:

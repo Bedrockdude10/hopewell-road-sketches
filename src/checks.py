@@ -482,6 +482,15 @@ class BikewayReachesTheEndOfItsKerb(SceneCheck):
     FAR END ONLY. The near end stops against the junction mouth or the crossing band and is meant
     to - that is curbside_paint_ft and the four limiters in SKILLS 0a, none of which are defects.
 
+    AND A SPAN THE DESIGN REFUSED BY NAME IS NOT A SHORTFALL. "no note saying why" is the actual
+    complaint in the message below, so the check has to be able to see a note - which is why a
+    refusal is a record on the design (DesignState.facility_refusals) and not a line on stdout.
+    A kerb whose facility stops at 361 ft with a FacilityRefusal covering 361-389 ft, carrying the
+    measurement that stopped it, is a drawing that says what it is doing; the same kerb with no
+    such record is the 245 ft of bare asphalt under 42 flex posts this check was written for.
+    The subtraction is bounded BY the recorded span, so a refusal cannot excuse ground it does not
+    cover: refuse 20 ft and stop 200 ft short and this still fires on the other 180.
+
     THE TOLERANCE IS THE DOTTED GRID, not slack for a design decision. Where the end of the kerb
     is inside an opening the lane crosses dotted, the last mark lands on paint_stations' ~2 ft
     grid and the surface finishes a step short of the kerb's own last station - 0.7 ft on
@@ -521,6 +530,12 @@ class BikewayReachesTheEndOfItsKerb(SceneCheck):
             # PaintContext._dash_spans_along carries the lane to the edge of the sheet instead,
             # so there is no longer any ground a facility could not occupy for that reason.
             kerb_ends_ft = float(span[1])
+            # Back to the start of whatever contiguous refusal reaches the end of the kerb. Only a
+            # refusal ADJACENT to the facility's own end can explain it: one covering 200-260 ft on
+            # a kerb whose paint stopped at 100 says nothing about the 100 ft in between.
+            for refusal in reversed(state.refusals_on(leg_name, side)):
+                if refusal.start_ft <= kerb_ends_ft <= refusal.end_ft + BIKEWAY_SHORTFALL_TOLERANCE_FT:
+                    kerb_ends_ft = float(refusal.start_ft)
             short_ft = kerb_ends_ft - reached_ft
             if short_ft <= BIKEWAY_SHORTFALL_TOLERANCE_FT:
                 continue
@@ -529,11 +544,89 @@ class BikewayReachesTheEndOfItsKerb(SceneCheck):
                 "bikeway_ends_early",
                 f"{leg_name} {side}: the bikeway's surface stops at station {reached_ft:.1f} ft "
                 f"while this kerb carries it to {kerb_ends_ft:.1f} ft - {short_ft:.1f} ft of kerb "
-                f"with no facility on it and no note saying why. A street that cannot hold this "
+                f"with no facility on it and no refusal recorded against it saying why. A street that cannot hold this "
                 f"section takes a NARROWER rung for its whole length (the corridor's ladder is "
                 f"BROAD_ST_TWO_WAY_BIKEWAY) or breaks here for a reason worth printing; what it "
                 f"does not get is a facility that quietly stops",
                 (float(at.x), float(at.y))))
+        return violations
+
+
+class CorridorFacilityCarriesEveryApproach(SceneCheck):
+    """A street whose approach carries a corridor facility must carry it on every approach.
+
+    THE SIBLING OF BikewayReachesTheEndOfItsKerb, AND IT SEES THE CASE THAT ONE CANNOT. That
+    check reads the surface pieces that were drawn and asks how far up the kerb they got, so a
+    leg-side with NO surface at all never enters its dictionary and is never tested. A facility
+    that stops early is caught; a facility that was never placed is invisible to it. Both are
+    the same defect - an approach of a corridor route with no facility on it - and the second is
+    the worse one, because there is nothing on the drawing to notice.
+
+    Measured at W Broad & Louellen on a 3x sheet, which is how it was found: `w_broad_st_northeast`
+    took the constrained 8 + 3 rung and `w_broad_st_southwest` fell off the bottom of the ladder,
+    so the render showed a protected bikeway arriving at the junction from one side and simply
+    ending. Every invariant passed and the 3D export was written.
+
+    WHY IT IS THE JUNCTION'S BUSINESS RATHER THAN THE LADDER'S. CorridorFacility already prints a
+    NOTE when it refuses every rung, and a note is the right answer to "this street is too narrow
+    here" - but it is not a drawing that can be shipped. THE LADDER ITSELF DECLARES THE INVARIANT
+    AND CANNOT ENFORCE IT: BROAD_ST_TWO_WAY_BIKEWAY's own note ends "what may NOT move with the
+    sheet is whether an approach is PROTECTED - every rung here keeps the full buffer, which is
+    what makes that safe". That argument is what licenses the rung to move with the sheet at all,
+    and it holds only while SOME rung fits. Falling off the bottom of the ladder is the case it
+    does not cover, and it was prose with nothing reading it. STANDARDS.md 4 says the same thing
+    from the other end: a width may move with the sheet, an extent or a claim of protection may
+    not.
+
+    THE COMPARISON IS BETWEEN SIBLINGS, not against a declared route, so this check knows nothing
+    about Broad Street. Approaches of ONE street at ONE junction either all carry the facility or
+    none do; a street with a single approach here has no sibling to disagree with and is skipped,
+    which is also what makes a corridor's last junction legal.
+    """
+
+    def run(self, scene: SceneContext) -> list[Violation]:
+        from src.geometry.network.corridor import _street_name
+        from src.geometry.targets import LegSide
+        from src.geometry.treatments.bikeways import AddBikeLane
+
+        state, model = scene.state, scene.model
+        if model is None:
+            return []
+        legs_cfg = model.config.get("legs", {})
+        by_street: dict[str, list[str]] = {}
+        for leg_name in state.legs:
+            street = _street_name(legs_cfg.get(leg_name, {}).get("street_name", "") or "")
+            if street:
+                by_street.setdefault(street, []).append(leg_name)
+
+        violations = []
+        for street, leg_names in sorted(by_street.items()):
+            if len(leg_names) < 2:
+                continue        # no sibling approach to disagree with
+            # isinstance matching, so AddTwoWayBikeLane answers to AddBikeLane - the question is
+            # "does this approach carry the facility", not "which subclass placed it".
+            carrying = {name: side for name in sorted(leg_names) for side in ("left", "right")
+                        if state.treatment_for(AddBikeLane, LegSide(name, side)) is not None}
+            if not carrying or len(carrying) == len(leg_names):
+                continue
+            missing = sorted(set(leg_names) - set(carrying))
+            has = ", ".join(f"{n} {carrying[n]}" for n in sorted(carrying))
+            for leg_name in missing:
+                leg = state.legs[leg_name]
+                at = leg.centerline.interpolate(leg.centerline.length / 2)
+                violations.append(Violation(
+                    "corridor_facility_breaks",
+                    f"{leg_name} carries no bike facility while {has} on the same street "
+                    f"({street}) does - the corridor arrives at this junction and stops, so "
+                    f"whether this approach is PROTECTED has been decided by the frame. Check the "
+                    f"NOTEs from CorridorFacility for which limit refused each rung; the section "
+                    f"is sized on the narrowest pinch ANYWHERE along the leg, so a tight spot far "
+                    f"out sets the width for the whole approach and a wider sheet can reach one "
+                    f"that no rung clears. BROAD_ST_TWO_WAY_BIKEWAY names the fix and does not "
+                    f"implement it: a section that varied by station would keep both. Until then "
+                    f"the honest answers are a sheet the corridor can hold, or a stated "
+                    f"concession on a floor - not a leg quietly left bare.",
+                    (float(at.x), float(at.y))))
         return violations
 
 

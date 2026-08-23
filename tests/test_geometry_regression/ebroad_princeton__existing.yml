@@ -147,6 +147,7 @@ channels:
 existing_marked_crosswalks:
 - e_broad_st_west
 - princeton_ave_south
+facilities: {}
 frame:
   center_m:
   - 0.344

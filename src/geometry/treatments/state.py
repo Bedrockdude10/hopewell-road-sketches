@@ -22,6 +22,30 @@ if TYPE_CHECKING:    # annotation-only: these types are layered above this modul
 
 
 
+@dataclass(frozen=True)
+class FacilityRefusal:
+    """One stretch a facility does NOT cover, and the measurement that says so.
+
+    A REFUSAL IS AN OUTPUT, NOT AN ERROR. A corridor plan that quietly stops at its hardest point
+    is the plan nobody costed, so every refusal is carried out and drawn as a gap.
+
+    HERE RATHER THAN IN corridor_paint, WHICH IS WHERE IT WAS. A refusal is a decision the design
+    made - SKILLS 5's first row - and once a check has to distinguish "this kerb was measured and
+    could not hold the section" from "this kerb was quietly skipped", the record has to be
+    somewhere the design carries it. The alternative was a second dataclass of the same four
+    fields at this layer, which is this repo's most reliable way of producing two answers to one
+    question. Both renderers now build it: corridor_paint imports it from here.
+    """
+    start_ft: float
+    end_ft: float
+    reason: str
+    narrowest_ft: float | None = None
+
+    @property
+    def length_ft(self) -> float:
+        return self.end_ft - self.start_ft
+
+
 @dataclass
 class DesignState:
     """A mutable-by-copy snapshot of intersection geometry. Treatments clone the
@@ -52,6 +76,30 @@ class DesignState:
     # treatments_of / every_treatment, and provenance is written from it.
     treatments: list = field(default_factory=list)
     notes: list = field(default_factory=list)
+    # (leg name, "left"|"right") -> [FacilityRefusal]. Stretches of kerb a corridor facility was
+    # MEASURED against and could not take, written by CorridorFacility._place_on.
+    #
+    # NOT DERIVABLE FROM THE TREATMENTS, which is why it is a field. A treatment records what the
+    # design DOES; these are spans where it deliberately does nothing, and the difference between
+    # that and an oversight is invisible downstream - which is exactly what
+    # BikewayReachesTheEndOfItsKerb has to tell apart before it can call a shortened facility a
+    # defect. Printing the reason to stdout, as this used to, put it somewhere no check can read.
+    facility_refusals: dict = field(default_factory=dict)
+
+    def refuse(self, leg_name: str, side: str, refusal: FacilityRefusal) -> None:
+        """Record that this kerb was measured over `refusal`'s span and cannot take the facility.
+
+        Mutates, unlike everything else here, because a refusal is not a treatment: it is what the
+        treatment layer learned while deciding, and threading a whole new state through
+        `_place_on`'s loop for each rung it rules out would make the refusals a function of the
+        order they were found in.
+        """
+        self.facility_refusals.setdefault((leg_name, str(side)), []).append(refusal)
+
+    def refusals_on(self, leg_name: str, side: str) -> list:
+        """Every stretch of this kerb the design measured and declined, in station order."""
+        return sorted(self.facility_refusals.get((leg_name, str(side)), ()),
+                      key=lambda refusal: refusal.start_ft)
 
     @classmethod
     def from_model(cls, model: "IntersectionModel") -> "DesignState":

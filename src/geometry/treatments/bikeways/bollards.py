@@ -106,7 +106,12 @@ class AddBikeLaneBollards(Treatment):
         # in the bike lane they are supposed to protect. BollardsStandInTheirBuffer now fails the
         # build for it, and src/render/props.py had the same mistake, which is why the 2D and 3D
         # views agreed and post_not_in_the_render stayed green.
-        lane = ctx.state.treatment_for(AddBikeLane, self.target).section(ctx.state)
+        # THE TREATMENT, not just its section, because the row has to stop where the LANE stops.
+        # A post row is a claim that the lane beside it is protected, so it runs over the lane's
+        # own span and no further - the failure this repo already has a fatal check for is 42
+        # posts standing along 245 ft of asphalt that got no green.
+        bikeway = ctx.state.treatment_for(AddBikeLane, self.target)
+        lane = bikeway.section(ctx.state)
         bounds = lane.offsets_from_centerline_ft()
         at = ctx.anchors(leg_name, side, inner_offset_ft=(
             leg.curb_to_curb_ft / 2 - lane.total_ft + TARGET_LANE_WIDTH_FT))
@@ -119,5 +124,5 @@ class AddBikeLaneBollards(Treatment):
             start_ft = clear_ft = at.target_ft + CROSSWALK_CLEARANCE_FT
         centre_ft = (bounds["travel_lane_edge_ft"] + bounds["bike_inner_ft"]) / 2
         for point in points_at_offset_ft(leg, side, centre_ft, max(start_ft, clear_ft),
-                                          spacing_ft=self.spacing_ft):
+                                          bikeway.to_ft, spacing_ft=self.spacing_ft):
             ctx.emit(PaintPiece(BOLLARD, _dot(point), leg_name, side))

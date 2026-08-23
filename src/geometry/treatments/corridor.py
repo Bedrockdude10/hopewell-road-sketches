@@ -13,6 +13,8 @@ knows and the route does not stays where it is.
 """
 from dataclasses import dataclass
 
+import numpy as np
+
 from src.geometry.model import side_facing
 from src.geometry.network import _street_name
 from src.geometry.targets import AcrossTheJunction, LegSide, Side
@@ -132,12 +134,105 @@ class CorridorFacility:
                 print(f"  NOTE: no lane extension across this junction - {no_gap}")
             return state
 
+    def _reach_on(self, state: DesignState, leg_name: str, side: str
+                   ) -> tuple[float | None, str | None]:
+        """How far up this kerb the facility runs CONTINUOUSLY FROM THE JUNCTION, and why not further.
+
+        Returns (to_ft, refused). `to_ft` is None for "the whole traced kerb", which is the answer
+        wherever every station fits and is what keeps an approach the street can carry byte-for-byte
+        as it was. A non-None `refused` means this approach carries nothing at all and says what
+        stopped it.
+
+        PER STATION, THROUGH section_at, WHICH IS THE RENDERER'S OWN PREDICATE. The whole-leg
+        minimum this replaces let one station veto an entire approach: at W Broad & Louellen on a
+        3x sheet, 168 of 169 stations on the southwest approach fit and station 363.6 - where the
+        travel way measures 31.813 ft against the 31.820 the constrained rung needs, short by seven
+        THOUSANDTHS of a foot - refused all 335 ft, including the 307 ft where the FULL rung fits.
+
+        CONTINUITY FROM THE JUNCTION IS THE PROPERTY, which is why this reports a reach and not a
+        set of runs. A corridor exists to be ridden through the junction: a stretch of room 200 ft
+        out that cannot be reached without rejoining traffic is not coverage, and the crossbike
+        (_carry_through_the_junction) has to start from a lane that is actually at the node.
+
+        SO A SECOND FITTING RUN BEYOND THE BREAK IS REFUSED, NOT DRAWN, and that is a real
+        limitation rather than a judgement about the street. Drawing it needs a SECOND section on
+        one approach, and the divider shift (DesignState.travel_lane_divider_shift), the post row
+        and the far kerb's surplus are each keyed one-per-approach today - two rungs on one leg
+        would give the reader one centre stripe for two different sections. corridor_paint._collect
+        already draws every fitting run of the between-junction strip; bringing that here is the
+        next step, and the refusal below records the span so it is a span to pick up rather than
+        one to rediscover.
+        """
+        from src.geometry.model import curb_station_span
+        from src.geometry.treatments.bikeways import (MIN_FACILITY_RUN_FT, section_at,
+                                                      travel_way_profile)
+        from src.geometry.treatments.state import FacilityRefusal
+
+        leg = state.legs[leg_name]
+        profile = travel_way_profile(leg, side)
+        if profile is None:
+            # Nothing traced on one of the two sides, so there is no station-by-station
+            # measurement to split on and the nominal width is all there is. Whole leg, as before.
+            return None, None
+        stations, near_ft, far_ft = profile
+        fits = np.array([section_at(self, float(near), float(far))[0] is not None
+                         for near, far in zip(near_ft, far_ft)])
+        if fits.all():
+            return None, None
+
+        # The first station that fails is where the ride stops; the reach is the one before it.
+        broke = int(np.argmin(fits))
+        reach_ft = float(stations[broke - 1]) if broke else float(stations[0])
+        _section, why = section_at(self, float(near_ft[broke]), float(far_ft[broke]))
+        # THE NARROWEST STATION IN THE TAIL, not at the break: the break is where continuity ends
+        # and the pinch that a wider design would have to solve can be anywhere beyond it. Both
+        # figures go in, because a refusal whose measurement is not the binding one is the mistake
+        # SKILLS 0a is about.
+        tail = slice(broke, None)
+        tail_total = near_ft[tail] + far_ft[tail]
+        narrowest_ft = float(tail_total.min())
+        span = curb_station_span(leg, side)
+        tail_end_ft = float(stations[-1]) if span is None else max(float(stations[-1]), span[1])
+        reason = (f"the facility cannot continue past station {stations[broke]:.1f} ft - {why} "
+                  f"Beyond it this kerb runs to {tail_end_ft:.1f} ft and the street is "
+                  f"{narrowest_ft:.2f} ft between kerbs at its narrowest there; any of it that "
+                  f"does hold a rung cannot be reached from this junction without putting riders "
+                  f"back in traffic, so it is left bare deliberately.")
+        state.refuse(leg_name, side, FacilityRefusal(
+            float(stations[broke]), tail_end_ft, reason, narrowest_ft))
+
+        covered_ft = reach_ft - float(stations[0])
+        if covered_ft < MIN_FACILITY_RUN_FT:
+            # The head is bare too, and for a DIFFERENT reason - it fits, there is just not enough
+            # of it. Recorded separately rather than folded into the tail's refusal: one span says
+            # the street is too narrow and the other says the stretch is too short, and a reader
+            # given one reason for both would go looking for a pinch that is not there.
+            too_short = (f"{covered_ft:.0f} ft of continuous room from the junction, under the "
+                         f"{MIN_FACILITY_RUN_FT:.0f} ft a usable facility needs - a rider cannot "
+                         f"use it and drawing it would invite the reader to count it as coverage")
+            state.refuse(leg_name, side, FacilityRefusal(
+                float(stations[0]), float(stations[broke]), too_short))
+            return None, f"{too_short}. Beyond that, {reason}"
+        return reach_ft, None
+
     def _place_on(self, state: DesignState, leg_name: str, side: str, quiet: bool) -> DesignState:
+        to_ft, refused = self._reach_on(state, leg_name, side)
+        if refused is not None:
+            # _reach_on has already recorded the span; nothing else is claimed on this kerb.
+            if not quiet:
+                print(f"  NOTE: {leg_name} {side} ({self.side} kerb) carries NO two-way lane - "
+                      f"{refused}")
+            return state
+        if to_ft is not None and not quiet:
+            print(f"  NOTE: {leg_name} {side} carries the facility to station {to_ft:.0f} ft and "
+                  f"no further. The rung below is sized over THAT stretch, not over the whole "
+                  f"approach - see the refusal recorded on this kerb for what stopped it and "
+                  f"where. Posts, centre stripe and green all end there together.")
         for section in self.sections:
             try:
                 state = state.apply(AddTwoWayBikeLane(
                     LegSide(leg_name, side), width_ft=section.width_ft,
-                    buffer_ft=section.buffer_ft, constrained=section.constrained))
+                    buffer_ft=section.buffer_ft, constrained=section.constrained, to_ft=to_ft))
             except ValueError as too_narrow:
                 if not quiet:
                     print(f"  NOTE: {leg_name} {side} ({self.side} kerb) cannot take a "
@@ -170,6 +265,17 @@ class CorridorFacility:
             # not the kerb that gains this. Single home: hold_travel_lane_at_target in parking.py.
             return hold_travel_lane_at_target(state, leg_name, str(Side(side).other))
 
+        # RECORDED, NOT ONLY PRINTED, and over the whole kerb: every rung was refused, so there
+        # is no span of this approach the design is claiming. A check reading stdout is not a
+        # check - see DesignState.facility_refusals.
+        from src.geometry.model import curb_station_span
+        from src.geometry.treatments.state import FacilityRefusal
+
+        span = curb_station_span(state.legs[leg_name], side)
+        if span is not None:
+            state.refuse(leg_name, side, FacilityRefusal(
+                span[0], span[1], "every rung of the ladder was refused on this approach - see "
+                                  "the widths printed above for which limit stopped each"))
         if not quiet:
             print(f"  NOTE: {leg_name} {side} carries NO two-way lane. THIS IS WHERE THE "
                   f"BOROUGH-LENGTH CORRIDOR BREAKS - riders would rejoin the carriageway through "

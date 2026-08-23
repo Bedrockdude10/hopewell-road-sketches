@@ -8,6 +8,8 @@ fixed because it is what a post stands in, and the bike lane takes what is left.
 Go through `bike_lane_spare_ft` rather than subtracting widths by hand; a caller doing its own
 accounting misses the lane LINE, which is 0.82 ft and decides whether e_broad_st_east is buildable.
 """
+import numpy as np
+
 from src.geometry.model import narrowest_half_width_ft
 from src.geometry.treatments.base import LANE_WIDTH_SLACK_FT, TARGET_LANE_WIDTH_FT
 from src.geometry.treatments.state import DesignState
@@ -105,3 +107,112 @@ def widest_protected_lane_ft(state: DesignState, leg_name: str, side: str) -> fl
                                    buffer_ft=BIKE_LANE_BUFFER_FT)
     fitted_ft = min(BIKE_LANE_WIDTH_FT, BIKE_LANE_WIDTH_FT + spare_ft)
     return fitted_ft if fitted_ft >= MIN_BIKE_LANE_FT - LANE_WIDTH_SLACK_FT else None
+
+
+#: A stretch shorter than this is not a facility, it is a gap between two of them. A rider cannot
+#: use 30 ft of protected lane, and drawing one invites the reader to count it as coverage.
+MIN_FACILITY_RUN_FT = 100.0
+
+
+def section_at(facility, near_half_ft: float, far_half_ft: float):
+    """The best rung of the facility's ladder that fits this cross-section, or None.
+
+    THE CLASS IS THE PREDICATE. TwoWayBikeLane.__post_init__ already refuses a section that
+    leaves the travel lanes under NACTO's floor, with the measurement in the message; writing a
+    second "does it fit" test here would be a second definition of the rule the whole facility
+    turns on, and the two would drift the first time the floor changed. So a rung is tried by
+    CONSTRUCTING it, and the ValueError it raises is the refusal, quoted verbatim.
+
+    HERE RATHER THAN IN corridor_paint, WHICH IS WHERE IT WAS, because both renderers ask it. The
+    between-junction strip asked it per station and the junction pieces did not ask it at all -
+    they took two whole-leg minima and applied one section to the whole approach - and that is
+    how a quarter-inch shortfall at one station of W Broad's southwest approach denied a protected
+    bikeway over the 270 ft where the FULL rung fits. Two renderers, one fit rule.
+
+    `facility` is anything carrying a `.sections` ladder, which is CorridorFacility; typed loosely
+    on purpose, since that class is layered above this module.
+    """
+    refusal = None
+    for rung in facility.sections:
+        try:
+            return TwoWayBikeLane(width_ft=rung.width_ft, buffer_ft=rung.buffer_ft,
+                                  constrained=rung.constrained, near_half_ft=near_half_ft,
+                                  far_half_ft=far_half_ft), None
+        except ValueError as too_narrow:
+            refusal = str(too_narrow)
+    return None, refusal
+
+
+def travel_way_profile(leg, side: str, from_ft: float = 0.0, to_ft: float | None = None):
+    """(stations, near half-widths, far half-widths) over the stretch where BOTH kerbs are traced.
+
+    The measurement a two-way section is judged on, station by station. Clipped to the
+    intersection of the two traced spans, because outside it one of the two numbers is
+    extrapolation - curb_offsets_at_stations interpolates and will happily flat-extend a kerb
+    tens of feet past where the surveyor stopped, which reads as room that was never measured.
+
+    BOTH SIDES ON ONE GRID, which is the same invariant curbside_strip_polygon states for a
+    strip's two boundaries: sampled at different stations, near and far are a cross-section of
+    nothing. None where there is no such stretch to measure.
+    """
+    from src.geometry.model import curb_offsets_at_stations, curb_station_span, half_width_profile
+
+    other = "right" if side == "left" else "left"
+    near_span, far_span = curb_station_span(leg, side), curb_station_span(leg, other)
+    if near_span is None or far_span is None:
+        return None
+    lo = max(near_span[0], far_span[0], from_ft)
+    hi = min(near_span[1], far_span[1],
+             leg.centerline.length if to_ft is None else to_ft)
+    profile = half_width_profile(leg, side, lo, hi)
+    if profile is None:
+        return None
+    stations, near_ft = profile
+    far_ft = curb_offsets_at_stations(leg, other, stations)
+    if far_ft is None:
+        return None
+    return stations, near_ft, np.abs(far_ft)
+
+
+def governing_half_widths_ft(leg, side: str, from_ft: float = 0.0, to_ft: float | None = None
+                              ) -> tuple[float, float]:
+    """The two half-widths a section promised over this stretch has to fit between.
+
+    TWO QUESTIONS, AND THEY DO NOT BIND AT THE SAME STATION. Returning one kerb pair papers over
+    that, so which pair is a real choice and both obvious answers are wrong.
+
+    WHERE THE NEAR-SIDE PAINT GOES is the near kerb's OWN minimum. `near_half_ft` is the datum
+    every kerbside mark is placed off - `travel_edge_ft = near_half_ft - section_ft` in
+    TwoWayBikeLane.offsets_from_centerline_ft - so a section built on anything wider overruns the
+    near kerb wherever it pinches. This function returned the min-SUM station's own near half for
+    exactly one session, and the receipt is worth keeping: on w_broad_st_northeast at 3x that
+    station reads 17.05 ft while the same kerb comes in to 16.12 ft at station 35.8, which put the
+    outer edge line 0.84 ft INSIDE its own floor and 4.9 sq ft of white stripe on top of the green.
+    markings_collide, fatal. The floor in AddBikeLane.paint holds each mark to its designed offset
+    and the green to a band off the kerb, and those two rules only agree while the section fits.
+
+    WHAT IS LEFT FOR THE TRAVEL LANES is the smallest SUM, because that is the quantity
+    TwoWayBikeLane refuses on (near + far - section) and the two kerbs pinch at different stations.
+    Taking each side's own minimum - what this did before - pairs a near pinch at station 40 with a
+    far pinch at station 300 and describes a cross-section that exists nowhere: it understates W
+    Broad's northeast approach by 2.45 ft, enough to drop it from the full rung to the constrained
+    one. corridor_paint._collect has always measured the sum at one station; the per-approach
+    placement did not, and that is the second definition of one rule that SKILLS 0 is about.
+
+    SO THE FAR HALF RETURNED IS NOT A KERB READING. It is the far half-width the binding travel way
+    implies, min(near + far) - min(near), which is the only way one pair can answer both questions
+    at once. Sound because far_half_ft is never read alone: the travel way, the far-kerb surplus
+    and the between-kerbs figure are all near + far minus constants, so referring the far half to
+    the near minimum leaves every one of them exact while the near datum stays a measurement.
+
+    Falls back to each side's own minimum where there is nothing traced to measure, which is
+    narrowest_half_width_ft's nominal answer - no measurement, so no reason to prefer a pairing.
+    """
+    profile = travel_way_profile(leg, side, from_ft, to_ft)
+    if profile is None:
+        other = "right" if side == "left" else "left"
+        return (narrowest_half_width_ft(leg, side, from_ft, to_ft),
+                narrowest_half_width_ft(leg, other, from_ft, to_ft))
+    _stations, near_ft, far_ft = profile
+    near = float(near_ft.min())
+    return near, max(float((near_ft + far_ft).min()) - near, 0.0)

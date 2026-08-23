@@ -161,6 +161,7 @@ existing_marked_crosswalks:
 - columbia_ave_west
 - princeton_ave_north
 - princeton_ave_south
+facilities: {}
 frame:
   center_m:
   - -1.99

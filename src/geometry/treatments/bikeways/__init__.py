@@ -42,10 +42,13 @@ from src.geometry.treatments.bikeways.sections import (
 from src.geometry.treatments.bikeways.fit import (
                                             bike_lane_spare_ft,
                                             far_kerb_surplus_ft,
+                                            governing_half_widths_ft,
+                                            travel_way_profile,
                                             divided_lane_width_ft,
                                             travel_lane_divider_shift_ft,
-                                            widest_protected_lane_ft,
-)
+                                            MIN_FACILITY_RUN_FT,
+                                            section_at,
+                                            widest_protected_lane_ft)
 from src.geometry.treatments.bikeways.symbols import (
                                             CONTRAFLOW_DASH_FT,
                                             CONTRAFLOW_GAP_FT,
@@ -91,6 +94,7 @@ __all__ = [
                                             "LANE_END_FACE_SAMPLE_FT",
                                             "MIN_BIKE_LANE_FT",
                                             "MIN_EXTENSION_GAP_FT",
+                                            "MIN_FACILITY_RUN_FT",
                                             "MIN_MARK_FRACTION",
                                             "MIN_TRAVEL_LANE_BESIDE_TWO_WAY_FT",
                                             "MIN_TWO_WAY_BIKE_LANE_FT",
@@ -116,10 +120,13 @@ __all__ = [
                                             "divided_lane_width_ft",
                                             "divider_shift_toward_ft",
                                             "far_kerb_surplus_ft",
+                                            "governing_half_widths_ft",
                                             "lane_end_face",
                                             "min_bike_lane_buffer_ft",
+                                            "section_at",
                                             "travel_lane_divider_shift_ft",
                                             "travel_lane_edge_ft",
                                             "travel_lane_width_ft",
+                                            "travel_way_profile",
                                             "widest_protected_lane_ft",
 ]

@@ -42,6 +42,17 @@ BROAD_ST_SITES = ("wbroad_louellen", "broad_st_greenwood", "ebroad_princeton")
 # nodes, which is a measured distance and not a guess about how far the extensions reach.
 MIN_BROAD_ST_LENGTH_FT = 2435.0
 
+# Broad St resolves to 4526.0 ft at 1x and 4527.4 ft at 3x - the same survey, re-chained through
+# junction pieces of a different length, so the joins land on slightly different vertices. That
+# 1.6 ft is re-assembly noise; anything above it is the sheet adding street.
+CORRIDOR_EXTENT_TOL_FT = 2.0
+
+# Traced coverage carries the same re-assembly noise, as a FRACTION: re-chaining moves where the
+# kerb stations against the corridor, so a run's measured span shifts a little. Measured worst case
+# is Princeton Ave, 31.2 ft of 2065.0 (1.5%) between 1x and 3x. Fractional rather than absolute
+# because the noise is per-seam and Broad St has the most seams and the most coverage.
+DESIGN_SPAN_TOL = 0.02
+
 
 @pytest.fixture(scope="session")
 def corridors(site_models):
@@ -389,6 +400,65 @@ def test_the_facility_covers_the_street_it_is_drawn_on(scale):
 
 
 @needs_source_data
+def test_the_design_span_is_the_surveyed_one_not_the_sheets(site_models, wide_site_models):
+    """The amount of SURVEYED street a corridor covers is a fact about the survey, not the sheet.
+
+    This is the bug class in one assertion. A facility's rung is chosen over a span
+    (corridor_paint._collect takes the governing cross-section of each run), so if the span moves
+    with HOPEWELL_FRAME_SCALE then the render viewport is voting on the design - which is how W
+    Broad's southwest approach carried a protected lane at 2.5x and nothing at all at 3x.
+
+    The leak was that a corridor's EXTENSIONS were measured from the end of a junction piece, and a
+    piece is a frame-cut leg. Both the search window and the fetch-radius cap in _traced_end_ft
+    were relative to that moving seam, and the junction centre defining the cap circle was chosen
+    by proximity to it - so a wider sheet slid the window outward and discovered street a narrower
+    sheet had not looked for. Columbia Ave's traced coverage moved 369 ft between sheets. Anchoring
+    on the junction NODE, a surveyed point, makes it 0.7.
+
+    Measured as TRACED coverage rather than raw length, because that is what the design reads. The
+    raw length still moves, and deliberately has its own pin below.
+    """
+    def coverage(models):
+        return {road.name: sum(run.end_ft - run.start_ft for run in road.kerb_runs
+                               if run.source == KERB_FROM_TRACING)
+                for road in corridors_from_models(models)}
+
+    narrow, wide = coverage(site_models), coverage(wide_site_models)
+    assert narrow, "no corridor resolved, so nothing was compared"
+    assert set(narrow) == set(wide), (
+        f"a street is a corridor on one sheet and not the other: "
+        f"{sorted(set(narrow) ^ set(wide))}")
+    moved = {name: (narrow[name], wide[name]) for name in narrow
+             if abs(wide[name] - narrow[name]) > DESIGN_SPAN_TOL * max(narrow[name], 1.0)}
+    assert not moved, (
+        "the surveyed street a corridor covers moved with the frame scale, so the sheet is "
+        "voting on how much street the design is asked about: "
+        + ", ".join(f"{name} {a:.1f} -> {b:.1f} ft ({b - a:+.1f})"
+                    for name, (a, b) in sorted(moved.items())))
+
+
+@needs_source_data
+@pytest.mark.xfail(strict=True, reason=(
+    "A junction piece is a frame-cut leg (intersection/load.py multiplies the surveyed leg length "
+    "by frame_scale()), so a wider sheet can push a piece PAST the last traced kerb and the "
+    "corridor claims street nothing was surveyed on: Greenwood 1564.9 -> 1698.4 ft, Columbia "
+    "1502.4 -> 1698.3 ft. No paint comes of it - corridor_paint refuses an untraced span by name - "
+    "but a Coverage denominator that moves with the sheet is still a figure measured over a "
+    "viewport. Retires itself: this XPASSes, and so FAILS, the moment leg extent stops being a "
+    "render parameter."))
+def test_a_corridor_never_claims_more_street_than_the_survey(site_models, wide_site_models):
+    """The extent a corridor REPORTS, as opposed to the part of it that is surveyed."""
+    narrow = {road.name: road.length_ft for road in corridors_from_models(site_models)}
+    wide = {road.name: road.length_ft for road in corridors_from_models(wide_site_models)}
+    grew = {name: (narrow[name], wide[name]) for name in narrow
+            if abs(wide[name] - narrow[name]) > CORRIDOR_EXTENT_TOL_FT}
+    assert not grew, (
+        "a corridor's length moved with the frame scale: "
+        + ", ".join(f"{name} {a:.1f} -> {b:.1f} ft ({b - a:+.1f})"
+                    for name, (a, b) in sorted(grew.items())))
+
+
+@needs_source_data
 def test_a_narrower_rung_never_costs_an_approach_its_protection():
     """What a wider sheet may and may not change about a section.
 
@@ -403,6 +473,19 @@ def test_a_narrower_rung_never_costs_an_approach_its_protection():
     facility (see BROAD_ST_TWO_WAY_BIKEWAY), and it is what the flex posts stand in - so a
     painted lane in one picture and a protected one in another is a difference in the PROPOSAL,
     not in the sheet. That is the half of the old frame-invariance assertion worth keeping.
+
+    MAY NOT change whether the approach carries one AT ALL, which is the assertion below that
+    two sheets were not enough to catch. This swept 1x and 2.5x, passed both, and the southwest
+    approach still went bare at 3x - so the property was pinned at the two scales that happened
+    to agree. Three sheets is not a principle either; what makes it enough here is that the third
+    is the one the reader asked for, and the mechanism is now measured per station rather than
+    per sheet (see AddTwoWayBikeLane.to_ft and TwoWayBikeway._reach_on).
+
+    The 3x failure is worth keeping as a number, because nothing about it looked like a rounding
+    problem from the outside: 168 of that leg's 169 sampled stations held the section, station
+    363.6 measured 31.813 ft between kerbs against the 31.820 the rung wanted, and the 0.0036 ft
+    that left each travel lane short of MIN_TRAVEL_LANE_BESIDE_TWO_WAY_FT denied a protected
+    bikeway over all 335 traced feet. That is a fortieth of an inch deciding a corridor.
     """
     from src.geometry.intersection import load_intersection_model
     from src.geometry.treatments import (AddBikeLane, BROAD_ST_TWO_WAY_BIKEWAY, DesignState)
@@ -430,11 +513,103 @@ def test_a_narrower_rung_never_costs_an_approach_its_protection():
                                                 round(lane.buffer_ft, 2))
         return placed
 
-    narrow, wide = sections(None), sections(2.5)
-    assert narrow, "no approach carried the facility, so nothing was compared"
-    assert set(narrow) == set(wide), (
-        f"an approach carries the facility on one sheet and not the other: {narrow} vs {wide}")
-    for scale_name, placed in (("1x", narrow), ("2.5x", wide)):
+    placed_at = {"1x": sections(None), "2.5x": sections(2.5), "3x": sections(3.0)}
+    assert all(placed_at.values()), (
+        f"a sheet carried the facility on no approach at all, so nothing was compared: "
+        f"{ {name: len(placed) for name, placed in placed_at.items()} }")
+    carried = {name: set(placed) for name, placed in placed_at.items()}
+    assert len(set(map(frozenset, carried.values()))) == 1, (
+        "an approach carries the facility on one sheet and not another, so the render viewport "
+        "is deciding whether a leg is protected: "
+        + "; ".join(f"{name} {sorted(f'{leg}/{side}' for leg, side in legs)}"
+                    for name, legs in carried.items()))
+    for scale_name, placed in placed_at.items():
         assert all(buffer_ft > 0 for _width, buffer_ft in placed.values()), (
             f"at {scale_name} an approach carries an UNBUFFERED lane, which takes no flex posts - "
             f"the buffer is the rung that never gives on this facility: {placed}")
+
+
+@needs_source_data
+def test_a_station_that_refuses_the_section_costs_the_tail_and_not_the_approach():
+    """One station that cannot hold the facility ends it THERE, with the span named.
+
+    THIS IS THE BUG CLASS, AND THE SHAPE OF IT IS THE POINT. A fit judged once for a whole
+    approach lets any single station veto every foot of it: 168 of w_broad_st_southwest's 169
+    sampled stations held the section on the 3x sheet, station 363.6 was 0.0036 ft per travel lane
+    short, and the approach went bare - so the reader got a corridor that arrives at the junction
+    and stops, and nothing in the drawing said why. Asked per station instead, the same leg carries
+    a protected lane for 324 of its 335 traced feet and REFUSES the tail by name.
+
+    A REFUSAL IS AN OUTPUT, NOT A PRINT STATEMENT, which is the second half of this. The span, the
+    reason and the measurement go on the design (DesignState.refuse) because
+    BikewayReachesTheEndOfItsKerb is fatal and has to tell a stretch that was measured and
+    declined from one the paint quietly stopped on - and it cannot read stdout.
+
+    Driven with a ONE-RUNG ladder, because the real ladder's job is to make this rare: given a
+    fallback rung the facility takes a narrower section over the whole leg rather than a wide one
+    over part of it, which is the last assertion here and the reason nothing in production carries
+    a shortened lane today.
+    """
+    from src.geometry.model import curb_station_span
+    from src.geometry.treatments import BROAD_ST_TWO_WAY_BIKEWAY, DesignState
+    from src.geometry.treatments.bikeways import (MIN_FACILITY_RUN_FT, MIN_TWO_WAY_BIKE_LANE_FT,
+                                                  TWO_WAY_BIKE_LANE_BUFFER_FT)
+    from src.geometry.treatments.corridor import CorridorFacility, Section
+    from src.geometry.intersection import load_intersection_model
+    from src.render.frame import FRAME_SCALE_ENV
+
+    LEG, SIDE = "w_broad_st_southwest", "right"
+
+    monkey = pytest.MonkeyPatch()
+    try:
+        monkey.setenv(FRAME_SCALE_ENV, "3.0")
+        with contextlib.redirect_stdout(io.StringIO()):
+            model = load_intersection_model(site="wbroad_louellen")
+    finally:
+        monkey.undo()
+
+    span = curb_station_span(model.legs[LEG], SIDE)
+    assert span is not None, f"{LEG} {SIDE} has no traced kerb, so there is nothing to reach along"
+
+    # The full rung with no fallback under it, so where the street pinches there is nowhere to go.
+    one_rung = CorridorFacility(
+        road=BROAD_ST_TWO_WAY_BIKEWAY.road, side=BROAD_ST_TWO_WAY_BIKEWAY.side,
+        sections=(Section(MIN_TWO_WAY_BIKE_LANE_FT, TWO_WAY_BIKE_LANE_BUFFER_FT),))
+    state = DesignState.from_model(model)
+    with contextlib.redirect_stdout(io.StringIO()):
+        reach_ft, refused = one_rung._reach_on(state, LEG, SIDE)
+
+    assert refused is None, f"the whole approach was given up rather than part of it: {refused}"
+    assert reach_ft is not None, (
+        "the section fits every station of this leg, so no split was measured - this test is "
+        "pinning nothing on this data")
+    assert float(span[0]) < reach_ft < float(span[1]), (
+        f"a reach of {reach_ft} ft is not inside the {span[0]:.1f}-{span[1]:.1f} ft traced kerb")
+    assert reach_ft - float(span[0]) >= MIN_FACILITY_RUN_FT, (
+        f"a {reach_ft - float(span[0]):.0f} ft facility should have been refused outright, not "
+        f"drawn - MIN_FACILITY_RUN_FT is {MIN_FACILITY_RUN_FT:.0f} ft")
+
+    refusals = state.refusals_on(LEG, SIDE)
+    assert len(refusals) == 1, f"expected the tail to be refused once, got {refusals}"
+    tail = refusals[0]
+    assert reach_ft <= tail.start_ft <= float(span[1]), (
+        f"the refused span starts at {tail.start_ft:.1f} ft, which is not where the facility "
+        f"stopped ({reach_ft:.1f} ft) - a gap between them is ground with neither paint nor a "
+        f"reason on it")
+    assert tail.end_ft >= float(span[1]) - 1e-6, (
+        f"the refusal covers to {tail.end_ft:.1f} ft but the kerb is traced to {span[1]:.1f} ft")
+    assert tail.narrowest_ft is not None and tail.narrowest_ft > 0, (
+        f"the refusal carries no measurement, so it is an opinion: {tail}")
+    assert f"{tail.narrowest_ft:.2f}" in tail.reason, (
+        f"the reason should quote the width that stopped it: {tail.reason}")
+
+    # AND THE LADDER COMES FIRST. Given somewhere to step down to, the same leg keeps its whole
+    # length: a narrower section over all of it beats the full section over three quarters.
+    laddered = DesignState.from_model(model)
+    with contextlib.redirect_stdout(io.StringIO()):
+        ladder_reach, ladder_refused = BROAD_ST_TWO_WAY_BIKEWAY._reach_on(laddered, LEG, SIDE)
+    assert (ladder_reach, ladder_refused) == (None, None), (
+        f"the real ladder shortened this leg to {ladder_reach} instead of taking a narrower rung "
+        f"over all of it - a rung is a width and an extent is not negotiable the same way")
+    assert not laddered.facility_refusals, (
+        f"nothing should have been refused on a leg the ladder covers: {laddered.facility_refusals}")

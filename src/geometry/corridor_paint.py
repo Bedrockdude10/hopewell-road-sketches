@@ -26,7 +26,8 @@ from shapely.geometry import LineString, Polygon
 
 from src.geometry.model import (Alignment, band_from_offsets, line_from_offsets,
                                 place_in_measured_frame, side_facing, whole_stalls_ft)
-from src.geometry.treatments.bikeways import TwoWayBikeLane
+from src.geometry.treatments.bikeways import (MIN_FACILITY_RUN_FT, section_at)
+from src.geometry.treatments.state import FacilityRefusal
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:    # annotation-only: these types are layered above this module,
@@ -37,11 +38,6 @@ if TYPE_CHECKING:    # annotation-only: these types are layered above this modul
 #: with every vertex the surveyor placed; 5 ft follows a real kerb's course. Coarser than the
 #: junction paint's STRIP_SAMPLE_FT because this runs 3,693 ft rather than 130.
 CORRIDOR_SAMPLE_FT = 5.0
-
-#: A stretch shorter than this is not a facility, it is a gap between two of them. A rider cannot
-#: use 30 ft of protected lane, and drawing one invites the reader to count it as coverage.
-MIN_FACILITY_RUN_FT = 100.0
-
 
 @dataclass(frozen=True)
 class FacilityRun:
@@ -56,23 +52,6 @@ class FacilityRun:
     #: is left on the FAR kerb for parking - is a property of the section, and it differs between
     #: a standard run and a constrained one.
     section: object = None
-
-    @property
-    def length_ft(self) -> float:
-        return self.end_ft - self.start_ft
-
-
-@dataclass(frozen=True)
-class FacilityRefusal:
-    """One stretch where the section does NOT fit, and the measurement that says so.
-
-    A refusal is an output, not an error. A corridor plan that quietly stops at its hardest point
-    is the plan nobody costed, so every refusal is carried out and drawn as a gap.
-    """
-    start_ft: float
-    end_ft: float
-    reason: str
-    narrowest_ft: float | None = None
 
     @property
     def length_ft(self) -> float:
@@ -156,26 +135,6 @@ def kerb_offset_ft(corridor: "Corridor", side: str, station_ft: float) -> float 
     if run is None:
         return None
     return _kerb_offset_at(corridor.centerline, run.line, side, station_ft)
-
-
-def section_at(facility, near_half_ft: float, far_half_ft: float):
-    """The best rung of the facility's ladder that fits this cross-section, or None.
-
-    THE CLASS IS THE PREDICATE. TwoWayBikeLane.__post_init__ already refuses a section that
-    leaves the travel lanes under NACTO's floor, with the measurement in the message; writing a
-    second "does it fit" test here would be a second definition of the rule the whole facility
-    turns on, and the two would drift the first time the floor changed. So a rung is tried by
-    CONSTRUCTING it, and the ValueError it raises is the refusal, quoted verbatim.
-    """
-    refusal = None
-    for rung in facility.sections:
-        try:
-            return TwoWayBikeLane(width_ft=rung.width_ft, buffer_ft=rung.buffer_ft,
-                                  constrained=rung.constrained, near_half_ft=near_half_ft,
-                                  far_half_ft=far_half_ft), None
-        except ValueError as too_narrow:
-            refusal = str(too_narrow)
-    return None, refusal
 
 
 #: How wide a surveyed crossing's break in the lane is taken to be, where the corridor knows the

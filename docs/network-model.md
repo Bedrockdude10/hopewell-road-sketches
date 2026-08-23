@@ -181,6 +181,24 @@ halves come off DIFFERENT SRIs (CR 518 turns west onto Louellen, CR 654 carries 
 there is no single source alignment to build the road from. The seam is real and has to be eased,
 the way `network/corridor.py:_eased_alignment` already eases a corridor across one.
 
+**The corridor's EXTENT was a render parameter, and that was the bug class itself.** Extensions were
+carried out from the end of a junction piece - a frame-cut leg - so the search window and the
+fetch-radius cap in what is now `_traced_end_ft` were both relative to a seam that moves with
+`HOPEWELL_FRAME_SCALE`, and the junction centre defining the cap circle was picked by proximity to
+that seam. A wider sheet slid the window outward and discovered street the narrower sheet never
+looked for: Columbia Ave's traced coverage moved 369 ft between sheets, Greenwood's 196 ft. Since a
+facility's rung is chosen over a span, the viewport was voting on the design. Anchoring on the
+junction NODE - a surveyed point - takes Columbia's movement to 0.7 ft, and moved **0 of 15
+exports**, because nothing renders from the corridor yet.
+
+**What that leaves is one coupling, and it is the one step 5 deletes.** `intersection/load.py`
+multiplies the surveyed leg length by `frame_scale()`, so a junction piece can still be pushed past
+the last traced kerb and the corridor then claims street nothing was surveyed on (Greenwood 1564.9
+-> 1698.4 ft). No paint comes of it - `corridor_paint` refuses an untraced span by name - but a
+Coverage denominator measured over a viewport is not a figure. `test_corridor.py` pins both halves:
+the surveyed span invariant now, and the raw extent as a `strict` xfail that fails the moment leg
+extent stops being a render parameter.
+
 **`nj31_wdelaware` does not build at all** on current OSM — `build_all` reports 4 of 5 sites ok and
 that one as "Pavement ring is self-intersecting". It is the Pennington failure this document names,
 and it is invisible to the test suite, because the committed fixture cache carries no borough

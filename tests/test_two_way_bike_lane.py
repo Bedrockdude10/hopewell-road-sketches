@@ -410,3 +410,130 @@ def test_a_two_way_lane_stays_against_the_kerb_that_protects_it(site_models):
             far.append(f"{where}: typically {typical:.2f} ft off the kerb")
     assert not far, ("a two-way lane is drawn away from the kerb that is supposed to protect it:\n"
                      "  " + "\n  ".join(far))
+
+
+# --------------------------------------------------------------------------
+# The two half-widths a section is sized between, and the two different
+# stations they bind at.
+# --------------------------------------------------------------------------
+
+@needs_source_data
+def test_the_governing_pair_describes_a_cross_section_the_street_actually_has(site_models):
+    """Both halves handed to TwoWayBikeLane must be numbers measured somewhere on the leg.
+
+    They answer different questions and bind at DIFFERENT STATIONS, which is what makes this
+    worth pinning: `near_half_ft` is the datum every kerbside mark is placed off, so it has to be
+    the near kerb's own minimum or the section overruns the kerb where it pinches; `near + far` is
+    what TwoWayBikeLane refuses on, so it has to be the smallest travel way anywhere on the run.
+    Each of the two obvious single answers fails one of those, and both failures shipped:
+
+    - the min-SUM station's own near half put w_broad_st_northeast's outer edge line 0.84 ft
+      inside its own floor at station 35.8, laying 4.9 sq ft of white stripe on the green;
+    - each side's own minimum independently pairs a near pinch with a far pinch that are hundreds
+      of feet apart and describes a cross-section that exists nowhere on the street.
+
+    The third assertion is the one that keeps the second honest. If the two kerbs pinched at the
+    same station everywhere, min(near + far) would equal min(near) + min(far) and this test could
+    not fail - SKILLS 0a's rule about a check that cannot fail, applied to the check itself.
+    """
+
+    from src.geometry.model import narrowest_half_width_ft
+    from src.geometry.treatments.bikeways import governing_half_widths_ft, travel_way_profile
+
+    TOL_FT = 0.01
+    swept, understated = 0, []
+    for site in ("wbroad_louellen", "broad_st_greenwood", "ebroad_princeton"):
+        model = site_models[site]
+        for leg_name, leg in model.legs.items():
+            for side in ("left", "right"):
+                profile = travel_way_profile(leg, side)
+                if profile is None:
+                    continue
+                _stations, near_ft, far_ft = profile
+                near, far = governing_half_widths_ft(leg, side)
+                where = f"{site} {leg_name} {side}"
+                swept += 1
+
+                assert near == pytest.approx(float(near_ft.min()), abs=TOL_FT), (
+                    f"{where}: the section's near datum is {near:.2f} ft while this kerb comes in "
+                    f"to {float(near_ft.min()):.2f} ft - paint placed off it would be drawn "
+                    f"outside the kerb by {near - float(near_ft.min()):.2f} ft somewhere")
+                assert near + far == pytest.approx(float((near_ft + far_ft).min()), abs=TOL_FT), (
+                    f"{where}: the pair totals {near + far:.2f} ft between kerbs, which is not "
+                    f"the {float((near_ft + far_ft).min()):.2f} ft the street measures at its "
+                    f"narrowest - the travel lanes would be sized off a width nowhere on the leg")
+
+                independent = (narrowest_half_width_ft(leg, side)
+                               + narrowest_half_width_ft(leg, "right" if side == "left" else "left"))
+                if (near + far) - independent > 0.5:
+                    understated.append(f"{where}: {independent:.2f} -> {near + far:.2f} ft")
+
+    assert swept >= 6, f"only {swept} leg-sides had both kerbs traced - the sweep lost legs"
+    assert understated, (
+        "no leg's two kerbs pinch far enough apart for the governing pair to differ from the two "
+        "minima taken separately, so the assertion above pins nothing on this data")
+
+
+@needs_source_data
+def test_a_lane_that_ends_early_takes_its_posts_and_its_stripes_with_it(site_models):
+    """Every mark a facility is made of stops where the facility stops.
+
+    THIS IS THE OLD BUG WITH THE SIGN FLIPPED. When the extent was trimmed by the paint path
+    alone, broad_st_east's green stopped at 180 ft while 42 flex posts and a centre stripe ran the
+    full 425 - three marks each running the leg by a path of its own, so the drawing claimed
+    protection over 245 ft of bare asphalt. Now that a lane can legitimately end early
+    (AddBikeLane.to_ft, set from TwoWayBikeway._reach_on where a station genuinely refuses the
+    section), the same three paths have to agree in the other direction.
+
+    Asserted over EVERY drawn kind on the kerb rather than a list of the ones known to matter,
+    because the failure mode is a mark whose path nobody remembered to thread - so naming the
+    marks to check would reproduce the bug in the test.
+    """
+    import contextlib
+    import io
+
+    import numpy as np
+
+    from src.geometry.model import curb_station_span, station_offset_many
+    from src.geometry.targets import LegSide
+    from src.geometry.treatments import DesignState
+    from src.geometry.treatments.bikeways import AddBikeLaneBollards, AddTwoWayBikeLane
+    from src.render.scene import SceneGeometry
+    from src.sources.osm_context import fetch_crossings
+
+    LEG, SIDE = "w_broad_st_northeast", "left"
+    model = site_models["wbroad_louellen"]
+    span = curb_station_span(model.legs[LEG], SIDE)
+    assert span is not None, f"{LEG} {SIDE} has no traced kerb, so there is no extent to shorten"
+    # Half the traced kerb, so a mark that ignores to_ft misses by ~150 ft and not by a tolerance.
+    ends_ft = float(span[0]) + (float(span[1]) - float(span[0])) / 2
+
+    def paint_ending_at(to_ft):
+        state = DesignState.from_model(model)
+        state = state.apply(AddTwoWayBikeLane(LegSide(LEG, SIDE), width_ft=8.0, buffer_ft=3.0,
+                                              constrained=True, to_ft=to_ft))
+        state = state.apply(AddBikeLaneBollards(LegSide(LEG, SIDE)))
+        with contextlib.redirect_stdout(io.StringIO()):
+            crossings = fetch_crossings(model.center_wgs84, radius_m=130)
+            scene = SceneGeometry.resolve(model, state, crossings)
+            return scene.build_paint()
+
+    full = {p.kind.name for p in paint_ending_at(None) if p.leg == LEG and p.side == SIDE}
+    assert len(full) >= 4, f"only {sorted(full)} drawn on this kerb - too little to be a facility"
+
+    overrun = {}
+    for piece in paint_ending_at(ends_ft):
+        if piece.leg != LEG or piece.side != SIDE or piece.kind.name not in full:
+            continue
+        coords = (piece.geometry.exterior.coords if piece.geometry.geom_type == "Polygon"
+                  else piece.geometry.coords)
+        stations, _offsets = station_offset_many(model.legs[LEG].centerline,
+                                                 np.asarray(coords, dtype=float))
+        past_ft = float(stations.max()) - ends_ft
+        if past_ft > 2.0:      # paint_stations' dotted grid, the same slack the check allows
+            overrun[piece.kind.name] = max(overrun.get(piece.kind.name, 0.0), past_ft)
+
+    assert not overrun, (
+        f"the lane on {LEG} {SIDE} ends at station {ends_ft:.0f} ft, but these marks carry on past "
+        f"it - a reader counting them would read protection over ground with no lane under it: "
+        + ", ".join(f"{kind} +{past:.0f} ft" for kind, past in sorted(overrun.items())))

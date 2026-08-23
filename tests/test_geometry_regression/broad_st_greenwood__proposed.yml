@@ -185,6 +185,7 @@ existing_marked_crosswalks:
 - broad_st_west
 - greenwood_ave_north
 - greenwood_ave_south
+facilities: {}
 frame:
   center_m:
   - 0.439

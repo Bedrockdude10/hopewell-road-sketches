@@ -421,27 +421,45 @@ def test_a_two_way_lane_stays_against_the_kerb_that_protects_it(site_models):
 def test_the_governing_pair_describes_a_cross_section_the_street_actually_has(site_models):
     """Both halves handed to TwoWayBikeLane must be numbers measured somewhere on the leg.
 
-    They answer different questions and bind at DIFFERENT STATIONS, which is what makes this
-    worth pinning: `near_half_ft` is the datum every kerbside mark is placed off, so it has to be
-    the near kerb's own minimum or the section overruns the kerb where it pinches; `near + far` is
-    what TwoWayBikeLane refuses on, so it has to be the smallest travel way anywhere on the run.
-    Each of the two obvious single answers fails one of those, and both failures shipped:
+    They answer different questions and bind at DIFFERENT STATIONS, and each side's own minimum
+    is the answer to both. `near_half_ft` is the datum every kerbside mark is placed off, so it
+    has to be the near kerb's own minimum or the section overruns the kerb where it pinches.
+    `far_half_ft` is what the opposing travel lane is measured against, so it has to be the far
+    kerb's own minimum or the divider is placed on width that kerb does not have.
 
-    - the min-SUM station's own near half put w_broad_st_northeast's outer edge line 0.84 ft
-      inside its own floor at station 35.8, laying 4.9 sq ft of white stripe on the green;
-    - each side's own minimum independently pairs a near pinch with a far pinch that are hundreds
-      of feet apart and describes a cross-section that exists nowhere on the street.
+    THE SUM IS THE TRAP, AND IT SHIPPED. This returned `min(near + far) - min(near)` for one
+    session, on the argument that the two kerbs pinch at different stations so pairing their
+    minima describes a cross-section that exists nowhere. That is true of the STREET and false of
+    the DRAWING: the section's inner edge is held on the alignment at `min(near) - section_ft`
+    (place.py, lane_edge_line - only the lane's own two edges hug the kerb), so where the near
+    kerb runs wider than its minimum the surplus is drawn as bike-lane hatching on THAT kerb and
+    never reaches the travel way. The drawn travel way is `min(near) - section_ft + far(s)`, whose
+    minimum over the leg is exactly the two independent minima. Crediting it with the sum
+    promoted w_broad_st_northeast from the constrained rung to the full one and put the divider
+    9.45 ft toward a far kerb that pinches to 17.30 ft - a 7.88 ft travel lane on a rural
+    arterial with trucks, at 49 of 67 stations, drawn and shipped.
 
-    The third assertion is the one that keeps the second honest. If the two kerbs pinched at the
-    same station everywhere, min(near + far) would equal min(near) + min(far) and this test could
-    not fail - SKILLS 0a's rule about a check that cannot fail, applied to the check itself.
+    MEASURED OVER THE BOTH-TRACED STRETCH, NOT OVER THE LEG, so neither half equals
+    `narrowest_half_width_ft` on the same side and asserting that they do is a false
+    equivalence - it fails by 5.59 ft on louellen_st_west, whose far kerb is traced well past
+    where the near one stops. travel_way_profile clips to the intersection of the two spans
+    because outside it one of the two numbers is an extrapolation of a kerb nobody traced, and
+    that clip is the whole reason the pair is a cross-section at all.
+
+    The last assertion is what keeps the second honest. Where the two kerbs pinch at the same
+    station, min(near) + min(far) equals min(near + far) and this test cannot tell the two rules
+    apart - SKILLS 0a's rule about a check that cannot fail, applied to the check itself.
     """
 
-    from src.geometry.model import narrowest_half_width_ft
     from src.geometry.treatments.bikeways import governing_half_widths_ft, travel_way_profile
 
     TOL_FT = 0.01
-    swept, understated = 0, []
+    # COLLECTED AND REPORTED WORST-FIRST rather than asserted per leg-side. Asserted in the loop,
+    # the min-sum rule failed this on louellen_st_west by 0.02 ft and pytest stopped there, so the
+    # message quoted a two-hundredth of a foot for a defect that is 2.44 ft on
+    # w_broad_st_northeast - a refusal whose measurement is not the binding one, which is the
+    # mistake SKILLS 0a is about.
+    swept, unmeasured, distinguishing = 0, [], []
     for site in ("wbroad_louellen", "broad_st_greenwood", "ebroad_princeton"):
         model = site_models[site]
         for leg_name, leg in model.legs.items():
@@ -454,24 +472,28 @@ def test_the_governing_pair_describes_a_cross_section_the_street_actually_has(si
                 where = f"{site} {leg_name} {side}"
                 swept += 1
 
-                assert near == pytest.approx(float(near_ft.min()), abs=TOL_FT), (
-                    f"{where}: the section's near datum is {near:.2f} ft while this kerb comes in "
-                    f"to {float(near_ft.min()):.2f} ft - paint placed off it would be drawn "
-                    f"outside the kerb by {near - float(near_ft.min()):.2f} ft somewhere")
-                assert near + far == pytest.approx(float((near_ft + far_ft).min()), abs=TOL_FT), (
-                    f"{where}: the pair totals {near + far:.2f} ft between kerbs, which is not "
-                    f"the {float((near_ft + far_ft).min()):.2f} ft the street measures at its "
-                    f"narrowest - the travel lanes would be sized off a width nowhere on the leg")
+                for half, measured, name in ((near, float(near_ft.min()), "near"),
+                                             (far, float(far_ft.min()), "far")):
+                    if abs(half - measured) > TOL_FT:
+                        unmeasured.append((abs(half - measured), name, where, half, measured))
 
-                independent = (narrowest_half_width_ft(leg, side)
-                               + narrowest_half_width_ft(leg, "right" if side == "left" else "left"))
-                if (near + far) - independent > 0.5:
-                    understated.append(f"{where}: {independent:.2f} -> {near + far:.2f} ft")
+                min_sum = float((near_ft + far_ft).min())
+                if min_sum - (near + far) > 0.5:
+                    distinguishing.append(f"{where}: {near + far:.2f} vs min-sum {min_sum:.2f} ft")
 
     assert swept >= 6, f"only {swept} leg-sides had both kerbs traced - the sweep lost legs"
-    assert understated, (
-        "no leg's two kerbs pinch far enough apart for the governing pair to differ from the two "
-        "minima taken separately, so the assertion above pins nothing on this data")
+    unmeasured.sort(reverse=True)
+    assert not unmeasured, (
+        "the governing pair is not measured on the kerb it names, worst first:\n  "
+        + "\n  ".join(
+            f"{where}: the {name} half is {half:.2f} ft while that kerb comes in to "
+            f"{measured:.2f} ft - {off:.2f} ft the kerb does not have, and on the far side the "
+            f"opposing travel lane pays for all of it"
+            for off, name, where, half, measured in unmeasured))
+    assert distinguishing, (
+        "no leg's two kerbs pinch far enough apart for the two minima to differ from the sum's "
+        "minimum, so this test cannot tell the current rule from the one that shipped a 7.88 ft "
+        "travel lane, and the assertion above pins nothing on this data")
 
 
 @needs_source_data

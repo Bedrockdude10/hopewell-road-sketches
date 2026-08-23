@@ -194,7 +194,7 @@ scripts/
   export_all_scenarios.py  Every scenario through export_scenario, into a directory
   diff_exports.py          Diff two such directories key by key - says WHAT changed
   measure_drawn.py         What was actually DRAWN, stationed against each leg's centreline;
-                           --all adds the section, limiter, gap and continuity reports
+                           --all adds the section, limiter, gap, lane-width and continuity reports
   whatis.py                What is this symbol? Signature, docstring line, and how callers actually use it
   corridor_report.py       The corridor questions, with the coverage of every answer beside them
   corridor_render.py       A straightened strip plan of one corridor, on stacked panels

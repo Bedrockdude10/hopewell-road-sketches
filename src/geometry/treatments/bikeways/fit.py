@@ -191,19 +191,41 @@ def governing_half_widths_ft(leg, side: str, from_ft: float = 0.0, to_ft: float 
     markings_collide, fatal. The floor in AddBikeLane.paint holds each mark to its designed offset
     and the green to a band off the kerb, and those two rules only agree while the section fits.
 
-    WHAT IS LEFT FOR THE TRAVEL LANES is the smallest SUM, because that is the quantity
-    TwoWayBikeLane refuses on (near + far - section) and the two kerbs pinch at different stations.
-    Taking each side's own minimum - what this did before - pairs a near pinch at station 40 with a
-    far pinch at station 300 and describes a cross-section that exists nowhere: it understates W
-    Broad's northeast approach by 2.45 ft, enough to drop it from the full rung to the constrained
-    one. corridor_paint._collect has always measured the sum at one station; the per-approach
-    placement did not, and that is the second definition of one rule that SKILLS 0 is about.
+    WHAT IS LEFT FOR THE TRAVEL LANES is the FAR kerb's OWN minimum, and the smallest SUM is the
+    trap. min(near + far) is what the STREET measures at its narrowest cross-section, and on
+    w_broad_st_northeast that is 2.44 ft more than the travel way ever gets: the section's inner
+    edge is held on the alignment at `min(near) - section_ft`, because the travel lane's edge
+    always comes off the alignment so the lane holds its width whatever the kerb does (place.py,
+    lane_edge_line - only the lane's OWN two edges hug the kerb). So where the near kerb runs
+    wider than its own minimum the surplus is drawn as bike-lane hatching on THAT kerb and never
+    reaches the travel way. The drawn travel way is `min(near) - section_ft + far(s)`, whose
+    minimum over the leg is exactly the two independent minima.
 
-    SO THE FAR HALF RETURNED IS NOT A KERB READING. It is the far half-width the binding travel way
-    implies, min(near + far) - min(near), which is the only way one pair can answer both questions
-    at once. Sound because far_half_ft is never read alone: the travel way, the far-kerb surplus
-    and the between-kerbs figure are all near + far minus constants, so referring the far half to
-    the near minimum leaves every one of them exact while the near datum stays a measurement.
+    THIS RETURNED min(near + far) - min(near) FOR ONE SESSION and the receipt is the point. It
+    credited that approach with a travel way it does not have, promoted it from the constrained
+    rung to the full one, and put the divider 9.45 ft toward a far kerb that pinches to 17.30 ft
+    at station 48 - a 7.88 ft travel lane on a rural arterial carrying trucks, at 49 of 67
+    stations. Nothing in the repo could see it: all three travel-lane checks either need kerbside
+    PAINT to fire or clamp what a lane is entitled to AT the traced kerb, so a lane squeezed by a
+    bare kerb could not fail one. ShiftedTravelLanesClearTheirKerb now closes that, and this
+    arithmetic is what stops needing it.
+
+    A near pinch at station 40 and a far pinch at station 300 DO describe a cross-section that
+    exists nowhere - the objection that motivated the sum was right about the street and wrong
+    about the drawing. With a constant-width section on one datum and a straight divider, neither
+    kerb's slack is reachable from the other, so here the conservative pair is also the exact one.
+
+    AND `to_ft` BOUNDS THE NEAR SIDE ONLY, because the two kerbs bound two different drawings.
+    The facility stops where the reach stops; the DIVIDER it implies does not - a centre stripe is
+    one offset per approach and it is drawn to the end of the leg whatever the green does. So a far
+    minimum taken over the run measures the wrong stretch of kerb, and the tail pays: on a 3x
+    w_broad_st_southwest the run stopped at 371.5 ft where the far kerb holds 15.95 ft, the leg
+    runs to 389.9 where it comes in to 15.65, and the 0.30 ft went straight out of a travel lane
+    already at its floor - a 9.65 ft lane under a design claiming 9.95, at 8 of 196 stations, with
+    nothing in the arithmetic that had looked. Measuring the far kerb over the whole leg costs
+    33.9 ft of that approach's protected lane and buys a divider that holds everywhere it is
+    drawn. It changes nothing at 1x or 2.5x, where every corridor approach reaches the end of its
+    kerb and the two stretches are the same stretch.
 
     Falls back to each side's own minimum where there is nothing traced to measure, which is
     narrowest_half_width_ft's nominal answer - no measurement, so no reason to prefer a pairing.
@@ -213,6 +235,7 @@ def governing_half_widths_ft(leg, side: str, from_ft: float = 0.0, to_ft: float 
         other = "right" if side == "left" else "left"
         return (narrowest_half_width_ft(leg, side, from_ft, to_ft),
                 narrowest_half_width_ft(leg, other, from_ft, to_ft))
-    _stations, near_ft, far_ft = profile
-    near = float(near_ft.min())
-    return near, max(float((near_ft + far_ft).min()) - near, 0.0)
+    _stations, near_ft, _far_over_the_run = profile
+    whole_leg = travel_way_profile(leg, side)
+    far_ft = _far_over_the_run if whole_leg is None else whole_leg[2]
+    return float(near_ft.min()), float(far_ft.min())

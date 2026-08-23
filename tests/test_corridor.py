@@ -29,7 +29,7 @@ from shapely.geometry import Point
 from scripts.corridor_report import Coverage, Figure, corridor_report
 from src.geometry.network import (KERB_FROM_TRACING, corridor_facts, corridors_from_models,
                                  marked_parking_capacity, osm_window_spans)
-from tests.conftest import needs_source_data
+from tests.conftest import WIDE_FRAME_SCALE, needs_source_data
 from tests.test_network import AGREEMENT_TOL_FT, _leg_width_at
 
 # The three sites this project models on Broad St / CR 518. Columbia & Princeton is deliberately in
@@ -538,17 +538,26 @@ def test_a_station_that_refuses_the_section_costs_the_tail_and_not_the_approach(
     sampled stations held the section on the 3x sheet, station 363.6 was 0.0036 ft per travel lane
     short, and the approach went bare - so the reader got a corridor that arrives at the junction
     and stops, and nothing in the drawing said why. Asked per station instead, the same leg carries
-    a protected lane for 324 of its 335 traced feet and REFUSES the tail by name.
+    a protected lane for 283 of its 335 traced feet and REFUSES the tail by name.
 
     A REFUSAL IS AN OUTPUT, NOT A PRINT STATEMENT, which is the second half of this. The span, the
     reason and the measurement go on the design (DesignState.refuse) because
     BikewayReachesTheEndOfItsKerb is fatal and has to tell a stretch that was measured and
     declined from one the paint quietly stopped on - and it cannot read stdout.
 
-    Driven with a ONE-RUNG ladder, because the real ladder's job is to make this rare: given a
-    fallback rung the facility takes a narrower section over the whole leg rather than a wide one
-    over part of it, which is the last assertion here and the reason nothing in production carries
-    a shortened lane today.
+    Driven with a ONE-RUNG ladder, because the real ladder's job is to make this rare: the
+    step-down buys length rather than trading it, and on this sheet the full rung stops at 285.8 ft
+    where the constrained one carries to 337.6 of the kerb's 54.4-389.9.
+
+    THE LAST ASSERTION HERE USED TO BE THAT THE LADDER COVERED THE WHOLE LEG, which held only
+    while the travel way was measured as min(near + far) - a figure that credits the lanes with
+    room the drawing spends on bike-lane hatching at the OTHER kerb, see
+    governing_half_widths_ft. Measured as drawn, the last 50.2 ft of this 3x leg is 0.06 ft per
+    lane under the floor, so the ladder refuses a tail here too - 16.3 ft of that once fitted and
+    lost to the same function's second rule, that the far kerb is measured over the whole leg
+    because the divider is DRAWN over the whole leg. Nothing in the drawing refuses anything:
+    all six corridor approaches take the ladder over their whole kerb at 1x and at 2.5x, pinned in
+    test_no_approach_in_the_drawing_carries_a_shortened_facility.
     """
     from src.geometry.model import curb_station_span
     from src.geometry.treatments import BROAD_ST_TWO_WAY_BIKEWAY, DesignState
@@ -603,13 +612,76 @@ def test_a_station_that_refuses_the_section_costs_the_tail_and_not_the_approach(
     assert f"{tail.narrowest_ft:.2f}" in tail.reason, (
         f"the reason should quote the width that stopped it: {tail.reason}")
 
-    # AND THE LADDER COMES FIRST. Given somewhere to step down to, the same leg keeps its whole
-    # length: a narrower section over all of it beats the full section over three quarters.
+    # AND THE LADDER BUYS LENGTH, which is what a rung below is for: a narrower section covers at
+    # least as much street as the wider one it stands in for, never less. Anything it still cannot
+    # reach is refused by name, on the same terms as the tail above.
     laddered = DesignState.from_model(model)
     with contextlib.redirect_stdout(io.StringIO()):
         ladder_reach, ladder_refused = BROAD_ST_TWO_WAY_BIKEWAY._reach_on(laddered, LEG, SIDE)
-    assert (ladder_reach, ladder_refused) == (None, None), (
-        f"the real ladder shortened this leg to {ladder_reach} instead of taking a narrower rung "
-        f"over all of it - a rung is a width and an extent is not negotiable the same way")
-    assert not laddered.facility_refusals, (
-        f"nothing should have been refused on a leg the ladder covers: {laddered.facility_refusals}")
+    assert ladder_refused is None, (
+        f"the ladder gave up the whole approach where a single rung carried {reach_ft:.0f} ft of "
+        f"it, so stepping down cost this leg its facility instead of extending it: {ladder_refused}")
+    assert ladder_reach is None or ladder_reach > reach_ft, (
+        f"the ladder reached {ladder_reach:.1f} ft against the single rung's {reach_ft:.1f} - a "
+        f"narrower section cannot cover less street than a wider one, so the rung here was chosen "
+        f"by something other than what fits")
+    ladder_refusals = laddered.refusals_on(LEG, SIDE)
+    if ladder_reach is None:
+        assert not ladder_refusals, (
+            f"the ladder covered the whole kerb and refused part of it anyway: {ladder_refusals}")
+    else:
+        assert (len(ladder_refusals) == 1
+                and ladder_refusals[0].end_ft >= float(span[1]) - 1e-6), (
+            f"the ladder stopped at {ladder_reach:.1f} ft of a kerb traced to {span[1]:.1f} ft and "
+            f"the bare tail is not covered by one refusal: {ladder_refusals}")
+
+
+@needs_source_data
+def test_no_approach_in_the_drawing_carries_a_shortened_facility(site_models, wide_site_models):
+    """A tail refusal is a legal output, and on the sheets the drawing uses there are none.
+
+    The reach is a measurement, so it CAN come in short, and TwoWayBikeway._reach_on records the
+    span, the reason and the width when it does - because BikewayReachesTheEndOfItsKerb is fatal
+    and has to tell a stretch that was measured and declined from one the paint quietly stopped
+    on. That is the escape valve; this is what stops it becoming a licence. An extent that moves
+    is the bug class (SKILLS 0b), so the published claim is that every approach carrying the
+    facility carries it to the end of its traced kerb, asserted per approach rather than as one
+    number for the borough.
+
+    HAS TEETH ON REAL DATA: the same sweep at 3x reports w_broad_st_southwest reaching 371.5 ft of
+    a kerb traced to 389.9, the pinch
+    test_a_station_that_refuses_the_section_costs_the_tail_and_not_the_approach is built on. So
+    this is a property of these two sheets, not of arithmetic that cannot fail.
+
+    BOTH FIXTURES, because a leg is 2.5x longer on the wide one and that is 2.5x as much street to
+    find a pinch in - W Broad's southwest approach reaches its 16.58 ft pinch only there.
+    """
+    from src.geometry.model import curb_station_span, side_facing
+    from src.geometry.treatments import BROAD_ST_TWO_WAY_BIKEWAY, DesignState
+
+    carrying, swept, short = 0, 0, []
+    for sheet, models in (("1x", site_models), (f"{WIDE_FRAME_SCALE}x", wide_site_models)):
+        for site, model in sorted(models.items()):
+            for leg_name in BROAD_ST_TWO_WAY_BIKEWAY.legs_on(model):
+                try:
+                    side = side_facing(model.legs[leg_name], BROAD_ST_TWO_WAY_BIKEWAY.side)
+                except ValueError:
+                    continue        # a stem meeting the route square on has no kerb on this side
+                swept += 1
+                state = DesignState.from_model(model)
+                with contextlib.redirect_stdout(io.StringIO()):
+                    reach_ft, refused = BROAD_ST_TWO_WAY_BIKEWAY._reach_on(state, leg_name, side)
+                if refused is not None:
+                    continue        # carries nothing here, and says why - a different property
+                carrying += 1
+                if reach_ft is None:
+                    continue        # the whole traced kerb, which is the answer being asserted
+                span = curb_station_span(model.legs[leg_name], side)
+                end_ft = reach_ft if span is None else float(span[1])
+                short.append(f"{sheet} {site} {leg_name} {side}: reaches {reach_ft:.1f} ft of a "
+                             f"kerb traced to {end_ft:.1f} ft")
+    assert carrying >= 12, (
+        f"only {carrying} of {swept} corridor approaches carried the facility at all, so "
+        f"'none of them stops short' is measuring almost nothing")
+    assert not short, ("an approach in the drawing carries a facility that stops short of its own "
+                       "kerb:\n  " + "\n  ".join(short))

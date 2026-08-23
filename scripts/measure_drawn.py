@@ -6,12 +6,13 @@
     .venv/bin/python scripts/measure_drawn.py wbroad_louellen --frame-scale 2.5
     .venv/bin/python scripts/measure_drawn.py broad_st_greenwood --scenario X --all
 
---all adds the other four questions SKILLS.md 0a says answer most complaints, so that answering
+--all adds the other five questions SKILLS.md 0a says answer most complaints, so that answering
 one never means writing a throwaway script or cropping a render:
 
     --section     what each treatment THINKS it placed, beside the room the traced kerb gives
     --limiters    all four things that decide where kerbside paint starts, not the first one
     --gaps        kerb offset minus outermost drawn offset, station by station
+    --lanes       how wide the drawn travel lane is - drawn stripe to innermost drawn marking
     --continuity  whether a facility is one piece, and how wide the holes are
 
 Two of those exist to print a number that CANNOT BE RECONSTRUCTED from the constants you think
@@ -55,12 +56,14 @@ from src.geometry.model.corners import corner_tangent_station_ft
 from src.geometry.model.leg_frame import (curb_offsets_at_stations, curb_station_span,
                                           leg_clearance_ft, narrowest_half_width_ft)
 from src.geometry.paint import junction_mouths_ft
-from src.geometry.treatments.base import kerbside_allowance_ft
+from src.geometry.targets import BOTH_SIDES
+from src.geometry.treatments.base import TARGET_LANE_WIDTH_FT, kerbside_allowance_ft
 from src.render.crosswalks import crosswalk_reach_on_leg_side_ft
 from src.geometry.treatments import DesignState
 from src.render.export import (BUILDING_CONTEXT_RADIUS_M, KERB_RADIUS_M,
                                TRAFFIC_CONTROL_RADIUS_M)
 from src.render.frame import FRAME_SCALE_ENV
+from src.render.coords import FT_TO_M
 from src.render.props import build_props
 from src.render.scene import SceneGeometry
 from src.site import list_sites, load_site_scenarios, run_scenario
@@ -271,16 +274,8 @@ def report_gaps(built: Built, leg_filter: str | None, kind_filter: str | None,
                       f"{bin_ft:.0f} ft bin along the leg - widen --bin)")
                 continue
             gap = np.abs(kerb) - reach
-            runs, start = [], None
-            for i, value in enumerate(gap):
-                over = bool(value > threshold_ft)  # NaN compares false: an empty bin ends a run
-                if over and start is None:
-                    start = i
-                elif not over and start is not None:
-                    runs.append((start, i - 1))
-                    start = None
-            if start is not None:
-                runs.append((start, len(gap) - 1))
+            # NaN compares false, so an empty bin ends a run rather than extending it.
+            runs = _runs(gap > threshold_ft)
             if not runs:
                 print(f"{name:22s} {side:6s}  within {threshold_ft:.1f} ft of the kerb "
                       f"wherever there is paint (max gap {np.nanmax(gap):.2f} ft over "
@@ -290,6 +285,180 @@ def report_gaps(built: Built, leg_filter: str | None, kind_filter: str | None,
                 f"{edges[a]:.1f}-{edges[b]:.1f} ft: {gap[a]:.2f}->{gap[b]:.2f} "
                 f"(max {np.nanmax(gap[a:b + 1]):.2f})" for a, b in runs)
             print(f"{name:22s} {side:6s}  {described}")
+
+
+def _bin_stat(edges: np.ndarray, bin_ft: float, station: np.ndarray, value: np.ndarray,
+              reduce) -> np.ndarray:
+    """`reduce` over the values landing in each bin, NaN where a bin holds nothing.
+
+    The NaN is produced by hand because the obvious spelling does not work:
+    `np.max(..., initial=np.nan)` folds the initial value INTO the reduction, so every bin comes
+    out NaN, every comparison against a threshold comes out false, and a profile reports
+    "flush the whole way" having measured nothing. A quantitative check that cannot see
+    anything has to say so, not pass.
+    """
+    return np.array([
+        (lambda inside: reduce(value[inside]) if inside.any() else np.nan)(
+            (station >= lo) & (station < lo + bin_ft))
+        for lo in edges])
+
+
+def _runs(mask: np.ndarray) -> list[tuple[int, int]]:
+    """The [start, end] index pairs of each contiguous True run in `mask`."""
+    runs, start = [], None
+    for i, flag in enumerate(mask):
+        if flag and start is None:
+            start = i
+        elif not flag and start is not None:
+            runs.append((start, i - 1))
+            start = None
+    return runs + ([(start, len(mask) - 1)] if start is not None else [])
+
+
+def _longitudinal_on(built: Built, leg, leg_name: str, side: str
+                     ) -> tuple[np.ndarray, np.ndarray, set[str]] | None:
+    """(station, |offset|) of the drawn paint that RUNS ALONG this leg-side, and its kinds.
+
+    Longitudinal is decided by extent rather than by name: a piece counts when it reaches
+    further along the leg than it does across it. A name list would have to be extended by hand
+    for every new kerbside marking and would silently omit it until someone remembered - the
+    hole POLYLINE_CHANNELS had. Measured, a stop bar and a stall divider (a couple of feet of
+    station against several feet of offset) drop out on their own, and a taper stays in, which
+    is right: where a taper runs, the taper IS the lane's edge.
+
+    THE OFFSET RETURNED IS THE PAINT'S INNER FACE, not its axis, and only for a stroked LINE -
+    a FILL or a COLOUR travels as its own polygon, so its boundary already IS its face. This
+    project sizes kerbside treatments so the stripe's own width comes out of the TREATMENT and
+    not out of the lane (checks.PaintClearOfTheTravelLane says so in as many words), which puts
+    a stripe's axis half a width outboard of the lane it bounds. Measured axis to axis, every
+    designed lane at all five sites reads 11.41 ft and compares false against an 11.00 ft
+    target - one number, reported 92 times as a defect.
+    """
+    stations, offsets, kinds = [], [], set()
+    for piece in built.paint:
+        if piece.leg != leg_name or piece.side != side or piece.kind.is_object:
+            continue
+        station, offset = station_offset_many(leg.centerline, piece_coords(piece.geometry))
+        if np.ptp(station) <= np.ptp(np.abs(offset)):
+            continue
+        stroke_m = piece.kind.channel.stroke_width_m if piece.kind.is_line else None
+        kinds.add(piece.kind.name)
+        stations.append(station)
+        offsets.append(np.abs(offset) - (stroke_m or 0.0) / FT_TO_M / 2)
+    if not stations:
+        return None
+    return np.concatenate(stations), np.concatenate(offsets), kinds
+
+
+def report_lanes(built: Built, leg_filter: str | None, bin_ft: float) -> None:
+    """How wide the DRAWN travel lane is on each side of each leg, station by station.
+
+    "Every travel lane is exactly 11.00 ft" is this repo's canonical wrong answer: it was
+    computed from the section while the drawn centreline sat 2.84 ft off the alignment, so one
+    lane was 8.16 ft. Both bounds here are therefore read off the drawing.
+
+    THE INNER BOUND IS THE STRIPE THE VIEWS ACTUALLY PAINT, through the same
+    centerline_paint_ft call src/render/export.py and the plan view make, shift and all. Neither
+    the alignment (the bug above) nor divider_shift_toward_ft, which would be the second
+    derivation of one number that every serious defect here has turned out to be. A leg drawn
+    with no centre stripe has no drawn inner bound at all: the row says `stripe=none` and
+    measures from the alignment, because an undivided road has no lane to measure, only a
+    half-road.
+
+    THE OUTER BOUND IS THE INNERMOST LONGITUDINAL MARKING, or the traced kerb where there is
+    none - and the `by` column names which, because the two answers mean opposite things. A lane
+    held in by paint is this design's decision. A lane held in by the kerb is the street being
+    narrow, which W Broad's north-east approach is: 7.2 ft from the alignment to its right kerb,
+    and no 11 ft lane there to protect.
+
+    From the divider's axis out to the bounding paint's INNER FACE - see _longitudinal_on for
+    why the face and not the axis. That makes the figure directly comparable with
+    TARGET_LANE_WIDTH_FT and with what checks.PaintClearOfTheTravelLane enforces. The asphalt a
+    driver gets is narrower still by half the centre stripe, which is a constant across every
+    leg here and so not what any of these rows are about.
+    """
+    from src.render.crosswalks import centerline_paint_ft, centerline_start_ft
+
+    state, scene = built.state, built.scene
+    print(f"\n{'leg':22s} {'side':6s} {'stripe':>7s} {'min':>7s} {'med':>7s} {'max':>7s} "
+          f"{'bins':>5s}  under {TARGET_LANE_WIDTH_FT:.2f} ft")
+    for leg_name, leg in sorted(built.model.legs.items()):
+        if leg_filter and leg_name != leg_filter:
+            continue
+        style = state.centerline_style(leg_name)
+        stripes = centerline_paint_ft(
+            leg,
+            centerline_start_ft(scene.crosswalk_offsets[leg_name].offset_ft,
+                                scene.stop_bar_offsets.get(leg_name),
+                                leg_name in scene.marked_crosswalks),
+            style,
+            *(state.travel_lane_divider_shift(leg_name) or (0.0, None)))
+        edges = np.arange(0.0, leg.centerline.length + bin_ft, bin_ft)
+        if stripes:
+            # EACH STRIPE BINNED SEPARATELY AND THEN AVERAGED, because a double yellow is two
+            # stripes 0.33 ft apart and they are separate LineStrings with vertices at their own
+            # stations. Pooling the vertices and taking one mean lets an uneven count inside a bin
+            # weight one stripe over the other, which wobbled a constant-offset divider by 0.04 ft
+            # and put that wobble into the lane width - a measurement artefact reported as a
+            # varying lane.
+            # AND A BIN THAT ONE STRIPE REACHES AND THE OTHER DOES NOT IS NOT A MEASUREMENT OF THE
+            # DIVIDER. nanmean read such a bin as the single stripe it could see, which put a
+            # double yellow lying dead on the alignment 0.164 ft off centre: princeton_ave_north
+            # reported a 10.84 ft lane against an 11.16 ft one, off two vertices a float either
+            # side of one bin edge. A plain mean propagates the NaN and the interpolation below
+            # then reads the drawn line through the hole, which is what the dashed case needed
+            # anyway - so a bin no stripe reaches, or only half of one does, says nothing rather
+            # than saying something wrong.
+            divider = np.mean([
+                _bin_stat(edges, bin_ft,
+                          *station_offset_many(leg.centerline,
+                                               np.asarray(line.coords, dtype=float)), np.mean)
+                for line in stripes], axis=0)
+            # A DASHED STRIPE LEAVES EMPTY BINS AND THE LINE STILL RUNS THROUGH THEM. The divider
+            # is one continuous line that happens to be painted in dashes, so interpolating
+            # between two dashes reads the drawn line rather than inventing it. Outside the
+            # painted extent it stays NaN, because there the drawing really does show no divider:
+            # the centreline stops at the stop bar and does not cross the junction.
+            seen = np.flatnonzero(np.isfinite(divider))
+            if seen.size:
+                span = slice(seen[0], seen[-1] + 1)
+                divider[span] = np.interp(edges[span], edges[seen], divider[seen])
+        else:
+            divider = np.zeros_like(edges)
+            style = "none"
+        for side in BOTH_SIDES:
+            drawn = _longitudinal_on(built, leg, leg_name, str(side))
+            # ONLY WHERE THE KERB WAS ACTUALLY TRACED. curb_offsets_at_stations interpolates, and
+            # np.interp CLAMPS outside its range rather than refusing - so every bin beyond the
+            # traced span comes back holding the kerb's last value, and a lane measured against
+            # it reports a width nobody drew. Every kerb at every site starts 12-58 ft out.
+            kerb = curb_offsets_at_stations(leg, str(side), edges)
+            traced = curb_station_span(leg, str(side))
+            if kerb is not None and traced is not None:
+                kerb = np.where((edges >= traced[0]) & (edges <= traced[1]), kerb, np.nan)
+            paint = (_bin_stat(edges, bin_ft, drawn[0], drawn[1], np.min) if drawn
+                     else np.full_like(edges, np.nan))
+            held_by_paint = np.isfinite(paint)
+            bound = np.where(held_by_paint, paint, np.abs(kerb) if kerb is not None else np.nan)
+            width = bound - divider * side.sign
+            if not np.isfinite(width).any():
+                why = ("no traced kerb and no paint running along this side" if drawn is None
+                       else "nothing drawn in any bin along this side")
+                print(f"{leg_name:22s} {side.value:6s} {style:>7s}  ({why})")
+                continue
+            under = np.isfinite(width) & (width < TARGET_LANE_WIDTH_FT - 0.01)
+            if not under.any():
+                verdict = (f"none - held in by "
+                           f"{'paint' if held_by_paint.all() else 'kerb' if not held_by_paint.any() else 'both'}")
+            else:
+                worst = int(np.nanargmin(np.where(under, width, np.nan)))
+                verdict = (f"{int(under.sum())} of {int(np.isfinite(width).sum())} bins, worst "
+                           f"{width[worst]:.2f} ft at station {edges[worst]:.0f} "
+                           f"({'paint' if held_by_paint[worst] else 'kerb'}) over "
+                           + "; ".join(f"{edges[a]:.0f}-{edges[b]:.0f} ft" for a, b in _runs(under)))
+            print(f"{leg_name:22s} {side.value:6s} {style:>7s} {np.nanmin(width):7.2f} "
+                  f"{np.nanmedian(width):7.2f} {np.nanmax(width):7.2f} "
+                  f"{int(np.isfinite(width).sum()):5d}  {verdict}")
 
 
 def report_continuity(built: Built, kind_filter: str | None) -> None:
@@ -380,10 +549,13 @@ def main() -> int:
                         help="all four things deciding where kerbside paint starts")
     parser.add_argument("--gaps", action="store_true",
                         help="kerb offset minus outermost drawn offset, station by station")
+    parser.add_argument("--lanes", action="store_true",
+                        help="how wide the drawn travel lane is, from the drawn stripe out to "
+                             "the innermost drawn marking (or the kerb)")
     parser.add_argument("--continuity", action="store_true",
                         help="whether a facility is one piece, and how wide the holes are")
     parser.add_argument("--bin", type=float, default=10.0, metavar="FT",
-                        help="station bin for --gaps (default 10)")
+                        help="station bin for --gaps and --lanes (default 10)")
     parser.add_argument("--gap-threshold", type=float, default=1.0, metavar="FT",
                         help="a gap under this is flush, for --gaps' runs (default 1.0)")
     parser.add_argument("--frame-scale", type=float, default=1.0,
@@ -403,7 +575,8 @@ def main() -> int:
               f"{', '.join(scenarios_for(args.site))}", file=sys.stderr)
         return 2
     built = build(args.site, args.scenario)
-    reports = (args.section, args.limiters, args.gaps, args.continuity)
+    reports = (args.section, args.limiters, args.gaps, args.lanes,
+               args.continuity)
     if args.paint or args.all or not any(reports):
         report(built.model, built.paint, args.leg, args.kind)
     if args.all or args.section:
@@ -412,6 +585,8 @@ def main() -> int:
         report_limiters(built, args.leg, args.kind)
     if args.all or args.gaps:
         report_gaps(built, args.leg, args.kind, args.bin, args.gap_threshold)
+    if args.all or args.lanes:
+        report_lanes(built, args.leg, args.bin)
     if args.all or args.continuity:
         report_continuity(built, args.kind)
     return 0

@@ -64,16 +64,24 @@ def site_models():
     return models
 
 
-# The frame scale output/ is actually drawn at - `build_all.py --frame-scale 2.5`, which is what
-# every render under output/ was built with. Here rather than in one test module because five of
-# them need it now: anything about a feature PAST the modelled junction - a cross street, its kerb
-# opening, its crosswalks - is invisible at 1x, so a test that forgets to widen the frame passes
-# having checked nothing.
+# A SECOND, WIDER SHEET for the five test modules that need one. Anything about a feature PAST the
+# modelled junction - a cross street, its kerb opening, its crosswalks - is invisible at 1x, so a
+# test that forgets to widen the frame passes having checked nothing.
 #
-# IT IS THE RENDER'S SCALE OR IT IS WORTH LITTLE. This was 2.2 while output/ was drawn at 2.5, and
-# a fixture near the render is not the render: a leg is 41 ft longer at 2.5x, which is where W
-# Broad's kerb pinch to 16.58 ft lies, and every test on this fixture was measuring a sheet nobody
-# looks at. Two other modules had already written 2.5 as their own constant to get the real frame.
+# NEAR THE RENDER IS NOT THE RENDER, which is why this is one constant and not a number per module:
+# it was 2.2 while output/ was drawn at 2.5, and a leg is 41 ft longer at 2.5x, which is where W
+# Broad's kerb pinch to 16.58 ft lies - so every test on the 2.2 fixture was measuring a sheet
+# nobody looks at.
+#
+# AND IT IS NO LONGER output/'s SCALE. `build_all.py --frame-scale` takes it on the command line and
+# the committed renders are 3x (legs 387-390 ft against 130 ft at 1x), so the honest reading of the
+# rule above is 3.0. It is 2.5 because raising it fails two tests that are their own piece of work,
+# neither about the corridor: test_every_traced_crossing_inside_the_frame_is_returned hardcodes
+# 431.2 ft, which IS this constant times a 1x radius and should be derived from it; and
+# test_an_intersecting_approach_gets_no_driveway_apron finds ebroad_princeton's
+# princeton_ave_south/right reaching `driven` but not `intersection_mouths` - a real gap that only
+# a sheet wide enough to pull that cross street in can see. Both are the frame-keyed coupling the
+# network model is meant to delete; see docs/network-model.md.
 WIDE_FRAME_SCALE = 2.5
 
 

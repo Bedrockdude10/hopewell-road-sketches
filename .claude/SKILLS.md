@@ -21,6 +21,7 @@ agreement with each other and not with the picture. In one session:
 |---|---|
 | "every travel lane is exactly 11.00 ft" — computed from the section | the drawn centreline was 2.84 ft away, so a lane was 8.16 ft |
 | flex posts sit in the buffer — computed from the declared cross-section | 30 posts were drawn inside the bike lane |
+| "34.40 ft between kerbs at its narrowest" — the least `near + far` over the leg | the section is a constant off the least `near`, so the travel way got 32.01 ft and one lane 7.93 ft — see `governing_half_widths_ft` |
 | the label says 9.6 ft so the geometry is wrong | the geometry was right; the *label* used the wrong datum |
 
 So: after any change to geometry, **build the thing and measure the drawn coordinates** —
@@ -61,6 +62,7 @@ those wrong answers were about `w_broad_st_northeast` when the complaint was abo
 | `--section` | what the treatment THINKS it placed, against the room the kerb gives | `section(state).offsets_from_centerline_ft()`, `narrowest_half_width_ft` |
 | `--limiters` | all four things deciding where kerbside paint starts | see the table below |
 | `--gaps` | kerb offset minus outermost drawn offset, station by station | `curb_offsets_at_stations`, `curb_station_span` |
+| `--lanes` | how wide the DRAWN travel lane is, and whether paint or the kerb holds it in | `centerline_paint_ft`, `curb_offsets_at_stations` |
 | `--continuity` | whether a facility is one piece, and how wide the holes are | `unary_union` |
 
 Reach for the flag before the render. Each one exists because a session guessed that answer from

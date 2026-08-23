@@ -21,8 +21,9 @@ render inside the loop is a round trip that cannot answer the question you asked
   quantitative layer: what is drawn stationed against the centreline, plus `--section` (what
   the treatment thinks it placed vs the room the kerb gives), `--limiters` (all four things
   deciding where kerbside paint starts), `--gaps` (kerb minus outermost paint, station by
-  station) and `--continuity` (is the facility one piece, how wide are the holes). Narrow with
-  `--leg`/`--kind`; measure at the reader's `--frame-scale`, not at 1x.
+  station), `--lanes` (the drawn centre stripe to the innermost drawn marking, which is the only
+  honest way to ask "is this lane 11 ft") and `--continuity` (is the facility one piece, how wide
+  are the holes). Narrow with `--leg`/`--kind`; measure at the reader's `--frame-scale`, not at 1x.
 - **`scripts/verify.py` before you report done.** One command for the whole loop: exports the
   working tree and `--base` side by side, diffs them, runs the suite, and reports failures as
   NEW / KNOWN / FIXED against a recorded baseline. `--no-tests` is ~22 s, `--no-tests --site

@@ -525,13 +525,13 @@ class AddTwoWayBikeLane(AddBikeLane):
     def section(self, state: "DesignState") -> TwoWayBikeLane:
         """The section as this leg's own kerbs make it, over the span this lane occupies.
 
-        AT THE NARROWEST STATION'S OWN CROSS-SECTION, which is not the narrowest half-width on
-        each side: those pinch at different stations on five of this project's legs and pairing
-        them invents a cross-section the street does not have. On w_broad_st_northeast the
-        pairing reads 31.99 ft between kerbs where the narrowest real station is 34.39 - a 2.40 ft
-        understatement, enough to drop the approach from the full 10 ft rung to NACTO's
-        constrained 8. One home: governing_half_widths_ft, which corridor_paint also measures
-        through.
+        THE TWO KERBS ARE MEASURED SEPARATELY AND OVER DIFFERENT STRETCHES, which is the whole
+        of governing_half_widths_ft's docstring and not restated here - it is the one home, and
+        corridor_paint and CorridorBikeway._reach_on measure through it too. Note only that
+        pairing each side's own minimum reads NARROWER than the narrowest real cross-section (by
+        2.44 ft on w_broad_st_northeast) and that this is the exact figure rather than a
+        conservative one: with a constant-width section on one datum, the near kerb's slack is
+        drawn as hatching on the near kerb and never reaches the travel way.
 
         Raises through TwoWayBikeLane when the leg cannot hold two travel lanes beside it.
         """

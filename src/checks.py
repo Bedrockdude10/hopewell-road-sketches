@@ -410,6 +410,78 @@ class TravelLanesKeepTheirWidth(SceneCheck):
         return violations
 
 
+class ShiftedTravelLanesClearTheirKerb(SceneCheck):
+    """A design that pushes traffic toward a kerb owns the lane that kerb then leaves.
+
+    THE ONE TRAVEL LANE NOTHING ELSE COULD SEE, and three checks measure travel lanes:
+    TravelLanesKeepTheirWidth needs kerbside PAINT to fire, so an unpainted kerb is skipped
+    entirely; PaintClearOfTheTravelLane clamps what a lane is ENTITLED to at the traced kerb,
+    so a lane squeezed BY its kerb cannot fail it by construction; TravelLanesHoldTheTarget
+    looks for lanes that are too wide. w_broad_st_northeast carried a 7.93 ft travel lane over
+    90 ft of a rural arterial with trucks, past all three, and what found it was being asked
+    whether the lanes were 11 ft.
+
+    ONLY THE KERB THE DIVIDER MOVED TOWARD, which is what makes this the design's doing and not
+    the street's. Louellen Street is 19.3 ft between kerbs and no check widens it; what must not
+    happen is a treatment taking one kerbside for a bikeway and pushing the opposing lane into a
+    kerb that pinches at a station the section was never measured at. So the far side is checked
+    and the near side is not: the near lane is bounded by the section's own inner edge, which is
+    held on the alignment (place.py, lane_edge_line) and is already PaintClearOfTheTravelLane's.
+
+    AGAINST THE DESIGN'S OWN LANE WIDTH, not TARGET_LANE_WIDTH_FT. Where a leg cannot hold two
+    target-width lanes the design says so and splits the travel way, and divided_lane_width_ft
+    is that declared figure; comparing against 11 ft would report the declaration as the defect.
+
+    STATION BY STATION, because the failure is local and both inputs are whole-leg minima. The
+    section is sized on the near kerb's narrowest point and the divider is one fixed offset, so
+    the far lane is `far(s) - shift` and nothing about its minimum can be recovered from either
+    kerb's reduction to a single number - which is how min(near + far) came to credit this leg
+    with 2.44 ft that is drawn as bike-lane surplus on the OTHER kerb.
+
+    AND IT FIRED TWICE, ON TWO DIFFERENT MECHANISMS, which is why the message names a stretch and
+    not just a station. The second is the one worth remembering: a facility whose reach stops
+    short still shifts the divider to the END of the leg, so a far minimum taken over the RUN has
+    measured the wrong kerb. On a 3x w_broad_st_southwest that was 0.30 ft off a lane already at
+    its floor, over the last 18 ft of 390 - invisible in a render, fatal all the same, and fixed
+    in governing_half_widths_ft rather than here.
+    """
+
+    def run(self, scene: SceneContext) -> list[Violation]:
+        state = scene.state
+        from src.geometry.model import half_width_profile
+        from src.geometry.targets import BOTH_SIDES
+
+        violations = []
+        for leg_name, leg in state.legs.items():
+            for side in BOTH_SIDES:
+                shift_ft = _divider_shift_toward_ft(state, leg_name, str(side))
+                if shift_ft <= 0:
+                    continue                      # nothing was pushed this way
+                # The lane target is the divider plus the lane, so the difference is the lane -
+                # through this module's one delegating wrapper, and so the same figure the
+                # drawing was built from.
+                designed_ft = _travel_lane_target_ft(state, leg_name, str(side)) - shift_ft
+                profile = half_width_profile(leg, str(side))
+                if profile is None:
+                    continue                      # nothing traced here to measure against
+                stations, half_ft = profile
+                room_ft = half_ft - shift_ft
+                worst = int(np.argmin(room_ft))
+                if room_ft[worst] < designed_ft - LANE_WIDTH_TOLERANCE_FT:
+                    short = int((room_ft < designed_ft - LANE_WIDTH_TOLERANCE_FT).sum())
+                    violations.append(Violation(
+                        "travel_lane_squeezed_by_its_kerb",
+                        f"{leg_name} {side}: the divider sits {shift_ft:.2f} ft toward this kerb "
+                        f"for a {designed_ft:.2f} ft lane, but the kerb is {half_ft[worst]:.2f} ft "
+                        f"out at station {stations[worst]:.0f} - a {room_ft[worst]:.2f} ft travel "
+                        f"lane, short at {short} of {len(stations)} stations. A divider is ONE "
+                        f"offset drawn over the whole leg, so the kerb it moves toward has to be "
+                        f"measured over the whole leg too - governing_half_widths_ft",
+                        tuple(leg.centerline.interpolate(
+                            min(stations[worst], leg.centerline.length)).coords[0])))
+        return violations
+
+
 class PaintInsideTheCurb(SceneCheck):
     """Road markings are painted on the road. None may cross its own side's curb.
 

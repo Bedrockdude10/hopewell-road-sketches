@@ -175,15 +175,37 @@ class CorridorFacility:
             # measurement to split on and the nominal width is all there is. Whole leg, as before.
             return None, None
         stations, near_ft, far_ft = profile
+        # ON THE RUN'S OWN TWO MINIMA, NOT ON THE LOCAL CROSS-SECTION. section_at(near(s), far(s))
+        # asks whether the STREET holds a rung at that station; what gets drawn is one
+        # constant-width section placed off the near kerb's minimum over the whole run, so a
+        # station holds the facility only if the run REACHING it does. Asked per station the two
+        # arithmetics disagreed - _place_on then sized the rung through governing_half_widths_ft
+        # over [0, reach], which could refuse a section every station had individually approved,
+        # and the approach went bare with no refusal recorded to say why.
+        #
+        # Accumulating the near minimum also makes `fits` monotone, so "the first station that
+        # fails is where the ride stops" is exact rather than nearly true: a run that has failed
+        # cannot start fitting again by getting longer.
+        #
+        # THE FAR SIDE IS THE WHOLE LEG'S MINIMUM AND NOT THE RUN'S, because the divider this
+        # section implies is drawn to the end of the leg even where the green stops - see
+        # governing_half_widths_ft, which this has to agree with station for station or _place_on
+        # refuses a rung this approved. It makes the predicate STRICTER as the tail gets narrower,
+        # which is the point: a reach is only worth having if the centre stripe it puts on the
+        # street holds for its whole length.
+        run_near = np.minimum.accumulate(near_ft)
+        run_far = np.full_like(far_ft, far_ft.min())
         fits = np.array([section_at(self, float(near), float(far))[0] is not None
-                         for near, far in zip(near_ft, far_ft)])
+                         for near, far in zip(run_near, run_far)])
         if fits.all():
             return None, None
 
         # The first station that fails is where the ride stops; the reach is the one before it.
         broke = int(np.argmin(fits))
         reach_ft = float(stations[broke - 1]) if broke else float(stations[0])
-        _section, why = section_at(self, float(near_ft[broke]), float(far_ft[broke]))
+        # Quoted off the same accumulated pair the predicate refused, so the measurement in the
+        # message is the binding one - see SKILLS 0a.
+        _section, why = section_at(self, float(run_near[broke]), float(run_far[broke]))
         # THE NARROWEST STATION IN THE TAIL, not at the break: the break is where continuity ends
         # and the pinch that a wider design would have to solve can be anywhere beyond it. Both
         # figures go in, because a refusal whose measurement is not the binding one is the mistake
@@ -225,9 +247,10 @@ class CorridorFacility:
             return state
         if to_ft is not None and not quiet:
             print(f"  NOTE: {leg_name} {side} carries the facility to station {to_ft:.0f} ft and "
-                  f"no further. The rung below is sized over THAT stretch, not over the whole "
-                  f"approach - see the refusal recorded on this kerb for what stopped it and "
-                  f"where. Posts, centre stripe and green all end there together.")
+                  f"no further. The rung below is sized over THAT stretch on THIS kerb and over "
+                  f"the WHOLE approach on the far one, because the centre stripe it shifts runs "
+                  f"the full leg while the green, the posts and the buffer end together at "
+                  f"{to_ft:.0f} ft - see the refusal recorded on this kerb for what stopped it.")
         for section in self.sections:
             try:
                 state = state.apply(AddTwoWayBikeLane(

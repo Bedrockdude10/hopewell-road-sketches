@@ -430,7 +430,8 @@ def test_a_gentle_drift_is_followed_and_a_sharp_kink_is_not():
     is the street genuinely bending, so the paint should track it; the kinked one does it over
     20 ft and is a corner flare in the tracing, so the paint should ride straight past.
     """
-    from src.geometry.model import curb_offsets_at_stations, tapered_curb_offsets
+    from src.geometry.model import (MAX_KERB_FOLLOW_TAPER, curb_offsets_at_stations,
+                                    tapered_curb_offsets)
 
     stations = np.arange(0.0, 300.0, 2.0)
     drift = _drifting_kerb()
@@ -443,11 +444,18 @@ def test_a_gentle_drift_is_followed_and_a_sharp_kink_is_not():
     kink = _kinked_kerb()
     refused = np.abs(curb_offsets_at_stations(kink, "right", stations)) \
         - tapered_curb_offsets(kink, "right", stations)
-    # The apex is 20 ft from the kerb either side of it, so at 1:10 the followed profile may
-    # rise 2 ft to meet a 10 ft kink and no more: 8 ft of it is refused, by arithmetic.
-    assert refused.max() == pytest.approx(8.0, abs=0.05), (
+    # DERIVED FROM THE CONSTANT, not written down beside it. The apex sits 20 ft from the kerb
+    # either side, so the followed profile may rise 20 * taper to meet a 10 ft kink and no more,
+    # and the rest is refused - by arithmetic, at whatever rate the constant holds. Hardcoded
+    # instead, this expectation was the only thing in the repo that had to be hand-edited to move
+    # the taper, which is the same defect as a second copy of a number.
+    expected_ft = 10.0 - 20.0 * MAX_KERB_FOLLOW_TAPER
+    assert refused.max() == pytest.approx(expected_ft, abs=0.05), (
         f"a 1:2 flare must not be followed; the limiter held back {refused.max():.2f} ft "
-        f"of a 10 ft kink, where 8.00 is the taper's own answer")
+        f"of a 10 ft kink, where {expected_ft:.2f} is the taper's own answer")
+    assert expected_ft > 0.0, (
+        f"1:{1 / MAX_KERB_FOLLOW_TAPER:.0f} is gentle enough to swallow a 1:2 flare over 20 ft "
+        f"whole, so this test can no longer tell the two populations apart")
 
 
 def test_the_followed_profile_never_exceeds_the_taper_rate():

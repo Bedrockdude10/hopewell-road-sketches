@@ -404,7 +404,7 @@ class TwoWayBikeLane(BikeLane):
         Both are real, and neither is a reason to choose per leg - the two differ by how sharply
         the kerb moves, not by how far, so the limit belongs on the rate and applies everywhere.
         tapered_curb_offsets is where that lives, and MAX_KERB_FOLLOW_TAPER is the rate; a drift
-        gentler than 1:10 is followed to within a few inches and a 1:2 kink is refused by up to
+        gentler than 1:5 is followed to within a few inches and a 1:2 kink is refused by up to
         12 ft, at any frame scale.
         """
         return True

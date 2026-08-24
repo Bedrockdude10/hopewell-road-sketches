@@ -145,7 +145,13 @@ def leg_clearance_ft(leg_name: str, legs: dict, corner_fillets: dict, buffer_ft:
 # the strip stays a strip rather than a wedge.
 STRIP_SAMPLE_FT = 2.0
 
-# The steepest lateral shift a marking will follow the kerb through: 1 ft across per 10 along.
+# The steepest lateral shift a marking will follow the kerb through: 1 ft across per 5 along.
+#
+# THE CITED FIGURE, and it has to be, because this rate now places the travel-lane divider as well
+# as the paint. NACTO's floor for a bidirectional bikeway's lateral shift is 1:5, and MUTCD's
+# shifting taper - half the merging L=WS^2/60 - is 1:5.2 at Broad St's posted 25 mph, so the two
+# agree to within a rounding. A driver is steered through this shift; a house number is not the
+# right thing to steer them through. STANDARDS.md carries both citations.
 #
 # A kerb-referenced marking must not inherit every kink in the tracing, and the question of WHICH
 # kinks is a rate, not a total. Measured over these three sites, the two kinds of kerb movement
@@ -155,19 +161,16 @@ STRIP_SAMPLE_FT = 2.0
 # the same street followed its kerb at a 130 ft frame and abandoned it at a 325 ft one - see
 # tests/test_two_way_bike_lane.py::test_kerb_follow_does_not_depend_on_the_frame.
 #
-# At 1:10 a marking gives up a mean 0.11-0.28 ft of the drift on the legs that drift, and refuses
-# up to 12.2 ft of the kink on broad_st_east. Both figures hold at either frame scale, because a
-# rate limit is a local property of the kerb and total swing is not.
+# 1:5 SITS BETWEEN THOSE TWO POPULATIONS AND STILL SEPARATES THEM, which is what makes the cited
+# figure usable here rather than merely defensible: a 1:6 street bend is gentler than the limit and
+# is followed exactly, and a 1:2 flare is still refused - by 6.0 ft of a 10 ft kink, against the
+# 8.0 ft the old 1:10 refused. The margin above the drift population is thinner (1:6 against 1:5,
+# not 1:6 against 1:10), so a site whose real bends run steeper than 1:5 would need this re-read
+# rather than assumed.
 #
-# THE SAME RATE NOW LIMITS THE TRAVEL-LANE DIVIDER (corridor_paint._build_run), which is a lateral
-# shift a driver is steered through rather than a cosmetic choice about paint - so it has to answer
-# to the published tapers, and it does. On Broad St, posted 25 mph its whole length, MUTCD's
-# shifting taper is half the merging L=WS^2/60, i.e. 1:5.2; NACTO's floor for a bidirectional
-# bikeway is 1:5. This is 1:10, about twice as gentle as either, so a figure that was chosen as a
-# tracing filter turns out to be conservative as a design taper too. STANDARDS.md carries both
-# citations against this constant. A street posted materially faster would need the rate derived
-# from ITS speed instead of this constant - S enters as 1/S^2, so 45 mph is 1:17.
-MAX_KERB_FOLLOW_TAPER = 0.10
+# A STREET POSTED MATERIALLY FASTER NEEDS ITS OWN RATE, not this constant: S enters MUTCD's taper
+# as 1/S^2, so 45 mph wants 1:17 and this would be three times too steep for it.
+MAX_KERB_FOLLOW_TAPER = 0.20
 
 
 def taper_limited(stations: np.ndarray, offsets: np.ndarray,
@@ -186,7 +189,7 @@ def taper_limited(stations: np.ndarray, offsets: np.ndarray,
     _tapered_curb_frame smooths a TRACING so paint does not inherit a surveyor's corner flare, and
     corridor_paint._build_run limits how fast the travel-lane DIVIDER may shift. Written twice they
     would be free to disagree, and the second one is a lateral shift a driver is steered through -
-    see MAX_KERB_FOLLOW_TAPER for why 1:10 serves both.
+    see MAX_KERB_FOLLOW_TAPER for why the one cited rate serves both.
     """
     return (offsets[None, :] + max_taper * np.abs(stations[:, None] - stations[None, :])).min(axis=1)
 

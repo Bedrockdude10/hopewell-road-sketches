@@ -760,9 +760,9 @@ def test_the_travel_edge_shifts_no_faster_than_the_published_taper(broad_st_pain
     """The divider a driver follows may not inherit the tracing's kinks.
 
     The section follows its kerb, so without a rate limit the travel edge - and the divider hung
-    off it - jinks wherever the surveyor placed a vertex. MAX_KERB_FOLLOW_TAPER is 1:10, against
-    MUTCD's shifting taper of 1:5.2 at Broad St's posted 25 mph and NACTO's 1:5 floor for a
-    bidirectional bikeway; see STANDARDS.md. Measured on the drawn profile, because the limit is
+    off it - jinks wherever the surveyor placed a vertex. MAX_KERB_FOLLOW_TAPER is NACTO's 1:5
+    floor for a bidirectional bikeway's lateral shift, which MUTCD's shifting taper at Broad St's
+    posted 25 mph independently puts at 1:5.2; see STANDARDS.md. Measured on the drawn profile, because the limit is
     applied one call away from it and an unlimited profile passes every check that reads the
     section instead.
     """

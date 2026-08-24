@@ -312,7 +312,7 @@ def _build_run(corridor: "Corridor", side: str, section, stations: np.ndarray, o
     The placement line is the kerb RATE-LIMITED, not the kerb - tapered_curb_offsets' rule, which
     the corridor was the only kerb-following paint in the repo not to follow. It matters more here
     than on a leg: the divider is derived from this line, so a flare in the tracing would steer a
-    driver through it. See MAX_KERB_FOLLOW_TAPER for why 1:10 answers to the published tapers.
+    driver through it. MAX_KERB_FOLLOW_TAPER is NACTO's 1:5; see it for why that is the figure.
 
     NO FLOOR AT THE GOVERNING HALF-WIDTH, and it costs nothing to leave it out. The section does
     slide inside where it was sized - `_collect` governs off the min-SUM station, whose near kerb

@@ -27,6 +27,7 @@ import pytest
 from shapely.geometry import Point
 
 from scripts.corridor_report import Coverage, Figure, corridor_report
+from src.geometry.corridor_paint import hatch_bands
 from src.geometry.network import (KERB_FROM_TRACING, corridor_facts, corridors_from_models,
                                  marked_parking_capacity, osm_window_spans)
 from tests.conftest import WIDE_FRAME_SCALE, needs_source_data
@@ -320,6 +321,29 @@ def test_parking_capacity_never_exceeds_the_kerb_it_is_counted_over(broad_st, si
                                                    within=broad_st.both_traced_spans())
         assert tested <= stalls and tested_ft <= measured_ft + 1e-6, (
             "the width-tested count is a subset of the length-only count by construction")
+
+
+@needs_source_data
+def test_hatch_bands_are_not_dropped_by_a_few_untraced_samples(broad_st, site_models):
+    """A span that is mostly traced must not vanish because a handful of its samples are not.
+
+    `_kerb_band_over` used to require every sampled offset in a span to be finite and drop the
+    WHOLE span otherwise - so a kerb-topology seam a few feet wide, inside an otherwise-traced
+    500 ft run, discarded the run. With nothing marked, hatch_bands's spans must cover essentially
+    all of the kerb outside its openings; the pre-fix code covered only 2,199 of 3,526 ft here.
+    """
+    facts = corridor_facts(broad_st, site_models)
+    for side in ("left", "right"):
+        hatch = hatch_bands(broad_st, facts, side, ())
+        hatch_ft = sum(hi - lo for lo, hi, _, _ in hatch)
+        mouths_ft = sum(opening.end_ft - opening.start_ft
+                        for opening_side, opening in facts.openings if opening_side == side)
+        expected_ft = broad_st.length_ft - mouths_ft
+        # ~2% of Broad St's kerb is genuinely untraced end-to-end (OSM traces the block, not the
+        # kerb) and correctly drops out; anything below 90% is the whole-span-discard bug back.
+        assert hatch_ft > expected_ft * 0.9, (
+            f"{side} kerb: hatch_bands covered {hatch_ft:.0f} of {expected_ft:.0f} ft with "
+            f"nothing marked - a partially-traced span is being dropped instead of trimmed")
 
 
 @needs_source_data

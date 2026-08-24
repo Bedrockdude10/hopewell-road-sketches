@@ -28,6 +28,11 @@ class LaneNarrowing(Treatment):
     `sides` defaults to both. Pass a single side when the OTHER side's edge is already owned by
     another treatment - MarkedParking delineates its own side, and this then adds only the
     matching plain line opposite.
+
+    end_ft trims the buffer to a station short of the leg's own end, closing it with the same
+    square-cut line a leg with no crossing gets at its start - for the caller that measured the
+    kerb per station and found room only part of the way (see
+    parking.hold_travel_lane_at_target), rather than one that wants the whole leg drawn.
     """
     # Painted in the order the markings are layered: the kerbside zones first, and a
     # row of posts after the buffer it stands in - see paint.curbside_paint_ft.
@@ -36,6 +41,7 @@ class LaneNarrowing(Treatment):
     stripe_width_ft: float = LANE_NARROWING_DEFAULT_STRIPE_FT
     line_only: bool = False
     sides: tuple = BOTH_SIDES
+    end_ft: float | None = None
 
     def __post_init__(self):
         if self.stripe_width_ft <= 0:
@@ -46,8 +52,9 @@ class LaneNarrowing(Treatment):
             raise ValueError("A lane narrowing with no sides paints nothing - pass at least one.")
 
     def describe(self) -> str:
+        end = f", end_ft={self.end_ft:.1f}" if self.end_ft is not None else ""
         return (f"LaneNarrowing({self.target}, stripe_width_ft={self.stripe_width_ft}, "
-                f"line_only={self.line_only}, sides={tuple(str(s) for s in self.sides)})")
+                f"line_only={self.line_only}, sides={tuple(str(s) for s in self.sides)}{end})")
 
     def paint(self, ctx) -> None:
         """An edge line, a hatched buffer, and a taper back to the kerb. line_only legs get the
@@ -85,7 +92,7 @@ class LaneNarrowing(Treatment):
             line_ft, fill_ft = lane_edge_stripes(stripe_width_ft)
             ctx.add(LANE_EDGE_LINE, _one(lane_narrowing_edge_lines_ft(
                 leg, line_ft, start_left_ft=start_ft, start_right_ft=start_ft, sides=(side,),
-                keep_inside_ft=LANE_EDGE_LINE_WIDTH_FT / 2,
+                keep_inside_ft=LANE_EDGE_LINE_WIDTH_FT / 2, end_ft=self.end_ft,
                 beyond_the_tracing=True)), leg_name, side, beyond_ft)
             if curved:
                 ctx.add(TAPER_LINE, _one(lane_narrowing_taper_ft(
@@ -93,7 +100,8 @@ class LaneNarrowing(Treatment):
             if fill:
                 ctx.rim(ctx.add(LANE_NARROWING_FILL, _one(lane_narrowing_polygons_ft(
                     leg, fill_ft, start_left_ft=start_ft, start_right_ft=start_ft,
-                    sides=(side,), beyond_the_tracing=True)), leg_name, side, beyond_ft,
+                    sides=(side,), end_ft=self.end_ft, beyond_the_tracing=True)),
+                    leg_name, side, beyond_ft,
                     shares_a_kerb=(leg_name, side) in ctx.straight_through), LANE_EDGE_LINE)
                 if curved:
                     ctx.add(TAPER_FILL, _one(lane_narrowing_taper_polygons_ft(
@@ -105,6 +113,14 @@ class LaneNarrowing(Treatment):
                     # node, and closing it off draws a line across the hatching mid-intersection.
                     ctx.add(ZONE_END_LINE, zone_end_line_ft(
                         leg, side, start_ft, leg.curb_to_curb_ft / 2 - fill_ft),
+                        leg_name, side)
+                if self.end_ft is not None:
+                    # The OTHER end: not the junction, the station where the room this buffer
+                    # was sized on ran out - see LaneNarrowing.end_ft. Same closing line, cut at
+                    # the far station instead of the near one, independent of whether the near
+                    # end tapers, ends at a crossing, or runs into the intersection.
+                    ctx.add(ZONE_END_LINE, zone_end_line_ft(
+                        leg, side, self.end_ft, leg.curb_to_curb_ft / 2 - fill_ft),
                         leg_name, side)
 
 

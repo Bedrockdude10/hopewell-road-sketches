@@ -85,6 +85,13 @@ class DesignState:
     # BikewayReachesTheEndOfItsKerb has to tell apart before it can call a shortened facility a
     # defect. Printing the reason to stdout, as this used to, put it somewhere no check can read.
     facility_refusals: dict = field(default_factory=dict)
+    # (leg name, "left"|"right") -> room beside a TARGET_LANE_WIDTH_FT lane, off the NOMINAL
+    # half-width - the datum hold_travel_lane_at_target actually decides against, which is NOT
+    # kerbside_allowance_ft's traced-kerb datum (see THE TWO DATUMS in that function's docstring).
+    # Written so the plan view's kerb label can show the number that governed this kerb instead
+    # of recomputing a different one and disagreeing with it - the same failure divider_ft's own
+    # docstring already recounts once happening to the lane-width label.
+    target_lane_room_ft: dict = field(default_factory=dict)
 
     def refuse(self, leg_name: str, side: str, refusal: FacilityRefusal) -> None:
         """Record that this kerb was measured over `refusal`'s span and cannot take the facility.
@@ -100,6 +107,17 @@ class DesignState:
         """Every stretch of this kerb the design measured and declined, in station order."""
         return sorted(self.facility_refusals.get((leg_name, str(side)), ()),
                       key=lambda refusal: refusal.start_ft)
+
+    def record_target_lane_room(self, leg_name: str, side: str, room_ft: float) -> None:
+        """hold_travel_lane_at_target's own room figure for this kerb - mutates, for the same
+        reason refuse() does: this is what the treatment layer learned while deciding, not a
+        treatment of its own."""
+        self.target_lane_room_ft[(leg_name, str(side))] = room_ft
+
+    def target_lane_room(self, leg_name: str, side: str) -> float | None:
+        """The room hold_travel_lane_at_target found on this kerb, or None if it never ran here
+        (e.g. a bike lane already owns this side, or apply_osm_parking decided it instead)."""
+        return self.target_lane_room_ft.get((leg_name, str(side)))
 
     @classmethod
     def from_model(cls, model: "IntersectionModel") -> "DesignState":

@@ -6,9 +6,10 @@ builder, not a reader: it turns OSM's parking:*  tags into MarkedParking and Lan
 from dataclasses import dataclass
 from typing import ClassVar
 
+import numpy as np
 
 from src.geometry.targets import LegSide, LegTarget, Side
-from src.geometry.model import (narrowest_half_width_ft)
+from src.geometry.model import half_width_profile, narrowest_half_width_ft
 from src.geometry.treatments.base import (BOLLARD_DEFAULT_SPACING_FT,
                                           LANE_NARROWING_DEFAULT_STRIPE_FT,
                                           LANE_WIDTH_SLACK_FT, MIN_MARKED_PARKING_DEPTH_FT,
@@ -18,7 +19,7 @@ from src.geometry.treatments.base import (BOLLARD_DEFAULT_SPACING_FT,
                                           kerbside_allowance_ft)
 from src.geometry.treatments.bikeways import AddBikeLane, divider_shift_toward_ft
 from src.geometry.treatments.lanes import LaneNarrowing
-from src.geometry.treatments.state import DesignState
+from src.geometry.treatments.state import DesignState, FacilityRefusal
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:    # annotation-only: these types are layered above this module,
@@ -59,6 +60,12 @@ class MarkedParking(Treatment):
     depth_ft: float = PARKING_STALL_DEPTH_DEFAULT_FT
     stall_length_ft: float = PARKING_STALL_LENGTH_DEFAULT_FT
     curb_offset_ft: float = 0.0
+    # Where the room this depth was sized on runs out - see LaneNarrowing.end_ft, the same idea
+    # for the other kerbside treatment. None draws every run/zone to wherever it would otherwise
+    # end (a crossing, the leg's own end); a station caps every run AND every daylight zone at
+    # that point, because both are stalls/hatching sized off ONE depth_ft and neither may run
+    # past the stretch of kerb that depth was measured to fit.
+    end_ft: float | None = None
 
     def __post_init__(self):
         # None of this was checked before. A zero-depth lane marked an edge line on top of the
@@ -71,9 +78,10 @@ class MarkedParking(Treatment):
             raise ValueError(f"A kerb buffer cannot be negative; got {self.curb_offset_ft}.")
 
     def describe(self) -> str:
+        end = f", end_ft={self.end_ft:.1f}" if self.end_ft is not None else ""
         return (f"MarkedParking({self.target.leg}, side={str(self.target.side)!r}, "
                 f"depth_ft={self.depth_ft}, stall_length_ft={self.stall_length_ft}, "
-                f"curb_offset_ft={self.curb_offset_ft})")
+                f"curb_offset_ft={self.curb_offset_ft}{end})")
 
     def paint(self, ctx) -> None:
         """The stalls, the hatched buffer between them and the kerb, and the daylight zones
@@ -97,6 +105,8 @@ class MarkedParking(Treatment):
         at = ctx.anchors(leg_name, side,
                           inner_offset_ft=leg.curb_to_curb_ft / 2 - depth_ft - curb_offset_ft)
         runs = parking_runs(state, leg_name, side, ctx.crosswalk_offsets, ctx.props)
+        if self.end_ft is not None:
+            runs = [(s, min(e, self.end_ft)) for s, e in runs if s < self.end_ft]
 
         # DAYLIGHTING. Every stretch where R.S. 39:4-138 forbids parking is hatched across
         # the FULL depth of the parking lane, not just the buffer strip beside it. Those
@@ -115,8 +125,18 @@ class MarkedParking(Treatment):
         # it falls back to a taper if a gentle one exists and a square cut otherwise.
         daylight_line_ft, daylight_fill_ft = lane_edge_stripes(depth_ft + curb_offset_ft)
         lane_edge_offset_ft = leg.curb_to_curb_ft / 2 - daylight_line_ft
-        for zone_start_ft, zone_end_ft in merged_no_parking_spans_ft(
-                no_parking_zones_ft(state, leg_name, side, ctx.crosswalk_offsets, ctx.props)):
+        daylight_spans = merged_no_parking_spans_ft(
+            no_parking_zones_ft(state, leg_name, side, ctx.crosswalk_offsets, ctx.props))
+        for zone_start_ft, zone_end_ft in daylight_spans:
+            # Capped, not filtered out early with the runs above: a daylight zone is the statute
+            # restated in paint (see the comment on beyond_the_tracing below) and still applies
+            # up to wherever this depth_ft was actually sized to reach, even though the zone
+            # itself may run further in law.
+            capped = self.end_ft is not None and zone_end_ft > self.end_ft
+            if self.end_ft is not None:
+                if zone_start_ft >= self.end_ft:
+                    continue
+                zone_end_ft = min(zone_end_ft, self.end_ft)
             if leg_name in ctx.marked and (leg_name, side) in ctx.straight_through:
                 start_ft, beyond_ft = zone_start_ft, None
             elif leg_name in ctx.marked:
@@ -158,6 +178,13 @@ class MarkedParking(Treatment):
             if leg_name not in ctx.marked and (leg_name, side) not in ctx.straight_through:
                 ctx.add(ZONE_END_LINE, zone_end_line_ft(
                     leg, side, start_ft, leg.curb_to_curb_ft / 2 - daylight_fill_ft),
+                    leg_name, side)
+            if capped:
+                # The far end above was cut mid-zone by self.end_ft, which the crossing/opening
+                # cuts ctx.rim knows about is not one of - so without this the hatch just stops,
+                # no line, same failure LaneNarrowing.end_ft's own closing line exists to avoid.
+                ctx.add(ZONE_END_LINE, zone_end_line_ft(
+                    leg, side, zone_end_ft, leg.curb_to_curb_ft / 2 - daylight_fill_ft),
                     leg_name, side)
 
         for start_ft, end_ft in runs:
@@ -632,6 +659,48 @@ def narrow_lanes_and_recover_parking(state: DesignState) -> DesignState:
     return state
 
 
+def _lane_target_reach_ft(leg, side: str, lane_edge_ft: float
+                           ) -> tuple[float | None, float | None] | None:
+    """How far up this kerb, CONTINUOUSLY FROM STATION 0, a TARGET_LANE_WIDTH_FT lane (plus this
+    leg's own divider shift) actually fits - and the narrowest this kerb gets beyond that point.
+
+    PER STATION, through half_width_profile, which is what a single whole-leg minimum used to
+    replace here: on W Broad's southwest approach the kerb holds this lane over 336 of 390 ft and
+    only pinches inside it over the last 52, but narrowest_half_width_ft's own reduction is the
+    LEAST half-width anywhere on the leg, so that one pinch refused a lane over the 336 ft that
+    fit it fine and nothing at all was drawn - see half_width_profile's own docstring for the
+    identical bug on a two-way section, and corridor.py's AddTwoWayBikeLane._reach_on for the
+    same fix already made there for that treatment.
+
+    Returns None where nothing fits even at the start of the traced kerb - the caller's existing
+    "nothing to spend" answer. Otherwise returns (reach_ft, narrowest_ft): reach_ft is None where
+    every traced station holds the lane (whole leg, exactly as before this existed) or a station
+    short of the leg's end where a tail too narrow to hold it begins; narrowest_ft is the least
+    half-width found beyond that station, for the refusal recorded there, and is None alongside a
+    None reach_ft.
+    """
+    profile = half_width_profile(leg, side)
+    if profile is None:
+        # Nothing traced to split on - narrowest_half_width_ft already falls back to the nominal
+        # half-width in this case, so there is no per-station reach to compute either.
+        if narrowest_half_width_ft(leg, side) - lane_edge_ft <= LANE_WIDTH_SLACK_FT:
+            return None
+        return None, None
+    stations, half_ft = profile
+    # Accumulated, not the local value, so "the first station that fails is where the lane
+    # stops" is exact: a run that has already failed cannot start fitting again by getting
+    # narrower still, and a lane held from station 0 cannot skip over a pinch to a wider run
+    # beyond it without putting the reader in a lane that is not actually there.
+    run_min = np.minimum.accumulate(half_ft)
+    fits = (run_min - lane_edge_ft) > LANE_WIDTH_SLACK_FT
+    if not fits[0]:
+        return None                     # no room even where this kerb starts being traced
+    if fits.all():
+        return None, None               # holds all the way - whole leg, exactly as before
+    broke = int(np.argmin(fits))
+    return float(stations[broke - 1]), float(half_ft[broke:].min())
+
+
 def hold_travel_lane_at_target(state: DesignState, leg_name: str, side: str) -> DesignState:
     """Bring ONE kerb's travel lane down to TARGET_LANE_WIDTH_FT, spending the surplus.
 
@@ -639,7 +708,9 @@ def hold_travel_lane_at_target(state: DesignState, leg_name: str, side: str) -> 
     the speed every treatment here exists to reduce, and it is the cheapest intervention
     available - paint. So wherever a design has decided to restripe a leg, both of its lanes get
     held at the target and the leftover becomes parking (where the kerb may legally hold it and
-    there is room for a usable stall) or hatching (where it may not).
+    there is room for a usable stall) or hatching (where it may not) - OVER WHATEVER STRETCH OF
+    THE KERB ACTUALLY HOLDS THE LANE, per _lane_target_reach_ft, with the rest carried as a
+    FacilityRefusal rather than silently dropped or let veto the whole leg.
 
     ONE DEFINITION, because this was written twice. sites/broad_st_greenwood/scenarios.py grew it
     inline for the two-way corridor and sites/ebroad_princeton/scenarios.py did not, so the same
@@ -659,25 +730,40 @@ def hold_travel_lane_at_target(state: DesignState, leg_name: str, side: str) -> 
         return state          # a bike lane already defines this side's edge
     divider_ft = divider_shift_toward_ft(state, leg_name, side)
     lane_edge_ft = divider_ft + TARGET_LANE_WIDTH_FT
-    # Room beyond the travel lane, measured where the kerb comes closest - a promise about a
-    # whole kerb has to hold at its narrowest.
-    surplus_ft = narrowest_half_width_ft(leg, side) - lane_edge_ft
-    if surplus_ft <= LANE_WIDTH_SLACK_FT:
-        return state          # the street has nothing spare; the lane is already at or under target
     zone_from_nominal_ft = leg.curb_to_curb_ft / 2 - lane_edge_ft
+    state.record_target_lane_room(leg_name, side, zone_from_nominal_ft)
+    reach = _lane_target_reach_ft(leg, side, lane_edge_ft)
+    if reach is None:
+        return state          # the street has nothing spare; the lane is already at or under target
+    reach_ft, narrowest_ft = reach
+    # Room beyond the travel lane, measured over the stretch that is actually reached rather
+    # than the whole leg's minimum - see _lane_target_reach_ft.
+    surplus_ft = narrowest_half_width_ft(leg, side, to_ft=reach_ft) - lane_edge_ft
     if zone_from_nominal_ft <= 0:
         return state
+    end_ft = None
+    if reach_ft is not None:
+        end_ft = reach_ft
+        state.refuse(leg_name, side, FacilityRefusal(
+            reach_ft, leg.centerline.length,
+            f"the kerb narrows to {narrowest_ft:.2f} ft off the {leg_name} {side} centreline "
+            f"past station {reach_ft:.1f} ft, under the {lane_edge_ft:.2f} ft a "
+            f"{TARGET_LANE_WIDTH_FT:.0f} ft travel lane (plus this leg's own divider shift) "
+            f"needs there - so nothing is marked on this kerb beyond that station rather than "
+            f"paint drawn past the room the kerb actually gives.",
+            narrowest_ft))
     if kerb_may_hold_parking(state, leg_name, side) and surplus_ft >= MIN_USABLE_STALL_FT:
         depth_ft = min(surplus_ft, PARKING_STALL_DEPTH_DEFAULT_FT)
         return state.apply(MarkedParking(LegSide(leg_name, side), depth_ft=depth_ft,
-                                          curb_offset_ft=max(zone_from_nominal_ft - depth_ft, 0.0)))
+                                          curb_offset_ft=max(zone_from_nominal_ft - depth_ft, 0.0),
+                                          end_ft=end_ft))
     if zone_from_nominal_ft < MIN_HATCHED_ZONE_FT:
         # Sized from what the road can spare, which is checks.PaintClearOfTheTravelLane's own
         # wording. See MIN_HATCHED_ZONE_FT.
         return state
     return state.apply(LaneNarrowing(LegTarget(leg_name),
                                       stripe_width_ft=zone_from_nominal_ft,
-                                      sides=(side,)))
+                                      sides=(side,), end_ft=end_ft))
 
 
 def kerb_may_hold_parking(state: DesignState, leg_name: str, side: str) -> bool:

@@ -393,6 +393,31 @@ def _restationed(run, centerline: LineString):
     return dataclasses.replace(run, start_ft=float(span[0]), end_ft=float(span[1]))
 
 
+def _kerb_band_over(corridor: "Corridor", on: "Alignment", side: str, spans, depth_ft: float):
+    """[(lo_ft, hi_ft, polygon)] - one band `depth_ft` deep against the traced kerb, per span.
+
+    Shared by `parking_bands` and `hatch_bands` so a marked-stall band and a hatched one are the
+    same shape drawn over different spans, not two independently-tuned rectangles that could
+    drift apart depth-wise.
+    """
+    out = []
+    for lo, hi in spans:
+        if hi - lo < CORRIDOR_SAMPLE_FT:
+            continue
+        stations = np.append(np.arange(lo, hi, CORRIDOR_SAMPLE_FT), hi)
+        offs = np.array([kerb_offset_ft(corridor, side, float(s)) or np.nan for s in stations])
+        # A handful of untraced samples inside an otherwise-traced span (a kerb-topology seam, not
+        # a real gap) used to drop the WHOLE span - losing 1,326 of 3,526 ft of Broad St's far-kerb
+        # hatch to four samples out of 272. Build the band from what IS traced instead.
+        finite = np.isfinite(offs)
+        if finite.sum() < 2:
+            continue
+        band = band_from_offsets(on, side, stations[finite], (offs - depth_ft)[finite], offs[finite])
+        if band is not None and not band.is_empty:
+            out.append((float(lo), float(hi), band))
+    return out
+
+
 def parking_bands(corridor: "Corridor", facts, side: str, depth_ft: float | None = None):
     """[(lo_ft, hi_ft, polygon)] where a stall may legally be marked along one kerb.
 
@@ -404,19 +429,52 @@ def parking_bands(corridor: "Corridor", facts, side: str, depth_ft: float | None
     from src.geometry.treatments.parking import PARKING_STALL_DEPTH_DEFAULT_FT
 
     depth_ft = PARKING_STALL_DEPTH_DEFAULT_FT if depth_ft is None else depth_ft
+    return _kerb_band_over(corridor, Alignment(corridor.centerline), side,
+                           facts.by_side("parkable", side), depth_ft)
+
+
+def hatch_bands(corridor: "Corridor", facts, side: str, marked_spans, depth_ft: float | None = None):
+    """[(lo_ft, hi_ft, polygon, reason)] where this kerb carries neither a marked stall nor a
+    vehicle crossing - `parking.py`'s "parking or hatching, never neither" rule, asked of a road.
+
+    `reason` is `"legal"` where R.S. 39:4-138, a sign, or an OSM restriction closes the kerb
+    outright (`CorridorFacts.no_parking`), and `"room"` where the law allows parking but no stall
+    fits - too narrow once the facility holds its target lane, or too short for one whole car
+    (`CorridorFacts.parkable` minus what actually got marked). These are drawn in different colours
+    because they are different findings about different things: one is a fact about the STREET
+    (a corner, a hydrant, a stop sign) and the other is a fact about this DESIGN's own section - a
+    narrower facility or a shorter divider shift would open kerb that is already legally clear.
+
+    `marked_spans` is the corridor's OWN count of what actually got a box - the same spans
+    `stall_marks` drew, via `stalls_per_span` - not re-derived from `stall_room_spans` here,
+    because a span short of one whole stall (parkable AND wide enough, but too short to hold a
+    car) has to be hatched too, and only the caller that already dropped it from the stall count
+    knows which spans those are. Recomputing "not marked" from `stall_room_spans` directly would
+    also count every SUB-whole-stall leftover as if it were marked, which is the ONE case this
+    function exists to catch. Excludes driveway/side-street mouths - a hatch is a paint decision,
+    and nothing is painted over a place a vehicle actually crosses the kerb.
+    """
+    from src.geometry.network import _complement_spans, _intersect_spans, _merged_spans
+    from src.geometry.treatments.parking import PARKING_STALL_DEPTH_DEFAULT_FT
+
+    depth_ft = PARKING_STALL_DEPTH_DEFAULT_FT if depth_ft is None else depth_ft
+    mouths = _merged_spans([(opening.start_ft, opening.end_ft)
+                            for opening_side, opening in facts.openings if opening_side == side])
+    clear = _complement_spans(mouths, 0.0, corridor.length_ft)
+    unmarked = _complement_spans(marked_spans, 0.0, corridor.length_ft)
+    candidate = _intersect_spans(clear, unmarked)
+
+    # no_parking zones can overlap each other (stacked statutory setbacks) so are merged before
+    # `_intersect_spans`, which assumes disjoint input; `parkable` is already the merged complement
+    # of `no_parking`, computed once in corridor_facts, so the two partition `candidate` exactly.
+    restricted = _merged_spans([(zone.start_ft, zone.end_ft)
+                                for zone in facts.by_side("no_parking", side)])
+    legal = _intersect_spans(candidate, restricted)
+    room = _intersect_spans(candidate, facts.by_side("parkable", side))
+
     on = Alignment(corridor.centerline)
-    out = []
-    for lo, hi in facts.by_side("parkable", side):
-        if hi - lo < CORRIDOR_SAMPLE_FT:
-            continue
-        stations = np.append(np.arange(lo, hi, CORRIDOR_SAMPLE_FT), hi)
-        offs = np.array([kerb_offset_ft(corridor, side, float(s)) or np.nan for s in stations])
-        if not np.isfinite(offs).all():
-            continue
-        band = band_from_offsets(on, side, stations, offs - depth_ft, offs)
-        if band is not None and not band.is_empty:
-            out.append((float(lo), float(hi), band))
-    return out
+    return ([(lo, hi, band, "legal") for lo, hi, band in _kerb_band_over(corridor, on, side, legal, depth_ft)]
+           + [(lo, hi, band, "room") for lo, hi, band in _kerb_band_over(corridor, on, side, room, depth_ft)])
 
 
 def stall_room_spans(corridor: "Corridor", side: str, lane_edge_at, sample_ft: float = CORRIDOR_SAMPLE_FT):

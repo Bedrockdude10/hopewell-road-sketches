@@ -717,9 +717,15 @@ def _label_parking_legality(labels: LabelPlacer, state: DesignState):
             continue
         narrowing = state.treatment_for(LaneNarrowing, LegTarget(leg_name))
         for side in BOTH_SIDES:
-            # The same measurement apply_osm_parking decides on, so the label cannot say
-            # "7.5 ft spare" about a kerb the code sized a treatment for at 5.0.
-            allowance_ft = kerbside_allowance_ft(leg, side)
+            # The same measurement whichever mechanism decided this kerb actually used, so the
+            # label cannot say "7.5 ft spare" about a kerb the code sized a treatment for at 5.0.
+            # hold_travel_lane_at_target subtracts its own divider shift from the NOMINAL
+            # half-width - a different datum from kerbside_allowance_ft's traced kerb - and
+            # records that figure on the state precisely so this label can read it back rather
+            # than recompute the wrong one, which is what put "6.3 ft spare" beside a kerb that
+            # mechanism had already refused for having none. See target_lane_room's docstring.
+            room_ft = state.target_lane_room(leg_name, side)
+            allowance_ft = room_ft if room_ft is not None else kerbside_allowance_ft(leg, side)
             kerb = LegSide(leg_name, side)
             bike_lane = state.treatment_for(AddBikeLane, kerb)
             at = restriction_summary(state, leg_name, side, leg.centerline.length)
@@ -756,6 +762,12 @@ def _label_parking_legality(labels: LabelPlacer, state: DesignState):
                 else:
                     drew = (f"hatched by this proposal, though {allowance_ft:.1f} ft is spare "
                             f"- see the scenario for why")
+            elif allowance_ft < 0:
+                # target_lane_room can go negative - a corridor's own divider shift outgrew the
+                # nominal half-width it was subtracted from - and "-0.6 ft spare" reads as a
+                # typo where "0.6 ft short" reads as the deficit it is.
+                drew = (f"nothing: {-allowance_ft:.1f} ft short of an "
+                        f"{TARGET_LANE_WIDTH_FT:.0f} ft lane")
             else:
                 drew = (f"nothing: {allowance_ft:.1f} ft spare beside an "
                         f"{TARGET_LANE_WIDTH_FT:.0f} ft lane")

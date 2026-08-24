@@ -31,10 +31,10 @@ from matplotlib.patches import Rectangle
 
 from src.geometry.corridor_paint import (CORRIDOR_SAMPLE_FT, JUNCTION_MOUTH,
                                          centred_on_its_kerbs, far_kerb_lane_edge,
-                                         kerb_offset_ft, paint_facility, parking_bands,
-                                         contraflow_centreline, green_extension_spans,
-                                         stall_marks, stall_room_spans, stalls_per_span,
-                                         symbol_stations)
+                                         hatch_bands, kerb_offset_ft, paint_facility,
+                                         parking_bands, contraflow_centreline,
+                                         green_extension_spans, stall_marks, stall_room_spans,
+                                         stalls_per_span, symbol_stations)
 from src.geometry.intersection import load_intersection_model
 from src.geometry.model import station_offset_many
 from src.geometry.network import (_complement_spans, _merged_spans, corridor_facts,
@@ -56,6 +56,16 @@ OPENING = "#8a5a1f"
 GAP_RED = "#c1272d"
 DAYLIGHT = "#e8c33c"
 MOUTH_BLUE = "#3b6ea5"
+# The same fill plan_view.py uses for LANE_NARROWING_FILL - "parking or hatching, never neither"
+# has to look like the one hatch this project already draws, not a second visual language for
+# the same claim. Gold is reused for the ROOM reason (a property of THIS DESIGN's own section);
+# a distinct colour and pattern mark the LEGAL reason (a property of the STREET - a corner, a
+# stop sign, a hydrant), because a reader asking "why can't this be parking" needs a different
+# fix for each: a narrower section for one, nothing at all for the other.
+HATCH_GOLD = "gold"
+HATCH_EDGE = "goldenrod"
+HATCH_LEGAL = "orchid"
+HATCH_LEGAL_EDGE = "darkorchid"
 
 
 def _intersect(a, b):
@@ -120,7 +130,7 @@ def straighten(corridor, geometry):
 
 
 def draw_panel(ax, corridor, paint, parking, openings, lo_ft, hi_ft, half_ft,
-               marks=(), daylight=(), stall_labels=(), extras=None):
+               marks=(), daylight=(), stall_labels=(), extras=None, hatch=()):
     grid = np.arange(lo_ft, hi_ft, CORRIDOR_SAMPLE_FT)
     left = np.array([kerb_offset_ft(corridor, "left", float(s)) or np.nan for s in grid])
     right = np.array([-(kerb_offset_ft(corridor, "right", float(s)) or np.nan) for s in grid])
@@ -132,14 +142,27 @@ def draw_panel(ax, corridor, paint, parking, openings, lo_ft, hi_ft, half_ft,
     ax.plot(grid, np.where(np.isfinite(left), left, np.nan), color=KERB, lw=1.4, zorder=6)
     ax.plot(grid, np.where(np.isfinite(right), right, np.nan), color=KERB, lw=1.4, zorder=6)
 
-    # Where the law leaves room for a stall on the far kerb. Drawn as ROOM, not as a marked lane:
-    # every one of these is a length R.S. 39:4-138 does not forbid, which is a different claim
-    # from a design deciding to paint it.
+    # Marked parking on the far kerb - legal AND wide enough AND long enough for a whole car.
     for lo, hi, band in parking:
         if hi < lo_ft or lo > hi_ft:
             continue
         for xy in straighten(corridor, band):
             ax.fill(xy[:, 0], xy[:, 1], color=PARKING_BLUE, alpha=0.45, linewidth=0, zorder=2)
+
+    # EVERY OTHER FOOT OF THIS KERB, hatched - never left bare, which is what read as "maybe
+    # parking" before this existed. Two DIFFERENT findings, two colours: gold is this DESIGN's own
+    # section - too narrow once the facility holds its target lane, or too short for one whole car,
+    # and a narrower facility would open it. Orchid is the STREET, independent of any design here -
+    # R.S. 39:4-138's corner/stop-sign/hydrant setbacks or an OSM restriction; nothing this project
+    # draws changes it. Not a driveway/side-street mouth, which is never hatched over.
+    hatch_style = {"room": (HATCH_GOLD, HATCH_EDGE, "//"), "legal": (HATCH_LEGAL, HATCH_LEGAL_EDGE, "xx")}
+    for lo, hi, band, reason in hatch:
+        if hi < lo_ft or lo > hi_ft:
+            continue
+        face, edge, texture = hatch_style[reason]
+        for xy in straighten(corridor, band):
+            ax.fill(xy[:, 0], xy[:, 1], facecolor=face, edgecolor=edge, hatch=texture,
+                   alpha=0.5, linewidth=0.6, zorder=2)
 
     # THE DAYLIGHTING: kerb the law keeps clear so a driver and a pedestrian can see each other.
     # Drawn under the stalls, because what a reader needs to see is that the clear zone is where
@@ -256,6 +279,39 @@ def draw_panel(ax, corridor, paint, parking, openings, lo_ft, hi_ft, half_ft,
     ax.tick_params(axis="x", labelsize=6)
     for spine in ("top", "right", "left"):
         ax.spines[spine].set_visible(False)
+
+
+def _legend(fig) -> None:
+    """A real legend - colour swatches and line/marker samples with labels.
+
+    Replaces a color key that used to live only in the title's prose ("blue = ...", "gold hatch =
+    ..."), which could not show a hatch texture or a line style and grew a new clause every time a
+    marking was added to the panel.
+    """
+    from matplotlib.lines import Line2D
+    from matplotlib.patches import Patch
+
+    handles = [
+        Patch(facecolor=LANE_GREEN, alpha=0.85, label="protected bike lane"),
+        Patch(facecolor=BUFFER_GREY, alpha=0.85, label="buffer / painted median"),
+        Line2D([], [], color=PAINT_WHITE, markeredgecolor="#999999", lw=1.4, label="lane edge line"),
+        Line2D([], [], color=POST, marker="o", linestyle="none", markersize=4, label="flex post"),
+        Patch(facecolor=PARKING_BLUE, alpha=0.45, label="marked parking stall"),
+        Patch(facecolor=HATCH_GOLD, edgecolor=HATCH_EDGE, hatch="//", alpha=0.5,
+              label="no parking - too narrow / too short for this design"),
+        Patch(facecolor=HATCH_LEGAL, edgecolor=HATCH_LEGAL_EDGE, hatch="xx", alpha=0.5,
+              label="no parking - restricted by law or signage"),
+        Line2D([], [], color=OPENING, lw=2.6, label="driveway or side-street crossing"),
+        Patch(facecolor=GREEN_HOT, alpha=0.9, label="conspicuity zone at a crossing"),
+        Line2D([], [], color=YELLOW, lw=1.1, label="dotted centreline at a crossbike"),
+        Line2D([], [], color=PAINT_WHITE, marker="^", markeredgecolor="#555555", linestyle="none",
+               markersize=5, label="BIKE LANE symbol"),
+        Patch(facecolor=MOUTH_BLUE, alpha=0.16, label="junction - no kerb to test"),
+        Patch(facecolor=GAP_RED, alpha=0.16, label="unsurveyed - section untested"),
+        Line2D([], [], color="#3b6ea5", lw=0.8, linestyle="--", label="junction node / site boundary"),
+    ]
+    fig.legend(handles=handles, loc="lower left", bbox_to_anchor=(0.30, -0.10), ncol=3,
+              fontsize=6, frameon=True, edgecolor="#3b6ea5", title="LEGEND", title_fontsize=6.5)
 
 
 def _decision_table(fig, outcomes, drawn: str) -> None:
@@ -424,6 +480,10 @@ def main() -> int:
     marks = stall_marks(corridor, far_side, stall_spans)[0]
     stall_labels = tuple((far_side, lo, hi, n) for lo, hi, n in stalls_per_span(stall_spans))
     openings = tuple((side, opening.start_ft, opening.end_ft) for side, opening in facts.openings)
+    # Every foot of this kerb that is neither a marked stall nor a vehicle crossing: "parking or
+    # hatching, never neither" (parking.py's own rule, asked of the whole corridor).
+    marked_spans = tuple((lo, hi) for _side, lo, hi, _n in stall_labels)
+    hatch = hatch_bands(corridor, facts, far_side, marked_spans)
 
     # The three markings NACTO asks for besides the lane itself (STANDARDS.md, 2026-08-18).
     green = []
@@ -454,11 +514,11 @@ def main() -> int:
     fig, axes = plt.subplots(args.panels, 1, figsize=(13, 2.0 * args.panels))
     for ax, lo, hi in zip(np.atleast_1d(axes), edges[:-1], edges[1:]):
         draw_panel(ax, corridor, paint, parking, openings, float(lo), float(hi), half_ft,
-                   marks=tuple(marks), stall_labels=stall_labels, extras=extras)
+                   marks=tuple(marks), stall_labels=stall_labels, extras=extras, hatch=hatch)
     axes[0].set_title(
         f"{corridor.name} - existing kerbs (surveyed) and the proposed two-way protected bikeway "
-        f"on the {paint.compass_side} kerb; blue = where the law leaves parking room on the "
-        f"{far_compass} kerb, brown = a driveway or side road crossing it\n"
+        f"on the {paint.compass_side} kerb; every foot of the {far_compass} kerb is marked parking "
+        f"or hatched against it - see legend\n"
         f"{paint.placed_ft:,.0f} ft placed of {corridor.length_ft:,.0f} ft "
         f"({paint.placed_ft / corridor.length_ft:.0%}); straightened into the corridor's own frame "
         f"- lengths and widths true, curvature removed\n"
@@ -468,6 +528,7 @@ def main() -> int:
     axes[-1].set_xlabel("station along the corridor (ft)", fontsize=7)
     fig.tight_layout()
     _decision_table(fig, outcomes, drawn)
+    _legend(fig)
 
     out_dir = Path(args.out)
     out_dir.mkdir(parents=True, exist_ok=True)

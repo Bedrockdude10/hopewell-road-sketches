@@ -158,31 +158,53 @@ STRIP_SAMPLE_FT = 2.0
 # At 1:10 a marking gives up a mean 0.11-0.28 ft of the drift on the legs that drift, and refuses
 # up to 12.2 ft of the kink on broad_st_east. Both figures hold at either frame scale, because a
 # rate limit is a local property of the kerb and total swing is not.
+#
+# THE SAME RATE NOW LIMITS THE TRAVEL-LANE DIVIDER (corridor_paint._build_run), which is a lateral
+# shift a driver is steered through rather than a cosmetic choice about paint - so it has to answer
+# to the published tapers, and it does. On Broad St, posted 25 mph its whole length, MUTCD's
+# shifting taper is half the merging L=WS^2/60, i.e. 1:5.2; NACTO's floor for a bidirectional
+# bikeway is 1:5. This is 1:10, about twice as gentle as either, so a figure that was chosen as a
+# tracing filter turns out to be conservative as a design taper too. STANDARDS.md carries both
+# citations against this constant. A street posted materially faster would need the rate derived
+# from ITS speed instead of this constant - S enters as 1/S^2, so 45 mph is 1:17.
 MAX_KERB_FOLLOW_TAPER = 0.10
+
+
+def taper_limited(stations: np.ndarray, offsets: np.ndarray,
+                   max_taper: float = MAX_KERB_FOLLOW_TAPER) -> np.ndarray:
+    """The largest profile at or inside `offsets` whose lateral slope never exceeds `max_taper`.
+
+    A cone erosion: at each station, the lowest any cone of that slope rising from another
+    station's offset reaches. So a drift gentler than the limit comes back unchanged, while a kink
+    is cut back to the limit from both directions.
+
+    AT OR INSIDE THE INPUT, NEVER OUTSIDE - erosion can only reduce an offset, so anything built
+    off this cannot cross a boundary the input did not already cross. That property is what lets
+    both callers use it as a floor rather than having to re-check the result.
+
+    THE ONE HOME FOR THE RATE LIMIT, because two things need it and they are not the same thing:
+    _tapered_curb_frame smooths a TRACING so paint does not inherit a surveyor's corner flare, and
+    corridor_paint._build_run limits how fast the travel-lane DIVIDER may shift. Written twice they
+    would be free to disagree, and the second one is a lateral shift a driver is steered through -
+    see MAX_KERB_FOLLOW_TAPER for why 1:10 serves both.
+    """
+    return (offsets[None, :] + max_taper * np.abs(stations[:, None] - stations[None, :])).min(axis=1)
 
 
 @lru_cache(maxsize=256)
 def _tapered_curb_frame(centerline: LineString, curb: LineString, max_taper: float):
     """A kerb profile with its steep kinks flattened - see MAX_KERB_FOLLOW_TAPER.
 
-    The largest profile lying at or inside the traced kerb whose lateral slope never exceeds
-    `max_taper`, which is a cone erosion: at each station, the lowest any cone of that slope
-    rising from another station's kerb offset reaches. So a drift gentler than the limit comes
-    back unchanged, while a kink is cut back to the limit from both directions.
-
     Computed once over the WHOLE traced span, not over each caller's window, because otherwise
     two markings on one kerb get different profiles from asking about different stretches of it -
     and a bike lane's outer stripe disagreeing with its own surface by a few inches is exactly
     what MarkingsDoNotCollide reports.
-
-    Inside the kerb, never outside: erosion can only reduce an offset, so a marking built off
-    this cannot cross a kerb it did not already cross.
     """
     stations, offsets = _curb_in_leg_frame(centerline, curb)
     lo, hi = float(stations[0]), float(stations[-1])
     grid = np.linspace(lo, hi, max(int(np.ceil((hi - lo) / STRIP_SAMPLE_FT)) + 1, 2))
     sampled = np.abs(np.interp(grid, stations, offsets))
-    eroded = (sampled[None, :] + max_taper * np.abs(grid[:, None] - grid[None, :])).min(axis=1)
+    eroded = taper_limited(grid, sampled, max_taper)
     grid.flags.writeable = False
     eroded.flags.writeable = False
     return grid, eroded

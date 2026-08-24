@@ -75,6 +75,20 @@ Broad St and not `TARGET_LANE_WIDTH_FT`; assuming the 11 ft produced a confident
 needs 22.0 ft and the kerb gives 20.32, so it does not fit", and a four-option design decision put
 to Danny on the strength of it. Nothing about it was true.
 
+**AND A SECTION IS A RIGID PIECE, SO ONE PROFILE HAS TO PLACE ALL OF IT.** `corridor_paint`
+computed the buffer's inner edge from the traced kerb station by station, while `far_kerb_lane_edge`
+— which hangs the travel-lane divider off that same edge — read one scalar per run out of the run's
+governing cross-section. Two derivations of one line, in agreement with each other nowhere: on the
+1,050 ft run through station 1400 they ended **7.3 ft apart**, the drawn near travel lane measured
+**11.00 to 22.31 ft** against a design of 11.00, and the far kerb's parking was counted against a
+stripe that was not where the stripe was. Neither number was wrong on its own terms. The fix was one
+placement line (`place = taper_limited(stations, offs)`) that every offset comes off, and the divider
+derived from the drawn edge rather than from the scalar — after which both travel lanes are
+`divided_lane_width_ft` at every station by construction, the surplus lands on the far kerb, and the
+far kerb goes from 40 markable stalls to 72. **The tell was that all three of `_build_run`'s edge
+lines varied by 11.31 ft while the thing derived from them varied by 0.00.** A number that cannot
+move, downstream of one that does, is the shape of this bug.
+
 `--section` prints that comparison and flags it when it holds, which is the only useful thing to
 do with a check that cannot fail. The tell is worth learning as a shape: printing demand against
 room gave
@@ -198,6 +212,7 @@ There is exactly one home for each of these. Adding a second copy is the most co
 | the centreline stripes both views draw | `centerline_paint_ft` | `src/render/crosswalks.py` |
 | a band between two lateral offsets | `offset_band_polygon` | `src/geometry/model/` |
 | a line N ft to one side | `inset_line_ft` — **never** `offset_curve` for stationed work | `src/geometry/model/` |
+| a profile rate-limited to a taper | `taper_limited` | `src/geometry/model/` |
 
 **Search before writing.** `grep -rn "SOME_CONSTANT" src/` costs nothing. Writing the second copy
 costs a session: the far-kerb rule was written inline in one site's `scenarios.py`, the sibling
@@ -217,6 +232,13 @@ This has caused three separate bugs. Learn it once.
 On `broad_st_east` those differ by 25 ft (config says 68.0; the traced kerbs are 43.26 apart).
 Size paint off the traced number and you draw a 20 ft hatch. `apply_osm_parking` spells this out
 in a comment; read it rather than rediscovering it.
+
+**The third instance is a corridor's two-way section**, and it is the one that shows what the rule
+costs when it is broken quietly: `_build_run` measured the section from the kerb and
+`far_kerb_lane_edge` measured the divider from the alignment, 7.3 ft apart, and no check could see it
+because each side was internally consistent. See §0a. The resolution there was not to pick a datum
+but to make the section rigid — one placement line, every offset off it — which is what a
+cross-section is.
 
 ---
 

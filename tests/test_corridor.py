@@ -709,3 +709,150 @@ def test_no_approach_in_the_drawing_carries_a_shortened_facility(site_models, wi
         f"'none of them stops short' is measuring almost nothing")
     assert not short, ("an approach in the drawing carries a facility that stops short of its own "
                        "kerb:\n  " + "\n  ".join(short))
+
+
+@pytest.fixture(scope="session")
+def broad_st_paint(broad_st, site_models):
+    """The two-way bikeway as the corridor drawing actually places it, once for the whole file."""
+    from src.geometry.corridor_paint import centred_on_its_kerbs, paint_facility
+    from src.geometry.treatments import BROAD_ST_TWO_WAY_BIKEWAY
+
+    corridor = centred_on_its_kerbs(broad_st)
+    with contextlib.redirect_stdout(io.StringIO()):
+        facts = corridor_facts(corridor, site_models)
+        paint = paint_facility(corridor, BROAD_ST_TWO_WAY_BIKEWAY, facts=facts)
+    return corridor, paint
+
+
+@needs_source_data
+def test_the_divider_reads_the_travel_edge_that_was_drawn(broad_st_paint):
+    """Where the far kerb's lane edge sits must come off the DRAWN near travel edge.
+
+    THE TWO DERIVATIONS OF ONE NUMBER, again (SKILLS.md section 0). `_build_run` places the whole
+    section against the kerb, station by station; `far_kerb_lane_edge` hangs the divider one lane
+    width in from that edge. Read instead off the run's governing cross-section - one scalar for
+    the run - the two ended 7.3 ft apart on the 1,050 ft run through station 1400, and the far
+    kerb's parking was measured against a stripe that is not where the stripe is.
+
+    Asserted as VARIATION rather than against values: a scalar per run cannot vary, so this is the
+    one shape of assertion the old code fails and the new one passes. The 1,050 ft run is the
+    reason this matters - one narrow cross-section was setting the section for the other 1,000.
+    """
+    from src.geometry.corridor_paint import far_kerb_lane_edge
+
+    _corridor, paint = broad_st_paint
+    at = far_kerb_lane_edge(paint)
+    varies = {}
+    for run in paint.runs:
+        if run.section is None or run.length_ft < 200.0:
+            continue
+        stations = np.arange(run.start_ft, run.end_ft, 25.0)
+        edges = np.array([at(float(s)) for s in stations])
+        varies[f"[{run.start_ft:.0f}, {run.end_ft:.0f}]"] = float(edges.max() - edges.min())
+    assert varies, "no run long enough to have a varying kerb, so nothing was measured"
+    assert max(varies.values()) > 1.0, (
+        "the far kerb's lane edge is the same everywhere on every run, so it is being read off a "
+        f"per-run scalar rather than the travel edge that was drawn: {varies}")
+
+
+@needs_source_data
+def test_the_travel_edge_shifts_no_faster_than_the_published_taper(broad_st_paint):
+    """The divider a driver follows may not inherit the tracing's kinks.
+
+    The section follows its kerb, so without a rate limit the travel edge - and the divider hung
+    off it - jinks wherever the surveyor placed a vertex. MAX_KERB_FOLLOW_TAPER is 1:10, against
+    MUTCD's shifting taper of 1:5.2 at Broad St's posted 25 mph and NACTO's 1:5 floor for a
+    bidirectional bikeway; see STANDARDS.md. Measured on the drawn profile, because the limit is
+    applied one call away from it and an unlimited profile passes every check that reads the
+    section instead.
+    """
+    from src.geometry.corridor_paint import kerb_offset_ft
+    from src.geometry.model import MAX_KERB_FOLLOW_TAPER
+
+    corridor, paint = broad_st_paint
+    steep, raw_max = {}, 0.0
+    for run in paint.runs:
+        if not run.travel_edge_ft:
+            continue
+        stations, edges = (np.asarray(a, dtype=float) for a in run.travel_edge_ft)
+        slope = np.abs(np.diff(edges) / np.diff(stations))
+        if slope.max() > MAX_KERB_FOLLOW_TAPER + 1e-6:
+            steep[f"[{run.start_ft:.0f}, {run.end_ft:.0f}]"] = float(slope.max())
+        kerb = np.array([kerb_offset_ft(corridor, paint.side, float(s)) or np.nan
+                         for s in stations])
+        raw = np.abs(np.diff(kerb) / np.diff(stations))
+        raw_max = max(raw_max, float(np.nanmax(raw)))
+    assert raw_max > MAX_KERB_FOLLOW_TAPER, (
+        f"the traced kerb's own steepest slope is {raw_max:.3f}, under the {MAX_KERB_FOLLOW_TAPER} "
+        f"limit, so following it unlimited would have passed and this asserts nothing")
+    assert not steep, ("the travel edge shifts faster than the published taper: "
+                       + ", ".join(f"{k} at 1:{1 / v:.1f}" for k, v in steep.items()))
+
+
+@needs_source_data
+def test_no_kerbside_paint_is_drawn_outside_the_traced_kerb(broad_st_paint):
+    """The section slides INSIDE the tracing or not at all.
+
+    `taper_limited` only ever reduces an offset, which is what lets `_build_run` place every
+    stripe off one eroded profile without re-checking the result against the kerb. The tempting
+    change that breaks it is a floor at the run's governing half-width, to stop the section
+    sliding inside where it was sized - that draws paint 2.13 ft OUT over the traced kerb here,
+    and _build_run's docstring says why it is not needed.
+    """
+    from src.geometry.corridor_paint import kerb_offset_ft
+    from src.geometry.model import station_offset_many
+
+    corridor, paint = broad_st_paint
+    over, measured = {}, 0
+    for run in paint.runs:
+        for geom in (run.lane_surface, run.buffer_zone):
+            if geom is None or geom.is_empty:
+                continue
+            for part in getattr(geom, "geoms", [geom]):
+                coords = np.asarray(part.exterior.coords, dtype=float)
+                stations, offsets = station_offset_many(corridor.centerline, coords)
+                kerb = np.array([kerb_offset_ft(corridor, paint.side, float(s)) or np.nan
+                                 for s in stations])
+                # Untraced stations say nothing; a bin that measured nothing must not read as pass.
+                past = np.abs(offsets) - kerb
+                measured += int(np.isfinite(past).sum())
+                if np.nanmax(np.where(np.isfinite(past), past, -np.inf)) > 0.05:
+                    where = f"[{run.start_ft:.0f}, {run.end_ft:.0f}]"
+                    over[where] = float(np.nanmax(past))
+    assert measured > 500, f"only {measured} vertices sat on traced kerb, so this measured little"
+    assert not over, ("kerbside paint is drawn past the traced kerb: "
+                      + ", ".join(f"{k} by {v:.2f} ft" for k, v in over.items()))
+
+
+@needs_source_data
+def test_the_lane_still_sits_on_the_kerb_it_follows(broad_st_paint):
+    """Rate-limiting the placement line may not become standing off the kerb.
+
+    The other end of the trade `taper_limited` makes, and the one SKILLS.md section 0b has the
+    receipt for: a bikeway that followed its kerb under one rule stood 8.4 ft clear of it under
+    another, from a single threshold. Erosion only reduces an offset, so the standoff is BOUNDED by
+    how kinky the tracing is - but bounded is not measured, and the bound is large. Measured here:
+    a mean of 0.05-1.15 ft per run, with every per-run worst case AT A RUN END, where the kerb
+    flares into a corner return and refusing to follow it is the whole point of the limit.
+
+    So the assertion is on the MEAN, not the maximum. A maximum assertion would either fail on the
+    flares the limit exists to refuse or be loosened until it pinned nothing.
+    """
+    from src.geometry.corridor_paint import kerb_offset_ft
+    from src.geometry.model import taper_limited
+
+    corridor, paint = broad_st_paint
+    off_the_kerb = {}
+    for run in paint.runs:
+        if not run.travel_edge_ft:
+            continue
+        stations = np.asarray(run.travel_edge_ft[0], dtype=float)
+        raw = np.array([kerb_offset_ft(corridor, paint.side, float(s)) or np.nan
+                        for s in stations])
+        standoff = float(np.nanmean(raw - taper_limited(stations, raw)))
+        if standoff > 2.0:
+            off_the_kerb[f"[{run.start_ft:.0f}, {run.end_ft:.0f}]"] = standoff
+    assert not off_the_kerb, (
+        "the placement line stands off the kerb it is supposed to follow, on average over a whole "
+        "run - so the lane is no longer a kerbside facility there: "
+        + ", ".join(f"{k} by {v:.2f} ft" for k, v in off_the_kerb.items()))

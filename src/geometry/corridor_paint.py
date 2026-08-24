@@ -24,8 +24,9 @@ from dataclasses import dataclass, field
 import numpy as np
 from shapely.geometry import LineString, Polygon
 
-from src.geometry.model import (Alignment, band_from_offsets, line_from_offsets,
-                                place_in_measured_frame, side_facing, whole_stalls_ft)
+from src.geometry.model import (MAX_KERB_FOLLOW_TAPER, Alignment, band_from_offsets,
+                                line_from_offsets, place_in_measured_frame, side_facing,
+                                taper_limited, whole_stalls_ft)
 from src.geometry.treatments.bikeways import (MIN_FACILITY_RUN_FT, section_at)
 from src.geometry.treatments.state import FacilityRefusal
 from typing import TYPE_CHECKING
@@ -48,6 +49,11 @@ class FacilityRun:
     buffer_zone: Polygon | None = None
     edge_lines: tuple = ()
     bollards: tuple = ()
+    #: (stations, offsets) of the travel lane's edge AS DRAWN - the profile _build_run actually
+    #: placed, not the scalar it was sized from. Kept because the divider hangs one lane width off
+    #: this line, so far_kerb_lane_edge has to read the drawn profile or the far kerb's parking is
+    #: measured against a stripe that is not where the stripe is.
+    travel_edge_ft: tuple = ()
     #: The rung this run landed on. Kept because the divider shift - and therefore how much room
     #: is left on the FAR kerb for parking - is a property of the section, and it differs between
     #: a standard run and a constrained one.
@@ -82,6 +88,16 @@ class CorridorFacilityPaint:
         lines = [f"{self.road}: two-way protected lane on the {self.compass_side} kerb",
                  f"  placed        {self.placed_ft:8,.0f} ft of {corridor_length_ft:,.0f} "
                  f"({self.placed_ft / corridor_length_ft:.0%}) in {len(self.runs)} run(s)"]
+        # HOW FAR THE SECTION SLID, because a reader who is not told assumes it did not. A run's
+        # rung is chosen at its narrowest cross-section and the section then follows its
+        # rate-limited kerb out from there, so this is the width one narrow spot is NOT costing the
+        # rest of the run - and it lands on the other kerb, which is where the parking count moves.
+        slide = [max(run.travel_edge_ft[1]) - min(run.travel_edge_ft[1])
+                 for run in self.runs if run.travel_edge_ft]
+        if slide:
+            lines.append(f"  resectioned   {max(slide):8.1f} ft of lateral give at the most "
+                         f"generous run, {sum(slide) / len(slide):.1f} ft mean, all of it inside "
+                         f"the traced kerb and inside 1:{1 / MAX_KERB_FOLLOW_TAPER:.0f}")
         for refusal in self.refusals:
             narrow = "" if refusal.narrowest_ft is None else f", narrowest {refusal.narrowest_ft:.1f} ft"
             lines.append(f"  REFUSED       {refusal.start_ft:6,.0f}-{refusal.end_ft:<6,.0f} "
@@ -287,17 +303,33 @@ def _blocks(flags: np.ndarray):
 def _build_run(corridor: "Corridor", side: str, section, stations: np.ndarray, offs, breaks=()):
     """The paint itself, from the SAME section accounting the per-leg treatment uses.
 
-    The lane hugs the kerb (TwoWayBikeLane.hugs_kerb); the travel lane's edge is measured from
-    the alignment; the buffer between them absorbs the difference. That split is
-    bikeways.BikeLane.offsets_from_kerb_ft's, quoted rather than re-derived.
+    The lane hugs the kerb (TwoWayBikeLane.hugs_kerb), so THE WHOLE SECTION SLIDES AS ONE PIECE
+    and every offset comes off a single placement line. Written per-offset instead, the section
+    stretched: the buffer's inner edge followed the raw tracing while the divider downstream of it
+    (far_kerb_lane_edge) stayed frozen at the governing station's arithmetic, and on the 1,050 ft
+    run through station 1400 those two datums ended 7.3 ft apart.
+
+    The placement line is the kerb RATE-LIMITED, not the kerb - tapered_curb_offsets' rule, which
+    the corridor was the only kerb-following paint in the repo not to follow. It matters more here
+    than on a leg: the divider is derived from this line, so a flare in the tracing would steer a
+    driver through it. See MAX_KERB_FOLLOW_TAPER for why 1:10 answers to the published tapers.
+
+    NO FLOOR AT THE GOVERNING HALF-WIDTH, and it costs nothing to leave it out. The section does
+    slide inside where it was sized - `_collect` governs off the min-SUM station, whose near kerb
+    can be 2.95 ft wider than the narrowest near kerb on the run - but the divider hangs off THIS
+    line (far_kerb_lane_edge), so both travel lanes stay at `divided_lane_width_ft` everywhere and
+    the whole deficit lands on the far kerb as parking room. Measured over 815 stations of Broad
+    St that room never goes negative. A floor would instead hold paint 2.13 ft OUT over the traced
+    kerb, measured, which is what taper_limited's at-or-inside promise exists to rule out.
     """
     kerb = section.offsets_from_kerb_ft()
     on = Alignment(corridor.centerline)
     if not np.isfinite(offs).all():
         return None, "the kerb is not readable at every station of this stretch"
-    lane_outer = offs - kerb["bike_outer_ft"]
-    lane_inner = offs - kerb["bike_inner_ft"]
-    travel_edge = lane_inner - section.buffer_ft
+    place = taper_limited(stations, offs)
+    lane_outer = place - kerb["bike_outer_ft"]
+    lane_inner = place - kerb["bike_inner_ft"]
+    travel_edge = place - section.section_ft
     if (travel_edge <= 0).any():
         # The section is wider than the distance from the alignment to its own kerb, so the travel
         # lane's edge lands on the far side of the line it is measured from. That is a real
@@ -320,6 +352,7 @@ def _build_run(corridor: "Corridor", side: str, section, stations: np.ndarray, o
                        lane_surface=lane, buffer_zone=buffer_zone,
                        edge_lines=tuple(e for e in edges if e is not None),
                        bollards=_bollards(on, side, stations, (travel_edge + lane_inner) / 2),
+                       travel_edge_ft=(tuple(stations.tolist()), tuple(travel_edge.tolist())),
                        section=section), None
 
 
@@ -501,26 +534,33 @@ def stall_room_spans(corridor: "Corridor", side: str, lane_edge_at, sample_ft: f
 def far_kerb_lane_edge(paint: CorridorFacilityPaint, default_ft: float | None = None):
     """station -> where the FAR kerb's travel lane edge sits, given what the facility placed.
 
-    Taking width out of one kerbside pushes the divider toward the other, so the far kerb's
-    lane edge is `travel_lane_divider_shift_ft` plus the lane's own width wherever the section
-    is actually down - `divided_lane_width_ft`, NOT `TARGET_LANE_WIDTH_FT`: they agree only on a
-    leg wide enough to hold two target-width lanes, and `divider.travel_lane_edge_ft`'s docstring
-    names the leg that doesn't (w_broad_st_northeast, an 0.92 ft error) - the same reconstruction,
-    repeated here, undercounted far-kerb room on every run that takes the equal split. Per run,
-    because a constrained rung shifts the divider by a different amount.
+    Taking width out of one kerbside pushes the divider toward the other, and the divider sits one
+    lane width in from the near travel edge - so the far kerb's lane edge is two lane widths in
+    from the DRAWN near travel edge. `divided_lane_width_ft`, NOT `TARGET_LANE_WIDTH_FT`: they
+    agree only on a leg wide enough to hold two target-width lanes, and
+    `divider.travel_lane_edge_ft`'s docstring names the leg that doesn't (w_broad_st_northeast, an
+    0.92 ft error). Per run, because a constrained rung has a different lane width.
+
+    A RE-EXPRESSION OF travel_lane_divider_shift_ft, NOT A RELAXATION OF IT (SKILLS.md section 4):
+    that shift is `lane_w - (near_half_ft - section_ft)`, so `shift + lane_w` is identically
+    `2*lane_w - travel_edge` at the one station the section was sized from. What changes is that
+    the near travel edge is a PROFILE - the section follows its rate-limited kerb - so a run whose
+    near kerb opens out 4 ft past its own narrowest point hands those 4 ft to the far kerb instead
+    of pinning 1,050 ft of street to one cross-section. Reading the scalar while _build_run drew
+    the profile put the two 7.3 ft apart through station 1400.
     """
     from src.geometry.treatments.base import TARGET_LANE_WIDTH_FT
-    from src.geometry.treatments.bikeways import divided_lane_width_ft, travel_lane_divider_shift_ft
+    from src.geometry.treatments.bikeways import divided_lane_width_ft
 
     default_ft = TARGET_LANE_WIDTH_FT if default_ft is None else default_ft
-    placed = [(run.start_ft, run.end_ft,
-               travel_lane_divider_shift_ft(run.section) + divided_lane_width_ft(run.section))
-              for run in paint.runs if run.section is not None]
+    placed = [(run.start_ft, run.end_ft, 2.0 * divided_lane_width_ft(run.section),
+               np.asarray(run.travel_edge_ft[0]), np.asarray(run.travel_edge_ft[1]))
+              for run in paint.runs if run.section is not None and run.travel_edge_ft]
 
     def at(station_ft: float) -> float:
-        for lo, hi, edge_ft in placed:
+        for lo, hi, two_lanes_ft, stations, edges in placed:
             if lo <= station_ft <= hi:
-                return edge_ft
+                return two_lanes_ft - float(np.interp(station_ft, stations, edges))
         return default_ft
 
     return at

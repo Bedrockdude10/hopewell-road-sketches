@@ -418,18 +418,35 @@ separation, corner islands, turn wedges, medians to slow turning vehicles, and v
 turn conflicts. **All three of Broad St's modelled junctions are signalized** (Greenwood, E Broad &
 Princeton, and Louellen - corrected 2026-08-18), so phase separation is available at each.
 
-#### How closely a kerbside marking follows the kerb — **Modelled, 2026-08-19**
+#### How closely a kerbside marking follows the kerb — **Modelled, checked against cited tapers, 2026-08-24**
 
 | figure | value | constant | where |
 |---|---|---|---|
 | Steepest lateral shift a marking will follow a traced kerb through | 1:10 | `MAX_KERB_FOLLOW_TAPER` | `src/geometry/model/` |
+| MUTCD shifting taper at 25 mph, for comparison | 1:5.2 | — | *as cited* |
+| NACTO lateral shift floor, bidirectional bikeway, for comparison | 1:5 | — | *as cited* |
 
-**Modelled, not cited.** No guide consulted here gives a taper for tracking a kerb that wanders, so
-this is our own figure and it is marked as such. What it is calibrated on: across the three corridor
-junctions, the legs where the traced kerb records the street genuinely bending move at 1:6 or
-gentler, and the two whose tracing takes in a corner flare kink at 1:2. At 1:10 a marking gives up a
-mean 0.11–0.28 ft of the drift on the legs that drift and refuses up to 12.2 ft of the flare on
-`broad_st_east`.
+**Modelled, and now with two cited figures to hold it against.** No guide consulted gives a taper
+for tracking a kerb that *wanders*, so the value is still ours. What it is calibrated on: across the
+three corridor junctions, the legs where the traced kerb records the street genuinely bending move
+at 1:6 or gentler, and the two whose tracing takes in a corner flare kink at 1:2. At 1:10 a marking
+gives up a mean 0.11–0.28 ft of the drift on the legs that drift and refuses up to 12.2 ft of the
+flare on `broad_st_east`.
+
+**Why it now needs citing at all.** `corridor_paint._build_run` places the whole two-way bikeway
+section against this profile, and the travel-lane divider hangs off it — so the rate is no longer a
+cosmetic choice about paint but a lateral shift a driver is steered through, and it has to answer to
+the published tapers. MUTCD's merging taper is `L = W·S²/60` below 45 mph and a *shifting* taper is
+about half of it; at Broad St's posted 25 mph (recorded below) that is 1:5.2. NACTO's floor for a
+bidirectional bikeway's lateral shift is 1:5. 1:10 is roughly twice as gentle as either, so a figure
+chosen as a tracing filter turns out to be conservative as a design taper too, and no new constant
+is needed. Both citations are marked *as cited* — the values are from the guides' rules as recorded
+here, not re-read out of the documents for this row.
+
+**The speed is an input, and this constant hides that.** `S` enters as 1/S², so a street posted 45
+mph wants 1:17 and this constant would be too steep for it. Any corridor materially faster than
+Broad St needs the rate derived from its own posted speed rather than read from
+`MAX_KERB_FOLLOW_TAPER`.
 
 **Why it is a rate and not an amount.** The first version of this rule compared the kerb's TOTAL
 swing over a leg against a 6 ft threshold, which made the answer depend on leg length — and leg

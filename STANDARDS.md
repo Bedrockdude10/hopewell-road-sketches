@@ -443,6 +443,16 @@ chosen as a tracing filter turns out to be conservative as a design taper too, a
 is needed. Both citations are marked *as cited* — the values are from the guides' rules as recorded
 here, not re-read out of the documents for this row.
 
+**Being 2x conservative costs no parking, measured.** The obvious objection to 1:10 is that it
+leaves room on the table when the guides permit 1:5 — it does not. Swept through the corridor's own
+pipeline, 1:10 → 1:5 moves the far kerb from 1,694 to 1,714 ft of room, 72 to 73 stalls of room, and
+**45 to 45 stalls actually drawn**; removing the limit entirely is worth one drawn stall. The
+mechanism is that the taper costs 0.36 ft of lateral placement on average, and 0.36 ft cannot move a
+`MIN_USABLE_STALL_FT` threshold of 7.0 except at the margin. What binds instead is street width
+through `divided_lane_width_ft` — on a run too narrow for two 11 ft lanes plus the section, the
+travel way takes everything and the kerb gets nothing at the pinch by construction. Do not spend the
+taper's conservatism looking for stalls; there are none there.
+
 **The speed is an input, and this constant hides that.** `S` enters as 1/S², so a street posted 45
 mph wants 1:17 and this constant would be too steep for it. Any corridor materially faster than
 Broad St needs the rate derived from its own posted speed rather than read from

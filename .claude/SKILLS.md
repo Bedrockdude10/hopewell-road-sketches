@@ -61,7 +61,7 @@ those wrong answers were about `w_broad_st_northeast` when the complaint was abo
 | the paint table | what is drawn on this leg-side, stationed in its own frame | `station_offset_many` |
 | `--section` | what the treatment THINKS it placed, against the room the kerb gives | `section(state).offsets_from_centerline_ft()`, `narrowest_half_width_ft` |
 | `--limiters` | all four things deciding where kerbside paint starts | see the table below |
-| `--gaps` | kerb offset minus outermost drawn offset, station by station | `curb_offsets_at_stations`, `curb_station_span` |
+| `--gaps` | kerb offset minus outermost drawn offset, station by station | `surface_reach_at`, `curb_offsets_at_stations` |
 | `--lanes` | how wide the DRAWN travel lane is, and whether paint or the kerb holds it in | `centerline_paint_ft`, `curb_offsets_at_stations` |
 | `--continuity` | whether a facility is one piece, and how wide the holes are | `unary_union` |
 
@@ -106,13 +106,29 @@ fail.)
 A gap profile — kerb offset minus outermost drawn offset, station by station — turns "it looks
 janky" into "bare from station 0 to 63.7, then 1.4 ft widening to 2.6 ft by station 118", which
 names the mechanism on its own. That is `--gaps`; extend it rather than writing another throwaway
-script, and NEVER answer a geometry question by cropping a PNG. Note it is **binned**, because
-paint is polygons and not a function of station — the outermost vertex in each bin is what "how
-far out does the paint reach here" can mean — and that an empty bin has to read as *no
+script, and NEVER answer a geometry question by cropping a PNG. Note it is **binned**, so that a
+transverse marking no cut lands on is still seen, and that an empty bin has to read as *no
 measurement*. Written the obvious way with `np.max(..., initial=np.nan)` the initial value folds
 into the reduction, every bin comes out NaN, every comparison against a threshold comes out
 false, and the profile reports "flush the whole way" having measured nothing. **A quantitative
 check that cannot see anything must say so, not pass.**
+
+**AND MEASURE THE PAINT'S SURFACE, NOT ITS NEAREST VERTEX — THIS TOOL GOT THAT WRONG FOR ITS
+WHOLE LIFE.** The line this paragraph used to carry ("the outermost vertex in each bin is what
+'how far out does the paint reach here' can mean") is false, and it is false in a way that made
+`--gaps` answer the one complaint it exists for with a defect that was not there. A fill is
+offset from the traced kerb, so its outer edge carries the kerb's vertices AND NOTHING BETWEEN
+THEM — 9 over the 85 ft of `greenwood_ave_south` left, against 44 on its inner edge, which is a
+plain offset from the alignment. Every 10 ft bin past station 54.5 therefore held inner vertices
+and no outer one, `max` returned the inner edge at a fixed 11.82 ft, and the profile reported
+kerb-minus-11.82: **4.06 ft of separation at station 120 on paint flush to 0.00**, and up to
+**17.54 ft on `broad_st_west`**. A perpendicular cut through the drawn polygon cannot read the
+wrong edge, because it does not choose between edges — `surface_reach_at`, kept as the max with
+the vertex reduction because each is a lower bound on the reach and the largest is the best
+estimate, which can only close a reported gap and never open one. Asked why the kerb was
+separating from the hatching on Greenwood, the honest answer was **it is not, to 0.04 ft** —
+everything the tool had been reporting along that leg was its own arithmetic. **A check that
+cries wolf is retired as fast as one that cannot fail, and it costs more on the way out.**
 
 **AND WHEN A MARKING DOES NOT REACH, PRINT EVERY LIMITER, NOT THE FIRST ONE.** Four separate
 things decide where a kerbside marking starts, they disagree, and the answer is whichever sits

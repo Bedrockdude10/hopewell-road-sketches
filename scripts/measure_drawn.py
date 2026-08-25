@@ -38,6 +38,7 @@ between) is reported against the junction centre instead, as a plain distance.
 import argparse
 import contextlib
 import io
+import math
 import os
 import sys
 from itertools import combinations
@@ -47,6 +48,7 @@ from typing import NamedTuple
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import numpy as np
+from shapely.geometry import LineString
 from shapely.ops import unary_union
 
 from scripts.build_all import scenarios_for
@@ -117,7 +119,9 @@ def piece_coords(geom) -> np.ndarray:
     A MultiPolygon has no .exterior, and a marking becomes one the moment it is clipped into
     two - so reading .exterior directly works right up until the case worth measuring.
     """
-    parts = getattr(geom, "geoms", None) or [geom]
+    parts = [g for g in (getattr(geom, "geoms", None) or [geom]) if not g.is_empty]
+    if not parts:
+        return np.empty((0, 2), dtype=float)
     return np.concatenate([
         np.asarray(g.exterior.coords if g.geom_type == "Polygon" else g.coords, dtype=float)
         for g in parts])
@@ -139,6 +143,67 @@ def drawn_on(built: Built, leg_name: str, side: str,
     if not stations:
         return None
     return np.concatenate(stations), np.concatenate(offsets)
+
+
+def _cut_across(centerline, station_ft: float, half_ft: float):
+    """A straight cut across the leg at one station, long enough to cross anything drawn."""
+    if not 0.0 <= station_ft <= centerline.length:
+        return None
+    eps = min(0.5, centerline.length / 2.0)
+    here = centerline.interpolate(station_ft)
+    ahead = centerline.interpolate(min(station_ft + eps, centerline.length))
+    behind = centerline.interpolate(max(station_ft - eps, 0.0))
+    span = math.hypot(ahead.x - behind.x, ahead.y - behind.y)
+    if span == 0.0:
+        return None
+    nx = -(ahead.y - behind.y) / span * half_ft
+    ny = (ahead.x - behind.x) / span * half_ft
+    return LineString([(here.x - nx, here.y - ny), (here.x + nx, here.y + ny)])
+
+
+def surface_reach_at(built: Built, leg_name: str, side, stations: np.ndarray,
+                     kind_filter: str | None = None) -> np.ndarray:
+    """How far out the drawn paint REACHES at each station, measured on the surface itself.
+
+    NOT by reducing over vertices, which is how this measurement was written first and which
+    reported a 4 ft gap on paint drawn flush to the kerb. A fill inherits its outer edge from
+    the traced kerb, so that edge carries the kerb's vertices and no more - 9 of them over the
+    85 ft of `greenwood_ave_south` left, against 44 on the inner edge, which is a plain offset
+    from the alignment. Every 10 ft bin between stations 54.5 and 130 therefore held inner-edge
+    vertices and no outer-edge one, `max` returned the inner edge at 11.82 ft, and the profile
+    reported kerb minus 11.82: 4.06 ft at station 120 against a true 0.00. Cutting the polygon
+    instead cannot read the wrong edge, because it does not choose between edges.
+
+    Both directions of the cut are built and the far side discarded by sign rather than aiming
+    the normal, so getting the frame's handedness wrong cannot silently halve the answer.
+    """
+    leg = built.model.legs[leg_name]
+    pieces = [piece for piece in built.paint
+              if piece.leg == leg_name and str(piece.side) == side.value
+              and (not kind_filter or kind_filter in piece.kind.name)]
+    reach = np.full(len(stations), np.nan)
+    if not pieces:
+        return reach
+    # Long enough to cross the widest thing drawn here, with slack for a segment that bows
+    # further out between its endpoints than either endpoint sits.
+    half_ft = 20.0
+    for piece in pieces:
+        _station, offset = station_offset_many(leg.centerline, piece_coords(piece.geometry))
+        if offset.size:
+            half_ft = max(half_ft, float(np.abs(offset).max()) + 5.0)
+    for i, station_ft in enumerate(stations):
+        cut = _cut_across(leg.centerline, float(station_ft), half_ft)
+        if cut is None:
+            continue
+        for piece in pieces:
+            hit = cut.intersection(piece.geometry)
+            if hit.is_empty:
+                continue
+            _station, offset = station_offset_many(leg.centerline, piece_coords(hit))
+            on_this_side = offset * side.sign > 0
+            if on_this_side.any():
+                reach[i] = np.fmax(reach[i], np.abs(offset[on_this_side]).max())
+    return reach
 
 
 def target_leg_sides(target) -> list[tuple[str, str | None]]:
@@ -235,56 +300,95 @@ def report_limiters(built: Built, leg_filter: str | None, kind_filter: str | Non
                   f"{binding + ' ' + format(value, '.2f'):>20s} {at:8.2f}{match}")
 
 
+class GapProfile(NamedTuple):
+    """One leg-side's gap profile: bin edges, kerb minus how far the paint reaches, and why not.
+
+    `why` is the reason there is no profile and is None whenever there is one, so a caller cannot
+    read a reason as a measurement of zero.
+    """
+    edges: np.ndarray
+    gap: np.ndarray
+    why: str | None
+
+
+def gap_profile(built: Built, leg_name: str, side, bin_ft: float,
+                kind_filter: str | None = None) -> GapProfile:
+    """Kerb offset minus how far the drawn paint reaches, binned along one leg-side.
+
+    THE REACH IS MEASURED ON THE DRAWN SURFACE, and the vertex reduction this was written with
+    is kept only as a floor. Reducing over vertices alone reported 1.70 -> 4.06 ft of separation
+    on both kerbs of `greenwood_ave_south` where the paint is flush to within 0.04 ft: a fill
+    takes its outer edge from the traced kerb and so carries only the kerb's vertices - 9 over
+    85 ft - while its inner edge is a dense offset from the alignment - 44 - and `max` over a bin
+    holding none of the former returns the latter. See surface_reach_at. The three terms below
+    (the bin's furthest vertex, and a cut across the paint at the bin's start and at its middle)
+    are each a genuine lower bound on how far the paint gets somewhere in this bin, so the
+    largest is the best estimate available and can only ever close a reported gap, never open
+    one.
+
+    Still binned, because a bin is what lets a transverse marking that no cut happens to land on
+    be seen at all, and because an empty bin has to read as NO MEASUREMENT rather than as flush.
+    Runs over the centreline's whole length, because the question is about what was DRAWN and the
+    drawing is at the render frame - measure at the reader's --frame-scale, not at 1x.
+    """
+    leg = built.model.legs[leg_name]
+    edges = np.arange(0.0, leg.centerline.length + bin_ft, bin_ft)
+    drawn = drawn_on(built, leg_name, side.value, kind_filter)
+    kerb = curb_offsets_at_stations(leg, side.value, edges)
+    if drawn is None or kerb is None:
+        why = "no paint on this side" if drawn is None else "no traced kerb to measure to"
+        return GapProfile(edges, np.full_like(edges, np.nan), why)
+    station, offset = drawn
+    # An empty bin is NaN, and it has to be produced by hand: np.max(..., initial=nan) folds the
+    # initial value INTO the reduction, so every bin came out NaN, every comparison came out
+    # false, and the profile reported "flush the whole way" while measuring nothing. A false
+    # all-clear is worse than a crash.
+    vertices = np.array([
+        (lambda inside: offset[inside].max() if inside.any() else np.nan)(
+            (station >= lo) & (station < lo + bin_ft))
+        for lo in edges])
+    # fmax and not maximum: a term that saw nothing must defer to one that did, and only a bin no
+    # term reached at all may stay NaN.
+    reach = np.fmax(vertices,
+                    np.fmax(surface_reach_at(built, leg_name, side, edges, kind_filter),
+                            surface_reach_at(built, leg_name, side, edges + bin_ft / 2.0,
+                                             kind_filter)))
+    if not np.isfinite(reach).any():
+        return GapProfile(edges, np.full_like(edges, np.nan),
+                          f"paint on this side, but none of it lands in a {bin_ft:.0f} ft bin "
+                          f"along the leg - widen --bin")
+    return GapProfile(edges, np.abs(kerb) - reach, None)
+
+
 def report_gaps(built: Built, leg_filter: str | None, kind_filter: str | None,
                 bin_ft: float, threshold_ft: float) -> None:
     """Kerb offset minus outermost drawn offset, station by station.
 
     This is what turns "it looks janky" into "bare from station 0 to 63.7, then 1.4 ft widening
-    to 2.6 ft by station 118", which names the mechanism on its own.
-
-    Binned, and the bin is the honest unit: paint is polygons, not a function of station, so the
-    outermost vertex in each bin is what "how far out does the paint reach here" can mean. The
-    Runs over the centreline's whole length, because the question is about what was DRAWN and the
-    drawing is at the render frame - measure at the reader's --frame-scale, not at 1x.
+    to 2.6 ft by station 118", which names the mechanism on its own. The measurement is
+    gap_profile; this is the printing.
     """
     print(f"\n{'leg':22s} {'side':6s}  gap profile (kerb - outermost paint, ft; "
           f"{bin_ft:.0f} ft bins, runs over {threshold_ft:.1f} ft)")
-    for name, leg in sorted(built.model.legs.items()):
+    for name, _leg in sorted(built.model.legs.items()):
         if leg_filter and name != leg_filter:
             continue
-        for side in ("left", "right"):
-            drawn = drawn_on(built, name, side, kind_filter)
-            edges = np.arange(0.0, leg.centerline.length + bin_ft, bin_ft)
-            kerb = curb_offsets_at_stations(leg, side, edges)
-            if drawn is None or kerb is None:
-                why = "no paint on this side" if drawn is None else "no traced kerb to measure to"
-                print(f"{name:22s} {side:6s}  ({why})")
+        for side in BOTH_SIDES:
+            edges, gap, why = gap_profile(built, name, side, bin_ft, kind_filter)
+            if why is not None:
+                print(f"{name:22s} {side.value:6s}  ({why})")
                 continue
-            station, offset = drawn
-            # An empty bin is NaN, and it has to be produced by hand: np.max(..., initial=nan)
-            # folds the initial value INTO the reduction, so every bin came out NaN, every
-            # comparison came out false, and the profile reported "flush the whole way" while
-            # measuring nothing. A false all-clear is worse than a crash.
-            reach = np.array([
-                (lambda inside: offset[inside].max() if inside.any() else np.nan)(
-                    (station >= lo) & (station < lo + bin_ft))
-                for lo in edges])
-            if not np.isfinite(reach).any():
-                print(f"{name:22s} {side:6s}  (paint on this side, but none of it lands in a "
-                      f"{bin_ft:.0f} ft bin along the leg - widen --bin)")
-                continue
-            gap = np.abs(kerb) - reach
             # NaN compares false, so an empty bin ends a run rather than extending it.
             runs = _runs(gap > threshold_ft)
             if not runs:
-                print(f"{name:22s} {side:6s}  within {threshold_ft:.1f} ft of the kerb "
+                print(f"{name:22s} {side.value:6s}  within {threshold_ft:.1f} ft of the kerb "
                       f"wherever there is paint (max gap {np.nanmax(gap):.2f} ft over "
                       f"{int(np.isfinite(gap).sum())} of {len(gap)} bins)")
                 continue
             described = "; ".join(
                 f"{edges[a]:.1f}-{edges[b]:.1f} ft: {gap[a]:.2f}->{gap[b]:.2f} "
                 f"(max {np.nanmax(gap[a:b + 1]):.2f})" for a, b in runs)
-            print(f"{name:22s} {side:6s}  {described}")
+            print(f"{name:22s} {side.value:6s}  {described}")
 
 
 def _bin_stat(edges: np.ndarray, bin_ft: float, station: np.ndarray, value: np.ndarray,

@@ -9,7 +9,7 @@
     "LaneNarrowing(w_broad_st_northeast, stripe_width_ft=6.630369368064457, line_only=False, sides=('left', 'right'))",
     "apply_osm_parking(w_broad_st_northeast, left): 3.7 ft hatched - too narrow for a stall",
     "apply_osm_parking(w_broad_st_northeast, right): 6.3 ft hatched - too narrow for a stall",
-    "LaneNarrowing(w_broad_st_southwest, stripe_width_ft=11.03998362032035, line_only=False, sides=('left', 'right'))",
+    "LaneNarrowing(w_broad_st_southwest, stripe_width_ft=11.039983620328947, line_only=False, sides=('left', 'right'))",
     "apply_osm_parking(w_broad_st_southwest, left): 4.7 ft hatched - too narrow for a stall",
     "apply_osm_parking(w_broad_st_southwest, right): 4.8 ft hatched - too narrow for a stall",
     "UpgradeCrosswalkMarkings(everywhere, style='continental')"

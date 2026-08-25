@@ -32,9 +32,9 @@ from matplotlib.patches import Rectangle
 from src.geometry.corridor_paint import (CORRIDOR_SAMPLE_FT, JUNCTION_MOUTH,
                                          centred_on_its_kerbs, far_kerb_lane_edge,
                                          hatch_bands, kerb_offset_ft, paint_facility,
-                                         parking_bands, contraflow_centreline,
-                                         green_extension_spans, stall_marks, stall_room_spans,
-                                         stalls_per_span, symbol_stations)
+                                         stall_bands, contraflow_centreline,
+                                         green_extension_spans, stall_footprints, stall_marks,
+                                         stall_room_spans, symbol_stations, travel_way_edges)
 from src.geometry.intersection import load_intersection_model
 from src.geometry.model import station_offset_many
 from src.geometry.network import (_complement_spans, _merged_spans, corridor_facts,
@@ -48,6 +48,9 @@ KERB = "#222222"
 LANE_GREEN = "#57a773"
 BUFFER_GREY = "#9a9a9a"
 PAINT_WHITE = "#ffffff"
+#: The travel way's own two edges. Dark, because it is the one line a reader is asked to
+#: measure the hatch AGAINST - white on light asphalt is a marking to look past.
+TRAVEL_EDGE = "#404040"
 POST = "#e8663c"
 GREEN_HOT = "#2f7d4f"
 YELLOW = "#e6c000"
@@ -95,6 +98,31 @@ def _far_kerb_stall_spans(corridor, facts, paint, far_side: str):
     clear = _complement_spans(mouths, 0.0, corridor.length_ft)
     room = stall_room_spans(corridor, far_side, far_kerb_lane_edge(paint))
     return _intersect(_intersect(facts.by_side("parkable", far_side), clear), room)
+
+
+def far_kerb_parking(corridor, facts, paint, far_side: str):
+    """(bands, marks, labels, hatch) - every foot of the far kerb, drawn once and to scale.
+
+    ONE FOOTPRINT FEEDS ALL FOUR, because the sheet is read as an area and not as a caption: a
+    reader weighing 45 stalls against a bikeway is looking at how much blue there is. Shading the
+    SPANS the stalls were counted out of put 3,152 ft of blue on a kerb that holds 990 ft of car -
+    3.2x - because the spans are only the legal test, and the count is the legal test AND the
+    width test AND the driveway mouths AND a walk in whole 22 ft steps.
+
+    So the boxes stop where the last stall line is drawn, and every other foot is hatched with the
+    reason it is not parking. Blue plus gold plus orchid plus the mouths is the whole kerb.
+    """
+    # The one line all four are measured against: `_far_kerb_stall_spans` width-tests against it,
+    # and every band is drawn only as deep as it leaves free, so a shape's depth on the page IS
+    # the spare the test found.
+    edge_at = far_kerb_lane_edge(paint)
+    spans = _far_kerb_stall_spans(corridor, facts, paint, far_side)
+    footprints = stall_footprints(spans)
+    marked = tuple((lo, hi) for lo, hi, _stalls in footprints)
+    return (stall_bands(corridor, far_side, marked, limit_at=edge_at),
+            tuple(stall_marks(corridor, far_side, spans)[0]),
+            tuple((far_side, lo, hi, stalls) for lo, hi, stalls in footprints),
+            hatch_bands(corridor, facts, far_side, marked, limit_at=edge_at))
 
 
 def _band_across(corridor, side, lo_ft, hi_ft):
@@ -167,16 +195,13 @@ def draw_panel(ax, corridor, paint, parking, openings, lo_ft, hi_ft, half_ft,
     # THE DAYLIGHTING: kerb the law keeps clear so a driver and a pedestrian can see each other.
     # Drawn under the stalls, because what a reader needs to see is that the clear zone is where
     # the stalls STOP - the treatment is the absence, and an absence has to be shown to be read.
-    for side, start, end in daylight:
+    # A BAND ON THE KERB, not a rectangle at the kerb's mid-span offset: it is the same shape as
+    # the stalls it interrupts, so the two read against each other where the kerb wanders.
+    for start, end, band in daylight:
         if end < lo_ft or start > hi_ft:
             continue
-        sign = 1.0 if side == "left" else -1.0
-        offs = kerb_offset_ft(corridor, side, (max(start, lo_ft) + min(end, hi_ft)) / 2)
-        if offs is None:
-            continue
-        ax.add_patch(Rectangle((max(start, lo_ft), sign * offs - (8.0 if sign > 0 else 0.0)),
-                               min(end, hi_ft) - max(start, lo_ft), 8.0,
-                               facecolor=DAYLIGHT, alpha=0.35, linewidth=0, zorder=2))
+        for xy in straighten(corridor, band):
+            ax.fill(xy[:, 0], xy[:, 1], color=DAYLIGHT, alpha=0.35, linewidth=0, zorder=2)
 
     for line in marks:
         for xy in straighten(corridor, line):
@@ -199,6 +224,17 @@ def draw_panel(ax, corridor, paint, parking, openings, lo_ft, hi_ft, half_ft,
         ax.text(mid, sign * (offset - PARKING_STALL_DEPTH_DEFAULT_FT / 2), str(stalls),
                 color="#10314f", fontsize=5.5, fontweight="bold", ha="center", va="center",
                 zorder=10)
+
+    # WHERE THE TRAVEL WAY ENDS, on both sides - the line every "no room" hatch was measured
+    # against, and the one thing the sheet did not show. Without it the far kerb is a wide grey
+    # nothing and the hatch has no visible reason; with it a reader can see the few feet between
+    # this line and the kerb for themselves. Drawn only over the runs, so where it stops is where
+    # the section stopped being tested. matplotlib clips it to the panel, so it is not windowed.
+    near_sign = 1.0 if paint.side == "left" else -1.0
+    for stations, near, far in travel_way_edges(paint):
+        for offsets, sign in ((near, near_sign), (far, -near_sign)):
+            ax.plot(stations, sign * offsets, color=TRAVEL_EDGE, lw=0.9, linestyle=(0, (4, 3)),
+                    zorder=6)
 
     for run in paint.runs:
         if run.end_ft < lo_ft or run.start_ft > hi_ft:
@@ -295,6 +331,8 @@ def _legend(fig) -> None:
         Patch(facecolor=LANE_GREEN, alpha=0.85, label="protected bike lane"),
         Patch(facecolor=BUFFER_GREY, alpha=0.85, label="buffer / painted median"),
         Line2D([], [], color=PAINT_WHITE, markeredgecolor="#999999", lw=1.4, label="lane edge line"),
+        Line2D([], [], color=TRAVEL_EDGE, lw=0.9, linestyle=(0, (4, 3)),
+               label="edge of the travel way - parking must clear it"),
         Line2D([], [], color=POST, marker="o", linestyle="none", markersize=4, label="flex post"),
         Patch(facecolor=PARKING_BLUE, alpha=0.45, label="marked parking stall"),
         Patch(facecolor=HATCH_GOLD, edgecolor=HATCH_EDGE, hatch="//", alpha=0.5,
@@ -429,16 +467,27 @@ def main() -> int:
             mouths = _merged_spans([(o.start_ft, o.end_ft)
                                    for s2, o in facts.openings if s2 == side])
             clear = _complement_spans(mouths, 0.0, corridor.length_ft)
-            room = stall_room_spans(corridor, side, lambda _s: 11.0)
+            # An 11 ft travel lane is what the default treatment leaves this kerb, so it is the
+            # line the daylighting sheet both TESTS against and draws its bands to.
+            def nominal_edge(_station_ft):
+                return 11.0
+
+            room = stall_room_spans(corridor, side, nominal_edge)
             spans = _intersect(_intersect(facts.by_side("parkable", side), clear), room)
             lines, count = stall_marks(corridor, side, spans)
             all_marks += lines
-            labels += [(side, lo, hi, n) for lo, hi, n in stalls_per_span(spans)]
+            footprints = stall_footprints(spans)
+            labels += [(side, lo, hi, n) for lo, hi, n in footprints]
             total += count
+            # The kerb the boxes COVER, not the kerb they were counted out of - the tail of every
+            # run is up to one car short and holds nothing.
             print(f"  {compass:5s} kerb: {count:3d} stalls DRAWN over "
-                  f"{sum(hi - lo for lo, hi in spans):,.0f} ft")
-            daylight_spans += [(side, z.start_ft, z.end_ft)
-                               for z in facts.by_side("no_parking", side)]
+                  f"{sum(hi - lo for lo, hi, _n in footprints):,.0f} ft of "
+                  f"{sum(hi - lo for lo, hi in spans):,.0f} ft available")
+            daylight_spans += stall_bands(corridor, side,
+                                          [(z.start_ft, z.end_ft)
+                                           for z in facts.by_side("no_parking", side)],
+                                          limit_at=nominal_edge)
         print(f"  daylighting + crossing upgrades only: {total} stalls marked on the corridor, "
               f"counted by drawing them")
         marks, daylight = tuple(all_marks), tuple(daylight_spans)
@@ -472,18 +521,12 @@ def main() -> int:
     far_side, far_compass = chosen["far"], chosen["far_compass"]
     print(f"\n  DRAWN: the {drawn} kerb.")
     print(paint.summary(corridor.length_ft))
-    parking = parking_bands(corridor, facts, far_side)
-    # The stalls themselves, drawn as boxes over the room band - a reader asked to weigh a stall
-    # count against a bikeway cannot see that count anywhere in a shaded strip. Off the same spans
-    # and the same call the headline number came from, so the boxes ARE the count.
-    stall_spans = _far_kerb_stall_spans(corridor, facts, paint, far_side)
-    marks = stall_marks(corridor, far_side, stall_spans)[0]
-    stall_labels = tuple((far_side, lo, hi, n) for lo, hi, n in stalls_per_span(stall_spans))
+    # The stalls themselves, drawn as boxes over the kerb they occupy - a reader asked to weigh a
+    # stall count against a bikeway cannot see that count anywhere in a shaded strip - and every
+    # other foot hatched with the reason it holds no car: "parking or hatching, never neither"
+    # (parking.py's own rule, asked of the whole corridor).
+    parking, marks, stall_labels, hatch = far_kerb_parking(corridor, facts, paint, far_side)
     openings = tuple((side, opening.start_ft, opening.end_ft) for side, opening in facts.openings)
-    # Every foot of this kerb that is neither a marked stall nor a vehicle crossing: "parking or
-    # hatching, never neither" (parking.py's own rule, asked of the whole corridor).
-    marked_spans = tuple((lo, hi) for _side, lo, hi, _n in stall_labels)
-    hatch = hatch_bands(corridor, facts, far_side, marked_spans)
 
     # The three markings NACTO asks for besides the lane itself (STANDARDS.md, 2026-08-18).
     green = []
@@ -514,7 +557,7 @@ def main() -> int:
     fig, axes = plt.subplots(args.panels, 1, figsize=(13, 2.0 * args.panels))
     for ax, lo, hi in zip(np.atleast_1d(axes), edges[:-1], edges[1:]):
         draw_panel(ax, corridor, paint, parking, openings, float(lo), float(hi), half_ft,
-                   marks=tuple(marks), stall_labels=stall_labels, extras=extras, hatch=hatch)
+                   marks=marks, stall_labels=stall_labels, extras=extras, hatch=hatch)
     axes[0].set_title(
         f"{corridor.name} - existing kerbs (surveyed) and the proposed two-way protected bikeway "
         f"on the {paint.compass_side} kerb; every foot of the {far_compass} kerb is marked parking "

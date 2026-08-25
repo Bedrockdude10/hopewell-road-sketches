@@ -27,7 +27,7 @@ import pytest
 from shapely.geometry import Point
 
 from scripts.corridor_report import Coverage, Figure, corridor_report
-from src.geometry.corridor_paint import hatch_bands
+from src.geometry.corridor_paint import hatch_bands, stall_footprints
 from src.geometry.network import (KERB_FROM_TRACING, corridor_facts, corridors_from_models,
                                  marked_parking_capacity, osm_window_spans)
 from tests.conftest import WIDE_FRAME_SCALE, needs_source_data
@@ -344,6 +344,129 @@ def test_hatch_bands_are_not_dropped_by_a_few_untraced_samples(broad_st, site_mo
         assert hatch_ft > expected_ft * 0.9, (
             f"{side} kerb: hatch_bands covered {hatch_ft:.0f} of {expected_ft:.0f} ft with "
             f"nothing marked - a partially-traced span is being dropped instead of trimmed")
+
+
+def test_a_run_is_only_as_long_as_the_cars_that_fit_in_it():
+    """`stall_footprints` covers the stalls and drops the tail, which is the whole point of it.
+
+    A 100 ft run holds four 22 ft cars and 12 ft of leftover, and a 20 ft run holds none at all.
+    Both leftovers are kerb that must not be shaded as parking - the corridor sheet shaded them,
+    and the second kind is the one a caller reaches for `stalls_per_span` and never sees.
+    """
+    from src.geometry.treatments import PARKING_STALL_LENGTH_DEFAULT_FT as STALL_FT
+
+    (lo, hi, stalls), = stall_footprints([(10.0, 110.0), (200.0, 220.0)])
+    assert (lo, stalls) == (10.0, 4)
+    assert hi == pytest.approx(10.0 + 4 * STALL_FT)
+    assert hi < 110.0, "the 12 ft tail of the run is not parking"
+
+
+@needs_source_data
+def test_the_parking_drawn_on_the_corridor_sheet_is_the_parking_it_counts(broad_st_paint,
+                                                                         site_models):
+    """Blue covers the cars and nothing else, and no foot of kerb is both parking and hatched.
+
+    THE SHEET IS READ AS AN AREA. A reader weighing a stall count against a bikeway looks at how
+    much blue there is, so a band shaded over more kerb than the count covers is the drawing
+    contradicting its own headline. It did: the bands came off the LEGAL spans alone, which is
+    3,152 ft of Broad St's far kerb against 990 ft of car - untested for width, over driveway
+    mouths, and including the unusable tail of every run - and that tail was then passed to
+    `hatch_bands` as marked, so 176 ft of it was shaded as parking AND excluded from the hatch.
+    """
+    from scripts.corridor_render import _far_kerb_stall_spans, far_kerb_parking
+    from src.geometry.corridor_paint import CORRIDOR_SAMPLE_FT
+    from src.geometry.treatments import PARKING_STALL_LENGTH_DEFAULT_FT as STALL_FT
+
+    corridor, paint = broad_st_paint
+    far = "left" if paint.side == "right" else "right"
+    with contextlib.redirect_stdout(io.StringIO()):
+        facts = corridor_facts(corridor, site_models)
+    bands, _marks, labels, hatch = far_kerb_parking(corridor, facts, paint, far)
+
+    stalls = sum(n for _side, _lo, _hi, n in labels)
+    blue_ft = sum(hi - lo for lo, hi, _band in bands)
+    assert stalls > 0, "nothing to check - the far kerb holds no stalls at all"
+    assert blue_ft == pytest.approx(stalls * STALL_FT, abs=1e-6), (
+        f"{blue_ft:,.0f} ft of parking drawn for {stalls} stalls "
+        f"({stalls * STALL_FT:,.0f} ft of car)")
+
+    for lo, hi, _band in bands:
+        for h_lo, h_hi, _h_band, reason in hatch:
+            assert min(hi, h_hi) - max(lo, h_lo) <= 1e-6, (
+                f"station {max(lo, h_lo):,.0f}-{min(hi, h_hi):,.0f} is drawn as parking AND "
+                f"hatched {reason!r}")
+
+    # ...and the tail is not left bare either, which is the other way of getting it wrong: pass
+    # the SPANS to hatch_bands and the leftover is excluded from the hatch instead of shaded by it.
+    for (lo, _hi, _band), (_side, _f_lo, f_hi, _n) in zip(bands, labels, strict=True):
+        span_hi = max(hi for s_lo, hi in _far_kerb_stall_spans(corridor, facts, paint, far)
+                      if s_lo == lo)
+        tail = span_hi - f_hi
+        if tail <= CORRIDOR_SAMPLE_FT:
+            continue
+        assert any(h_lo <= f_hi + 1e-6 and h_hi >= span_hi - 1e-6 for h_lo, h_hi, _b, _r in hatch), (
+            f"the {tail:,.0f} ft tail of the run at station {lo:,.0f} holds no car and is "
+            f"hatched nowhere")
+
+
+@needs_source_data
+def test_no_kerbside_band_is_drawn_over_the_travel_way(broad_st_paint, site_models):
+    """A band is as deep as the kerb is FREE - it never claims width the travel lane is using.
+
+    The depth is the only thing on the sheet that answers "could a car park here", and drawn at a
+    flat stall depth it answered yes everywhere: Broad St's "no room" hatch stood 8 ft off a kerb
+    with a median 4.01 ft free, overlapping the travel lane at 346 of 381 samples, and the
+    restricted hatch has 1.60 ft free and overlapped by a median of 6.40 ft. So the hatch looked
+    exactly as wide as the stalls it was refusing.
+    """
+    from scripts.corridor_render import far_kerb_parking
+    from src.geometry.corridor_paint import far_kerb_lane_edge
+    from src.geometry.model import station_offset_many
+
+    corridor, paint = broad_st_paint
+    far = "left" if paint.side == "right" else "right"
+    with contextlib.redirect_stdout(io.StringIO()):
+        facts = corridor_facts(corridor, site_models)
+    bands, _marks, _labels, hatch = far_kerb_parking(corridor, facts, paint, far)
+    edge_at = far_kerb_lane_edge(paint)
+
+    for what, polygons in (("parking", [b for _lo, _hi, b in bands]),
+                           ("hatch", [b for _lo, _hi, b, _r in hatch])):
+        for polygon in polygons:
+            for part in getattr(polygon, "geoms", [polygon]):
+                coords = np.asarray(part.exterior.coords, dtype=float)
+                stations, offsets = station_offset_many(corridor.centerline, coords)
+                edges = np.array([edge_at(float(s)) for s in stations])
+                inside = float(np.max(edges - np.abs(offsets)))
+                # A tenth of a foot: the frame's own residual placing a vertex, not a design width.
+                assert inside <= 0.1, (
+                    f"a {what} band reaches {inside:.2f} ft inside the travel way near station "
+                    f"{stations[int(np.argmax(edges - np.abs(offsets)))]:,.0f}")
+
+
+@needs_source_data
+def test_the_travel_way_edge_is_drawn_only_where_a_section_was_resolved(broad_st_paint):
+    """The line stops where the testing stops - it is never drawn across a junction mouth.
+
+    `far_kerb_lane_edge` answers EVERY station, falling back to TARGET_LANE_WIDTH_FT where no run
+    was placed. That is the right answer for a width test and the wrong one for a drawing: 370 ft
+    of Broad St's far kerb is decided against that default, and a line drawn across it would show
+    a reader a lane edge the section was never tested against.
+    """
+    from src.geometry.corridor_paint import travel_way_edges
+
+    _corridor, paint = broad_st_paint
+    runs = [(run.start_ft, run.end_ft) for run in paint.runs
+            if run.section is not None and run.travel_edge_ft]
+    assert runs, "no run resolved a section - there would be nothing to check"
+    drawn = travel_way_edges(paint)
+    assert drawn, "the travel way's edges are not drawn at all"
+    for stations, near, far in drawn:
+        assert len(stations) == len(near) == len(far)
+        for station in stations:
+            assert any(lo - 1e-6 <= station <= hi + 1e-6 for lo, hi in runs), (
+                f"the travel way edge is drawn at station {station:,.0f}, which is outside every "
+                f"run - there is no resolved section there to draw")
 
 
 @needs_source_data

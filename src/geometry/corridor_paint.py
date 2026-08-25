@@ -426,12 +426,24 @@ def _restationed(run, centerline: LineString):
     return dataclasses.replace(run, start_ft=float(span[0]), end_ft=float(span[1]))
 
 
-def _kerb_band_over(corridor: "Corridor", on: "Alignment", side: str, spans, depth_ft: float):
-    """[(lo_ft, hi_ft, polygon)] - one band `depth_ft` deep against the traced kerb, per span.
+def _kerb_band_over(corridor: "Corridor", on: "Alignment", side: str, spans, depth_ft: float,
+                    limit_at=None):
+    """[(lo_ft, hi_ft, polygon)] - one band against the traced kerb, per span.
 
-    Shared by `parking_bands` and `hatch_bands` so a marked-stall band and a hatched one are the
+    Shared by `stall_bands` and `hatch_bands` so a marked-stall band and a hatched one are the
     same shape drawn over different spans, not two independently-tuned rectangles that could
     drift apart depth-wise.
+
+    AS DEEP AS THE KERB IS FREE, not a flat `depth_ft`. `limit_at(station) -> offset` is the
+    innermost the band may reach - the travel way's own edge - and the band is the SHALLOWER of
+    the two. Drawn at a flat stall depth, Broad St's "no room" hatch stood 8 ft off a kerb with a
+    median of 4.01 ft free and overlapped the travel lane at 346 of 381 samples; the restricted
+    hatch has 1.60 ft free and overlapped by a median of 6.40 ft. Both then LOOK like a stall's
+    worth of kerb, which is the one thing the reader is being asked to judge - the sheet was
+    answering "could a car park here" with a rectangle the width of a car, everywhere.
+
+    Pass the same line the spans were width-tested against, so a drawn depth is the tested spare
+    and not a second opinion about it.
     """
     out = []
     for lo, hi in spans:
@@ -445,28 +457,40 @@ def _kerb_band_over(corridor: "Corridor", on: "Alignment", side: str, spans, dep
         finite = np.isfinite(offs)
         if finite.sum() < 2:
             continue
-        band = band_from_offsets(on, side, stations[finite], (offs - depth_ft)[finite], offs[finite])
+        inner = offs - depth_ft
+        if limit_at is not None:
+            # Never past the kerb itself either: where the travel way reaches the kerb there is no
+            # kerbside strip to draw, and a band that inverts would hatch the carriageway.
+            inner = np.clip(np.maximum(inner, [limit_at(float(s)) for s in stations]), None, offs)
+        band = band_from_offsets(on, side, stations[finite], inner[finite], offs[finite])
         if band is not None and not band.is_empty:
             out.append((float(lo), float(hi), band))
     return out
 
 
-def parking_bands(corridor: "Corridor", facts, side: str, depth_ft: float | None = None):
-    """[(lo_ft, hi_ft, polygon)] where a stall may legally be marked along one kerb.
+def stall_bands(corridor: "Corridor", side: str, spans, depth_ft: float | None = None,
+                limit_at=None):
+    """[(lo_ft, hi_ft, polygon)] - a stall-deep band against the traced kerb over the spans given.
 
-    The spans are `CorridorFacts.parkable` - R.S. 39:4-138 applied along the whole road rather
-    than to one junction's legs. This only gives them a footprint: a band `depth_ft` deep
-    against the traced kerb, drawn against the KERB and not the alignment (a parked car sits
-    against the kerb wherever the kerb happens to be).
+    IT TAKES THE SPANS AND DOES NOT CHOOSE THEM. This was `parking_bands`, which picked
+    `CorridorFacts.parkable` itself - the LEGAL test alone - and so shaded 3,152 ft of Broad St's
+    far kerb as parking where 990 ft of it holds a car: no width test, no driveway mouths, and the
+    unusable tail of every run. Where a stall may be marked is three independent tests (legal,
+    room, clear) and then a whole-car walk, and a band builder is not the place any of that gets
+    decided. Pass `stall_footprints`, so what is shaded is what was counted.
+
+    Drawn against the KERB and not the alignment - a parked car sits against the kerb wherever
+    the kerb happens to be.
     """
     from src.geometry.treatments.parking import PARKING_STALL_DEPTH_DEFAULT_FT
 
     depth_ft = PARKING_STALL_DEPTH_DEFAULT_FT if depth_ft is None else depth_ft
-    return _kerb_band_over(corridor, Alignment(corridor.centerline), side,
-                           facts.by_side("parkable", side), depth_ft)
+    return _kerb_band_over(corridor, Alignment(corridor.centerline), side, spans, depth_ft,
+                           limit_at)
 
 
-def hatch_bands(corridor: "Corridor", facts, side: str, marked_spans, depth_ft: float | None = None):
+def hatch_bands(corridor: "Corridor", facts, side: str, marked_spans,
+                depth_ft: float | None = None, limit_at=None):
     """[(lo_ft, hi_ft, polygon, reason)] where this kerb carries neither a marked stall nor a
     vehicle crossing - `parking.py`'s "parking or hatching, never neither" rule, asked of a road.
 
@@ -478,14 +502,13 @@ def hatch_bands(corridor: "Corridor", facts, side: str, marked_spans, depth_ft: 
     (a corner, a hydrant, a stop sign) and the other is a fact about this DESIGN's own section - a
     narrower facility or a shorter divider shift would open kerb that is already legally clear.
 
-    `marked_spans` is the corridor's OWN count of what actually got a box - the same spans
-    `stall_marks` drew, via `stalls_per_span` - not re-derived from `stall_room_spans` here,
-    because a span short of one whole stall (parkable AND wide enough, but too short to hold a
-    car) has to be hatched too, and only the caller that already dropped it from the stall count
-    knows which spans those are. Recomputing "not marked" from `stall_room_spans` directly would
-    also count every SUB-whole-stall leftover as if it were marked, which is the ONE case this
-    function exists to catch. Excludes driveway/side-street mouths - a hatch is a paint decision,
-    and nothing is painted over a place a vehicle actually crosses the kerb.
+    `marked_spans` is the kerb the boxes ACTUALLY cover - `stall_footprints`, not the spans they
+    were counted out of, and not re-derived from `stall_room_spans` here. Both of the other two
+    have been passed and both are wrong the same way: they hand this function a length no car can
+    use as though it were parking, and it is then hatched nowhere. A run's own tail is the case
+    this function exists to catch, so it is the one thing the argument must not smuggle back in.
+    Excludes driveway/side-street mouths - a hatch is a paint decision, and nothing is painted
+    over a place a vehicle actually crosses the kerb.
     """
     from src.geometry.network import _complement_spans, _intersect_spans, _merged_spans
     from src.geometry.treatments.parking import PARKING_STALL_DEPTH_DEFAULT_FT
@@ -506,8 +529,10 @@ def hatch_bands(corridor: "Corridor", facts, side: str, marked_spans, depth_ft: 
     room = _intersect_spans(candidate, facts.by_side("parkable", side))
 
     on = Alignment(corridor.centerline)
-    return ([(lo, hi, band, "legal") for lo, hi, band in _kerb_band_over(corridor, on, side, legal, depth_ft)]
-           + [(lo, hi, band, "room") for lo, hi, band in _kerb_band_over(corridor, on, side, room, depth_ft)])
+    return ([(lo, hi, band, "legal")
+             for lo, hi, band in _kerb_band_over(corridor, on, side, legal, depth_ft, limit_at)]
+            + [(lo, hi, band, "room")
+               for lo, hi, band in _kerb_band_over(corridor, on, side, room, depth_ft, limit_at)])
 
 
 def stall_room_spans(corridor: "Corridor", side: str, lane_edge_at, sample_ft: float = CORRIDOR_SAMPLE_FT):
@@ -566,6 +591,49 @@ def far_kerb_lane_edge(paint: CorridorFacilityPaint, default_ft: float | None = 
     return at
 
 
+def travel_way_edges(paint: CorridorFacilityPaint, sample_ft: float = CORRIDOR_SAMPLE_FT):
+    """((stations, near_ft, far_ft), ...) - one per run: the travel way's own two outside edges.
+
+    `near_ft` is how far the travel way's edge sits from the alignment on the FACILITY's side and
+    `far_ft` the same on the other. Both are magnitudes, like `kerb_offset_ft`, so a caller signs
+    them the way it signs its own kerbs.
+
+    THIS IS THE LINE THE PARKING IS TESTED AGAINST, and until it was drawn the corridor sheet did
+    not show it anywhere: a reader saw a wide grey carriageway and 1,904 ft of kerb hatched "no
+    room" against nothing visible, which reads as the drawing being wrong rather than the street
+    being narrow. It is not - 89% of that hatch has under 7 ft between this line and the kerb, a
+    median of 4.0 ft - but a sheet that cannot be checked by eye is asking to be taken on trust.
+
+    ONE PER RUN, AND NOWHERE ELSE. `far_kerb_lane_edge` answers every station, falling back to
+    TARGET_LANE_WIDTH_FT where no run was placed - the right answer for a width test and the wrong
+    one for a drawing, because a line drawn across a junction mouth claims a lane edge the section
+    was never tested against. A run is where the section actually resolved, so the line stops
+    where the testing stops, and the 370 ft of Broad St's far kerb decided against that default
+    can be seen to have been decided against nothing drawn.
+    """
+    edge_at = far_kerb_lane_edge(paint)
+    out = []
+    for run in paint.runs:
+        if run.section is None or not run.travel_edge_ft:
+            continue
+        stations = np.append(np.arange(run.start_ft, run.end_ft, sample_ft), run.end_ft)
+        near = np.interp(stations, run.travel_edge_ft[0], run.travel_edge_ft[1])
+        # Off `far_kerb_lane_edge` and not off `2 * lane_w - near` rebuilt here: the far edge has
+        # one home, and every station asked for is inside a run, so its fallback cannot fire.
+        far = np.array([edge_at(float(station)) for station in stations])
+        out.append((stations, near, far))
+    return tuple(out)
+
+
+def _stall_ft(stall_ft: float | None) -> float:
+    """The stall length, defaulted once - `stalls_per_span`, `stall_footprints` and `stall_marks`
+    all walk a run in the same steps, and three separate defaults are three chances to disagree.
+    """
+    from src.geometry.treatments import PARKING_STALL_LENGTH_DEFAULT_FT
+
+    return PARKING_STALL_LENGTH_DEFAULT_FT if stall_ft is None else stall_ft
+
+
 def stalls_per_span(spans, stall_ft: float | None = None):
     """((lo, hi, stalls), ...) - how many whole cars each span holds, and where.
 
@@ -573,12 +641,30 @@ def stalls_per_span(spans, stall_ft: float | None = None):
     a total has to be able to find that total on the page, run by run, or it is being asked to
     take it on trust. `stall_marks` counts through this, so the labels sum to the headline.
     """
-    from src.geometry.treatments import PARKING_STALL_LENGTH_DEFAULT_FT
-
-    stall_ft = PARKING_STALL_LENGTH_DEFAULT_FT if stall_ft is None else stall_ft
+    stall_ft = _stall_ft(stall_ft)
     # A span shorter than one car holds none, and gets no label pretending otherwise.
     return tuple((lo, hi, whole_stalls_ft(hi - lo, stall_ft)) for lo, hi in spans
                  if whole_stalls_ft(hi - lo, stall_ft) >= 1)
+
+
+def stall_footprints(spans, stall_ft: float | None = None):
+    """((lo, lo + stalls * stall_ft, stalls), ...) - the kerb the marked stalls ACTUALLY occupy.
+
+    `stalls_per_span` says how many cars a span holds; this says how much of the span they cover,
+    and the difference is the tail - up to one car short of a whole stall at the end of every run,
+    plus the whole of any run too short to hold one at all.
+
+    THE TAIL IS NOT PARKING AND IT IS NOT NOTHING. Drawn as a band it read as parking, and passed
+    to `hatch_bands` as if it were marked it was excluded from the hatch as well: 176 ft of Broad
+    St's far kerb was shaded blue AND left out of the "no room" gold, so a length too short to
+    hold a car counted as parking twice. Whatever a caller shades, hatches or labels a run with
+    comes off this, so the boxes, the leftover and the count are one walk.
+
+    Off the same `lo + index * stall_ft` walk `stall_marks` draws its boundary lines on, so a
+    footprint's ends are exactly the first and the last mark on that run.
+    """
+    return tuple((lo, lo + stalls * _stall_ft(stall_ft), stalls)
+                 for lo, _hi, stalls in stalls_per_span(spans, stall_ft))
 
 
 def stall_marks(corridor: "Corridor", side: str, spans, depth_ft: float | None = None,
@@ -592,14 +678,13 @@ def stall_marks(corridor: "Corridor", side: str, spans, depth_ft: float | None =
     Marks run from the kerb inward by `depth_ft`, following the kerb rather than standing off the
     narrowest point - a parked car sits where the kerb is.
     """
-    from src.geometry.treatments import PARKING_STALL_LENGTH_DEFAULT_FT
     from src.geometry.treatments.parking import PARKING_STALL_DEPTH_DEFAULT_FT
 
     depth_ft = PARKING_STALL_DEPTH_DEFAULT_FT if depth_ft is None else depth_ft
-    stall_ft = PARKING_STALL_LENGTH_DEFAULT_FT if stall_ft is None else stall_ft
+    stall_ft = _stall_ft(stall_ft)
     sign = 1.0 if side == "left" else -1.0
     marks, stalls = [], 0
-    for lo, _hi, whole in stalls_per_span(spans, stall_ft):
+    for lo, _hi, whole in stall_footprints(spans, stall_ft):
         stalls += whole
         for index in range(whole + 1):
             station = lo + index * stall_ft

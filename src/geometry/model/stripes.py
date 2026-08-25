@@ -8,7 +8,7 @@ buffer and a daylight zone."""
 import numpy as np
 from shapely.geometry import LineString, MultiLineString, Polygon
 from src.geometry.model.leg_frame import (Leg,STRIP_SAMPLE_FT, place_in_measured_frame,
-                                          _place_no_further_in_than, point_at, _traced_curb_frame,
+                                          _place_no_further_in_than, placement_holds, point_at, _traced_curb_frame,
                                           unit_vector, curb_edge_by_station, curb_offsets_at_stations,
                                           curb_point_at_station, curb_station_span,
                                           inset_line_ft, inset_point_at_station, paint_stations,
@@ -53,6 +53,15 @@ def curbside_strip_polygon(leg: "Leg", side: str, inner_offset_ft: float,
     if outer_pts is None:
         return None
     inner_pts = _place_no_further_in_than(leg.centerline, stations, inner)
+    # ...minus the grid points the frame cannot describe. This edge is a SAMPLING of a line, so
+    # a station inside a fold has no point to place and the placement returns a fiction: on
+    # greenwood_ave_south's 22.6 degree kink three of them crossed each other, the ring came out
+    # invalid, and buffer(0) resolved the bowtie into a spur that stood 0.27 ft over the kerb.
+    # The two ends are kept whatever they measure - they are what makes this a strip and not a
+    # wedge (see the invariant above), and a fold at either end would be a different bug.
+    holds = placement_holds(leg.centerline, stations, inner, inner_pts)
+    holds[0] = holds[-1] = True
+    inner_pts = [p for p, keep in zip(inner_pts, holds) if keep]
 
     # OSM traces the block, not every curb kink (SKILLS.md #7) - greenwood_ave_south's right
     # kerb goes 261 ft with no vertex at all, and its centerline bends inside that gap (48

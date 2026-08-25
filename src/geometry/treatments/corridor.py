@@ -10,6 +10,12 @@ NACTO's constrained fallback and the others did not.
 WHAT STAYS PER SITE: which of a junction's other legs get their OSM parking, the surrounding
 scenario, and the notes about that junction. A facility states the route; everything a junction
 knows and the route does not stays where it is.
+
+TWO KINDS OF ROUTE DECISION LIVE HERE, because a street that cannot hold a new facility still
+gets treated along its whole length: CorridorFacility places a new cross-section wherever it
+fits, and CorridorCalming names the legs a route's existing cross-section is narrowed on. Both
+answer "which approaches of this junction are on this street" the same way, off the configured
+street name - see legs_on_road, which is the one place that question is asked.
 """
 from dataclasses import dataclass
 
@@ -25,13 +31,31 @@ from src.geometry.treatments.bikeways import (BIKE_LANE_BOLLARD_SPACING_FT,
                                               AddBikeLaneBollards,
                                               AddTwoWayBikeLane,
                                               ExtendBikeLaneThroughJunction)
-from src.geometry.treatments.parking import hold_travel_lane_at_target
+from src.geometry.treatments.parking import (hold_travel_lane_at_target,
+                                             osm_derived_baseline)
 from src.geometry.treatments.state import DesignState
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:    # annotation-only: these types are layered above this module,
     # so importing them for real would close a cycle.
     from src.geometry.intersection.junction import IntersectionModel
+
+
+def legs_on_road(model: "IntersectionModel", road: str) -> list[str]:
+    """One junction's approaches that lie on a named route, in a stable order.
+
+    Read off each leg's configured `street_name`, never a per-site list of leg names: that would
+    be a second record of a fact the config already states, free to disagree with it the moment a
+    leg is renamed. `road` is normalised as network._street_name normalises it, so the compass
+    halves of one street ("East Broad Street", "West Broad Street") answer to one route.
+
+    Two route-level decisions ask this - a facility and a calming - so it is a function rather
+    than a method on either.
+    """
+    legs_cfg = model.config.get("legs", {})
+    return sorted(name for name, cfg in legs_cfg.items()
+                  if name in model.legs
+                  and _street_name(cfg.get("street_name", "")) == road)
 
 
 @dataclass(frozen=True)
@@ -66,16 +90,8 @@ class CorridorFacility:
     bollard_spacing_ft: float = BIKE_LANE_BOLLARD_SPACING_FT
 
     def legs_on(self, model: "IntersectionModel") -> list[str]:
-        """This junction's approaches that lie on this route, in a stable order.
-
-        Read off each leg's configured `street_name`, never a per-site list of leg names: that
-        would be a second record of a fact the config already states, free to disagree with it
-        the moment a leg is renamed.
-        """
-        legs_cfg = model.config.get("legs", {})
-        return sorted(name for name, cfg in legs_cfg.items()
-                      if name in model.legs
-                      and _street_name(cfg.get("street_name", "")) == self.road)
+        """This junction's approaches that lie on this route, in a stable order."""
+        return legs_on_road(model, self.road)
 
     def apply_to(self, state: DesignState, model: "IntersectionModel", quiet: bool = False) -> DesignState:
         """Place the facility on every approach of this junction that is on the route.
@@ -365,3 +381,79 @@ BROAD_ST_TWO_WAY_BIKEWAY = CorridorFacility(
               Section(CONSTRAINED_TWO_WAY_BIKE_LANE_FT, TWO_WAY_BIKE_LANE_BUFFER_FT,
                       constrained=True)),
 )
+
+
+@dataclass(frozen=True)
+class CorridorCalming:
+    """A route-level decision for a street with no room for a new facility: WHICH LEGS ARE CALMED.
+
+    It carries no section and no side because it places nothing new. It names the route, and every
+    approach on it gets the design that proposes nothing - travel lanes held at
+    TARGET_LANE_WIDTH_FT with the recovered width painted as OSM says that kerb is used, hatched
+    where parking is restricted and marked where it is not. See osm_derived_baseline, which is
+    that design; this decides only what it is applied to.
+
+    WHICH LEGS IS THE WHOLE DECISION, and it was a hand-written tuple in two site files: the same
+    two leg names at both junctions, each read off by eye from the street name the config already
+    states. That is the duplication CorridorFacility exists to remove, here in a form the
+    duplicate-rule test cannot see - tests/test_sites.py exempts a one-line scenario body, which
+    is what both of these were.
+
+    THE REST OF THE JUNCTION IS STILL UPGRADED, because osm_derived_baseline also completes the
+    centrelines and makes the crossings continental, and those are junction-wide rather than
+    per-street: a crossing of the cross street is still a crossing at this junction. The route
+    decides the CROSS-SECTION pass and nothing else.
+    """
+    road: str
+
+    def legs_on(self, model: "IntersectionModel") -> list[str]:
+        """This junction's approaches that lie on this route, in a stable order."""
+        return legs_on_road(model, self.road)
+
+    def apply_to(self, state: DesignState, model: "IntersectionModel" = None,
+                 quiet: bool = False) -> DesignState:
+        """Calm this junction's approaches that are on the route, and only those.
+
+        `model` is optional and None returns the state untouched, because that is the older
+        single-argument convention every site's scenario builder still answers to.
+        """
+        if model is None:
+            return state
+        legs = tuple(self.legs_on(model))
+        if not legs:
+            # NOT osm_derived_baseline(legs=()), WHICH WOULD CALM THE WHOLE JUNCTION: its `legs`
+            # is falsy-tested, so an empty tuple falls through to every kerb. A route that does
+            # not reach this junction has to leave its cross-sections alone, and a route named
+            # wrongly - a street name that matches nothing here - must say so rather than quietly
+            # treating four legs nobody asked about.
+            if not quiet:
+                print(f"  NOTE: no leg of this junction is on {self.road}, so nothing is calmed "
+                      f"here. Nothing about the cross-sections has changed.")
+            return state
+        return osm_derived_baseline(state, model, legs=legs)
+
+
+#: PRINCETON AVE (CR 569), CALMED END TO END - 1,565 ft over two modelled junctions.
+#:
+#: WHY CALMING AND NOT A BIKEWAY, which is the question this declaration exists to answer, because
+#: the corridor's other route decision is BROAD_ST_TWO_WAY_BIKEWAY and the obvious next move is to
+#: run it down this street too. It refuses every foot it can test. Reproduce it with
+#: `scripts/corridor_render.py --road "Princeton Avenue"`: over the 349 ft of the route where both
+#: kerbs are traced, the constrained rung's 8 ft lane and 3 ft buffer spend 11.82 ft of the 30.13 ft
+#: between the kerbs, leaving 9.15 ft per travel lane - under the 10 ft floor - and the route's
+#: narrowest traced width is 30.0 ft. A conventional one-way pair is out on the same measurement
+#: from the other end: 4.1-4.6 ft spare per side beside a TARGET_LANE_WIDTH_FT lane, under
+#: AASHTO_MIN_BIKE_LANE_FT, so what would be drawn is a stripe that reads as a bike lane and is not
+#: one. See each site's scenarios.py for its own junction's figures.
+#:
+#: SO BOTH OF THIS PROJECT'S USUAL LEVERS ARE UNAVAILABLE HERE, and that is a fact about the street
+#: rather than about the section: Princeton Ave is a designated truck route (hgv=designated) past an
+#: elementary school, so the travel lanes cannot go under the floor, and it is no_parking for its
+#: whole length, so there is no parking lane to reclaim and the recovered width hatches rather than
+#: becoming stalls. What is left is the width beside an 11 ft lane, which is what this places.
+#:
+#: NOT APPLIED AT ebroad_princeton, the route's third junction, where Princeton Ave arrives as a
+#: stem: that site's scenarios paint EVERY kerb, E Broad's included, so the stem is already calmed
+#: by that pass. Applying this on top would put a second LaneNarrowing and MarkedParking on the
+#: same kerb - DesignState.apply has no duplicate guard.
+PRINCETON_AVE_CALMING = CorridorCalming(road="Princeton Avenue")

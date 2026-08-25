@@ -45,7 +45,12 @@ from src.geometry.corridor_paint import centred_on_its_kerbs
 from src.geometry.network import (Corridor, CorridorFacts, KERB_FROM_TRACING, corridor_facts,
                                  corridors_from_models, marked_parking_capacity, osm_window_spans)
 
-DEFAULT_SITES = ("broad_st_greenwood", "ebroad_princeton", "columbia_princeton", "wbroad_louellen")
+# Every site whose junction sits on one of the corridors this project reads. nj31_wdelaware is
+# left out because it is in Pennington and on no borough corridor - corridor_render.py excludes
+# it for the same reason. princeton_eprospect belongs here or Princeton Ave reports over ONE of
+# its two modelled junctions and reads as a shorter street than it is.
+DEFAULT_SITES = ("broad_st_greenwood", "ebroad_princeton", "columbia_princeton",
+                 "princeton_eprospect", "wbroad_louellen")
 
 # A gap in the tracing shorter than this is a side street's mouth or a driveway - real, and already
 # accounted for by the coverage fractions. Longer than this is a stretch of street nobody has

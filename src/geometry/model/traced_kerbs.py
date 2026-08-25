@@ -6,11 +6,14 @@ pipeline takes - OSM ways start and stop arbitrarily, cover part of a corner, or
 of a street in one way - so most of what is here is about REFUSING a bad fit rather than making
 one."""
 
+import itertools
+
 import numpy as np
 from shapely.geometry import LineString, Point
 from shapely.ops import substring
-from src.geometry.model.leg_frame import (Leg,_leg_bearing, line_direction, point_at,
-                                          vertex_tangents, station_offset_many)
+from src.geometry.model.leg_frame import (Leg, _leg_bearing, line_direction,
+                                          place_in_measured_frame, placement_holds, vertex_tangents,
+                                          station_offset_many)
 
 
 
@@ -442,6 +445,44 @@ CURB_EXTRAPOLATION_MAX_SLOPE = 0.11        # ~6 degrees
 CURB_EXTRAPOLATION_MIN_BASELINE_FT = 15.0  # shorter than this is corner, not street
 
 
+# How finely the stretch BETWEEN two traced vertices is sampled. A traced kerb is a profile
+# in the leg's frame - (station, offset) pairs - so a straight WORLD segment joining two of
+# them means "constant offset" only while the centerline runs straight between them. OSM
+# traces the block and not the kerb (SKILLS.md #7), so those gaps get long: greenwood_ave_south
+# is traced to station 113.9 and then not again until the frame cuts the way at 387.8, and the
+# alignment curves through the 274 ft in between.
+#
+# ONE KERB, READ TWO WAYS, IN TWO FRAMES. The pavement ring, the corner fillets and the 3D
+# kerb are built from this LINE; every marking is placed against curb_offsets_at_stations,
+# which interpolates the SAME vertices in the leg's frame. Across that gap the chord stood
+# ~10 ft from the profile, and nothing downstream could see it, because each side was
+# internally consistent - the rendered leg carried 10 ft of bare asphalt outside the hatching
+# on one kerb and hatching over the sidewalk on the other. Sampling the gap in the frame the
+# kerb is defined in makes the two the same line again.
+#
+# The step is a chord-height budget, not a taste: a sample every 10 ft departs an arc of
+# radius R by 100/(8R) ft, so 0.02 ft on the ~940 ft curve above and less on anything
+# straighter. Where the centerline IS straight the samples land on the chord and nothing moves,
+# which is why this changes no other site.
+CURB_GAP_SAMPLE_FT = 10.0
+
+# How far the alignment has to pull away from a traced chord before the chord is read as MISSING
+# THE ROAD rather than describing it.
+#
+# BETWEEN TWO TRACED VERTICES THE OSM WAY IS A STRAIGHT WORLD SEGMENT. That is the datum, not an
+# artefact of it, so bending it toward the alignment everywhere makes a well-traced kerb WORSE:
+# sampled unconditionally, louellen_st_west's right kerb left the way it was traced from by 1.31
+# ft, and broad_st_east's by 0.16, where both had lain exactly on it. Only where the tracing is
+# so sparse that it cannot be describing the road does the alignment know better.
+#
+# The two cases separate cleanly, and the survey behind stripes.py's chord_deviates is the
+# measurement: greenwood_ave_south's two sides stand 9.6-10.9 ft off the smooth curve and every
+# other leg-side in this dataset under 1.2 ft. So 2 ft sits in an empty gap between hand-tracing
+# noise and a chord cutting a corner off the street - and a leg on the near side of it keeps
+# EXACTLY the kerb it had, with its pavement ring, corner fillets, frame and goldens.
+CURB_CHORD_DEVIATION_FT = 2.0
+
+
 def _outward_slope(points: list[tuple[float, float]]) -> float:
     """d(offset)/d(station) for the outward end of a traced side, or 0 if the tracing is
     too short to establish one - in which case the curb continues at the width last seen."""
@@ -502,7 +543,47 @@ def curb_line_from_points(points: list[tuple[float, float]], leg: "Leg",
         station = deduped[0][0]
         deduped.insert(0, (0.0, deduped[0][1] - _inward_slope(deduped) * station))
 
-    return LineString([point_at(leg.centerline, s, o) for s, o in deduped])
+    stations = np.array([s for s, _o in deduped])
+    offsets = np.array([o for _s, o in deduped])
+    return LineString(_sampled_along_the_alignment(leg.centerline, stations, offsets))
+
+
+def _sampled_along_the_alignment(centerline: LineString, stations: np.ndarray,
+                                  offsets: np.ndarray) -> np.ndarray:
+    """The traced vertices, plus a sample every CURB_GAP_SAMPLE_FT through the gaps between them.
+
+    Placed in the MEASURING frame rather than by point_at: these stations are imposed rather
+    than derived from a surveyed point, which is the case place_in_measured_frame exists for.
+
+    AND A GAP WHOSE CHORD IS THE TRACING IS LEFT ALONE - see CURB_CHORD_DEVIATION_FT. Sampled
+    per gap, all or nothing, because the question is about the gap and not about one vertex.
+
+    AND A SAMPLE THE FRAME CANNOT DESCRIBE IS DROPPED - placement_holds, which is the other
+    half of this. Kept, the four samples inside greenwood_ave_south's fold put a phantom 1 ft
+    jog in the kerb and the hatching built against it measured 0.67 ft over the kerb
+    (PaintInsideTheCurb, fatal). Dropped, a chord spans the ~8 ft the frame cannot describe,
+    which is the situation this function improves from 274 ft.
+    """
+    grid = np.union1d(stations, np.arange(stations[0], stations[-1], CURB_GAP_SAMPLE_FT))
+    ask_o = np.interp(grid, stations, offsets)
+    placed = np.asarray(place_in_measured_frame(centerline, grid, ask_o), dtype=float)
+    # A traced vertex is kept whatever it measures - it is a fact about the street, not a sample.
+    traced = np.isin(grid, stations)
+    holds = placement_holds(centerline, grid, ask_o, placed)
+    keep = holds | traced
+    at = np.flatnonzero(traced)
+    for lo, hi in itertools.pairwise(at):
+        # Judged on the samples that HOLD, never on the ones a fold displaced: a fold throws a
+        # point feet from where it was asked for, which read as deviation is a 9.3 ft chord
+        # across a 25.7 ft gap on louellen_st_west, and sampling that gap on the strength of it
+        # left the kerb 1.31 ft off the way it was traced from.
+        inner = [i for i in range(lo + 1, hi) if holds[i]]
+        if not inner:
+            continue
+        chord = LineString([placed[lo], placed[hi]])
+        if max(chord.distance(Point(placed[i])) for i in inner) <= CURB_CHORD_DEVIATION_FT:
+            keep[lo + 1:hi] = False        # the chord IS the tracing here - leave it alone
+    return placed[keep]
 
 
 def trimmed_curb_lines(legs: dict, corner_fillets: dict) -> dict[str, dict[str, LineString]]:

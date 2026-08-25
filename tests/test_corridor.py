@@ -856,3 +856,41 @@ def test_the_lane_still_sits_on_the_kerb_it_follows(broad_st_paint):
         "the placement line stands off the kerb it is supposed to follow, on average over a whole "
         "run - so the lane is no longer a kerbside facility there: "
         + ", ".join(f"{k} by {v:.2f} ft" for k, v in off_the_kerb.items()))
+
+
+@needs_source_data
+def test_a_route_calming_narrows_the_route_and_nothing_else(site_models):
+    """A route-level calming may change the cross-section of its own legs and no others.
+
+    THE TRAP IS AN EMPTY LEG LIST, and it is not hypothetical arithmetic: `osm_derived_baseline`
+    falsy-tests its `legs` argument, so a route that reaches NONE of a junction's legs would fall
+    through to every kerb there and calm four legs nobody proposed - silently, in the scenario that
+    is meant to propose nothing. Broad & Greenwood and W Broad & Louellen are on no part of
+    Princeton Ave, so they are where that shows.
+
+    ASSERTED AS AN IDENTITY WITH legs_on_road, which is the leg list this replaced two
+    hand-written per-site copies of. Only LaneNarrowing and MarkedParking count as touching a
+    leg: a calming also completes the centrelines and upgrades the crossings, and those are
+    junction-wide by design (see CorridorCalming), so counting them would fail on every site.
+    """
+    from src.geometry.treatments import (DesignState, LaneNarrowing, MarkedParking,
+                                         PRINCETON_AVE_CALMING, legs_on_road)
+
+    swept, wrong = 0, []
+    for site, model in sorted(site_models.items()):
+        with contextlib.redirect_stdout(io.StringIO()):
+            state = PRINCETON_AVE_CALMING.apply_to(DesignState.from_model(model), model)
+        narrowed = {treatment.target.leg for treatment in state.treatments
+                    if isinstance(treatment, (LaneNarrowing, MarkedParking))}
+        on_route = set(legs_on_road(model, PRINCETON_AVE_CALMING.road))
+        swept += len(on_route)
+        if narrowed != on_route:
+            wrong.append(f"{site}: calmed {sorted(narrowed) or 'nothing'}, "
+                         f"on the route {sorted(on_route) or 'nothing'}")
+    # THREE, NOT FIVE: conftest.SITES leaves out princeton_eprospect, so two of the route's five
+    # approaches are in no fixture and pinned by no golden. Written as a floor rather than as the
+    # exact count so adding that site strengthens this test instead of breaking it.
+    assert swept >= 3, (f"only {swept} approaches on {PRINCETON_AVE_CALMING.road} in the whole "
+                        f"fixture, so this asserts almost nothing")
+    assert not wrong, ("a route calming did not treat exactly the legs on its route:\n  "
+                       + "\n  ".join(wrong))

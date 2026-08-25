@@ -839,6 +839,57 @@ def place_in_measured_frame(centerline: LineString, stations: np.ndarray,
 _OUTWARD_BIAS_PASSES = 4
 
 
+
+
+# How far a placed point may measure back from the (station, offset) it was asked for and still
+# be believed. Tuned, and the margin either side of it is an order of magnitude: every good
+# sample measured on the five sites comes back at 0.00, the widest legitimate slide seen anywhere
+# is 0.30 ft where a vertex wedge shifts the station of a point whose OFFSET is exact to 15.000,
+# and the displacements this exists to reject run 3.0 to 19.3 ft. See placement_holds.
+FRAME_RESIDUAL_TOLERANCE_FT = 1.0
+
+
+def placement_holds(centerline: LineString, stations: np.ndarray, offsets: np.ndarray,
+                     placed) -> np.ndarray:
+    """Which of these placed points MEASURE BACK as the (station, offset) they were asked for.
+
+    place_in_measured_frame keeps whichever estimate lands closest and leaves a fold alone
+    rather than chasing it - see its last paragraph. That is the right thing to do with a point
+    that has to exist, and the wrong thing to do with one that does not: inside a fold there is
+    no point at the asked-for station at all, so the closest estimate is a fiction, and a line
+    drawn through it carries a phantom kink.
+
+    So this is the second half of that decision. A line whose vertex density is a sampling
+    choice - a kerb sampled through an untraced gap, a strip's inner edge on a station grid -
+    asks here and drops what does not hold, spanning the fold with a chord instead. A line whose
+    vertices are facts about the street does not ask.
+
+    THE FOLD IS REAL AND LOCAL: an offset curve on the INSIDE of a bend of theta degrees
+    self-intersects over 2 * offset * tan(theta/2) of station, and the OUTSIDE of the same bend
+    projects a whole wedge onto the one vertex. greenwood_ave_south's alignment kinks 22.6
+    degrees at station 355 on the 3x sheet, which is 7 ft of station at a 17.6 ft kerb and 4.7
+    ft at an 11.8 ft lane edge - a few grid points either way, and nothing at all on a leg that
+    does not bend.
+
+    AND THE FOLD IS NOT ONLY AT BENDS. The other source is a leg END, where an offset wider than
+    the leg's own start puts the perpendicular foot off the end of the line and every station in
+    a stretch projects onto station 0: louellen_st_west's far kerb, asked for station 11.22 at
+    21.4 ft out, measures back at -1.16. Same fiction, no bend involved, and it is the larger of
+    the two - up to 19.3 ft of station against greenwood's 3.0.
+
+    MEASURED BOTH WAYS, NOT BY ORDER. Station order alone reads as the sharper statement - a line
+    that runs backwards is self-intersecting whatever the tolerance - but it is not per-point:
+    scanning forward for the first decrease, one displaced point poisons every good point after
+    it, which threw away a sample that measured back to its own station and offset EXACTLY
+    (louellen station 31.22, d_s 0.00, d_o 0.000) because the sample before it had landed at
+    34.04. The residual asks of each point only what that point did.
+    """
+    got_s, got_o = station_offset_many(centerline, np.asarray(placed, dtype=float))
+    residual = np.hypot(got_s - np.asarray(stations, dtype=float),
+                        np.abs(got_o) - np.abs(np.asarray(offsets, dtype=float)))
+    return residual <= FRAME_RESIDUAL_TOLERANCE_FT
+
+
 def _place_no_further_in_than(centerline: LineString, stations: np.ndarray,
                                offsets: np.ndarray) -> list[tuple]:
     """place_in_measured_frame, biased so no point lands INSIDE the offset it was asked for.

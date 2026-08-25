@@ -251,3 +251,53 @@ def test_centring_leaves_an_already_centred_leg_alone():
     assert after <= 0.05, f"a centred leg moved {after:.3f} ft"
     assert legs["east"].centerline.length == pytest.approx(
         LineString(before).length, rel=1e-3), "centring must not change the leg's length"
+
+
+# --------------------------------------------------------------------------
+# A long gap between traced vertices, over a centerline that bends inside it
+# --------------------------------------------------------------------------
+
+def a_curving_leg(name="south", width_ft=30.0, length_ft=300.0, radius_ft=500.0):
+    """A leg whose alignment curves - Greenwood Ave south of Broad St, roughly. Its kerb is
+    traced for the first 100 ft and then not again until the frame cuts the way."""
+    xs = np.arange(0.0, length_ft + 1.0, 10.0)
+    return Leg(name=name, curb_to_curb_ft=width_ft,
+               centerline=LineString(np.c_[xs, xs ** 2 / (2 * radius_ft)]))
+
+
+def test_a_kerb_traced_at_one_offset_keeps_it_across_a_long_gap():
+    """OSM traces the block, not the kerb, so consecutive traced vertices can be hundreds of
+    feet apart - and the alignment curves inside the gap. A straight WORLD segment between
+    them means "constant offset" only while the centerline runs straight.
+    """
+    leg = a_curving_leg()
+    curb = curb_line_from_points([(20.0, 15.0), (280.0, 15.0)], leg, working_length_ft=280.0)
+    sampled = np.array([curb.interpolate(t, normalized=True).coords[0]
+                        for t in np.linspace(0.0, 1.0, 60)])
+    _stations, offsets = station_offset_many(leg.centerline, sampled)
+    assert np.abs(offsets - 15.0).max() < 0.5
+
+
+def test_the_kerb_line_and_the_kerb_offsets_are_the_same_kerb():
+    """THE DEFECT THIS PAIR EXISTS FOR: one kerb, read two ways, in two frames.
+
+    The pavement ring, the corner fillets and the 3D kerb are built from the curb LINE
+    (corners.build_pavement_polygon); every marking is placed against
+    curb_offsets_at_stations, which interpolates the same vertices in the leg's frame. Where
+    the alignment bends between two traced vertices those are not the same line, and nothing
+    downstream can see it: on greenwood_ave_south at the rendered frame the two stood ~10 ft
+    apart, which drew bare asphalt outside the hatching on one kerb and hatching over the
+    sidewalk on the other.
+    """
+    from src.geometry.model import curb_offsets_at_stations
+
+    leg = a_curving_leg()
+    leg.left_curb = curb_line_from_points([(20.0, 15.0), (280.0, 15.0)], leg,
+                                          working_length_ft=280.0)
+    stations = np.arange(30.0, 275.0, 5.0)
+    from_the_offsets = curb_offsets_at_stations(leg, "left", stations)
+    sampled = np.array([leg.left_curb.interpolate(t, normalized=True).coords[0]
+                        for t in np.linspace(0.0, 1.0, 200)])
+    line_stations, line_offsets = station_offset_many(leg.centerline, sampled)
+    from_the_line = np.interp(stations, line_stations, line_offsets)
+    assert np.abs(from_the_line - from_the_offsets).max() < 0.5

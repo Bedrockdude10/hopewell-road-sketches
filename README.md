@@ -144,7 +144,8 @@ src/                       General-purpose library - NO data specific to any one
       crossings.py         Refuge islands, raised crossings, crosswalk markings, crosswalk shifts
       parking.py           Marked stalls, their buffer, and the borough's parking tags
       lanes.py             Lane narrowing and the flex posts that hold it
-      corridor.py          A facility declared once for a route and applied at every junction on it
+      corridor.py          A route decision declared once and applied at every junction on it:
+                           a new cross-section where it fits, or calming where none does
       extras.py            Scenario-specific props, and the sidewalk band
     targets.py             What a treatment is applied TO: a leg, one kerb of a leg, a corner
     markings.py            Every marking kind and every renderer channel, declared once

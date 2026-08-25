@@ -229,6 +229,7 @@ There is exactly one home for each of these. Adding a second copy is the most co
 | a band between two lateral offsets | `offset_band_polygon` | `src/geometry/model/` |
 | a line N ft to one side | `inset_line_ft` — **never** `offset_curve` for stationed work | `src/geometry/model/` |
 | a profile rate-limited to a taper | `taper_limited` | `src/geometry/model/` |
+| which legs of a junction are on a route | `legs_on_road(model, road)` — **never** a per-site leg tuple | `src/geometry/treatments/` |
 
 **Search before writing.** `grep -rn "SOME_CONSTANT" src/` costs nothing. Writing the second copy
 costs a session: the far-kerb rule was written inline in one site's `scenarios.py`, the sibling

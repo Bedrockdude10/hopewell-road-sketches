@@ -591,9 +591,16 @@ def osm_derived_baseline(state: DesignState, model: "IntersectionModel", legs: t
     `build_demo_scenario` of four sites - byte-identical in three of them, and differing in the
     fourth only by which legs it touches.
 
-    `legs` restricts the parking pass to some of them, which IS a per-site fact (Columbia &
-    Princeton calms only its two Princeton Ave legs) and so stays a parameter rather than
-    becoming a second copy of the function.
+    `legs` restricts the parking pass to some of them, and WHICH ones is a ROUTE fact rather than
+    a per-site one - "Princeton Ave is calmed" is one decision that two junctions carry, which is
+    why it is CorridorCalming that supplies the list and not a tuple in each site file. It stays a
+    parameter here because a junction-wide pass and a route's pass are the same design.
+
+    AN EMPTY `legs` IS FALSY AND SO PAINTS EVERY KERB, which is the trap on the other side of that:
+    a caller computing the list has to check it itself rather than passing () for "none". See
+    CorridorCalming.apply_to, and tests/test_corridor.py
+    test_a_route_calming_narrows_the_route_and_nothing_else, which calms 7 legs at two junctions
+    without that check.
 
     Local import because crossings.py is a sibling and the package's __init__ imports both;
     reaching for it at module scope would order the two by accident.

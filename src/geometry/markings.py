@@ -243,6 +243,33 @@ KINDS: dict[str, PaintKind] = dict(_REGISTRY)
 # nothing else's; what the marking then does is this table's and nothing else's.
 # --------------------------------------------------------------------------------------
 
+# HOW FAR A PARKING STALL KEEPS BACK FROM A DRIVEWAY RETURN, in feet.
+#
+# NOT SIGHT DISTANCE AND NOT NEW JERSEY LAW. R.S. 39:4-138 prohibits parking "in front of a
+# public or private driveway" and names no distance at all, so the statute is satisfied the
+# moment no stall is drawn across the mouth - which STALL_DIVIDER's STOPPED row already does,
+# and which is why daylighting.py has no driveway in it. This is the separate municipal
+# clearance that keeps the RETURN usable: St. Louis 17.24 forbids parking "within five (5) feet
+# of the rounding of a driveway" and Seattle "within five feet (5') of the end of a constructed
+# driveway return". Both measure from the ROUNDING, which is what openings.OPENING_TRIM_FT
+# already models, so this is applied on top of the trimmed mouth and the margin off the dropped
+# kerb's raw extent comes out larger. STANDARDS.md carries both ordinances.
+#
+# THE SIGHT LINE IS A DIFFERENT QUESTION AND THIS DOES NOT ANSWER IT, which matters because 5 ft
+# looks like it ought to. WSDOT's Exhibit 1340-3 wants 155 ft of driveway sight distance at a
+# 25 mph posted speed with the sight triangle clear of obstructions, and a row of parked cars is
+# an obstruction in it. What a cleared length L buys is L*(E-t)/(E-w) in the driver's eye setback
+# E, the target offset t and the parked-car face w - dominated by the handful of feet in (E-w),
+# so it is tens of feet on one leg and hundreds on the next and there is no constant to write for
+# it. This one is scoped to the clearance it can actually cite.
+#
+# APPLIED AT AN INTERSECTION TOO, WHERE IT CAN NEVER BIND, on purpose: R.S. 39:4-138(e) already
+# holds parking 25 ft off every side line and crosswalk. A clearance wired to one column only is
+# one that goes missing the first time the other column is the one with no daylight zone behind
+# it, and this table's whole shape is that a marking may not inherit a branch by falling through.
+DRIVEWAY_CLEARANCE_FT = 5.0
+
+
 class AtAnOpening(Enum):
     """What one marking does where a vehicle crosses the kerb it runs beside.
 
@@ -288,12 +315,18 @@ class OpeningRule:
     (Numbering is the 11th edition. Do not "correct" this to the 2009 Section 3B.07, which is
     "White Lane Line Markings for Non-Continuing Lanes" and says nothing about any of this.)
 
+    `clearance_ft` is a THIRD answer at the same event and not a variant of the first two: how
+    far BEYOND the mouth this marking keeps back. Only a marking that stands for where a vehicle
+    may be put has one - see DRIVEWAY_CLEARANCE_FT - and it is a property of the row rather than
+    of the ground so that widening one marking's gap cannot widen everybody's.
+
     `why` is the clause, per row, so somebody checking this against the manual can see which
     sentence each cell came from without reading the code that applies it.
     """
     at_a_driveway: AtAnOpening
     at_an_intersection: AtAnOpening
     dotted_as: "PaintKind | None" = None
+    clearance_ft: float = 0.0
     why: str = ""
 
     def __post_init__(self):
@@ -305,6 +338,16 @@ class OpeningRule:
                              "BIKE_LANE_DOTTED_EXTENSION).")
         if not wants_dashes and self.dotted_as is not None:
             raise ValueError(f"dotted_as={self.dotted_as} on a rule that never goes dotted.")
+        if self.clearance_ft < 0.0:
+            raise ValueError(f"clearance_ft={self.clearance_ft} is a distance kept beyond a "
+                             "mouth, not a signed offset; a negative one would mean a marking "
+                             "reaching INTO the entrance, which is what CARRIED says.")
+        if self.clearance_ft and AtAnOpening.CARRIED in (self.at_a_driveway,
+                                                        self.at_an_intersection):
+            raise ValueError("A clearance widens a gap, so it says nothing on a column that "
+                             "leaves none. CARRIED subtracts no ground at all, so this row "
+                             "would keep its clearance at one kind of entrance and silently "
+                             "drop it at the other.")
         if not self.why:
             raise ValueError("Every row cites the clause it came from.")
 
@@ -354,9 +397,12 @@ AT_AN_OPENING: dict[PaintKind, OpeningRule] = {
             "carries on. Across a STREET it is discontinued - it ran unbroken over the 49.7 ft "
             "mouth of Blackwell Avenue until (08) was read."),
     STALL_DIVIDER: OpeningRule(
-        AtAnOpening.STOPPED, AtAnOpening.STOPPED,
+        AtAnOpening.STOPPED, AtAnOpening.STOPPED, clearance_ft=DRIVEWAY_CLEARANCE_FT,
         why="A stall tick belongs to the parking lane, which simply ends: there is no stall "
-            "across an entrance of either kind, so there is nothing for a tick to divide."),
+            "across an entrance of either kind, so there is nothing for a tick to divide. The "
+            "only row with a clearance, because a tick is the one marking here that says where "
+            "a CAR may stand - St. Louis 17.24 and Seattle both hold a parked vehicle 5 ft off "
+            "a driveway return, and the ticks were drawn 2.25 ft off one."),
     BIKE_LANE_EDGE_LINE: OpeningRule(
         AtAnOpening.DOTTED, AtAnOpening.DOTTED, dotted_as=BIKE_LANE_DOTTED_EXTENSION,
         why="MUTCD 3B.11(05) and 9C.04: a bicycle lane's markings are dotted where the lane is "

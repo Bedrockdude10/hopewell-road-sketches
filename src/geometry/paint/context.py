@@ -496,7 +496,7 @@ def curbside_paint_ft(state: "DesignState", crosswalk_offsets: dict, center_ft: 
                        crosswalk_bands: dict | None = None,
                        props: list[dict] | None = None,
                        marked_crosswalks: set | None = None,
-                       crossings_elsewhere=None) -> list[PaintPiece]:
+                       crossings_elsewhere=None, openings=None) -> list[PaintPiece]:
     """Every painted marking this design puts on the roadway, in state-plane feet.
 
     props supplies the stop signs and fire hydrants that carry statutory parking setbacks of
@@ -544,7 +544,10 @@ def curbside_paint_ft(state: "DesignState", crosswalk_offsets: dict, center_ft: 
     # fact about the street, and a leg without a painted crossing still has one - see
     # junction_mouths_ft.
     mouths = junction_mouths_ft(state, crosswalk_bands)
-    openings = kerb_opening_bands(state, mouths)
+    # ACCEPTED FROM THE CALLER when there is one, because the openings are not only the paint's
+    # business: the stall COUNT has to be measured off the same entrances the dividers were
+    # stopped at (src/metrics.py:marked_stall_runs). Built here for the callers that have none.
+    openings = openings if openings is not None else kerb_opening_bands(state, mouths)
     # --- and now the treatments paint themselves. Each one that has markings owns them
     # (Treatment.paint), so a marking's geometry lives beside the validation and the provenance
     # of the thing that calls for it, rather than in a block of this function keyed off one of

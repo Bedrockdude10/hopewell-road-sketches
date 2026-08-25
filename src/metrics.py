@@ -6,8 +6,9 @@ scene both renderers draw from (src/render/scene.py:SceneGeometry), never from t
 
 A crossing's length is NOT the leg's configured width: crosswalk_reach_to_curbs_ft measures
 to the traced kerbs, asymmetrically (12 ft one way, 20 the other on a 30 ft street). Parking
-stalls are counted off the PARKING_EDGE_LINE pieces the paint builder emitted, because a
-hydrant or driveway splits a kerb into two runs and the paint says where the runs are.
+stalls are counted over the PARKING_EDGE_LINE pieces the paint builder emitted, cut by the
+entrances a stall may not be marked across - see marked_stall_runs for why the edge line alone
+is no longer the run.
 
 Nothing here decides anything. Every value comes from geometry some other module resolved;
 this module only measures it and says what changed.
@@ -18,10 +19,10 @@ from math import sqrt
 
 import numpy as np
 from shapely.geometry import LineString
-from shapely.ops import unary_union
+from shapely.ops import substring, unary_union
 
-from src.geometry.markings import PARKING_EDGE_LINE
-from src.geometry.model import station_offset_many, whole_stalls_ft
+from src.geometry.markings import PARKING_EDGE_LINE, STALL_DIVIDER
+from src.geometry.model import stall_lane_runs_ft, station_offset_many, whole_stalls_ft
 from src.geometry.targets import Corner, LegSide
 from typing import TYPE_CHECKING
 
@@ -72,6 +73,81 @@ def stalls_in_run(length_ft: float, stall_length_ft: float) -> int:
     if stall_length_ft <= 0:
         raise ValueError(f"A stall needs a length; got stall_length_ft={stall_length_ft}.")
     return whole_stalls_ft(length_ft, stall_length_ft)
+
+
+def _between_stations(line, leg, lo_ft: float, hi_ft: float):
+    """The part of one drawn line lying between two stations of its leg.
+
+    So a caller handed a run can put a label on the paint it is counting. Cut by ARC LENGTH from
+    the line's own start after stationing that start, which is exact for the kerbside lines this
+    is used on - they are offsets of the centreline, so a foot along one is a foot of station -
+    and degrades to a slightly short substring rather than to a wrong count on anything else,
+    because the COUNT is stationed arithmetic and never measured off this geometry.
+    """
+    stations, _offsets = station_offset_many(leg.centerline,
+                                             np.asarray(line.coords, dtype=float))
+    at_start = float(stations[0])
+    return substring(line, max(lo_ft - at_start, 0.0), max(hi_ft - at_start, 0.0))
+
+
+def marked_stall_runs(paint: list, state: "DesignState", openings=None):
+    """Each run of kerb a stall is marked in, as drawn. Yields (piece, run, parking, stalls).
+
+    THE GROUND, NOT THE EDGE LINE. Stall counts were read straight off the PARKING_EDGE_LINE
+    pieces, on the reasoning that a hydrant or a driveway splits a kerb into two runs and so the
+    paint already says where the runs are. A hydrant still does. A DRIVEWAY stopped doing it the
+    moment the two markings were given different rows in markings.AT_AN_OPENING: the edge line is
+    CARRIED across one (MUTCD 3B.11(09)) while STALL_DIVIDER is STOPPED and keeps
+    DRIVEWAY_CLEARANCE_FT clear either side of it, so the line now runs straight past ground no
+    stall is drawn on. Counting off it claimed 5 stalls at broad_st_greenwood that the ticks do
+    not divide - in the summary panel AND on each run's own label, the two places that already
+    shared stalls_in_run precisely so they could not be two arithmetics. They were not: they were
+    one arithmetic over the wrong length.
+
+    So the run is the edge-line piece cut by the same `openings.against(STALL_DIVIDER)` the
+    divider builder laid its grid over (src/geometry/treatments/parking.py). Read off the drawn
+    piece rather than off the ticks: the ticks are the answer, and a count recovered from them
+    would have to guess whether a 21 ft gap between two of them is a stall or an entrance.
+
+    AND THEN THROUGH model.stall_lane_runs_ft, which is where the ticks come from, because
+    cutting by the same entrances only got the two answers CLOSE. broad_st_west's left kerb held a
+    66.19 ft run - 3.008 stalls - and the divider builder holds its two end ticks
+    MIN_LINE_LENGTH_FT inside the run, which spends 0.5 ft of it and lands on 2. Flooring the raw
+    length agreed with the drawing on seven leg-sides out of eight, and disagreed on the eighth by
+    eight thousandths of a stall. Trimming first makes every run a whole number of stalls long by
+    construction, so the count cannot be a near miss in either direction.
+
+    `openings` is passed in, never rebuilt here, so this cannot become a second answer to where
+    the entrances are - src/render/scene.py:kerb_openings is the one construction. Without it the
+    edge line is the run, which is the old behaviour and the right answer for a caller holding
+    paint it did not resolve a scene for.
+    """
+    from src.geometry.paint.anchors import MIN_LINE_LENGTH_FT
+    from src.geometry.treatments import MarkedParking
+
+    for piece in paint:
+        if piece.kind is not PARKING_EDGE_LINE:
+            continue
+        parking = state.treatment_for(MarkedParking, LegSide(piece.leg, piece.side))
+        leg = state.legs.get(piece.leg)
+        if parking is None or leg is None:
+            continue
+        ground = (openings.against(STALL_DIVIDER, piece.leg, piece.side)
+                  if openings is not None else None)
+        cut = piece.geometry
+        if ground is not None and not ground.is_empty:
+            cut = cut.difference(ground)
+        spans = []
+        for run in getattr(cut, "geoms", (cut,)):
+            if run.is_empty or run.length <= 0:
+                continue
+            stations, _offsets = station_offset_many(leg.centerline,
+                                                     np.asarray(run.coords, dtype=float))
+            spans.append((float(stations.min()), float(stations.max())))
+        for lo, hi in stall_lane_runs_ft(sorted(spans), parking.stall_length_ft,
+                                         keep_inside_ft=MIN_LINE_LENGTH_FT):
+            yield (piece, _between_stations(piece.geometry, leg, lo, hi), parking,
+                   whole_stalls_ft(hi - lo, parking.stall_length_ft))
 
 
 def turn_speed_mph(radius_ft: float) -> float:
@@ -256,14 +332,19 @@ class SceneMetrics:
 
     @classmethod
     def of(cls, state: "DesignState", reaches: dict, offsets: dict, skews: dict, paint: list,
-           marked=None, surveyed_leg_lengths: dict | None = None) -> "SceneMetrics":
+           marked=None, surveyed_leg_lengths: dict | None = None,
+           openings=None) -> "SceneMetrics":
         """Measure a design. Arguments are SceneGeometry's own fields - see its `metrics`.
 
         `marked` is the set of legs carrying a crossing; None measures every leg with a
         resolved offset — but every leg has one, so measuring by offset alone would report a
         crossing distance for a leg the drawing shows as unmarked.
+
+        `openings` is optional for the same reason marked_stall_runs takes it that way: without
+        it the stall count is measured over the whole edge line, which over-counts by every
+        driveway on the kerb.
         """
-        from src.geometry.treatments import MarkedParking, RefugeIsland
+        from src.geometry.treatments import RefugeIsland
 
         islands_by_leg: dict[str, list] = {}
         for island in state.treatments_of(RefugeIsland):
@@ -287,20 +368,16 @@ class SceneMetrics:
                     motor_lane_reach_ft(state, leg_name, reaches[leg_name]), islands)))
 
         runs = []
-        for piece in paint:
-            if piece.kind is not PARKING_EDGE_LINE:
-                continue
-            parking = state.treatment_for(MarkedParking, LegSide(piece.leg, piece.side))
-            if parking is None:
-                continue
-            length_ft = piece.geometry.length
+        for piece, run, parking, stalls in marked_stall_runs(paint, state, openings):
             _measured, projected = split_at_surveyed_end(
-                piece.geometry, state.legs.get(piece.leg),
+                run, state.legs.get(piece.leg),
                 (surveyed_leg_lengths or {}).get(piece.leg))
-            runs.append(ParkingRun(leg=piece.leg, side=piece.side, length_ft=length_ft,
+            # `stalls` comes back with the run rather than being recomputed off run.length: the
+            # run was TRIMMED to whole stalls, so the two agree - but only while the trim and the
+            # division stay one call, which is the whole point of marked_stall_runs.
+            runs.append(ParkingRun(leg=piece.leg, side=piece.side, length_ft=run.length,
                                     projected_ft=projected,
-                                    stall_length_ft=parking.stall_length_ft,
-                                    stalls=stalls_in_run(length_ft, parking.stall_length_ft)))
+                                    stall_length_ft=parking.stall_length_ft, stalls=stalls))
 
         corners = []
         for key in sorted(state.corner_fillets):

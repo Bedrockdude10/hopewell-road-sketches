@@ -175,6 +175,23 @@ class SceneGeometry:
         """
         return tuple(c.band_ft for c in self.unmodelled_crossings if c.is_marked)
 
+    @property
+    def kerb_openings(self):
+        """Where every kerb in this scene opens for a vehicle (src/geometry/paint/openings.py).
+
+        Here, and not inside the paint builder that used to own it, because two different
+        questions are answered off these entrances and they were being answered off two
+        constructions of them. The paint asks WHAT BREAKS at an opening; src/metrics.py asks HOW
+        MANY STALLS the design gets, and a stall may not be marked across an entrance either. One
+        property, for the reason this class exists.
+
+        Rebuilt per access like `unmodelled_crossing_bands`, which is cheap and keeps this class
+        frozen; what matters is that the RULE has one home, not the call.
+        """
+        from src.geometry.paint.openings import junction_mouths_ft, kerb_opening_bands
+
+        return kerb_opening_bands(self.state, junction_mouths_ft(self.state, self.crosswalk_bands))
+
     def build_paint(self, props: list[dict] | None = None) -> list["PaintPiece"]:
         """Every painted marking this scenario puts down (src/geometry/paint/).
 
@@ -187,7 +204,8 @@ class SceneGeometry:
         return curbside_paint_ft(self.state, self.crosswalk_offsets, self.model.center_ft,
                                   self.crosswalk_bands, props,
                                   marked_crosswalks=self.marked_crosswalks,
-                                  crossings_elsewhere=self.unmodelled_crossing_bands)
+                                  crossings_elsewhere=self.unmodelled_crossing_bands,
+                                  openings=self.kerb_openings)
 
     def build_paint_and_posts(self, props: list[dict]) -> tuple[list["PaintPiece"], list[dict]]:
         """The paint, and `props` extended with the posts only the paint knows the place of.
@@ -216,7 +234,8 @@ class SceneGeometry:
         return SceneMetrics.of(self.state, reaches=self.crosswalk_reaches,
                                 offsets=self.crosswalk_offsets, skews=self.crosswalk_skews,
                                 paint=paint, marked=self.marked_crosswalks,
-                                surveyed_leg_lengths=getattr(self.model, "surveyed_leg_lengths", None))
+                                surveyed_leg_lengths=getattr(self.model, "surveyed_leg_lengths", None),
+                                openings=self.kerb_openings)
 
     def context(self, props: list[dict], paint: list):
         """This scene as the one object every invariant reads (src/checks.py:SceneContext).

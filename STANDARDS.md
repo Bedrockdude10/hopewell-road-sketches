@@ -82,6 +82,50 @@ or side line, nor within 50 ft of a stop sign in a school zone while school is i
 > something stricter these numbers go **up**; none of them may go down without checking
 > 39:4-138.6 first.
 
+### A DRIVEWAY'S PARKING CLEARANCE, which no state statute gives a number to — **Verified 2026-08-25**
+
+`DRIVEWAY_CLEARANCE_FT = 5.0` in [`src/geometry/markings.py`](src/geometry/markings.py), carried
+as `OpeningRule.clearance_ft` on the `STALL_DIVIDER` row and applied by
+[`openings.against`](src/geometry/paint/openings.py).
+
+**R.S. 39:4-138** forbids parking *"in front of a public or private driveway"* and **names no
+distance at all** *(Verified)*. That is worth recording as a finding rather than as a gap: the
+statute is satisfied the moment no stall is drawn across the mouth, which `STALL_DIVIDER`'s
+`STOPPED` row already did on its own. So this constant is **not** New Jersey law and is not a
+daylight zone — which is why `daylighting.py` has no driveway rule in it.
+
+The 5 ft is a **municipal** clearance, the ordinary published figure for keeping the return itself
+usable, and it is measured from the **rounding**, not from the flat of the mouth:
+
+| source | words | provenance |
+|---|---|---|
+| St. Louis City Code **17.24** | parking prohibited *"within five (5) feet of the rounding of a driveway"* | **Verified** |
+| Seattle Municipal Code | *"within five feet (5') of the end of a constructed driveway return"* | **Verified** |
+| NACTO **GSDG** | *"Daylight intersections by removing parking within 6–8 m of the intersection"* (19.7–26.2 ft) — **intersections only; silent on driveways** | *as cited* |
+
+Both ordinances measure from the return, which is the corner `openings.OPENING_TRIM_FT` already
+draws, so the clearance is applied to the **trimmed** mouth and the margin off the dropped kerb's
+raw extent comes out larger again. The site test asserts the ordinances' bare 5 ft against the raw
+span, which is the conservative reading and leaves the trim free to move.
+
+> **The sight line is a different question and 5 ft does not answer it**, which matters because it
+> looks as though it ought to. **WSDOT Design Manual M 22.01.23 ch. 1340, Exhibit 1340-3**
+> *(Verified)* wants **155 ft** of driveway sight distance at a 25 mph posted speed, eye and object
+> both 3.5 ft, with the sight triangles *"clear of sight obstructions"* — and note [1] puts the
+> driver's eye **18 ft desirable / 10 ft minimum** back from the edge of the travelled way. A row
+> of parked cars is an obstruction in that triangle. What a cleared length `L` buys is
+> `L·(E−t)/(E−w)` in the eye setback `E`, the target offset `t` and the parked-car face `w`, which
+> is dominated by the few feet in `(E−w)` and so comes out at tens of feet on one leg and hundreds
+> on the next. **There is no constant to write for it**, and this row is scoped to the clearance it
+> can cite. A `--sight` profile on `measure_drawn.py` is how to ask that question per driveway.
+
+**What it costs, measured** on `broad_st_greenwood` at the 2.5× sheet the renders use: the demo
+scenario goes **28 → 25** marked stalls and the two-way proposal **6 → 4**. Separately, and found
+only while measuring that: the summary panel had been *reporting* 31 and 8, because stalls were
+counted over the `PARKING_EDGE_LINE`, which is `CARRIED` straight across a driveway. Three of the
+stalls this change appears to cost were never drawn. See
+[`src/metrics.py`](src/metrics.py):`marked_stall_runs`.
+
 ---
 
 ## 2. MUTCD

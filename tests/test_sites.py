@@ -661,7 +661,7 @@ def test_a_cross_street_mouth_ends_where_the_traced_kerb_does(site, wide_site_mo
 @needs_source_data
 @pytest.mark.parametrize("site", SITES)
 def test_the_edge_line_runs_unbroken_past_a_driveway(site, wide_site_models):
-    """MUTCD 3B.07: an edge line is maintained across a driveway, interrupted at intersections.
+    """MUTCD 3B.11(09): an edge line is maintained across a driveway, interrupted at intersections.
 
     A driveway breaks what a car drives over on its way in. It does not break the line marking
     where the running lane ends, because that does not stop being true because someone can turn
@@ -733,9 +733,146 @@ def test_the_edge_line_runs_unbroken_past_a_driveway(site, wide_site_models):
                 f"{site}/{leg_name} {side}: the edge of the travelled way is broken across the "
                 f"driveway at {opening.start_ft:.0f}-{opening.end_ft:.0f} ft - pieces run "
                 + ", ".join(f"{lo:.0f}-{hi:.0f}" for lo, hi in sorted(runs))
-                + ". MUTCD 3B.07 maintains an edge line across a driveway")
+                + ". MUTCD 3B.11(09) maintains an edge line across a driveway")
     if not checked:
         pytest.skip(f"{site} has no driveway inside a marked run")
+
+
+@needs_source_data
+@pytest.mark.parametrize("site", SITES)
+def test_a_stall_keeps_its_clearance_from_a_driveway(site, wide_site_models):
+    """markings.DRIVEWAY_CLEARANCE_FT against the drawn ticks, not against the rule.
+
+    The rule's own test is in test_paint.py; this is the other half of section 0 of SKILLS.md -
+    a check that reads the same table the cut reads is not a check. The defect it was written
+    against is measured: on broad_st_west's left kerb the last tick before the driveway at
+    154.4 ft stood at 152.20, so a parked bumper sat 2.25 ft off the mouth, and 2.47 ft on the
+    right. Nothing objected, because nothing had been told to.
+
+    ON THE WIDE SHEET, and that is not a detail. At 1x no site has a marked stall anywhere near
+    a driveway - broad_st_greenwood's parking starts at 129.95 ft and the 1x leg ends at 130 -
+    so the same assertions on `site_models` pass having measured nothing at all. This is the
+    SKILLS.md 0b case where the sheet decides whether a rule is exercised, so the fixture has
+    to be the render's own frame.
+
+    Measured off the RAW dropped-kerb span, which is the conservative reading: the clearance is
+    applied to the mouth after openings.OPENING_TRIM_FT has already flared it out to the return
+    the ordinances actually name, so the true margin is that much larger again. Asserting the
+    ordinance's own 5 ft here leaves the trim free to move without rewriting the test.
+    """
+    from src.geometry.markings import DRIVEWAY_CLEARANCE_FT, STALL_DIVIDER
+
+    model = wide_site_models[site]
+    with contextlib.redirect_stdout(io.StringIO()):
+        state = run_scenario(load_site_scenarios(site).build_demo_scenario,
+                             DesignState.from_model(model), model)
+        paint = resolved_scene(model, state).build_paint()
+
+    openings = {key: spans for key, spans in getattr(state, "kerb_openings", {}).items() if spans}
+    checked = 0
+    for (leg_name, side), spans in openings.items():
+        leg = model.legs.get(leg_name)
+        if leg is None:
+            continue
+        ticks = []
+        for piece in paint:
+            if (piece.leg, piece.side) != (leg_name, side) or piece.kind is not STALL_DIVIDER:
+                continue
+            stations, _offsets = station_offset_many(
+                leg.centerline, np.asarray(piece.geometry.coords, dtype=float))
+            ticks.append(float(stations.mean()))
+        if not ticks:
+            continue
+        for opening in spans:
+            if opening.is_an_intersection:
+                continue
+            checked += 1
+            lo = opening.start_ft - DRIVEWAY_CLEARANCE_FT
+            hi = opening.end_ft + DRIVEWAY_CLEARANCE_FT
+            inside = sorted(t for t in ticks if lo < t < hi)
+            closest_ft = min((min(abs(t - opening.start_ft), abs(t - opening.end_ft))
+                              for t in inside), default=float("inf"))
+            assert not inside, (
+                f"{site}/{leg_name} {side}: stall tick(s) at "
+                + ", ".join(f"{t:.2f}" for t in inside)
+                + f" stand within {DRIVEWAY_CLEARANCE_FT:.0f} ft of the driveway at "
+                f"{opening.start_ft:.1f}-{opening.end_ft:.1f} ft - the nearest is {closest_ft:.2f} "
+                f"ft off the mouth, and St. Louis 17.24 and Seattle both say 5 ft off the return")
+    if not checked:
+        pytest.skip(f"{site} has no driveway on a kerb with marked stalls")
+
+
+@needs_source_data
+@pytest.mark.parametrize("site", SITES)
+def test_the_stall_count_matches_the_ticks_that_divide_it(site, wide_site_models):
+    """The number the panel reports against the number the drawing divides.
+
+    Two answers to one question, which is this repo's signature defect (SKILLS.md 0). The panel
+    and each run's own label were counted off the PARKING_EDGE_LINE pieces, on the reasoning that
+    whatever splits a kerb splits the paint. That stopped being true when the edge line was made
+    CARRIED across a driveway (MUTCD 3B.11(09)) and the ticks STOPPED: the line runs straight past
+    ground no stall is drawn on, so the count ran past it too. broad_st_greenwood claimed 31 stalls
+    over 28 drawn, and 8 over 6 in the two-way proposal - a label reading "parking 8 stalls" beside
+    six ticked stalls, with nothing to catch it because both readers shared the arithmetic and
+    neither read the ground. src/metrics.py:marked_stall_runs is the fix and this is the check.
+
+    THE DRAWN SIDE IS COUNTED FROM THE TICKS, deliberately, so the two derivations stay
+    independent: a pair of consecutive ticks exactly one stall apart with no entrance between them
+    is a stall, and nothing else is. Chaining on the pitch alone would fuse the two ticks either
+    side of a narrow entrance whenever that gap happened to land near one stall length, which is
+    why the opening spans are consulted rather than trusted to be far from 22 ft.
+
+    On the wide sheet for the same reason the clearance test above is: at 1x no site draws a stall
+    near an entrance at all, so this passes over nothing.
+    """
+    from src.geometry.markings import STALL_DIVIDER
+
+    model = wide_site_models[site]
+    scenarios = load_site_scenarios(site)
+    checked = 0
+    for name in ("build_demo_scenario", "build_proposal_two_way_bike_lane"):
+        build = getattr(scenarios, name, None)
+        if build is None:
+            continue
+        with contextlib.redirect_stdout(io.StringIO()):
+            state = run_scenario(build, DesignState.from_model(model), model)
+            scene = resolved_scene(model, state)
+            paint = scene.build_paint()
+            reported = scene.metrics(paint).total_stalls
+
+        spans = {key: [(o.start_ft, o.end_ft) for o in openings]
+                 for key, openings in getattr(state, "kerb_openings", {}).items()}
+        ticks = {}
+        for piece in paint:
+            if piece.kind is not STALL_DIVIDER:
+                continue
+            leg = model.legs.get(piece.leg)
+            if leg is None:
+                continue
+            stations, _offsets = station_offset_many(
+                leg.centerline, np.asarray(piece.geometry.coords, dtype=float))
+            ticks.setdefault((piece.leg, piece.side), []).append(float(stations.mean()))
+
+        drawn = 0
+        for (leg_name, side), stations in ticks.items():
+            parking = state.treatment_for(MarkedParking, LegSide(leg_name, side))
+            if parking is None:
+                continue
+            entrances = spans.get((leg_name, side), [])
+            stations.sort()
+            for lo, hi in itertools.pairwise(stations):
+                if abs((hi - lo) - parking.stall_length_ft) > 0.05:
+                    continue
+                if any(lo < end and start < hi for start, end in entrances):
+                    continue        # two ticks a stall apart across an entrance: not a stall
+                drawn += 1
+        checked += 1
+        assert reported == drawn, (
+            f"{site}/{name}: the panel reports {reported} stalls and the ticks divide {drawn}. "
+            "Stall counts are measured over marked_stall_runs so the two cannot disagree; a "
+            "difference means the count and the ticks are reading different ground again.")
+    if not checked:
+        pytest.skip(f"{site} has no scenario to count stalls in")
 
 
 @needs_source_data

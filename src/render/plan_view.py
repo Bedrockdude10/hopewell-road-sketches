@@ -8,7 +8,7 @@ from matplotlib.patches import Patch
 from shapely.geometry import LineString, Point
 from shapely.ops import unary_union
 
-from src.metrics import Comparison, SceneMetrics, stalls_in_run
+from src.metrics import Comparison, SceneMetrics, marked_stall_runs
 from src.geometry.model import inset_point_at_station, trimmed_curb_lines
 from src.geometry.intersection import (IntersectionModel, drawn_kerb_radius_ft,
                                        kerb_lines_with_tags_ft)
@@ -612,7 +612,7 @@ def plot_design_state(ax, model: IntersectionModel, state: DesignState, title: s
                    color=BOLLARD_PLAN_COLOR, marker="o", s=10, zorder=6)
 
     if dimension_labels:
-        _label_paint(labels, state, paint)
+        _label_paint(labels, state, paint, scene.kerb_openings)
         _label_parking_legality(labels, state)
 
     ax.scatter([model.center_ft.x], [model.center_ft.y], color="blue", zorder=6, s=40)
@@ -793,15 +793,14 @@ def _offset_of(leg, point):
     return float(offsets[0])
 
 
-def _label_paint(labels: LabelPlacer, state: DesignState, paint):
+def _label_paint(labels: LabelPlacer, state: DesignState, paint, openings=None):
     """Dimension labels for the curbside paint: what each treatment actually measures.
 
     One lane label PER SIDE narrowed, offset into that lane - not a single label on the
     centerline, which reads as "this road is one 11 ft lane" rather than what is there
     (a leg is not always narrowed on both sides).
     """
-    from src.geometry.targets import LegSide
-    from src.geometry.treatments import (LaneNarrowing, MarkedParking, divider_shift_toward_ft,
+    from src.geometry.treatments import (LaneNarrowing, divider_shift_toward_ft,
                                           travel_lane_width_ft)
 
     for narrowing in state.treatments_of(LaneNarrowing):
@@ -824,17 +823,13 @@ def _label_paint(labels: LabelPlacer, state: DesignState, paint):
                              bbox=dict(boxstyle="round,pad=0.15", fc="white", ec="none", alpha=0.75))
 
     # One label per RUN of stalls, not per side: a hydrant mid-block splits a kerb into two
-    # separate runs, and a single label would be counting stalls that are not in one place.
-    for piece in paint:
-        if piece.kind is not markings.PARKING_EDGE_LINE:
-            continue
-        parking = state.treatment_for(MarkedParking, LegSide(piece.leg, piece.side))
-        if parking is None:
-            continue
-        # The same rule the summary panel totals with (src/metrics.py:stalls_in_run), so the
-        # count beside a run and the count in the panel cannot be two arithmetics.
-        n_stalls = stalls_in_run(piece.geometry.length, parking.stall_length_ft)
-        mid = piece.geometry.interpolate(0.5, normalized=True)
+    # separate runs, and a single label would be counting stalls that are not in one place. A
+    # DRIVEWAY splits one too, and this label could not see that while it read the edge line -
+    # which is CARRIED straight across one. src/metrics.py:marked_stall_runs is the whole rule,
+    # shared with the summary panel so the count beside a run and the count in the panel cannot
+    # be two arithmetics OR two lengths.
+    for piece, run, parking, n_stalls in marked_stall_runs(paint, state, openings):
+        mid = run.interpolate(0.5, normalized=True)
         # Pushed out over the kerb, off the stalls it counts, with a leader back to them: their
         # depth is the label's own subject, and a reader cannot check it against paint the label
         # is standing on.

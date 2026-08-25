@@ -1242,3 +1242,48 @@ def test_blender_stroke_widths_match_the_channels():
             f"{channel.key} declares a stroke width that no 3D table accounts for")
         assert channel.stroke_width_m == pytest.approx(declared["CENTERLINE_WIDTH_M"]), (
             "the contraflow stripe is drawn through the centreline path, at CENTERLINE_WIDTH_M")
+
+
+def test_a_stall_keeps_its_clearance_from_the_driveway_return():
+    """DRIVEWAY_CLEARANCE_FT, and that it belongs to ONE ROW and not to openings in general.
+
+    Pinned at the rule, alongside the two (08)/(09) tests above, because the clearance is a
+    third answer at the same event and the three are easy to conflate: the parking edge line is
+    CARRIED across a driveway, a hatched zone FILLETS away from it, and a stall keeps back from
+    it - by MORE than the mouth, which is the only one of the three that widens the gap.
+
+    The distance is a municipal-ordinance clearance and not sight distance; see the constant.
+
+    The negative half is the load-bearing one. A clearance implemented as a wider mouth rather
+    than as a property of the row would push the hatched buffer's fillet 5 ft out with it and
+    quietly give up 10 ft of buffer per driveway to a rule about where a CAR may stand.
+    """
+    from src.geometry.markings import (BUFFER_FILL, DRIVEWAY_CLEARANCE_FT, PARKING_EDGE_LINE,
+                                       STALL_DIVIDER)
+    from src.geometry.paint import KerbSideOpenings
+
+    driveway = Polygon([(0, 0), (10, 0), (10, 5), (0, 5)])
+    openings = KerbSideOpenings(driveway_mouths=driveway, driveway_tapered=driveway,
+                                 intersection_mouths=None)
+
+    assert DRIVEWAY_CLEARANCE_FT > 0.0, (
+        "a zero clearance makes every assertion below vacuous - the stall cut would simply be "
+        "the mouth, which the other tests already pin")
+
+    stalls = openings.against(STALL_DIVIDER)
+    lo, _, hi, _ = stalls.bounds
+    assert lo == pytest.approx(-DRIVEWAY_CLEARANCE_FT, abs=0.01), (
+        f"a stall may not come within {DRIVEWAY_CLEARANCE_FT:.0f} ft of the return, so the "
+        f"ground it is cut out of starts {DRIVEWAY_CLEARANCE_FT:.0f} ft before the mouth")
+    assert hi == pytest.approx(10.0 + DRIVEWAY_CLEARANCE_FT, abs=0.01), (
+        "and ends the same distance past it - the ordinances name one distance, not a near "
+        "side and a far side")
+
+    zone = openings.against(BUFFER_FILL)
+    assert zone.bounds[0] == pytest.approx(0.0, abs=0.01) and \
+           zone.bounds[2] == pytest.approx(10.0, abs=0.01), (
+        f"the hatched buffer gives up {zone.bounds[0]:.2f}-{zone.bounds[2]:.2f} ft where the "
+        f"mouth is 0-10 - the clearance has leaked out of STALL_DIVIDER's row into the ground "
+        f"itself, and every zone at this driveway is paying for it")
+    assert openings.against(PARKING_EDGE_LINE) is None, (
+        "and (09) still carries the edge line straight through, clearance or no clearance")

@@ -322,7 +322,9 @@ class KerbSideOpenings:
         One rule per column: CARRIED subtracts nothing, FILLETED subtracts the run-out (and at an
         intersection there is none, so it subtracts the mouth), DOTTED and STOPPED subtract the
         mouth. What differs between the two columns is which SHAPES they apply to, which is the
-        whole reason the shapes are kept apart above.
+        whole reason the shapes are kept apart above. A row with a `clearance_ft` then subtracts
+        that much MORE than the entrance, the one way a marking gives up ground an entrance did
+        not take from it.
 
         3B.11(07)'s exception - solid edge lines MAY continue "through that part of an
         intersection with no intersecting approach (such as at the far side of a T-intersection)"
@@ -340,7 +342,22 @@ class KerbSideOpenings:
                                                                       self.driveway_mouths)
         intersection = (None if rule.at_an_intersection is AtAnOpening.CARRIED
                          else self.intersection_mouths)
-        return _union((driveway, intersection))
+        cut = _union((driveway, intersection))
+        if cut is None or not rule.clearance_ft:
+            return cut
+        # AND WIDENED, for the one row that keeps back further than the entrance itself.
+        #
+        # Here and not in the shapes above, because the shapes are the ground and this is one
+        # marking's rule about it: growing `driveway_tapered` instead would carry every hatched
+        # zone's fillet out with it and pay for a rule about parked cars in buffer.
+        #
+        # An isotropic buffer for a clearance that is longitudinal, which is deliberate rather
+        # than merely convenient. The only rows that carry one are cut out of a kerbside BAND
+        # bounded laterally by its own depth, so lateral growth spans ground the cut was going to
+        # span anyway; outward growth lands past the kerb where there is no paint to remove; and
+        # the round join measures the clearance off the return's own rounded corner, which is the
+        # corner OPENING_TRIM_FT actually draws, rather than off a square one it does not.
+        return cut.buffer(rule.clearance_ft)
 
     def dotted(self, kind) -> object:
         """The ground `kind` lays a dotted extension across, or None. The complement of `against`

@@ -162,11 +162,16 @@ STRIP_SAMPLE_FT = 2.0
 # tests/test_two_way_bike_lane.py::test_kerb_follow_does_not_depend_on_the_frame.
 #
 # 1:5 SITS BETWEEN THOSE TWO POPULATIONS AND STILL SEPARATES THEM, which is what makes the cited
-# figure usable here rather than merely defensible: a 1:6 street bend is gentler than the limit and
-# is followed exactly, and a 1:2 flare is still refused - by 6.0 ft of a 10 ft kink, against the
-# 8.0 ft the old 1:10 refused. The margin above the drift population is thinner (1:6 against 1:5,
-# not 1:6 against 1:10), so a site whose real bends run steeper than 1:5 would need this re-read
-# rather than assumed.
+# figure usable here and not merely defensible. It was 1:10, and moving it loosened the filter
+# without breaking it: measured over the 36 traced leg-sides at the four buildable sites, the
+# followed profile came CLOSER to the tracing on 32 and further from it on none - erosion is
+# monotone in the rate, so no marking can move out - recovering 0.20 ft of mean standoff and up to
+# 0.81 ft. The flares are still refused, by up to 9.72 ft on broad_st_east's left kerb against
+# 12.18 at 1:10, and the synthetic 1:2 kink still loses 6.0 ft of 10.
+#
+# The margin above the drift population is thinner now (1:6 against 1:5, not against 1:10), so a
+# site whose real bends run steeper than 1:5 needs this re-measured rather than assumed - that is
+# the cost of paying for accuracy with the filter's headroom.
 #
 # A STREET POSTED MATERIALLY FASTER NEEDS ITS OWN RATE, not this constant: S enters MUTCD's taper
 # as 1/S^2, so 45 mph wants 1:17 and this would be three times too steep for it.

@@ -9,8 +9,8 @@ channels:
       - 27.826
       - 26.48
       min:
-      - -32.712
-      - -23.816
+      - -32.688
+      - -23.791
     points: 92
   bike_lane_edge_lines:
     count: 53

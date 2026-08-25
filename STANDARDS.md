@@ -418,44 +418,50 @@ separation, corner islands, turn wedges, medians to slow turning vehicles, and v
 turn conflicts. **All three of Broad St's modelled junctions are signalized** (Greenwood, E Broad &
 Princeton, and Louellen - corrected 2026-08-18), so phase separation is available at each.
 
-#### How closely a kerbside marking follows the kerb — **Modelled, checked against cited tapers, 2026-08-24**
+#### How closely a kerbside marking follows the kerb — **Cited (NACTO), 2026-08-24**
 
 | figure | value | constant | where |
 |---|---|---|---|
-| Steepest lateral shift a marking will follow a traced kerb through | 1:10 | `MAX_KERB_FOLLOW_TAPER` | `src/geometry/model/` |
-| MUTCD shifting taper at 25 mph, for comparison | 1:5.2 | — | *as cited* |
-| NACTO lateral shift floor, bidirectional bikeway, for comparison | 1:5 | — | *as cited* |
+| Steepest lateral shift a marking will follow a traced kerb through | 1:5 | `MAX_KERB_FOLLOW_TAPER` | `src/geometry/model/` |
+| NACTO lateral shift floor, bidirectional bikeway | 1:5 | — | *as cited* |
+| MUTCD shifting taper at 25 mph, for corroboration | 1:5.2 | — | *as cited* |
 
-**Modelled, and now with two cited figures to hold it against.** No guide consulted gives a taper
-for tracking a kerb that *wanders*, so the value is still ours. What it is calibrated on: across the
-three corridor junctions, the legs where the traced kerb records the street genuinely bending move
-at 1:6 or gentler, and the two whose tracing takes in a corner flare kink at 1:2. At 1:10 a marking
-gives up a mean 0.11–0.28 ft of the drift on the legs that drift and refuses up to 12.2 ft of the
-flare on `broad_st_east`.
+**It is NACTO's figure now; it was 1:10 and ours until 2026-08-24.** No guide consulted gives a
+taper for tracking a kerb that *wanders*, which is what let a house number stand here for a while.
+What ended that: `corridor_paint._build_run` places the whole two-way bikeway section against this
+profile and the travel-lane divider hangs off it, so the rate is a lateral shift **a driver is
+steered through** rather than a cosmetic choice about paint. Two published figures cover that shift
+and they agree — NACTO's floor for a bidirectional bikeway is 1:5, and MUTCD's merging taper
+`L = W·S²/60` (below 45 mph), halved for a *shifting* taper, is 1:5.2 at Broad St's posted 25 mph
+(recorded below). Both are marked *as cited*: taken from the guides' rules as recorded elsewhere in
+this file, not re-read out of the documents for this row.
 
-**Why it now needs citing at all.** `corridor_paint._build_run` places the whole two-way bikeway
-section against this profile, and the travel-lane divider hangs off it — so the rate is no longer a
-cosmetic choice about paint but a lateral shift a driver is steered through, and it has to answer to
-the published tapers. MUTCD's merging taper is `L = W·S²/60` below 45 mph and a *shifting* taper is
-about half of it; at Broad St's posted 25 mph (recorded below) that is 1:5.2. NACTO's floor for a
-bidirectional bikeway's lateral shift is 1:5. 1:10 is roughly twice as gentle as either, so a figure
-chosen as a tracing filter turns out to be conservative as a design taper too, and no new constant
-is needed. Both citations are marked *as cited* — the values are from the guides' rules as recorded
-here, not re-read out of the documents for this row.
+**Why move, given 1:10 was the conservative side of both?** Accuracy, not room — and the room was
+measured first, because "we are leaving parking on the table" was the obvious reason to move and it
+is false. Swept through the corridor's own pipeline, 1:10 → 1:5 moves the far kerb from 1,694 to
+1,714 ft of room and 72 to 73 stalls of room, and **45 to 45 stalls actually drawn**; removing the
+limit altogether is worth one drawn stall. The taper costs 0.36 ft of lateral placement on average
+and 0.36 ft cannot move a `MIN_USABLE_STALL_FT` threshold of 7.0 except at the margin. What binds
+instead is street width through `divided_lane_width_ft` — on a run too narrow for two 11 ft lanes
+plus the section, the travel way takes everything and the kerb gets nothing at the pinch, by
+construction. **Do not spend this constant looking for stalls; there are none in it.**
 
-**Being 2x conservative costs no parking, measured.** The obvious objection to 1:10 is that it
-leaves room on the table when the guides permit 1:5 — it does not. Swept through the corridor's own
-pipeline, 1:10 → 1:5 moves the far kerb from 1,694 to 1,714 ft of room, 72 to 73 stalls of room, and
-**45 to 45 stalls actually drawn**; removing the limit entirely is worth one drawn stall. The
-mechanism is that the taper costs 0.36 ft of lateral placement on average, and 0.36 ft cannot move a
-`MIN_USABLE_STALL_FT` threshold of 7.0 except at the margin. What binds instead is street width
-through `divided_lane_width_ft` — on a run too narrow for two 11 ft lanes plus the section, the
-travel way takes everything and the kerb gets nothing at the pinch by construction. Do not spend the
-taper's conservatism looking for stalls; there are none there.
+What moving *did* buy is that the paint sits closer to the kerb it is following. Measured over the
+36 traced leg-sides at the four buildable sites, the followed profile came closer to the tracing on
+32 and further on none — a cone erosion is monotone in its rate, so no marking can move outward —
+recovering 0.20 ft of mean standoff and up to 0.81 ft.
+
+**The filter still separates the two populations, with less headroom.** The rate exists to tell a
+street that genuinely bends (1:6 or gentler here) from a tracing that takes in a corner flare or a
+parking apron (1:2). 1:5 still sits between them: the flares are refused by up to 9.72 ft on
+`broad_st_east`'s left kerb, against 12.18 ft at 1:10, and the synthetic 1:2 kink in
+`tests/test_leg_frame.py` still loses 6.0 ft of 10. But the margin above the drift population is now
+1:6 against 1:5 rather than 1:6 against 1:10, so **a site whose real bends run steeper than 1:5 needs
+this re-measured, not assumed.** That is what accuracy was paid for with.
 
 **The speed is an input, and this constant hides that.** `S` enters as 1/S², so a street posted 45
-mph wants 1:17 and this constant would be too steep for it. Any corridor materially faster than
-Broad St needs the rate derived from its own posted speed rather than read from
+mph wants 1:17 and 1:5 would be over three times too steep for it. Any corridor materially faster
+than Broad St needs the rate derived from its own posted speed rather than read from
 `MAX_KERB_FOLLOW_TAPER`.
 
 **Why it is a rate and not an amount.** The first version of this rule compared the kerb's TOTAL

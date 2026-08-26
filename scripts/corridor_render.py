@@ -705,37 +705,18 @@ def _calming_strip(corridor, facts, args, outcomes, decision) -> int:
     _legend(fig, facility=False, top_in=note_h_in)
     out_dir = Path(args.out)
     out_dir.mkdir(parents=True, exist_ok=True)
-    path = out_dir / f"{args.road.lower().replace(' ', '_')}_strip_{stem}.png"
+    path = out_dir / f"{corridor.name.lower().replace(' ', '_')}_strip_{stem}.png"
     fig.savefig(path, dpi=args.dpi, bbox_inches="tight")
     print(f"\nwrote {path}")
     return 0
 
 
-def main() -> int:
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--road", default="Broad Street")
-    parser.add_argument("--panels", type=int, default=4)
-    parser.add_argument("--out", default="output/corridor")
-    parser.add_argument("--dpi", type=int, default=200)
-    parser.add_argument("--no-bikeway", action="store_true",
-                        help="draw the daylighting and crossing treatments only, with the parking "
-                             "stalls actually marked and counted on both kerbs")
-    parser.add_argument("--side", choices=("north", "south"), default=None,
-                        help="which kerb carries the facility; default is the route's own "
-                             "CORRIDOR_SIDE. Both are always MEASURED and compared.")
-    args = parser.parse_args()
-
+def _render_corridor(corridor, models, args) -> int:
+    """Everything `main()` does for ONE corridor - `--all` calls this once per corridor rather
+    than duplicating the pipeline, so a street this project adds later gets an `--all` sheet
+    for free instead of needing a second loop kept in sync with the first by hand.
+    """
     quiet = io.StringIO()
-    with contextlib.redirect_stdout(quiet):
-        models = {site: load_intersection_model(site=site) for site in list_sites()
-                  if site != "nj31_wdelaware"}
-        corridors = corridors_from_models(models)
-    matching = [c for c in corridors if args.road.lower() in c.name.lower()]
-    if not matching:
-        print(f"No corridor matching {args.road!r}. Found: "
-              f"{', '.join(sorted(c.name for c in corridors))}")
-        return 2
-    corridor = centred_on_its_kerbs(matching[0])
     with contextlib.redirect_stdout(quiet):
         facts = corridor_facts(corridor, models)
 
@@ -908,10 +889,52 @@ def main() -> int:
 
     out_dir = Path(args.out)
     out_dir.mkdir(parents=True, exist_ok=True)
-    path = out_dir / f"{args.road.lower().replace(' ', '_')}_strip_{drawn}.png"
+    path = out_dir / f"{corridor.name.lower().replace(' ', '_')}_strip_{drawn}.png"
     fig.savefig(path, dpi=args.dpi, bbox_inches="tight")
     print(f"\nwrote {path}")
     return 0
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--road", default="Broad Street")
+    parser.add_argument("--all", action="store_true",
+                        help="render every corridor's own route decision in one run - Broad "
+                             "Street's bikeway sheet, Princeton Ave's calming sheet, and so on - "
+                             "instead of the single --road match")
+    parser.add_argument("--panels", type=int, default=4)
+    parser.add_argument("--out", default="output/corridor")
+    parser.add_argument("--dpi", type=int, default=200)
+    parser.add_argument("--no-bikeway", action="store_true",
+                        help="draw the daylighting and crossing treatments only, with the parking "
+                             "stalls actually marked and counted on both kerbs")
+    parser.add_argument("--side", choices=("north", "south"), default=None,
+                        help="which kerb carries the facility; default is the route's own "
+                             "CORRIDOR_SIDE. Both are always MEASURED and compared.")
+    args = parser.parse_args()
+
+    quiet = io.StringIO()
+    with contextlib.redirect_stdout(quiet):
+        models = {site: load_intersection_model(site=site) for site in list_sites()
+                  if site != "nj31_wdelaware"}
+        corridors = corridors_from_models(models)
+
+    if args.all:
+        targets = sorted(corridors, key=lambda c: c.name)
+    else:
+        matching = [c for c in corridors if args.road.lower() in c.name.lower()]
+        if not matching:
+            print(f"No corridor matching {args.road!r}. Found: "
+                  f"{', '.join(sorted(c.name for c in corridors))}")
+            return 2
+        targets = matching[:1]
+
+    worst = 0
+    for i, raw in enumerate(targets):
+        if i:
+            print()
+        worst = _render_corridor(centred_on_its_kerbs(raw), models, args) or worst
+    return worst
 
 
 if __name__ == "__main__":

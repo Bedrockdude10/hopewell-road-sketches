@@ -398,6 +398,30 @@ def stall_lane_runs_ft(runs: list[tuple[float, float]], stall_length_ft: float,
     return lanes
 
 
+def stall_leftover_runs_ft(runs: list[tuple[float, float]], stall_length_ft: float,
+                            keep_inside_ft: float = 0.0) -> list[tuple[float, float]]:
+    """The tail stall_lane_runs_ft floors away from each run - too short to hold a car, but
+    real asphalt beside a marked stall that a driver can still be misled into parking across.
+
+    Most often the stretch between the last whole stall and a driveway's clearance cut, since
+    that is where a run's stall grid runs out of length without running out of paintable kerb
+    (MarkedParking.paint hatches it rather than leaving it bare).
+
+    MIRRORS stall_lane_runs_ft's OWN FLOOR EXACTLY - same whole_stalls_ft call, same
+    keep_inside_ft - because a tail computed by a second rounding of the same boundary is
+    the identical-datum trap SKILLS.md section 0a warns about: the hatch has to start exactly
+    where the stall ticks stop, not close.
+    """
+    leftovers = []
+    for lo, hi in runs:
+        trimmed_lo, trimmed_hi = lo + keep_inside_ft, hi - keep_inside_ft
+        n_stalls = whole_stalls_ft(trimmed_hi - trimmed_lo, stall_length_ft)
+        tail_start = trimmed_lo + n_stalls * stall_length_ft if n_stalls else lo
+        if hi - tail_start > 0:
+            leftovers.append((tail_start, hi))
+    return leftovers
+
+
 def parking_lane_edge_line_ft(leg: "Leg", side: str, depth_ft: float, start_ft: float,
                                end_ft: float | None = None, curb_offset_ft: float = 0.0) -> LineString | None:
     """The line marking the inner edge of a curbside marked-parking lane - depth_ft in from

@@ -92,7 +92,8 @@ class MarkedParking(Treatment):
                                            ZONE_END_LINE)
         from src.geometry.model import (inset_line_ft, lane_narrowing_polygons_ft,
                                         offset_band_polygon, parking_lane_edge_line_ft,
-                                        parking_stall_lines_ft, stall_lane_runs_ft)
+                                        parking_stall_lines_ft, stall_lane_runs_ft,
+                                        stall_leftover_runs_ft)
         from src.geometry.paint import (LANE_EDGE_LINE_WIDTH_FT, MIN_LINE_LENGTH_FT, _one,
                                         end_against_crossing, lane_edge_stripes, parking_runs,
                                         zone_end_line_ft)
@@ -241,6 +242,21 @@ class MarkedParking(Treatment):
                         leg, side, depth_ft, stall_length_ft, lo, hi,
                         curb_offset_ft=stall_curb_offset_ft):
                     ctx.add(STALL_DIVIDER, divider, leg_name, side)
+
+            # THE TAIL stall_lane_runs_ft FLOORS AWAY - shorter than a stall, most often the
+            # stretch between the last whole stall and a driveway's clearance cut (STALL_DIVIDER
+            # stops there, PARKING_EDGE_LINE is carried straight across it - see the comment
+            # above). Left bare it reads as a stall someone forgot to finish painting rather than
+            # ground nobody was ever offering; hatch it instead, the same "too narrow, so hatched"
+            # rule allocate_kerbside already applies to a kerb too shallow for a stall, applied
+            # here along the kerb instead of across it.
+            for lo, hi in stall_leftover_runs_ft(open_runs, stall_length_ft,
+                                                  keep_inside_ft=MIN_LINE_LENGTH_FT):
+                if hi - lo < MIN_HATCHED_ZONE_FT:
+                    continue
+                leftover = offset_band_polygon(leg, side, inner_off, outer_off, lo, hi)
+                if leftover:
+                    ctx.add(BUFFER_FILL, leftover, leg_name, side)
 
             if not curb_offset_ft:
                 continue

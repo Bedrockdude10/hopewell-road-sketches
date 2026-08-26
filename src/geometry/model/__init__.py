@@ -102,6 +102,7 @@ from src.geometry.model.stripes import (
                                     parking_lane_edge_line_ft,
                                     parking_stall_lines_ft,
                                     stall_lane_runs_ft,
+                                    stall_leftover_runs_ft,
                                     whole_stalls_ft,
 )
 from src.geometry.model.traced_kerbs import (
@@ -222,6 +223,7 @@ __all__ = [
                                     "smooth_traced_arc",
                                     "split_leg_centerlines",
                                     "stall_lane_runs_ft",
+                                    "stall_leftover_runs_ft",
                                     "station_offset",
                                     "station_offset_many",
                                     "taper_limited",

@@ -457,3 +457,27 @@ class CorridorCalming:
 #: by that pass. Applying this on top would put a second LaneNarrowing and MarkedParking on the
 #: same kerb - DesignState.apply has no duplicate guard.
 PRINCETON_AVE_CALMING = CorridorCalming(road="Princeton Avenue")
+
+
+#: EVERY ROUTE-LEVEL DECISION THIS PROJECT HAS MADE, so "what is proposed along this street" is a
+#: lookup and not an import. scripts/corridor_render.py hardcoded BROAD_ST_TWO_WAY_BIKEWAY, so
+#: `--road "Princeton Avenue"` drew BROAD ST'S BIKEWAY refusing down a street whose route decision
+#: is a calming: a strip plan headed "0 ft placed of 1,565 ft" for a design nobody proposed there,
+#: with a which-kerb-carries-the-lane table under it for a lane that does not exist. A drawing may
+#: not quietly answer a question about a different street.
+ROUTE_DECISIONS: tuple = (BROAD_ST_TWO_WAY_BIKEWAY, PRINCETON_AVE_CALMING)
+
+
+def route_decision_for(road: str):
+    """What this project proposes along a named street, or None if it has decided nothing.
+
+    Matched through the same _street_name normalisation legs_on_road uses, so a corridor named
+    off its legs ("East Broad Street", "W Broad St") finds the one Broad St decision. A street
+    with no row here is not an error - it is a street this project has not yet decided about, and
+    the caller is expected to say so rather than to borrow another street's proposal.
+    """
+    want = _street_name(road)
+    for decision in ROUTE_DECISIONS:
+        if _street_name(decision.road) == want:
+            return decision
+    return None

@@ -427,7 +427,7 @@ def _restationed(run, centerline: LineString):
 
 
 def _kerb_band_over(corridor: "Corridor", on: "Alignment", side: str, spans, depth_ft: float,
-                    limit_at=None):
+                    limit_at=None, piece: str = "stall", may_park: bool = True):
     """[(lo_ft, hi_ft, polygon)] - one band against the traced kerb, per span.
 
     Shared by `stall_bands` and `hatch_bands` so a marked-stall band and a hatched one are the
@@ -435,16 +435,26 @@ def _kerb_band_over(corridor: "Corridor", on: "Alignment", side: str, spans, dep
     drift apart depth-wise.
 
     AS DEEP AS THE KERB IS FREE, not a flat `depth_ft`. `limit_at(station) -> offset` is the
-    innermost the band may reach - the travel way's own edge - and the band is the SHALLOWER of
-    the two. Drawn at a flat stall depth, Broad St's "no room" hatch stood 8 ft off a kerb with a
-    median of 4.01 ft free and overlapped the travel lane at 346 of 381 samples; the restricted
-    hatch has 1.60 ft free and overlapped by a median of 6.40 ft. Both then LOOK like a stall's
-    worth of kerb, which is the one thing the reader is being asked to judge - the sheet was
-    answering "could a car park here" with a rectangle the width of a car, everywhere.
+    innermost the band may reach - the travel way's own edge. Drawn at a flat stall depth, Broad
+    St's "no room" hatch stood 8 ft off a kerb with a median of 4.01 ft free and overlapped the
+    travel lane at 346 of 381 samples; the restricted hatch has 1.60 ft free and overlapped by a
+    median of 6.40 ft. Both then LOOK like a stall's worth of kerb, which is the one thing the
+    reader is being asked to judge - the sheet was answering "could a car park here" with a
+    rectangle the width of a car, everywhere.
 
     Pass the same line the spans were width-tested against, so a drawn depth is the tested spare
     and not a second opinion about it.
+
+    HOW DEEP IS `parking.allocate_kerbside`'S CALL AND NOT THIS FUNCTION'S. It used to be
+    `min(depth_ft, free)` written here, which is the junction rule with its remainder term
+    deleted: past 8 ft of free kerb the stall stopped growing, correctly, and nothing took the
+    rest. On Broad St's south kerb - 48 to 58 ft between kerbs approaching Greenwood, where the
+    design hands every foot it does not use to that one side - it left 5,748 sq ft over 1,000 ft
+    unpainted, on the widest asphalt in the borough. `piece` picks which half of the allocation
+    to draw: "stall" the marked box against the kerb, "stripe" the hatched remainder inboard of
+    it. A hatch span passes `may_park=False`, which allocates the whole zone to the stripe.
     """
+    from src.geometry.treatments.parking import allocate_kerbside
     out = []
     for lo, hi in spans:
         if hi - lo < CORRIDOR_SAMPLE_FT:
@@ -457,12 +467,18 @@ def _kerb_band_over(corridor: "Corridor", on: "Alignment", side: str, spans, dep
         finite = np.isfinite(offs)
         if finite.sum() < 2:
             continue
-        inner = offs - depth_ft
-        if limit_at is not None:
-            # Never past the kerb itself either: where the travel way reaches the kerb there is no
-            # kerbside strip to draw, and a band that inverts would hatch the carriageway.
-            inner = np.clip(np.maximum(inner, [limit_at(float(s)) for s in stations]), None, offs)
-        band = band_from_offsets(on, side, stations[finite], inner[finite], offs[finite])
+        # Never past the kerb itself either: where the travel way reaches the kerb there is no
+        # kerbside strip to draw, and a band that inverts would hatch the carriageway.
+        limits = (np.full_like(offs, np.nan) if limit_at is None
+                  else np.array([limit_at(float(s)) for s in stations], dtype=float))
+        zone = np.where(np.isfinite(limits), offs - limits, depth_ft)
+        alloc = [allocate_kerbside(float(z), float(z), may_park) if np.isfinite(z)
+                 else None for z in zone]
+        stall = np.array([0.0 if a is None else a.stall_depth_ft for a in alloc])
+        total = np.array([0.0 if a is None else a.total_ft for a in alloc])
+        outer = offs - (0.0 if piece == "stall" else stall)
+        inner = offs - (stall if piece == "stall" else total)
+        band = band_from_offsets(on, side, stations[finite], inner[finite], outer[finite])
         if band is not None and not band.is_empty:
             out.append((float(lo), float(hi), band))
     return out
@@ -486,7 +502,7 @@ def stall_bands(corridor: "Corridor", side: str, spans, depth_ft: float | None =
 
     depth_ft = PARKING_STALL_DEPTH_DEFAULT_FT if depth_ft is None else depth_ft
     return _kerb_band_over(corridor, Alignment(corridor.centerline), side, spans, depth_ft,
-                           limit_at)
+                           limit_at, piece="stall", may_park=True)
 
 
 def hatch_bands(corridor: "Corridor", facts, side: str, marked_spans,
@@ -529,10 +545,19 @@ def hatch_bands(corridor: "Corridor", facts, side: str, marked_spans,
     room = _intersect_spans(candidate, facts.by_side("parkable", side))
 
     on = Alignment(corridor.centerline)
-    return ([(lo, hi, band, "legal")
-             for lo, hi, band in _kerb_band_over(corridor, on, side, legal, depth_ft, limit_at)]
-            + [(lo, hi, band, "room")
-               for lo, hi, band in _kerb_band_over(corridor, on, side, room, depth_ft, limit_at)])
+
+    def bands(spans, reason, may_park):
+        return [(lo, hi, band, reason)
+                for lo, hi, band in _kerb_band_over(corridor, on, side, spans, depth_ft, limit_at,
+                                                    piece="stripe", may_park=may_park)]
+
+    # THE THIRD SET IS THE REMAINDER BESIDE A MARKED STALL, and leaving it out is what made this
+    # function's own headline false. A stall stops at PARKING_STALL_DEPTH_DEFAULT_FT because that
+    # is how deep a car is; where the kerb spares more - 48 to 58 ft between kerbs on Broad St
+    # approaching Greenwood - the rest is neither a stall nor, until now, a hatch. `marked_spans`
+    # carries a stall, so `may_park=True` allocates the box first and this draws what is left.
+    return (bands(legal, "legal", False) + bands(room, "room", False)
+            + bands(_intersect_spans(_merged_spans(marked_spans), clear), "room", True))
 
 
 def stall_room_spans(corridor: "Corridor", side: str, lane_edge_at, sample_ft: float = CORRIDOR_SAMPLE_FT):

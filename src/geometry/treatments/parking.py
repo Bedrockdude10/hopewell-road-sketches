@@ -562,6 +562,61 @@ MIN_USABLE_STALL_FT = 7.0
 MIN_HATCHED_ZONE_FT = 0.5
 
 
+@dataclass(frozen=True)
+class KerbsideAllocation:
+    """How one kerb's spare width is spent: a stall against the kerb, a stripe, or nothing.
+
+    THE DECISION ONLY - no geometry, no datum, no side. Both numbers are depths measured
+    outward from the travel lane's edge, and the caller draws them however its view draws
+    things: the junction as `MarkedParking(depth_ft=..., curb_offset_ft=...)` and a
+    `LaneNarrowing`, the corridor as two bands against the traced kerb.
+    """
+    #: The marked stall, 0.0 where no stall fits or the kerb may not hold parking.
+    stall_depth_ft: float
+    #: Everything left over, hatched. Never negative, and never silently dropped - see below.
+    striped_ft: float
+
+    @property
+    def total_ft(self) -> float:
+        """What the allocation accounts for. Equals the zone it was asked about, or 0."""
+        return self.stall_depth_ft + self.striped_ft
+
+
+def allocate_kerbside(room_ft: float, zone_ft: float, may_park: bool) -> KerbsideAllocation:
+    """Spend one kerb's spare width: "parking or hatching, never neither", as one function.
+
+    TWO WIDTHS BECAUSE THERE ARE TWO DATUMS, and collapsing them is SKILLS.md section 2's bug.
+    `room_ft` is measured on the TRACED kerb and decides WHETHER a stall fits; `zone_ft` is
+    measured from the datum the paint is offset from and decides HOW MUCH there is to spend. On
+    `broad_st_east` those differ by 25 ft. A corridor measures both off the traced kerb and
+    passes the same number twice, which is correct there and is not an invitation to drop the
+    parameter.
+
+    THE REMAINDER IS THE WHOLE POINT. A stall is capped at PARKING_STALL_DEPTH_DEFAULT_FT because
+    that is how deep a parked car is, NOT because a wider kerb has less to allocate - so anything
+    past the cap is striped rather than left bare. This rule existed three times: twice in this
+    module (narrow_lanes_and_recover_parking, hold_travel_lane_at_target) and once as
+    `corridor_paint._kerb_band_over`'s `min(depth_ft, free)`, which kept the cap and dropped the
+    remainder. Measured on the drawn polygons, that lost 5,748 sq ft over 1,000 ft of Broad St's
+    south kerb - the design's own surplus, unpainted, on the widest street in the borough where
+    the reader is most likely to ask what the space is for. The two junction copies agreed with
+    each other and not with the picture, which is this repo's signature defect.
+
+    Returns depths that SUM TO `zone_ft` whenever anything is painted at all, so a caller can
+    assert the allocation is exhaustive instead of trusting it.
+    """
+    if zone_ft < MIN_HATCHED_ZONE_FT:
+        # A floor on WHETHER, not on how wide - painting 0.5 ft where the street spares 0.37
+        # takes the difference out of the travel lane. See MIN_HATCHED_ZONE_FT.
+        return KerbsideAllocation(0.0, 0.0)
+    if may_park and room_ft >= MIN_USABLE_STALL_FT:
+        # `room_ft` caps the box as well as admitting it: a stall cannot be deeper than the kerb
+        # is free, and it cannot be deeper than the zone there is to spend either.
+        stall_ft = min(room_ft, zone_ft, PARKING_STALL_DEPTH_DEFAULT_FT)
+        return KerbsideAllocation(stall_ft, max(zone_ft - stall_ft, 0.0))
+    return KerbsideAllocation(0.0, zone_ft)
+
+
 def lane_surplus_that_cannot_be_striped_ft() -> float:
     """How far over TARGET_LANE_WIDTH_FT a travel lane may be left, and why it is not a tolerance.
 
@@ -655,8 +710,8 @@ def narrow_lanes_and_recover_parking(state: DesignState) -> DesignState:
                   f"{recovered_ft:.1f} ft per side at {TARGET_LANE_WIDTH_FT:.0f} ft lanes - too "
                   f"narrow for a stall, so paint-only narrowing here, no parking.")
             continue
-        depth_ft = min(recovered_ft, PARKING_STALL_DEPTH_DEFAULT_FT)
-        buffer_ft = max(recovered_ft - depth_ft, 0.0)
+        spend = allocate_kerbside(recovered_ft, recovered_ft, may_park=True)
+        depth_ft, buffer_ft = spend.stall_depth_ft, spend.striped_ft
         for side in ("left", "right"):
             state = state.apply(MarkedParking(LegSide(leg_name, side), depth_ft=depth_ft,
                                                curb_offset_ft=buffer_ft))
@@ -759,17 +814,19 @@ def hold_travel_lane_at_target(state: DesignState, leg_name: str, side: str) -> 
             f"needs there - so nothing is marked on this kerb beyond that station rather than "
             f"paint drawn past the room the kerb actually gives.",
             narrowest_ft))
-    if kerb_may_hold_parking(state, leg_name, side) and surplus_ft >= MIN_USABLE_STALL_FT:
-        depth_ft = min(surplus_ft, PARKING_STALL_DEPTH_DEFAULT_FT)
-        return state.apply(MarkedParking(LegSide(leg_name, side), depth_ft=depth_ft,
-                                          curb_offset_ft=max(zone_from_nominal_ft - depth_ft, 0.0),
-                                          end_ft=end_ft))
-    if zone_from_nominal_ft < MIN_HATCHED_ZONE_FT:
-        # Sized from what the road can spare, which is checks.PaintClearOfTheTravelLane's own
-        # wording. See MIN_HATCHED_ZONE_FT.
+    # BOTH DATUMS GO IN, which is why allocate_kerbside takes two widths: the traced surplus
+    # decides whether a car fits and how deep the box may be, the nominal zone is what there is
+    # to spend. Sized from what the road can spare, which is checks.PaintClearOfTheTravelLane's
+    # own wording.
+    spend = allocate_kerbside(surplus_ft, zone_from_nominal_ft,
+                              may_park=kerb_may_hold_parking(state, leg_name, side))
+    if spend.stall_depth_ft > 0.0:
+        return state.apply(MarkedParking(LegSide(leg_name, side), depth_ft=spend.stall_depth_ft,
+                                          curb_offset_ft=spend.striped_ft, end_ft=end_ft))
+    if spend.striped_ft <= 0.0:
         return state
     return state.apply(LaneNarrowing(LegTarget(leg_name),
-                                      stripe_width_ft=zone_from_nominal_ft,
+                                      stripe_width_ft=spend.striped_ft,
                                       sides=(side,), end_ft=end_ft))
 
 

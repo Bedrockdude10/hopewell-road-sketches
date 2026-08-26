@@ -40,7 +40,7 @@ It writes the same files the phase scripts do, runs sites in parallel (`--jobs`)
 
 `--refresh-osm` re-pulls the whole borough in **one** request before the worker pool starts, rather than 20-24 fanned out across four workers against shared volunteer infrastructure. It is ignored under `HOPEWELL_OFFLINE`, so it can never make the test suite reach the network.
 
-Two more scripts read a whole corridor rather than one junction: `scripts/corridor_report.py` answers the corridor questions with the coverage of each answer beside it, and `scripts/corridor_render.py` draws a straightened strip plan of a whole street on stacked panels.
+Two more scripts read a whole corridor rather than one junction: `scripts/corridor_report.py` answers the corridor questions with the coverage of each answer beside it, and `scripts/corridor_render.py` draws a straightened strip plan of a whole street on stacked panels - of that street's OWN route decision, looked up by name, so Broad St gets its bikeway and Princeton Ave gets its calming.
 
 ## Tests
 
@@ -198,7 +198,8 @@ scripts/
                            --all adds the section, limiter, gap, lane-width and continuity reports
   whatis.py                What is this symbol? Signature, docstring line, and how callers actually use it
   corridor_report.py       The corridor questions, with the coverage of every answer beside them
-  corridor_render.py       A straightened strip plan of one corridor, on stacked panels
+  corridor_render.py       A straightened strip plan of one corridor, on stacked panels,
+                           drawing whichever route decision that street carries
   convert_road_network.py  Build + verify a spatially-indexed copy of a roadway network file
   make_data_fixture.py     Clip data/ down to the features the sites read, as a committed test fixture
   check_prose_only.py      Prove a commit changed only comments and docstrings

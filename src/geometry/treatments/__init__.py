@@ -95,7 +95,8 @@ from src.geometry.treatments.crossings import (CROSSING_CONTEXT_RADIUS_M, RaiseC
                                                resolved_crossing_stations)
 from src.geometry.treatments.corridor import (BROAD_ST_TWO_WAY_BIKEWAY, CorridorCalming,
                                              CorridorFacility, PRINCETON_AVE_CALMING,
-                                             Section, legs_on_road)
+                                             ROUTE_DECISIONS, Section, legs_on_road,
+                                             route_decision_for)
 from src.geometry.treatments.parking import (MIN_HATCHED_ZONE_FT, MIN_USABLE_STALL_FT,
                                             lane_surplus_that_cannot_be_striped_ft,
                                             MarkedParking,
@@ -145,6 +146,7 @@ __all__ = [
                                           "PARKING_STALL_LENGTH_DEFAULT_FT",
                                           "PRINCETON_AVE_CALMING",
                                           "RESTRICTION_COVERAGE_SLACK_FT",
+                                          "ROUTE_DECISIONS",
                                           "TARGET_LANE_WIDTH_FT",
                                           "TWO_WAY_BIKE_LANE_BUFFER_FT",
                                           "TWO_WAY_BIKE_LANE_WIDTH_FT",
@@ -200,6 +202,7 @@ __all__ = [
                                           "osm_derived_baseline",
                                           "resolved_crossing_stations",
                                           "restriction_summary",
+                                          "route_decision_for",
                                           "travel_lane_divider_shift_ft",
                                           "travel_lane_edge_ft",
                                           "travel_lane_width_ft",

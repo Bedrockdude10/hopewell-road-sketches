@@ -24,12 +24,17 @@ import io
 
 import numpy as np
 import pytest
-from shapely.geometry import Point
+from shapely.geometry import LineString, Point
+from shapely.ops import unary_union
 
 from scripts.corridor_report import Coverage, Figure, corridor_report
-from src.geometry.corridor_paint import hatch_bands, stall_footprints
-from src.geometry.network import (KERB_FROM_TRACING, corridor_facts, corridors_from_models,
-                                 marked_parking_capacity, osm_window_spans)
+from src.geometry.corridor_paint import (far_kerb_lane_edge, hatch_bands,
+                                         kerb_offset_ft, stall_footprints)
+from src.geometry.model.leg_frame import point_at
+from src.geometry.treatments.parking import MIN_HATCHED_ZONE_FT
+from src.geometry.network import (KERB_FROM_TRACING, _merged_spans, corridor_facts,
+                                 corridors_from_models, marked_parking_capacity,
+                                 osm_window_spans)
 from tests.conftest import WIDE_FRAME_SCALE, needs_source_data
 from tests.test_network import AGREEMENT_TOL_FT, _leg_width_at
 
@@ -373,15 +378,16 @@ def test_the_parking_drawn_on_the_corridor_sheet_is_the_parking_it_counts(broad_
     mouths, and including the unusable tail of every run - and that tail was then passed to
     `hatch_bands` as marked, so 176 ft of it was shaded as parking AND excluded from the hatch.
     """
-    from scripts.corridor_render import _far_kerb_stall_spans, far_kerb_parking
-    from src.geometry.corridor_paint import CORRIDOR_SAMPLE_FT
+    from scripts.corridor_render import kerbside_parking, stall_spans
+    from src.geometry.corridor_paint import CORRIDOR_SAMPLE_FT, far_kerb_lane_edge
     from src.geometry.treatments import PARKING_STALL_LENGTH_DEFAULT_FT as STALL_FT
 
     corridor, paint = broad_st_paint
     far = "left" if paint.side == "right" else "right"
     with contextlib.redirect_stdout(io.StringIO()):
         facts = corridor_facts(corridor, site_models)
-    bands, _marks, labels, hatch = far_kerb_parking(corridor, facts, paint, far)
+    bands, _marks, labels, hatch = kerbside_parking(corridor, facts, far,
+                                                    far_kerb_lane_edge(paint))
 
     stalls = sum(n for _side, _lo, _hi, n in labels)
     blue_ft = sum(hi - lo for lo, hi, _band in bands)
@@ -390,16 +396,23 @@ def test_the_parking_drawn_on_the_corridor_sheet_is_the_parking_it_counts(broad_
         f"{blue_ft:,.0f} ft of parking drawn for {stalls} stalls "
         f"({stalls * STALL_FT:,.0f} ft of car)")
 
-    for lo, hi, _band in bands:
-        for h_lo, h_hi, _h_band, reason in hatch:
-            assert min(hi, h_hi) - max(lo, h_lo) <= 1e-6, (
-                f"station {max(lo, h_lo):,.0f}-{min(hi, h_hi):,.0f} is drawn as parking AND "
-                f"hatched {reason!r}")
+    # BY SURFACE, NOT BY STATION. These were once disjoint spans, because a band was capped at a
+    # stall's depth and whatever the kerb spared past that was drawn by nobody. It is hatched now
+    # (see allocate_kerbside), so a wide kerb carries a box AND its remainder at the SAME station,
+    # side by side across the kerb - and a station test would read that correct drawing as a
+    # contradiction. What must never happen is the two claiming one square foot of asphalt.
+    for lo, hi, band in bands:
+        for h_lo, h_hi, h_band, reason in hatch:
+            shared = band.intersection(h_band).area
+            assert shared <= 1.0, (
+                f"{shared:,.0f} sq ft near station {max(lo, h_lo):,.0f}-{min(hi, h_hi):,.0f} is "
+                f"drawn as parking AND hatched {reason!r}")
 
     # ...and the tail is not left bare either, which is the other way of getting it wrong: pass
     # the SPANS to hatch_bands and the leftover is excluded from the hatch instead of shaded by it.
     for (lo, _hi, _band), (_side, _f_lo, f_hi, _n) in zip(bands, labels, strict=True):
-        span_hi = max(hi for s_lo, hi in _far_kerb_stall_spans(corridor, facts, paint, far)
+        span_hi = max(hi for s_lo, hi in stall_spans(corridor, facts, far,
+                                                     far_kerb_lane_edge(paint))
                       if s_lo == lo)
         tail = span_hi - f_hi
         if tail <= CORRIDOR_SAMPLE_FT:
@@ -407,6 +420,128 @@ def test_the_parking_drawn_on_the_corridor_sheet_is_the_parking_it_counts(broad_
         assert any(h_lo <= f_hi + 1e-6 and h_hi >= span_hi - 1e-6 for h_lo, h_hi, _b, _r in hatch), (
             f"the {tail:,.0f} ft tail of the run at station {lo:,.0f} holds no car and is "
             f"hatched nowhere")
+
+
+@needs_source_data
+def test_the_parking_a_bikeway_costs_is_measured_against_the_same_walk(broad_st_paint,
+                                                                      site_models):
+    """The baseline and the proposal are ONE count with ONE thing changed: the lane edge.
+
+    A stall figure means nothing except beside another stall figure, and the two this project
+    could produce were not comparable. `corridor_report.py` gives 243: legally parkable LENGTH
+    over both kerbs, counted whether or not the width there was ever measured. The sheet gives 45:
+    stalls DRAWN on one kerb after the width test, the driveway mouths and the walk in whole cars.
+    Subtracting one from the other reports a loss of 198 that is mostly method, and it is exactly
+    what a reader handed both will do - so `baseline_stalls` runs the SAME walk with nothing
+    changed but the lane edge, and that is what makes the sheet's "143 lost" a real figure.
+
+    THE FALSIFIABLE PART IS THE DIRECTION. A section that pushes the divider toward the far kerb
+    can only take room off it, so that kerb cannot keep more stalls with the bikeway than without
+    it. A sheet printing the trade backwards would be claiming a two-way lane BUYS parking, and
+    nothing else here would notice: both figures would be internally consistent, which is the
+    shape of every serious bug in this repo.
+    """
+    from scripts.corridor_render import baseline_stalls, nominal_lane_edge, stall_spans
+    from src.geometry.corridor_paint import far_kerb_lane_edge, stall_marks
+
+    corridor, paint = broad_st_paint
+    far = "left" if paint.side == "right" else "right"
+    with contextlib.redirect_stdout(io.StringIO()):
+        facts = corridor_facts(corridor, site_models)
+
+    baseline = baseline_stalls(corridor, facts)
+    assert set(baseline) == {"north", "south"}, (
+        f"the baseline must be measured on BOTH kerbs - the one carrying the lane loses all of "
+        f"its parking and that is most of the cost - got {sorted(baseline)}")
+    assert all(n > 0 for n in baseline.values()), (
+        f"a kerb holding no stalls at all makes the comparison vacuous: {baseline}")
+
+    # The proposal's own count, through the same function, differing only in the lane edge.
+    kept = stall_marks(corridor, far, stall_spans(corridor, facts, far,
+                                                  far_kerb_lane_edge(paint)))[1]
+    far_compass = "south" if paint.compass_side == "north" else "north"
+    assert kept <= baseline[far_compass], (
+        f"the {far_compass} kerb keeps {kept} stalls with the bikeway and only "
+        f"{baseline[far_compass]} without it - the section pushes the divider TOWARD this kerb, "
+        f"so it can only lose room. Either the two counts are not the same walk, or "
+        f"far_kerb_lane_edge is reporting a lane edge inside the nominal "
+        f"{nominal_lane_edge(0.0):.0f} ft one")
+
+    # ...and the loss the sheet decomposes is the whole loss: the lane's kerb plus the far kerb's
+    # squeeze, with no third bucket. Stated because the headline splits it and a reader checks it.
+    lost = sum(baseline.values()) - kept
+    assert lost == baseline[paint.compass_side] + (baseline[far_compass] - kept), (
+        f"{lost} stalls lost does not decompose into the {baseline[paint.compass_side]} on the "
+        f"lane's own {paint.compass_side} kerb plus the squeeze on the {far_compass}")
+
+
+@needs_source_data
+def test_every_spare_foot_of_kerb_is_allocated(broad_st_paint, site_models):
+    """"Parking or hatching, never neither" holds by AREA, not only by length.
+
+    The corridor sheet claims every foot of the far kerb is marked or hatched, and that was true
+    of its LENGTH and false of its DEPTH: a band was capped at PARKING_STALL_DEPTH_DEFAULT_FT
+    whatever the kerb gave, so where Broad St runs 48-58 ft between kerbs the first 8 ft was
+    painted and the rest was bare. Measured on the drawn polygons with a perpendicular cut, 5,748
+    sq ft over 1,000 ft of kerb - the surplus this design itself creates by holding the travel
+    lanes at target and handing every spare foot to the far kerb.
+
+    The cap belongs to the STALL, because that is how deep a parked car is. It never belonged to
+    the allocation. See parking.allocate_kerbside, which is now the one place either is decided.
+
+    MEASURED WITH A CUT, NOT A VERTEX REDUCTION (SKILLS.md 0a): a band's outer edge carries the
+    traced kerb's vertices and nothing between them, so a max over binned vertices reads the wrong
+    edge exactly where the kerb is sparsest - which is where the widest street is.
+    """
+    from scripts.corridor_render import kerbside_parking
+
+    corridor, paint = broad_st_paint
+    far = "left" if paint.side == "right" else "right"
+    with contextlib.redirect_stdout(io.StringIO()):
+        facts = corridor_facts(corridor, site_models)
+    edge_at = far_kerb_lane_edge(paint)
+    bands, _marks, _labels, hatch = kerbside_parking(corridor, facts, far, edge_at)
+    drawn = unary_union([b for _lo, _hi, b in bands] + [h for _lo, _hi, h, _why in hatch])
+
+    mouths = _merged_spans([(o.start_ft, o.end_ft) for side, o in facts.openings if side == far])
+    skip = list(mouths) + list(paint.breaks)
+    sign = 1.0 if far == "left" else -1.0
+    bare_sqft, bare_ft, worst = 0.0, 0.0, (0.0, None)
+    for run in paint.runs:
+        for station in np.arange(run.start_ft, run.end_ft, 5.0):
+            if any(lo <= station <= hi for lo, hi in skip):
+                continue
+            kerb_ft = kerb_offset_ft(corridor, far, float(station))
+            if kerb_ft is None or not np.isfinite(kerb_ft):
+                continue
+            zone_ft = kerb_ft - edge_at(float(station))
+            if zone_ft < MIN_HATCHED_ZONE_FT:
+                continue
+            cut = LineString([point_at(corridor.centerline, float(station),
+                                       sign * (kerb_ft - 0.05)),
+                              point_at(corridor.centerline, float(station),
+                                       sign * edge_at(float(station)))])
+            gap_ft = max(0.0, cut.length - cut.intersection(drawn).length)
+            if gap_ft > MIN_HATCHED_ZONE_FT:
+                bare_ft += 5.0
+                bare_sqft += gap_ft * 5.0
+                worst = max(worst, (gap_ft, float(station)))
+
+    # A CUT THAT INTERSECTS NOTHING WOULD PASS EVERY ONE OF THOSE COMPARISONS AND MEASURE NOTHING,
+    # which is how the first version of this measurement reported the whole kerb bare on a sign
+    # error. Prove the geometry is being read before trusting a zero. (SKILLS.md 0a.)
+    assert drawn.area > 1_000.0, "no far-kerb paint found at all - the sheet draws some"
+    on_kerb = drawn.intersection(
+        LineString([point_at(corridor.centerline, s, sign * (kerb_offset_ft(corridor, far, s)
+                                                             or 0.0) - sign * 0.05)
+                    for s in np.arange(paint.runs[0].start_ft, paint.runs[0].end_ft, 5.0)]))
+    assert on_kerb.length > 0.0, "the cut is on the wrong side - it reads no drawn paint"
+
+    assert bare_sqft < 100.0, (
+        f"{bare_sqft:,.0f} sq ft of the {far} kerb carries neither a stall nor a hatch, over "
+        f"{bare_ft:,.0f} ft of street - worst {worst[0]:.1f} ft bare at station {worst[1]:.0f}. "
+        f"Every foot the travel lane does not use is either parking or hatching; a band capped "
+        f"at a stall's depth leaves the rest of a wide kerb unpainted")
 
 
 @needs_source_data
@@ -419,7 +554,7 @@ def test_no_kerbside_band_is_drawn_over_the_travel_way(broad_st_paint, site_mode
     restricted hatch has 1.60 ft free and overlapped by a median of 6.40 ft. So the hatch looked
     exactly as wide as the stalls it was refusing.
     """
-    from scripts.corridor_render import far_kerb_parking
+    from scripts.corridor_render import kerbside_parking
     from src.geometry.corridor_paint import far_kerb_lane_edge
     from src.geometry.model import station_offset_many
 
@@ -427,7 +562,8 @@ def test_no_kerbside_band_is_drawn_over_the_travel_way(broad_st_paint, site_mode
     far = "left" if paint.side == "right" else "right"
     with contextlib.redirect_stdout(io.StringIO()):
         facts = corridor_facts(corridor, site_models)
-    bands, _marks, _labels, hatch = far_kerb_parking(corridor, facts, paint, far)
+    bands, _marks, _labels, hatch = kerbside_parking(corridor, facts, far,
+                                                     far_kerb_lane_edge(paint))
     edge_at = far_kerb_lane_edge(paint)
 
     for what, polygons in (("parking", [b for _lo, _hi, b in bands]),
@@ -1017,3 +1153,29 @@ def test_a_route_calming_narrows_the_route_and_nothing_else(site_models):
                         f"fixture, so this asserts almost nothing")
     assert not wrong, ("a route calming did not treat exactly the legs on its route:\n  "
                        + "\n  ".join(wrong))
+
+
+@needs_source_data
+def test_every_route_decision_is_found_by_the_street_it_names(corridors):
+    """A route decision must be reachable from its own corridor's name, and from no other's.
+
+    THIS IS THE ONE THING BETWEEN A SHEET AND THE WRONG STREET'S PROPOSAL. corridor_render.py
+    imported BROAD_ST_TWO_WAY_BIKEWAY directly and drew it down whatever --road named, so
+    Princeton Ave came out headed "0 ft placed" for a bikeway nobody proposed there. It now looks
+    the decision up by corridor name - which turns a wrong drawing into a wrong lookup, and a
+    lookup can be tested. The failure it guards is silent both ways: a typo'd or restyled road
+    ("Princeton Ave", "Broad St") returns None and the caller quietly falls back to a baseline
+    sheet, and a decision matching two corridors would draw one street's design on the other.
+    """
+    from src.geometry.treatments import ROUTE_DECISIONS, route_decision_for
+
+    by_name = {corridor.name: route_decision_for(corridor.name) for corridor in corridors}
+    for decision in ROUTE_DECISIONS:
+        matched = [name for name, found in by_name.items() if found is decision]
+        assert len(matched) == 1, (
+            f"{type(decision).__name__}(road={decision.road!r}) matches {len(matched)} of the "
+            f"{len(by_name)} corridors this project models ({matched or 'none'}). It must name "
+            f"exactly one: {sorted(by_name)}")
+    # And a street nobody has decided about answers None rather than borrowing a neighbour's
+    # design - the caller prints "no route decision declared" off exactly this.
+    assert route_decision_for("Elm Ridge Road") is None

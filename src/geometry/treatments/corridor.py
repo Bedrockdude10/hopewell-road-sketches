@@ -31,7 +31,7 @@ from src.geometry.treatments.bikeways import (BIKE_LANE_BOLLARD_SPACING_FT,
                                               AddBikeLaneBollards,
                                               AddTwoWayBikeLane,
                                               ExtendBikeLaneThroughJunction)
-from src.geometry.treatments.parking import (hold_travel_lane_at_target,
+from src.geometry.treatments.parking import (MarkedParking, hold_travel_lane_at_target,
                                              osm_derived_baseline)
 from src.geometry.treatments.state import DesignState
 from typing import TYPE_CHECKING
@@ -267,9 +267,10 @@ class CorridorFacility:
                   f"the WHOLE approach on the far one, because the centre stripe it shifts runs "
                   f"the full leg while the green, the posts and the buffer end together at "
                   f"{to_ft:.0f} ft - see the refusal recorded on this kerb for what stopped it.")
+        candidates = []
         for section in self.sections:
             try:
-                state = state.apply(AddTwoWayBikeLane(
+                candidate = state.apply(AddTwoWayBikeLane(
                     LegSide(leg_name, side), width_ft=section.width_ft,
                     buffer_ft=section.buffer_ft, constrained=section.constrained, to_ft=to_ft))
             except ValueError as too_narrow:
@@ -278,49 +279,88 @@ class CorridorFacility:
                           f"{section.width_ft:.0f} ft lane with a {section.buffer_ft:.0f} ft "
                           f"buffer - {too_narrow}")
                 continue
-            if section.constrained and not quiet:
-                print(f"  NOTE: {leg_name} {side} carries NACTO's CONSTRAINED "
-                      f"{section.width_ft:.0f} ft two-way width, not the "
-                      f"{self.sections[0].width_ft:.0f} ft minimum. At {section.width_ft:.0f} ft "
-                      f"two riders cannot pass an oncoming pair - a real cost, accepted because "
-                      f"the alternative is a gap in the route. The full {section.buffer_ft:.0f} ft "
-                      f"buffer is kept, so it stays a protected lane.")
-            # POSTS NEED A BUFFER TO STAND IN. On an unbuffered rung there is nowhere to put one
-            # that is not in the bike lane or the travel lane, so the lane is painted rather than
-            # protected here - said out loud, because "protected bikeway" is the claim the whole
-            # facility makes and this is the one place it does not hold.
-            from src.geometry.treatments.bikeways import min_bike_lane_buffer_ft
+            candidates.append((section, candidate))
 
-            if section.buffer_ft >= min_bike_lane_buffer_ft():
-                state = state.apply(AddBikeLaneBollards(LegSide(leg_name, side),
-                                                        spacing_ft=self.bollard_spacing_ft))
+        if not candidates:
+            # RECORDED, NOT ONLY PRINTED, and over the whole kerb: every rung was refused, so
+            # there is no span of this approach the design is claiming. A check reading stdout is
+            # not a check - see DesignState.facility_refusals.
+            from src.geometry.model import curb_station_span
+            from src.geometry.treatments.state import FacilityRefusal
+
+            span = curb_station_span(state.legs[leg_name], side)
+            if span is not None:
+                state.refuse(leg_name, side, FacilityRefusal(
+                    span[0], span[1], "every rung of the ladder was refused on this approach - "
+                                      "see the widths printed above for which limit stopped each"))
+            if not quiet:
+                print(f"  NOTE: {leg_name} {side} carries NO two-way lane. THIS IS WHERE THE "
+                      f"BOROUGH-LENGTH CORRIDOR BREAKS - riders would rejoin the carriageway "
+                      f"through this junction. The refusals above say which limit stopped it "
+                      f"here, which is not the same limit everywhere.")
+            return state
+
+        other_side = str(Side(side).other)
+
+        def stall_ft(candidate_state: DesignState) -> float:
+            parking = candidate_state.treatment_for(MarkedParking, LegSide(leg_name, other_side))
+            return parking.depth_ft if parking is not None else 0.0
+
+        # THE DEFAULT IS THE NARROWEST RUNG THAT FITS, not the widest. self.sections is declared
+        # widest to narrowest (see BROAD_ST_TWO_WAY_BIKEWAY), so candidates[-1] is the floor. A
+        # wider rung is spent only where it costs the far kerb NOTHING - the far kerb keeps the
+        # same usable parking it would have kept at the narrow rung - because "fits" alone was
+        # the bar that made the widest rung win almost everywhere and sacrifice parking no leg
+        # actually needed to give up for it.
+        # EXPLORED ON A CLONE. hold_travel_lane_at_target mutates facility_refusals in place
+        # (DesignState.refuse's own docstring: recording it any other way makes the refusal a
+        # function of the order rungs were tried), and every candidate here shares that dict by
+        # reference back to the state this method was handed. Comparing rungs by actually calling
+        # it on each would double- or triple-record the same tail refusal - exactly the failure
+        # its docstring was written to rule out, just reached from a new direction. Cloning keeps
+        # the exploration read-only; the real call happens exactly once, below, on the winner.
+        section, chosen_state = candidates[-1]
+        narrow_stall = stall_ft(hold_travel_lane_at_target(chosen_state.clone(), leg_name,
+                                                           other_side))
+        for wider_section, wider_state in candidates[:-1]:
+            wider_stall = stall_ft(hold_travel_lane_at_target(wider_state.clone(), leg_name,
+                                                              other_side))
+            if wider_stall >= narrow_stall:
+                if not quiet:
+                    print(f"  NOTE: {leg_name} {side} carries {wider_section.width_ft:.0f} ft, "
+                          f"not the {section.width_ft:.0f} ft default - the far kerb keeps its "
+                          f"parking either way, so the wider lane costs nothing here.")
+                section, chosen_state = wider_section, wider_state
+                break
             elif not quiet:
-                print(f"  NOTE: {leg_name} {side} takes the full {section.width_ft:.0f} ft lane "
-                      f"with a {section.buffer_ft:.1f} ft buffer - too narrow for a flex post, so "
-                      f"there are NO posts here and the lane is PAINTED, not protected. The kerb "
-                      f"is still alongside it. Width was kept over the buffer deliberately - see "
-                      f"BROAD_ST_TWO_WAY_BIKEWAY.")
-            # THE FAR KERB GETS THE SURPLUS: the kerb that loses its parking to the bike lane is
-            # not the kerb that gains this. Single home: hold_travel_lane_at_target in parking.py.
-            return hold_travel_lane_at_target(state, leg_name, str(Side(side).other))
+                print(f"  NOTE: {leg_name} {side} could take a {wider_section.width_ft:.0f} ft "
+                      f"lane, but it would leave the far kerb's parking hatched instead of the "
+                      f"stall the {section.width_ft:.0f} ft default keeps - staying narrow.")
 
-        # RECORDED, NOT ONLY PRINTED, and over the whole kerb: every rung was refused, so there
-        # is no span of this approach the design is claiming. A check reading stdout is not a
-        # check - see DesignState.facility_refusals.
-        from src.geometry.model import curb_station_span
-        from src.geometry.treatments.state import FacilityRefusal
+        if section.constrained and not quiet:
+            print(f"  NOTE: {leg_name} {side} carries NACTO's CONSTRAINED "
+                  f"{section.width_ft:.0f} ft two-way width by default. At {section.width_ft:.0f} "
+                  f"ft two riders cannot pass an oncoming pair - a real cost, accepted to keep "
+                  f"the far kerb's parking rather than spend it on a wider lane. The full "
+                  f"{section.buffer_ft:.0f} ft buffer is kept, so it stays a protected lane.")
+        # POSTS NEED A BUFFER TO STAND IN. On an unbuffered rung there is nowhere to put one
+        # that is not in the bike lane or the travel lane, so the lane is painted rather than
+        # protected here - said out loud, because "protected bikeway" is the claim the whole
+        # facility makes and this is the one place it does not hold.
+        from src.geometry.treatments.bikeways import min_bike_lane_buffer_ft
 
-        span = curb_station_span(state.legs[leg_name], side)
-        if span is not None:
-            state.refuse(leg_name, side, FacilityRefusal(
-                span[0], span[1], "every rung of the ladder was refused on this approach - see "
-                                  "the widths printed above for which limit stopped each"))
-        if not quiet:
-            print(f"  NOTE: {leg_name} {side} carries NO two-way lane. THIS IS WHERE THE "
-                  f"BOROUGH-LENGTH CORRIDOR BREAKS - riders would rejoin the carriageway through "
-                  f"this junction. The refusals above say which limit stopped it here, which is "
-                  f"not the same limit everywhere.")
-        return state
+        if section.buffer_ft >= min_bike_lane_buffer_ft():
+            chosen_state = chosen_state.apply(AddBikeLaneBollards(
+                LegSide(leg_name, side), spacing_ft=self.bollard_spacing_ft))
+        elif not quiet:
+            print(f"  NOTE: {leg_name} {side} takes the full {section.width_ft:.0f} ft lane "
+                  f"with a {section.buffer_ft:.1f} ft buffer - too narrow for a flex post, so "
+                  f"there are NO posts here and the lane is PAINTED, not protected. The kerb "
+                  f"is still alongside it. Width was kept over the buffer deliberately - see "
+                  f"BROAD_ST_TWO_WAY_BIKEWAY.")
+        # THE FAR KERB GETS THE SURPLUS: the kerb that loses its parking to the bike lane is
+        # not the kerb that gains this. Single home: hold_travel_lane_at_target in parking.py.
+        return hold_travel_lane_at_target(chosen_state, leg_name, other_side)
 
 
 #: THE BOROUGH'S TWO-WAY PROTECTED BIKEWAY, declared once; no site file restates any part of it.
@@ -336,6 +376,17 @@ class CorridorFacility:
 #: per direction with posts. What that bought at W Broad & Louellen was 5 ft per direction and NO
 #: PROTECTION AT ALL, on both W Broad approaches - the junction the corridor most needs to carry.
 #: The constrained rung fits there: 60 posts, travel lanes still over the 10 ft floor.
+#:
+#: THE 8 FT RUNG IS THE DEFAULT, NOT THE FALLBACK - reversed 2026-08-26. "Fits" was the only bar
+#: the 10 ft rung had to clear, and on a car-dependent borough that gave the 10 ft rung almost
+#: every leg regardless of what it cost the far kerb, because a section a few inches short of 10
+#: ft is not a section a few inches short of usable: it is a section that fits at 8 ft with no
+#: cost at all. `_place_on` now builds the far kerb's parking (hold_travel_lane_at_target) under
+#: BOTH rungs before choosing, and spends the extra 2 ft only where the far kerb keeps the same
+#: usable stall it would have kept at 8 ft. Where 10 ft would hatch a stall that 8 ft would have
+#: marked, the leg stays at 8 ft - the concession the rung ladder used to reserve for a kerb too
+#: narrow to hold 10 ft at all now also covers a kerb that could hold it but only by spending
+#: parking nothing required it to spend.
 #:
 #: NO INTERMEDIATE PART-BUFFER RUNG. Nothing on this route has room for one: a 10 ft lane with a
 #: 2 ft buffer leaves 9.58 ft travel lanes on Louellen's northeast approach, still under the floor,

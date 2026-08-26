@@ -46,8 +46,8 @@ from src.geometry.corridor_paint import (CORRIDOR_SAMPLE_FT, JUNCTION_MOUTH,
                                          stall_room_spans, symbol_stations, travel_way_edges)
 from src.geometry.intersection import load_intersection_model
 from src.geometry.model import station_offset_many
-from src.geometry.network import (_complement_spans, _merged_spans, corridor_facts,
-                                  corridors_from_models)
+from src.geometry.network import (_complement_spans, _intersect_spans, _merged_spans,
+                                  corridor_facts, corridors_from_models)
 from src.geometry.treatments import (BROAD_ST_TWO_WAY_BIKEWAY, CorridorFacility,
                                      TARGET_LANE_WIDTH_FT, route_decision_for)
 from src.geometry.treatments.parking import PARKING_STALL_DEPTH_DEFAULT_FT
@@ -376,7 +376,7 @@ def draw_panel(ax, corridor, paint, parking, openings, lo_ft, hi_ft, half_ft,
         ax.spines[spine].set_visible(False)
 
 
-def _legend(fig, facility: bool = True) -> None:
+def _legend(fig, facility: bool = True, top_in: float = 0.3) -> None:
     """A real legend - colour swatches and line/marker samples with labels.
 
     Replaces a color key that used to live only in the title's prose ("blue = ...", "gold hatch =
@@ -388,6 +388,13 @@ def _legend(fig, facility: bool = True) -> None:
     for a bikeway on a drawing whose whole point is that there is not one - the daylighting
     swatch, which every one of these sheets does draw, was meanwhile only ever named in the
     title's prose.
+
+    `top_in` IS THE CALLER'S OWN HEIGHT, IN INCHES, NOT A GUESS MADE HERE. The legend used to sit
+    at a fixed figure-FRACTION offset chosen to clear the decision table at one row count; the
+    table gained rows, the fraction did not move with it, and the two boxes started overlapping
+    where the sheet is read. Stacking below whatever height the caller reports - the decision
+    table's own layout function, or 0.3 in of bare margin when there is no note above it - is the
+    only way the two cannot collide by construction.
     """
     from matplotlib.lines import Line2D
     from matplotlib.patches import Patch
@@ -422,9 +429,12 @@ def _legend(fig, facility: bool = True) -> None:
         Patch(facecolor=GAP_RED, alpha=0.16, label="unsurveyed - section untested"),
         Line2D([], [], color="#3b6ea5", lw=0.8, linestyle="--", label="junction node / site boundary"),
     ]
-    # Clear of the note box in the bottom-left corner, which is wider on a sheet that has to
-    # explain a refusal than on one that only has to justify a kerb.
-    fig.legend(handles=handles, loc="lower left", bbox_to_anchor=(0.38 if facility else 0.46, -0.10),
+    # `loc="upper left"` anchors the LEGEND'S TOP edge to `top_in`, so it grows downward from
+    # wherever the note/table above it actually ended - it can graze that box but can never climb
+    # inside it, regardless of how many rows the table above gained.
+    fig_h_in = fig.get_size_inches()[1]
+    fig.legend(handles=handles, loc="upper left",
+              bbox_to_anchor=(0.012, -(top_in + 0.08) / fig_h_in),
               ncol=3 if facility else 2, fontsize=5.5 if facility else 6, frameon=True,
               edgecolor="#3b6ea5", title="LEGEND", title_fontsize=6.5)
 
@@ -453,93 +463,133 @@ def _verdict(outcomes) -> tuple[str, str, bool]:
     return fewest, most_parking, fewest == most_parking
 
 
-def _decision_table(fig, corridor, outcomes, drawn: str, ladder, baseline: dict) -> None:
-    """The which-kerb comparison, ON THE DRAWING, as two options rather than as two rows.
+def _artist_height_in(fig, artist) -> float:
+    """How tall an artist actually rendered, in inches - MEASURED, not assumed.
+
+    A text block's height depends on line count, font metrics and its bbox padding, all of which
+    this file used to bake into one fixed figure-fraction offset - the thing that let the decision
+    table and the legend below it collide the moment either one's content grew. Forcing a draw and
+    reading the real extent back is the same discipline this project already applies to geometry:
+    measure the drawn thing, not the arithmetic that was supposed to produce it.
+    """
+    fig.canvas.draw()
+    bbox = artist.get_window_extent(fig.canvas.get_renderer())
+    return bbox.height / fig.dpi
+
+
+def _decision_table(fig, corridor, outcomes, drawn: str, ladder, baseline: dict) -> float:
+    """The which-kerb comparison, ON THE DRAWING, as a real table rather than monospace prose.
 
     It was printed to a terminal, which is no use to anyone in a council chamber holding the
     sheet: the picture shows one kerb's proposal and the reason for choosing it lived somewhere
     the reader cannot see.
 
-    WHAT MADE THE FIRST VERSION UNREADABLE was that it was laid out like a table of results when
-    it is a comparison of two designs. Four figures in a row under bare headings - "placed",
-    "breaks", "mouths", "parking kept, other kerb" - of which the first two came out IDENTICAL on
-    both rows, so half the box read as a copy-paste error, the arrow marking the drawn option
-    hung off the end of a parking figure it did not belong to, and the conclusion the terminal
-    prints was missing entirely. Now: the options are columns, every row says in words what its
-    number counts, the two rows that came out equal say why, and the box ends with the choice.
+    WHAT MADE THE TEXT VERSION UNREADABLE was that it was laid out like a table of results using
+    manually padded strings - a monospace font faking the grid a real table draws for free, with
+    the winner marked by a trailing "<- fewest on the X" that hung off whichever cell happened to
+    be widest and did nothing to draw the reader's eye to the actual number. A `matplotlib.table`
+    fixes both: the grid lines up because the axes draws it, and the winning cell in each row that
+    has one is shaded instead of footnoted.
 
     Every row's parking figure belongs to the OTHER kerb - the lane and the parking are never on
-    the same side - so the row says so and each cell names the kerb it is on.
+    the same side - so the header names each column "lane on the X kerb" rather than "the X kerb"
+    to keep that from being misread as that kerb's own parking.
 
     AND IT ENDS ON THE COST, NOT ON THE REMAINDER. "45 stalls kept" is the number a reader is
     being asked to weigh a bikeway against, and on its own it is unreadable: nobody in a council
     chamber knows whether the corridor holds 50 or 500. `baseline_stalls` is the same walk with no
     facility on either kerb, so the subtraction below is a real one - which is the whole reason it
     is done here rather than left to be done wrongly against the corridor report's 243.
+
+    Returns the height, in inches, this box occupies below the figure's own canvas - so `_legend`
+    can be told exactly where the free space starts instead of guessing a fraction that a longer
+    table quietly outgrows.
     """
+    from matplotlib.table import Table
+
     order = list(outcomes)
     baseline_total = sum(baseline.values())
     fewest, most_parking, agree = _verdict(outcomes)
-    col = "  ".join(f"{'the ' + c.upper():>10s}" for c in order)
     rows = [(f"bikeway placed, of {corridor.length_ft:,.0f} ft",
-             [f"{outcomes[c]['paint'].placed_ft:,.0f} ft" for c in order], ""),
+             [f"{outcomes[c]['paint'].placed_ft:,.0f} ft" for c in order], None),
             ("crossings the lane is cut at",
-             [f"{outcomes[c]['breaks']:d}" for c in order], ""),
+             [f"{outcomes[c]['breaks']:d}" for c in order], None),
             ("driveway + side-street mouths crossed",
-             [f"{outcomes[c]['openings_on_lane']:d}" for c in order], ""),
+             [f"{outcomes[c]['openings_on_lane']:d}" for c in order], None),
             ("= interruptions a rider meets",
-             [f"{_interruptions(outcomes[c]):d}" for c in order], f"fewest on the {fewest}"),
+             [f"{_interruptions(outcomes[c]):d}" for c in order], fewest),
             ("parking stalls kept, on the OTHER kerb",
              [f"{outcomes[c]['kept']:d} {outcomes[c]['far_compass']}" for c in order],
-             f"most on the {most_parking}"),
+             most_parking),
             (f"of {baseline_total} on the corridor with no lane at all",
-             [f"{' + '.join(f'{n} {c2}' for c2, n in baseline.items())}" for _c in order],
-             "same walk, both kerbs"),
+             [f"{' + '.join(f'{n} {c2}' for c2, n in baseline.items())}" for _c in order], None),
             ("= parking stalls LOST to the bikeway",
-             [f"{baseline_total - outcomes[c]['kept']:d}" for c in order],
-             f"fewest on the {most_parking}")]
-    # THE LABEL COLUMN IS AS WIDE AS ITS WIDEST LABEL, not a constant: a fixed field that one
-    # label overruns shunts that row's figures out of their column, and two numbers a reader is
-    # meant to compare stop lining up under each other - which is most of what made the first
-    # version of this box unreadable.
-    pad = max(len(label) for label, _cells, _note in rows)
-    lines = ["WHICH KERB CARRIES THE TWO-WAY LANE - both options, one survey",
-             f"{'':{pad + 2}s}  {'lane on':>10s}  {'lane on':>10s}",
-             f"{'':{pad + 2}s}  {col}"]
-    for label, cells, note in rows:
-        marked = "  <- " + note if note else ""
-        lines.append(f"  {label:<{pad}s}  " + "  ".join(f"{c:>10s}" for c in cells) + marked)
+             [f"{baseline_total - outcomes[c]['kept']:d}" for c in order], most_parking)]
+
+    fig_w_in, fig_h_in = fig.get_size_inches()
+    label_w_in, col_w_in = 3.1, 1.5
+    table_w_in = label_w_in + col_w_in * len(order)
+    row_h_in = 0.24
+    table_h_in = row_h_in * (len(rows) + 1)
+    ax = fig.add_axes((0.012, -table_h_in / fig_h_in,
+                       table_w_in / fig_w_in, table_h_in / fig_h_in))
+    ax.axis("off")
+    tbl = Table(ax, bbox=(0, 0, 1, 1))
+    label_frac, col_frac, row_frac = label_w_in / table_w_in, col_w_in / table_w_in, 1 / (len(rows) + 1)
+
+    header = [f"{corridor.name} - which kerb carries the lane"] + \
+        [f"lane on the {c.upper()} kerb" for c in order]
+    for j, text in enumerate(header):
+        cell = tbl.add_cell(0, j, label_frac if j == 0 else col_frac, row_frac, text=text,
+                            loc="left" if j == 0 else "center", facecolor=MOUTH_BLUE)
+        cell.get_text().set_color("white")
+        cell.get_text().set_weight("bold")
+        cell.get_text().set_fontsize(6.5)
+    for i, (label, cells, winner) in enumerate(rows, start=1):
+        stripe = "#f2f2f2" if i % 2 == 0 else "white"
+        lc = tbl.add_cell(i, 0, label_frac, row_frac, text=label, loc="left", facecolor=stripe)
+        lc.get_text().set_fontsize(6.5)
+        for j, (c, value) in enumerate(zip(order, cells), start=1):
+            win = winner is not None and c == winner
+            cc = tbl.add_cell(i, j, col_frac, row_frac, text=value, loc="center",
+                              facecolor="#cfe8d6" if win else stripe)
+            cc.get_text().set_fontsize(6.5)
+            if win:
+                cc.get_text().set_weight("bold")
+    ax.add_table(tbl)
+
     # A ROW THAT CAME OUT EQUAL IS A MEASUREMENT, NOT A SLIP - said on the sheet, because two
     # identical figures side by side is exactly what a duplicated cell looks like.
+    caption = []
     if len({round(o["paint"].placed_ft, 1) for o in outcomes.values()}) == 1:
-        lines.append("")
-        lines.append("  the top two rows are equal by measurement: every refusal here is")
-        lines.append("  a survey gap or a junction mouth, and neither is a fact about a kerb")
-    lines.append("")
+        caption.append("the top two rows are equal by measurement: every refusal here is a "
+                       "survey gap or a junction mouth, and neither is a fact about a kerb")
     if agree:
-        lines.append(f"  DRAWN: THE {drawn.upper()} KERB, which wins on both counts. "
-                     f"CORRIDOR_SIDE is {ladder.side}.")
+        caption.append(f"DRAWN: THE {drawn.upper()} KERB, which wins on both counts. "
+                       f"CORRIDOR_SIDE is {ladder.side}.")
     else:
         other = next(c for c in order if c != drawn)
-        lines.append(f"  DRAWN: THE {drawn.upper()} KERB. The counts DISAGREE, so this is a "
-                     f"trade-off, not a")
-        lines.append(f"  calculation - against the {other} it buys "
-                     f"{abs(_interruptions(outcomes[drawn]) - _interruptions(outcomes[other]))} "
-                     f"fewer interruptions for "
-                     f"{abs(outcomes[drawn]['kept'] - outcomes[other]['kept'])} stalls.")
-        lines.append(f"  CORRIDOR_SIDE is {ladder.side}.")
-    fig.text(0.012, -0.004, "\n".join(lines), fontsize=6, family="monospace", va="top",
-             ha="left", zorder=20,
-             bbox={"facecolor": "white", "edgecolor": "#3b6ea5", "alpha": 0.92,
-                   "boxstyle": "round,pad=0.5"})
+        caption.append(f"DRAWN: THE {drawn.upper()} KERB. The counts DISAGREE, so this is a "
+                       f"trade-off, not a calculation - against the {other} it buys "
+                       f"{abs(_interruptions(outcomes[drawn]) - _interruptions(outcomes[other]))} "
+                       f"fewer interruptions for "
+                       f"{abs(outcomes[drawn]['kept'] - outcomes[other]['kept'])} stalls. "
+                       f"CORRIDOR_SIDE is {ladder.side}.")
+    gap_in = 0.06
+    txt = fig.text(0.012, -(table_h_in + gap_in) / fig_h_in, "\n".join(caption), fontsize=6.5,
+                   va="top", ha="left", weight="bold", wrap=True, zorder=20)
+    return table_h_in + gap_in + _artist_height_in(fig, txt)
 
 
-def _no_facility_note(fig, corridor, outcomes, decision) -> None:
+def _no_facility_note(fig, corridor, outcomes, decision) -> float:
     """WHY THIS STREET IS CALMED AND NOT GIVEN A LANE, on the sheet rather than in a terminal.
 
     The facility sheet carries _decision_table for the choice it made; this is the same
     obligation for the choice NOT to place anything. A strip plan showing 11 ft lanes and hatch,
-    with no statement of what was tried, reads as the project never having asked.
+    with no statement of what was tried, reads as the project never having asked. This one stays
+    prose rather than a table - it is a short list of facts, not two designs being compared - but
+    it shares the same box styling as the facility sheet's caption and, like it, reports its own
+    rendered height so `_legend` can start below it without a guessed offset.
     """
     # THE SAME TWO FIGURES corridor_report.py prints, off the corridor's own methods rather than
     # off a second kerb scan here: a refusal is only honest beside the width it was made on and
@@ -561,10 +611,11 @@ def _no_facility_note(fig, corridor, outcomes, decision) -> None:
                      f"are surveyed")
     lines.append(f"so the route decision is {type(decision).__name__}: hold the travel lanes at "
                  f"{TARGET_LANE_WIDTH_FT:.0f} ft and give the rest away")
-    fig.text(0.012, -0.004, "\n".join(lines), fontsize=6, family="monospace", va="top",
-             ha="left", zorder=20,
-             bbox={"facecolor": "white", "edgecolor": GAP_RED, "alpha": 0.92,
-                   "boxstyle": "round,pad=0.5"})
+    txt = fig.text(0.012, -0.004, "\n".join(lines), fontsize=6, family="monospace", va="top",
+                   ha="left", zorder=20,
+                   bbox={"facecolor": "white", "edgecolor": GAP_RED, "alpha": 0.92,
+                         "boxstyle": "round,pad=0.5"})
+    return _artist_height_in(fig, txt)
 
 
 def _calming_strip(corridor, facts, args, outcomes, decision) -> int:
@@ -650,9 +701,8 @@ def _calming_strip(corridor, facts, args, outcomes, decision) -> int:
         f"removed", fontsize=8)
     axes[-1].set_xlabel("station along the corridor (ft)", fontsize=7)
     fig.tight_layout()
-    if calmed:
-        _no_facility_note(fig, corridor, outcomes, decision)
-    _legend(fig, facility=False)
+    note_h_in = _no_facility_note(fig, corridor, outcomes, decision) if calmed else 0.0
+    _legend(fig, facility=False, top_in=note_h_in)
     out_dir = Path(args.out)
     out_dir.mkdir(parents=True, exist_ok=True)
     path = out_dir / f"{args.road.lower().replace(' ', '_')}_strip_{stem}.png"
@@ -729,6 +779,20 @@ def main() -> int:
 
     print(f"{corridor.name}: {corridor.length_ft:,.0f} ft, "
           f"{len(facts.marked_crossings)} surveyed crossings\n")
+    # A FACT ABOUT THE STREET, NOT ABOUT THIS DESIGN - printed before either kerb has a bikeway on
+    # it, because R.S. 39:4-138 setbacks, signed no-parking and OSM's own restrictions close kerb
+    # whether or not a lane is ever drawn there. `no_parking` is merged first: stacked statutory
+    # zones (a hydrant inside a corner clearance, say) would otherwise double-count their overlap.
+    for compass in ("north", "south"):
+        side = facility_side(corridor, compass)
+        merged = _merged_spans([(zone.start_ft, zone.end_ft)
+                                for zone in facts.by_side("no_parking", side)])
+        on_corridor = _intersect_spans(merged, ((0.0, corridor.length_ft),))
+        closed_ft = sum(hi - lo for lo, hi in on_corridor)
+        print(f"  legally no parking on the {compass} kerb regardless of design: "
+              f"{closed_ft:,.0f} of {corridor.length_ft:,.0f} ft "
+              f"({closed_ft / corridor.length_ft:.0%})")
+    print()
     if decision is None:
         print(f"  NOTE: this project has declared no route decision for {corridor.name}, so what "
               f"follows is the baseline - travel lanes at {TARGET_LANE_WIDTH_FT:.0f} ft and the "
@@ -839,8 +903,8 @@ def main() -> int:
         f"kerb; {paint.breaks and len(paint.breaks)} interruptions along the lane", fontsize=8)
     axes[-1].set_xlabel("station along the corridor (ft)", fontsize=7)
     fig.tight_layout()
-    _decision_table(fig, corridor, outcomes, drawn, ladder, baseline)
-    _legend(fig)
+    table_h_in = _decision_table(fig, corridor, outcomes, drawn, ladder, baseline)
+    _legend(fig, top_in=table_h_in)
 
     out_dir = Path(args.out)
     out_dir.mkdir(parents=True, exist_ok=True)

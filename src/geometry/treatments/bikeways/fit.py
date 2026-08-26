@@ -11,7 +11,8 @@ accounting misses the lane LINE, which is 0.82 ft and decides whether e_broad_st
 import numpy as np
 
 from src.geometry.model import narrowest_half_width_ft
-from src.geometry.treatments.base import LANE_WIDTH_SLACK_FT, TARGET_LANE_WIDTH_FT
+from src.geometry.treatments.base import (LANE_WIDTH_SLACK_FT, PARKING_STALL_DEPTH_DEFAULT_FT,
+                                          TARGET_LANE_WIDTH_FT)
 from src.geometry.treatments.state import DesignState
 from src.geometry.treatments.bikeways.sections import (BIKE_LANE_BUFFER_FT, BIKE_LANE_WIDTH_FT, BikeLane,
                                                        MIN_BIKE_LANE_FT, TwoWayBikeLane)
@@ -129,18 +130,45 @@ def section_at(facility, near_half_ft: float, far_half_ft: float):
     how a quarter-inch shortfall at one station of W Broad's southwest approach denied a protected
     bikeway over the 270 ft where the FULL rung fits. Two renderers, one fit rule.
 
+    THE NARROWEST RUNG THAT FITS IS THE DEFAULT, not the widest, mirroring
+    `CorridorFacility._place_on`'s policy rather than the mere geometric fit this used to stop at.
+    `facility.sections` is declared widest to narrowest, so the last rung to construct without
+    raising is the floor. A wider rung is only taken where it costs the far kerb nothing: this
+    compares `far_kerb_surplus_ft` against the same `MIN_USABLE_STALL_FT`/
+    `PARKING_STALL_DEPTH_DEFAULT_FT` cap `allocate_kerbside` applies, so the corridor strip agrees
+    with the per-junction sheets on which rung is drawn even though it never resolves a
+    `DesignState` to check. Before this, the strip kept the old first-fit-wins order and picked
+    the widest geometrically-possible rung regardless: narrowing the junction sheets' bikeway
+    left the between-junction strip's stall count exactly where it started.
+
     `facility` is anything carrying a `.sections` ladder, which is CorridorFacility; typed loosely
     on purpose, since that class is layered above this module.
     """
+    from src.geometry.treatments.parking import MIN_USABLE_STALL_FT
+
+    candidates = []
     refusal = None
     for rung in facility.sections:
         try:
-            return TwoWayBikeLane(width_ft=rung.width_ft, buffer_ft=rung.buffer_ft,
-                                  constrained=rung.constrained, near_half_ft=near_half_ft,
-                                  far_half_ft=far_half_ft), None
+            candidates.append(TwoWayBikeLane(width_ft=rung.width_ft, buffer_ft=rung.buffer_ft,
+                                             constrained=rung.constrained, near_half_ft=near_half_ft,
+                                             far_half_ft=far_half_ft))
         except ValueError as too_narrow:
             refusal = str(too_narrow)
-    return None, refusal
+    if not candidates:
+        return None, refusal
+
+    def stall_depth_ft(section: TwoWayBikeLane) -> float:
+        surplus_ft = far_kerb_surplus_ft(section)
+        return min(surplus_ft, PARKING_STALL_DEPTH_DEFAULT_FT) if surplus_ft >= MIN_USABLE_STALL_FT else 0.0
+
+    chosen = candidates[-1]
+    narrow_depth = stall_depth_ft(chosen)
+    for wider in candidates[:-1]:
+        if stall_depth_ft(wider) >= narrow_depth:
+            chosen = wider
+            break
+    return chosen, None
 
 
 def travel_way_profile(leg, side: str, from_ft: float = 0.0, to_ft: float | None = None):

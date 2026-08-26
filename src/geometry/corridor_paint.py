@@ -476,8 +476,16 @@ def _kerb_band_over(corridor: "Corridor", on: "Alignment", side: str, spans, dep
                  else None for z in zone]
         stall = np.array([0.0 if a is None else a.stall_depth_ft for a in alloc])
         total = np.array([0.0 if a is None else a.total_ft for a in alloc])
-        outer = offs - (0.0 if piece == "stall" else stall)
-        inner = offs - (stall if piece == "stall" else total)
+        # THE BOX SITS AGAINST THE TRAVEL LANE AND THE HATCH AGAINST THE KERB, which is the
+        # junction's order (MarkedParking.curb_offset_ft: "parking sits directly against the
+        # active travel lane instead of against the curb") and was this view's the other way
+        # round. Nothing showed it until the remainder started being drawn at all - with no hatch
+        # beside a box there was no order for the two views to disagree about. Measured on
+        # broad_st_east's right kerb the junction draws the stall over 14.64-22.49 ft and its
+        # buffer over 22.49-26.54, so the hatch is the outboard piece.
+        base = offs - total
+        outer = base + (stall if piece == "stall" else total)
+        inner = base + (0.0 if piece == "stall" else stall)
         band = band_from_offsets(on, side, stations[finite], inner[finite], outer[finite])
         if band is not None and not band.is_empty:
             out.append((float(lo), float(hi), band))
@@ -495,8 +503,11 @@ def stall_bands(corridor: "Corridor", side: str, spans, depth_ft: float | None =
     room, clear) and then a whole-car walk, and a band builder is not the place any of that gets
     decided. Pass `stall_footprints`, so what is shaded is what was counted.
 
-    Drawn against the KERB and not the alignment - a parked car sits against the kerb wherever
-    the kerb happens to be.
+    Stationed against the KERB and not the alignment - the kerb wanders, and a kerbside zone that
+    ignored it would drift off the street. WHERE IN THAT ZONE the box sits is a separate question
+    and the answer is NOT "against the kerb": it sits against the travel lane, with the surplus
+    hatched outboard of it. See _kerb_band_over, and MarkedParking.curb_offset_ft for the junction
+    saying the same thing first.
     """
     from src.geometry.treatments.parking import PARKING_STALL_DEPTH_DEFAULT_FT
 

@@ -476,6 +476,84 @@ def test_the_parking_a_bikeway_costs_is_measured_against_the_same_walk(broad_st_
 
 
 @needs_source_data
+def test_the_stall_sits_against_the_travel_lane_and_the_hatch_against_the_kerb(broad_st_paint,
+                                                                               site_models):
+    """The kerbside zone's two pieces, in the order the junction draws them.
+
+    THE TWO VIEWS DISAGREED ABOUT THIS AND NOTHING COULD SEE IT. MarkedParking.curb_offset_ft
+    puts the buffer "between the curb and the parking lane itself (so parking sits directly
+    against the active travel lane instead of against the curb)", and broad_st_east's right kerb
+    draws exactly that - stall over 14.64-22.49 ft off the centreline, buffer_fill over
+    22.49-26.54. `stall_bands` had it the other way round, and no test noticed for the same
+    reason no reader could: until the surplus beside a box was drawn at all there was no second
+    piece for the order to be wrong about. Pinned here so a corridor and a junction cannot
+    quietly draw one decision two ways again.
+
+    Cut perpendicular to the alignment rather than compared by polygon bounds. A band spans
+    stations and the kerb wanders across them, so a whole-polygon offset range mixes the widest
+    cross-section with the narrowest and reports the two pieces overlapping when they abut.
+    """
+    from shapely.geometry import LineString
+    from shapely.ops import unary_union
+
+    from scripts.corridor_render import kerbside_parking
+    from src.geometry.corridor_paint import CORRIDOR_SAMPLE_FT
+
+    corridor, paint = broad_st_paint
+    far = "left" if paint.side == "right" else "right"
+    with contextlib.redirect_stdout(io.StringIO()):
+        facts = corridor_facts(corridor, site_models)
+    edge_at = far_kerb_lane_edge(paint)
+    bands, _marks, _labels, hatch = kerbside_parking(corridor, facts, far, edge_at)
+    stalls = unary_union([b for _lo, _hi, b in bands])
+    hatches = unary_union([h for _lo, _hi, h, _why in hatch])
+    sign = 1.0 if far == "left" else -1.0
+
+    def reach(geom, station, edge, kerb):
+        """(innermost, outermost) offset this geometry covers on a cut at one station."""
+        hit = [off for off in np.arange(edge, kerb, 0.25)
+               if LineString([point_at(corridor.centerline, station, sign * off),
+                              point_at(corridor.centerline, station, sign * (off + 0.02))]
+                             ).intersects(geom)]
+        return (min(hit), max(hit)) if hit else None
+
+    checked, worst_ft, worst_at = 0, -np.inf, None
+    for lo, hi, _band in bands:
+        # ON THE BAND'S OWN VERTICES. A band carries a vertex every CORRIDOR_SAMPLE_FT and a
+        # straight chord between them, so a cut taken anywhere else reads the chord and not the
+        # design. Where the lane edge steps - station 3045 to 3047 is 13.70 ft to 11.00, a
+        # facility restarting at a junction - that chord is 1.5 ft out, which is enough to fail a
+        # threshold this test has no business failing on.
+        for station in np.arange(lo + CORRIDOR_SAMPLE_FT, hi, CORRIDOR_SAMPLE_FT):
+            kerb = kerb_offset_ft(corridor, far, float(station))
+            edge = edge_at(float(station))
+            if kerb is None or not np.isfinite(kerb) or kerb - edge < MIN_HATCHED_ZONE_FT:
+                continue
+            box = reach(stalls, float(station), edge, kerb)
+            hat = reach(hatches, float(station), edge, kerb)
+            if box is None or hat is None:
+                continue
+            checked += 1
+            # MEASURED ON THE BOX'S INNER EDGE, not by comparing the two outer edges. The pieces
+            # abut, so where the remainder is thinner than the probe's own step both land in one
+            # cell and the outer-edge comparison reads 0.00 - a real tie, and a threshold it
+            # cannot be held to. The inner edge has no such degeneracy: against the travel lane
+            # it reads the lane edge, and against the kerb it reads a stall's depth short of the
+            # kerb, which on this street is up to 19 ft away.
+            if box[0] - edge > worst_ft:
+                worst_ft, worst_at = box[0] - edge, float(station)
+
+    assert checked > 50, (
+        f"only {checked} station(s) carry both a stall and a hatch - this test measured almost "
+        f"nothing, which is how a wrong order would pass it")
+    assert worst_ft < MIN_HATCHED_ZONE_FT, (
+        f"the stall starts {worst_ft:.2f} ft outboard of the travel lane's edge at station "
+        f"{worst_at:.0f}, so the hatch is the INBOARD piece there - it is the box that sits "
+        f"against the travel lane and the hatch that runs out to the kerb "
+        f"(MarkedParking.curb_offset_ft)")
+
+
+@needs_source_data
 def test_every_spare_foot_of_kerb_is_allocated(broad_st_paint, site_models):
     """"Parking or hatching, never neither" holds by AREA, not only by length.
 
